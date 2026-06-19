@@ -237,7 +237,7 @@ export default function Dashboard() {
             </div>
 
             <p className="text-center text-[11px] text-slate-700 pb-2 tracking-wide">
-              Powered by Smart Solution ®
+              Powered by AFKenta Solution ®
             </p>
           </>
         )}
