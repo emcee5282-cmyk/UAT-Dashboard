@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useState, useCallback } from 'react';
-import { RefreshCw, Loader2, AlertCircle, Zap } from 'lucide-react';
+import { RefreshCw, Loader2, AlertCircle } from 'lucide-react';
 
 type Row = {
   agentName: string;
@@ -69,19 +69,13 @@ export default function Summary() {
   }, [fetchData]);
 
   return (
-    <div className="min-h-screen bg-[#0b0f1a] text-slate-100 font-sans">
+    <div className="min-h-screen text-slate-100 font-sans">
 
-      <div className="fixed top-0 left-0 right-0 h-px bg-gradient-to-r from-transparent via-indigo-500/40 to-transparent" />
-
-      <header className="sticky top-0 z-20 bg-[#0b0f1a]/80 backdrop-blur-md border-b border-white/[0.06] px-6 py-3.5 flex items-center justify-between">
-        <div className="flex items-center gap-3">
-          <div className="relative w-8 h-8 rounded-lg bg-indigo-600/20 border border-indigo-500/30 flex items-center justify-center">
-            <Zap size={14} className="text-indigo-400" />
-            <span className="absolute -top-0.5 -right-0.5 w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
-          </div>
-          <div>
-            <p className="font-bold text-sm tracking-tight text-white leading-none">Operations Overview</p>
-          </div>
+      {/* Top bar */}
+      <div className="sticky top-0 z-20 bg-[#0b0f1a]/80 backdrop-blur-md border-b border-white/[0.06] px-6 py-3.5 flex items-center justify-between">
+        <div className="space-y-0.5">
+          <span className="text-[10px] font-semibold tracking-[0.15em] uppercase text-indigo-400">Agent Summary</span>
+          <h1 className="text-sm font-bold text-white">Opening Balance</h1>
         </div>
         <div className="flex items-center gap-4">
           {lastUpdated && (
@@ -99,15 +93,9 @@ export default function Summary() {
             Refresh
           </button>
         </div>
-      </header>
+      </div>
 
-      <main className="max-w-7xl mx-auto px-4 sm:px-6 py-8 space-y-7">
-
-        <div className="space-y-1">
-          <span className="text-[10px] font-semibold tracking-[0.15em] uppercase text-indigo-400">Agent Summary</span>
-          <h1 className="text-2xl font-bold text-white tracking-tight">Opening Balance</h1>
-          <p className="text-[12px] text-slate-500">Per agent breakdown · auto-refreshes every 10 minutes</p>
-        </div>
+      <div className="px-6 py-8 space-y-7">
 
         {loading && (
           <div className="flex items-center justify-center py-28 gap-3 text-slate-500">
@@ -172,7 +160,7 @@ export default function Summary() {
         <p className="text-center text-[11px] text-slate-700 pb-2 tracking-wide">
           Powered by AFKenta Solution ®
         </p>
-      </main>
+      </div>
     </div>
   );
 }
