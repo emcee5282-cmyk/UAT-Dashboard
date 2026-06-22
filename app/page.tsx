@@ -176,51 +176,53 @@ export default function Dashboard() {
                 <span className="text-[11px] text-slate-600 font-mono">{dataRows.length} wallets</span>
               </div>
               <div className="overflow-x-auto">
-                <table className="w-full text-sm">
-                  <thead>
-                    <tr className="border-b border-white/[0.05]">
-                      {columns.map((col) => (
-                        <th key={col.key} className="px-5 py-3 text-left text-[10px] font-semibold text-slate-600 uppercase tracking-[0.12em] whitespace-nowrap">
-                          {col.label}
-                        </th>
+                <div className="min-w-[800px]">
+                  <table className="w-full text-sm">
+                    <thead>
+                      <tr className="border-b border-white/[0.05]">
+                        {columns.map((col) => (
+                          <th key={col.key} className="px-5 py-3 text-left text-[10px] font-semibold text-slate-600 uppercase tracking-[0.12em] whitespace-nowrap">
+                            {col.label}
+                          </th>
+                        ))}
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {dataRows.map((row) => (
+                        <tr key={row.wallet} className="border-b border-white/[0.03] hover:bg-white/[0.03] transition-colors group">
+                          <td className="px-5 py-3.5">
+                            <div className="flex items-center gap-2.5">
+                              <div className="w-1.5 h-1.5 rounded-full bg-indigo-500/50 group-hover:bg-indigo-400 transition-colors" />
+                              <span className="font-semibold text-slate-200 whitespace-nowrap">{row.wallet}</span>
+                            </div>
+                          </td>
+                          <td className={`px-5 py-3.5 font-mono text-[13px] whitespace-nowrap tabular-nums ${numColor(row.totalDP)}`}>{fmt(row.totalDP)}</td>
+                          <td className={`px-5 py-3.5 font-mono text-[13px] whitespace-nowrap tabular-nums ${numColor(row.totalWD)}`}>{fmt(row.totalWD)}</td>
+                          <td className={`px-5 py-3.5 font-mono text-[13px] whitespace-nowrap tabular-nums ${numColor(row.bdTransferIn)}`}>{fmt(row.bdTransferIn)}</td>
+                          <td className={`px-5 py-3.5 font-mono text-[13px] whitespace-nowrap tabular-nums ${numColor(row.stlm)}`}>{fmt(row.stlm)}</td>
+                          <td className={`px-5 py-3.5 font-mono text-[13px] whitespace-nowrap tabular-nums ${numColor(row.actualBal)}`}>{fmt(row.actualBal)}</td>
+                          <td className={`px-5 py-3.5 font-mono text-[13px] whitespace-nowrap tabular-nums ${numColor(row.runningBal)}`}>{fmt(row.runningBal)}</td>
+                        </tr>
                       ))}
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {dataRows.map((row) => (
-                      <tr key={row.wallet} className="border-b border-white/[0.03] hover:bg-white/[0.03] transition-colors group">
-                        <td className="px-5 py-3.5">
-                          <div className="flex items-center gap-2.5">
-                            <div className="w-1.5 h-1.5 rounded-full bg-indigo-500/50 group-hover:bg-indigo-400 transition-colors" />
-                            <span className="font-semibold text-slate-200 whitespace-nowrap">{row.wallet}</span>
-                          </div>
-                        </td>
-                        <td className={`px-5 py-3.5 font-mono text-[13px] whitespace-nowrap tabular-nums ${numColor(row.totalDP)}`}>{fmt(row.totalDP)}</td>
-                        <td className={`px-5 py-3.5 font-mono text-[13px] whitespace-nowrap tabular-nums ${numColor(row.totalWD)}`}>{fmt(row.totalWD)}</td>
-                        <td className={`px-5 py-3.5 font-mono text-[13px] whitespace-nowrap tabular-nums ${numColor(row.bdTransferIn)}`}>{fmt(row.bdTransferIn)}</td>
-                        <td className={`px-5 py-3.5 font-mono text-[13px] whitespace-nowrap tabular-nums ${numColor(row.stlm)}`}>{fmt(row.stlm)}</td>
-                        <td className={`px-5 py-3.5 font-mono text-[13px] whitespace-nowrap tabular-nums ${numColor(row.actualBal)}`}>{fmt(row.actualBal)}</td>
-                        <td className={`px-5 py-3.5 font-mono text-[13px] whitespace-nowrap tabular-nums ${numColor(row.runningBal)}`}>{fmt(row.runningBal)}</td>
-                      </tr>
-                    ))}
-                    {totalRow && (
-                      <tr className="bg-indigo-500/[0.08] border-t border-indigo-500/20">
-                        <td className="px-5 py-4">
-                          <div className="flex items-center gap-2.5">
-                            <div className="w-1.5 h-1.5 rounded-full bg-indigo-400" />
-                            <span className="font-bold text-indigo-300 whitespace-nowrap tracking-wide text-[13px] uppercase">Total</span>
-                          </div>
-                        </td>
-                        <td className={`px-5 py-4 font-mono font-bold text-[13px] whitespace-nowrap tabular-nums ${numColor(totalRow.totalDP)}`}>{fmt(totalRow.totalDP)}</td>
-                        <td className={`px-5 py-4 font-mono font-bold text-[13px] whitespace-nowrap tabular-nums ${numColor(totalRow.totalWD)}`}>{fmt(totalRow.totalWD)}</td>
-                        <td className={`px-5 py-4 font-mono font-bold text-[13px] whitespace-nowrap tabular-nums ${numColor(totalRow.bdTransferIn)}`}>{fmt(totalRow.bdTransferIn)}</td>
-                        <td className={`px-5 py-4 font-mono font-bold text-[13px] whitespace-nowrap tabular-nums ${numColor(totalRow.stlm)}`}>{fmt(totalRow.stlm)}</td>
-                        <td className={`px-5 py-4 font-mono font-bold text-[13px] whitespace-nowrap tabular-nums ${numColor(totalRow.actualBal)}`}>{fmt(totalRow.actualBal)}</td>
-                        <td className={`px-5 py-4 font-mono font-bold text-[13px] whitespace-nowrap tabular-nums ${numColor(totalRow.runningBal)}`}>{fmt(totalRow.runningBal)}</td>
-                      </tr>
-                    )}
-                  </tbody>
-                </table>
+                      {totalRow && (
+                        <tr className="bg-indigo-500/[0.08] border-t border-indigo-500/20">
+                          <td className="px-5 py-4">
+                            <div className="flex items-center gap-2.5">
+                              <div className="w-1.5 h-1.5 rounded-full bg-indigo-400" />
+                              <span className="font-bold text-indigo-300 whitespace-nowrap tracking-wide text-[13px] uppercase">Total</span>
+                            </div>
+                          </td>
+                          <td className={`px-5 py-4 font-mono font-bold text-[13px] whitespace-nowrap tabular-nums ${numColor(totalRow.totalDP)}`}>{fmt(totalRow.totalDP)}</td>
+                          <td className={`px-5 py-4 font-mono font-bold text-[13px] whitespace-nowrap tabular-nums ${numColor(totalRow.totalWD)}`}>{fmt(totalRow.totalWD)}</td>
+                          <td className={`px-5 py-4 font-mono font-bold text-[13px] whitespace-nowrap tabular-nums ${numColor(totalRow.bdTransferIn)}`}>{fmt(totalRow.bdTransferIn)}</td>
+                          <td className={`px-5 py-4 font-mono font-bold text-[13px] whitespace-nowrap tabular-nums ${numColor(totalRow.stlm)}`}>{fmt(totalRow.stlm)}</td>
+                          <td className={`px-5 py-4 font-mono font-bold text-[13px] whitespace-nowrap tabular-nums ${numColor(totalRow.actualBal)}`}>{fmt(totalRow.actualBal)}</td>
+                          <td className={`px-5 py-4 font-mono font-bold text-[13px] whitespace-nowrap tabular-nums ${numColor(totalRow.runningBal)}`}>{fmt(totalRow.runningBal)}</td>
+                        </tr>
+                      )}
+                    </tbody>
+                  </table>
+                </div>
               </div>
             </div>
 
