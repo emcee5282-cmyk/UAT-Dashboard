@@ -120,10 +120,10 @@ export default function Summary() {
               </div>
               <span className="text-[11px] text-slate-600 font-mono">{rows.length} agents</span>
             </div>
-            <div className="overflow-x-auto">
+            <div className="overflow-x-auto overflow-y-auto max-h-[calc(100vh-200px)]">
               <table className="w-full text-sm">
-                <thead>
-                  <tr className="border-b border-white/[0.05]">
+                  <thead className="sticky top-0 z-10 bg-[#111827]">
+                    <tr className="border-b border-white/[0.05]">
                     {['Leader', 'Agent Name', 'Opening Bal.', 'SDP'].map((col) => (
                       <th key={col} className="px-5 py-3 text-left text-[10px] font-semibold text-slate-600 uppercase tracking-[0.12em] whitespace-nowrap">
                         {col}
