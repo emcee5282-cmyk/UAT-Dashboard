@@ -2,7 +2,7 @@
 
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
-import { LayoutDashboard, Users, ChevronDown, BookOpen, Zap, Menu, X } from 'lucide-react';
+import { LayoutDashboard, Users, ChevronDown, BookOpen, Wallet, Zap, Menu, X, ArrowLeftRight } from 'lucide-react';
 import { useState } from 'react';
 
 export default function Sidebar() {
@@ -12,7 +12,6 @@ export default function Sidebar() {
 
   const NavContent = () => (
     <>
-      {/* Logo */}
       <div className="px-5 py-5 border-b border-white/[0.06] flex items-center justify-between">
         <div className="flex items-center gap-3">
           <div className="relative w-8 h-8 rounded-lg bg-indigo-600/20 border border-indigo-500/30 flex items-center justify-center">
@@ -32,7 +31,6 @@ export default function Sidebar() {
         </button>
       </div>
 
-      {/* Nav */}
       <nav className="flex-1 px-3 py-4 space-y-1">
         <Link
           href="/"
@@ -76,12 +74,35 @@ export default function Sidebar() {
                 <BookOpen size={13} />
                 Opening Balance
               </Link>
+              <Link
+                href="/agentbal"
+                onClick={() => setMobileOpen(false)}
+                className={`flex items-center gap-2.5 px-3 py-2 rounded-lg text-[13px] font-medium transition-all ${
+                  pathname === '/agentbal'
+                    ? 'bg-indigo-500/20 text-indigo-300 border border-indigo-500/20'
+                    : 'text-slate-500 hover:text-slate-200 hover:bg-white/[0.04]'
+                }`}
+              >
+                <Wallet size={13} />
+                Agent Balance
+              </Link>
+              <Link
+                href="/stlm"
+                onClick={() => setMobileOpen(false)}
+                className={`flex items-center gap-2.5 px-3 py-2 rounded-lg text-[13px] font-medium transition-all ${
+                  pathname === '/stlm'
+                    ? 'bg-indigo-500/20 text-indigo-300 border border-indigo-500/20'
+                    : 'text-slate-500 hover:text-slate-200 hover:bg-white/[0.04]'
+                }`}
+              >
+                <ArrowLeftRight size={13} />
+                STLM & Top Up
+              </Link>
             </div>
           )}
         </div>
       </nav>
 
-      {/* Footer */}
       <div className="px-5 py-4 border-t border-white/[0.06]">
         <p className="text-[10px] text-slate-700 tracking-wide">Powered by AFKenta Solution ®</p>
       </div>
@@ -90,7 +111,6 @@ export default function Sidebar() {
 
   return (
     <>
-      {/* Mobile hamburger button */}
       <button
         onClick={() => setMobileOpen(true)}
         className="md:hidden fixed top-3.5 left-4 z-50 text-slate-400 hover:text-slate-200 bg-[#0d1117] border border-white/[0.06] rounded-lg p-2"
@@ -98,7 +118,6 @@ export default function Sidebar() {
         <Menu size={16} />
       </button>
 
-      {/* Mobile overlay */}
       {mobileOpen && (
         <div
           className="md:hidden fixed inset-0 bg-black/60 z-40"
@@ -106,12 +125,10 @@ export default function Sidebar() {
         />
       )}
 
-      {/* Mobile drawer */}
       <aside className={`md:hidden fixed top-0 left-0 h-full w-56 bg-[#0d1117] border-r border-white/[0.06] flex flex-col z-50 transition-transform duration-300 ${mobileOpen ? 'translate-x-0' : '-translate-x-full'}`}>
         <NavContent />
       </aside>
 
-      {/* Desktop sidebar */}
       <aside className="hidden md:flex w-56 h-screen bg-[#0d1117] border-r border-white/[0.06] flex-col sticky top-0">
         <NavContent />
       </aside>
