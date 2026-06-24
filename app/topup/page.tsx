@@ -1,16 +1,16 @@
 'use client';
 
 import { useEffect, useState, useCallback } from 'react';
-import { RefreshCw, Loader2, AlertCircle, Search, ArrowLeftRight } from 'lucide-react';
+import { RefreshCw, Loader2, AlertCircle, Search, CircleDollarSign } from 'lucide-react';
 import ThemeToggle from '../components/ThemeToggle';
 
-type StlmRow = {
+type TopUpRow = {
   agentName: string;
-  amount: string;
-  remarks: string;
-  date: string;
+  toAgent: string;
   wallet: string;
-  brand: string;
+  amount: string;
+  date: string;
+  type: string;
 };
 
 function rawVal(val: string): string {
@@ -28,8 +28,8 @@ function fmtNum(val: string): string {
   });
 }
 
-export default function StlmPage() {
-  const [stlmRows, setStlmRows] = useState<StlmRow[]>([]);
+export default function TopUpPage() {
+  const [topUpRows, setTopUpRows] = useState<TopUpRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [lastUpdated, setLastUpdated] = useState('');
@@ -47,26 +47,26 @@ export default function StlmPage() {
       const text = await res.text();
       const lines = text.trim().split('\n').slice(1);
 
-      const stlm: StlmRow[] = [];
+      const topUp: TopUpRow[] = [];
 
       lines
         .filter(line => line.trim() !== '')
         .forEach(line => {
           const cols = line.split(',');
-          const agentRight = rawVal(cols[7]);
-          if (agentRight && agentRight !== '-') {
-            stlm.push({
-              agentName: agentRight,
-              amount: rawVal(cols[8]),
-              remarks: rawVal(cols[9]),
-              date: rawVal(cols[10]),
-              wallet: rawVal(cols[11]),
-              brand: rawVal(cols[12]),
+          const agentLeft = rawVal(cols[0]);
+          if (agentLeft && agentLeft !== '-') {
+            topUp.push({
+              agentName: agentLeft,
+              toAgent: rawVal(cols[1]),
+              wallet: rawVal(cols[2]),
+              amount: rawVal(cols[3]),
+              date: rawVal(cols[4]),
+              type: rawVal(cols[5]),
             });
           }
         });
 
-      setStlmRows(stlm);
+      setTopUpRows(topUp);
       setLastUpdated(new Date().toLocaleTimeString('en-PH'));
     } catch {
       setError('Unable to load data. Check your Google Sheet or network connection.');
@@ -80,8 +80,8 @@ export default function StlmPage() {
     fetchData();
   }, [fetchData]);
 
-  const filteredRows = stlmRows.filter((row) => {
-    const haystack = `${row.agentName} ${row.amount} ${row.remarks} ${row.date} ${row.wallet} ${row.brand}`.toLowerCase();
+  const filteredRows = topUpRows.filter((row) => {
+    const haystack = `${row.agentName} ${row.toAgent} ${row.wallet} ${row.amount} ${row.date} ${row.type}`.toLowerCase();
     return haystack.includes(searchTerm.toLowerCase());
   });
 
@@ -90,8 +90,8 @@ export default function StlmPage() {
       <header className="border-b border-slate-200 bg-white/80 px-4 py-4 backdrop-blur dark:border-slate-800 dark:bg-slate-900/80 md:px-8">
         <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
           <div>
-            <p className="text-[10px] font-semibold uppercase tracking-[0.28em] text-slate-500 dark:text-slate-400">Settlement</p>
-            <h1 className="text-2xl font-semibold text-slate-900 dark:text-slate-100">STLM Records</h1>
+            <p className="text-[10px] font-semibold uppercase tracking-[0.28em] text-slate-500 dark:text-slate-400">Top Up</p>
+            <h1 className="text-2xl font-semibold text-slate-900 dark:text-slate-100">Top Up Records</h1>
           </div>
           <div className="flex items-center gap-3">
             <label className="flex items-center gap-2 rounded-2xl border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-500 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-400">
@@ -120,7 +120,7 @@ export default function StlmPage() {
         <div className="rounded-3xl border border-slate-200 bg-white p-5 shadow-[0_16px_60px_-30px_rgba(15,23,42,0.35)] dark:border-slate-800 dark:bg-slate-900">
           <div className="flex flex-wrap items-center justify-between gap-3">
             <div className="flex items-center gap-3">
-              <div className="rounded-2xl bg-amber-50 p-2.5 text-amber-600 dark:bg-amber-500/10 dark:text-amber-400"><ArrowLeftRight size={16} /></div>
+              <div className="rounded-2xl bg-emerald-50 p-2.5 text-emerald-600 dark:bg-emerald-500/10 dark:text-emerald-400"><CircleDollarSign size={16} /></div>
               <div>
                 <p className="text-[10px] font-semibold uppercase tracking-[0.24em] text-slate-500 dark:text-slate-400">Live sync</p>
                 <p className="text-sm text-slate-600 dark:text-slate-300">Updated at {lastUpdated || '—'}</p>
@@ -153,8 +153,8 @@ export default function StlmPage() {
           <div className="overflow-hidden rounded-3xl border border-slate-200 bg-white shadow-[0_16px_60px_-30px_rgba(15,23,42,0.35)] dark:border-slate-800 dark:bg-slate-900">
             <div className="flex items-center justify-between border-b border-slate-200 px-6 py-4 dark:border-slate-800">
               <div>
-                <p className="text-[10px] font-semibold uppercase tracking-[0.24em] text-slate-500 dark:text-slate-400">STLM</p>
-                <h2 className="text-lg font-semibold text-slate-900 dark:text-slate-100">Settlement records</h2>
+                <p className="text-[10px] font-semibold uppercase tracking-[0.24em] text-slate-500 dark:text-slate-400">Top Up</p>
+                <h2 className="text-lg font-semibold text-slate-900 dark:text-slate-100">Transfer records</h2>
               </div>
               <div className="rounded-full bg-slate-100 px-3 py-1 text-sm font-medium text-slate-600 dark:bg-slate-800 dark:text-slate-300">{filteredRows.length} records</div>
             </div>
@@ -162,7 +162,7 @@ export default function StlmPage() {
               <table className="w-full min-w-[700px] text-sm">
                 <thead className="bg-slate-50 dark:bg-slate-800/70">
                   <tr className="border-b border-slate-200 text-left text-[10px] font-semibold uppercase tracking-[0.24em] text-slate-500 dark:border-slate-700 dark:text-slate-400">
-                    {['Agent Name', 'Amount', 'Remarks', 'Date', 'Wallet', 'Brand'].map(col => (
+                    {['Agent Name', 'To Agent', 'Wallet', 'Amount', 'Date', 'Type'].map(col => (
                       <th key={col} className="px-4 py-3 whitespace-nowrap">{col}</th>
                     ))}
                   </tr>
@@ -171,11 +171,11 @@ export default function StlmPage() {
                   {filteredRows.length > 0 ? filteredRows.map((row, i) => (
                     <tr key={i} className="border-b border-slate-100 hover:bg-slate-50 dark:border-slate-800 dark:hover:bg-slate-800/70">
                       <td className="px-4 py-3 font-semibold text-slate-800 dark:text-slate-100">{row.agentName}</td>
-                      <td className="px-4 py-3 font-mono font-semibold text-amber-600 dark:text-amber-400">{fmtNum(row.amount)}</td>
-                      <td className="px-4 py-3 text-slate-600 dark:text-slate-300">{row.remarks}</td>
-                      <td className="px-4 py-3 text-slate-500 dark:text-slate-400">{row.date}</td>
+                      <td className="px-4 py-3 text-slate-600 dark:text-slate-300">{row.toAgent}</td>
                       <td className="px-4 py-3 text-slate-600 dark:text-slate-300">{row.wallet}</td>
-                      <td className="px-4 py-3 text-indigo-600 dark:text-indigo-400">{row.brand}</td>
+                      <td className="px-4 py-3 font-mono font-semibold text-emerald-600 dark:text-emerald-400">{fmtNum(row.amount)}</td>
+                      <td className="px-4 py-3 text-slate-500 dark:text-slate-400">{row.date}</td>
+                      <td className="px-4 py-3 text-indigo-600 dark:text-indigo-400">{row.type}</td>
                     </tr>
                   )) : <tr><td colSpan={6} className="px-4 py-8 text-center text-sm text-slate-500 dark:text-slate-400">No matching records found.</td></tr>}
                 </tbody>

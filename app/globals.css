@@ -1,12 +1,40 @@
 @import "tailwindcss";
 
+@custom-variant dark (&:where(.dark, .dark *));
+
 :root {
-  --background: #0b0f1a;
-  --foreground: #f1f5f9;
+  --background: #f4f6fb;
+  --foreground: #0f172a;
+  color-scheme: light;
+}
+
+.dark {
+  --background: #020617;
+  --foreground: #f8fafc;
+  color-scheme: dark;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html {
+  background: var(--background);
 }
 
 body {
-  background: var(--background);
+  margin: 0;
+  background: linear-gradient(135deg, #f8fafc 0%, #eef2ff 100%);
   color: var(--foreground);
   font-family: Arial, Helvetica, sans-serif;
+  transition: background-color 250ms ease, color 250ms ease;
+}
+
+.dark body {
+  background: linear-gradient(135deg, #020617 0%, #111827 100%);
+}
+
+::selection {
+  background: rgba(99, 102, 241, 0.2);
+  color: #111827;
 }
