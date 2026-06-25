@@ -110,7 +110,8 @@ function normalizeWalletStatus(raw: string): string | null {
   if (trimmed === '') return null;
 
   const lower = trimmed.toLowerCase();
-  if (lower.includes('dp + wd')) return 'DP+WD';
+  const noSpaces = trimmed.replace(/\s+/g, '').toLowerCase();
+  if (noSpaces.includes('dp+wd')) return 'DP+WD';
   if (lower.includes('dp only')) return 'DP Only';
   if (lower.includes('wd only')) return 'WD Only';
   if (lower.includes('top up')) return 'Top Up Acc.';
@@ -282,7 +283,7 @@ export default function AgentBalance() {
   const [lastUpdated, setLastUpdated] = useState('');
   const [spinning, setSpinning] = useState(false);
   const [searchTerm, setSearchTerm] = useState('');
-  const [leaderFilter, setLeaderFilter] = useState('All Leaders');
+  const [leaderFilter, setLeaderFilter] = useState<Record<string, boolean>>({});
   const [sortColumn, setSortColumn] = useState<ColumnKey>('companyBalance');
   const [sortDirection, setSortDirection] = useState<'asc' | 'desc'>('desc');
   const [leaderMenuOpen, setLeaderMenuOpen] = useState(false);
@@ -497,6 +498,10 @@ export default function AgentBalance() {
     return leaders;
   }, [rows]);
 
+  const isLeaderChecked = (name: string) => leaderFilter[name] !== false;
+  const allLeadersChecked = leaderOptions.every((name) => isLeaderChecked(name));
+  const anyLeaderUnchecked = leaderOptions.some((name) => !isLeaderChecked(name));
+
   const searchedRows = useMemo(() => {
     const query = searchTerm.toLowerCase();
     if (!query) return rows;
@@ -509,14 +514,14 @@ export default function AgentBalance() {
 
   const filteredRows = useMemo(() => {
     let list = searchedRows;
-    if (leaderFilter !== 'All Leaders') {
-      list = list.filter((row) => row.leader === leaderFilter);
+    if (leaderOptions.some((name) => leaderFilter[name] === false)) {
+      list = list.filter((row) => leaderFilter[row.leader] !== false);
     }
     if (WALLET_STATUS_OPTIONS.some((status) => !walletStatusFilter[status])) {
       list = list.filter((row) => walletStatusFilter[row.walletStatus]);
     }
     return list;
-  }, [leaderFilter, walletStatusFilter, searchedRows]);
+  }, [leaderFilter, leaderOptions, walletStatusFilter, searchedRows]);
 
   const sortedRows = useMemo(() => {
     const list = [...filteredRows];
@@ -745,47 +750,49 @@ export default function AgentBalance() {
                                 event.stopPropagation();
                                 const rect = leaderButtonRef.current?.getBoundingClientRect();
                                 if (rect) {
-                                  setLeaderMenuPos({ top: rect.bottom + 8, left: rect.left });
+                                  const dropdownWidth = 176;
+                                  const left = Math.min(rect.left, window.innerWidth - dropdownWidth - 8);
+                                  setLeaderMenuPos({ top: rect.bottom + 8, left: Math.max(8, left) });
                                 }
                                 setLeaderMenuOpen((current) => !current);
                               }}
-                              className={`flex items-center justify-center rounded-full p-1 transition ${leaderFilter !== 'All Leaders' ? 'bg-indigo-100 text-indigo-700 dark:bg-indigo-500/30 dark:text-indigo-200' : 'text-[#6b7280] hover:bg-slate-200 dark:text-[#a0a0a0] dark:hover:bg-white/10'}`}
+                              className={`flex items-center justify-center rounded-full p-1 transition ${anyLeaderUnchecked ? 'bg-indigo-100 text-indigo-700 dark:bg-indigo-500/30 dark:text-indigo-200' : 'text-[#6b7280] hover:bg-slate-200 dark:text-[#a0a0a0] dark:hover:bg-white/10'}`}
                             >
-                              <Filter size={12} className={leaderFilter !== 'All Leaders' ? 'opacity-100' : 'opacity-70'} />
+                              <Filter size={12} className={anyLeaderUnchecked ? 'opacity-100' : 'opacity-70'} />
                             </button>
                             {leaderMenuOpen && typeof document !== 'undefined' && createPortal(
                               <div
                                 ref={leaderDropdownRef}
                                 style={{ position: 'fixed', top: leaderMenuPos.top, left: leaderMenuPos.left }}
-                                className="z-[1000] w-64 rounded-xl border border-[#e5e5e7] bg-white p-2 shadow-xl dark:border-[#3a3a3d] dark:bg-[#2a2a2d]"
+                                className="z-[9999] w-44 rounded-xl border border-[#e5e5e7] bg-white p-2 shadow-xl dark:border-[#3a3a3d] dark:bg-[#2a2a2d]"
                                 onClick={(event) => event.stopPropagation()}
                               >
                                 <div className="px-2 py-1.5 text-[10px] font-semibold uppercase tracking-[0.24em] text-[#6b7280] dark:text-[#a0a0a0]">Filter</div>
-                                <div className="max-h-60 overflow-y-auto">
-                                  <button
-                                    type="button"
-                                    onClick={() => {
-                                      setLeaderFilter('All Leaders');
-                                      setLeaderMenuOpen(false);
-                                    }}
-                                    className={`flex w-full items-center justify-between rounded-xl px-2 py-2 text-sm transition ${leaderFilter === 'All Leaders' ? 'bg-indigo-50 text-indigo-700 dark:bg-indigo-500/10 dark:text-indigo-300' : 'text-[#6b7280] hover:bg-[#f5f5f7] dark:text-[#a0a0a0] dark:hover:bg-slate-800'}`}
-                                  >
-                                    <span>All Leaders</span>
-                                    {leaderFilter === 'All Leaders' && <Filter size={12} />}
-                                  </button>
-                                  {leaderOptions.map((leader) => (
-                                    <button
-                                      key={leader}
-                                      type="button"
-                                      onClick={() => {
-                                        setLeaderFilter(leader);
-                                        setLeaderMenuOpen(false);
+                                <div className="max-h-56 overflow-y-auto">
+                                  <label className="flex w-full items-center gap-2 rounded-xl px-3 py-1.5 text-[10px] text-[#6b7280] hover:bg-[#f5f5f7] dark:text-[#a0a0a0] dark:hover:bg-slate-800">
+                                    <input
+                                      type="checkbox"
+                                      checked={allLeadersChecked}
+                                      onChange={() => {
+                                        const nextValue = !allLeadersChecked;
+                                        setLeaderFilter(
+                                          Object.fromEntries(leaderOptions.map((name) => [name, nextValue]))
+                                        );
                                       }}
-                                      className={`flex w-full items-center justify-between rounded-xl px-2 py-2 text-sm transition ${leaderFilter === leader ? 'bg-indigo-50 text-indigo-700 dark:bg-indigo-500/10 dark:text-indigo-300' : 'text-[#6b7280] hover:bg-[#f5f5f7] dark:text-[#a0a0a0] dark:hover:bg-slate-800'}`}
-                                    >
+                                    />
+                                    <span>All</span>
+                                  </label>
+                                  {leaderOptions.map((leader) => (
+                                    <label key={leader} className="flex w-full items-center gap-2 rounded-xl px-3 py-1.5 text-[10px] text-[#6b7280] hover:bg-[#f5f5f7] dark:text-[#a0a0a0] dark:hover:bg-slate-800">
+                                      <input
+                                        type="checkbox"
+                                        checked={isLeaderChecked(leader)}
+                                        onChange={() => {
+                                          setLeaderFilter((current) => ({ ...current, [leader]: !isLeaderChecked(leader) }));
+                                        }}
+                                      />
                                       <span>{leader}</span>
-                                      {leaderFilter === leader && <Filter size={12} />}
-                                    </button>
+                                    </label>
                                   ))}
                                 </div>
                               </div>,
@@ -816,7 +823,9 @@ export default function AgentBalance() {
                                 event.stopPropagation();
                                 const rect = walletStatusButtonRef.current?.getBoundingClientRect();
                                 if (rect) {
-                                  setWalletStatusMenuPos({ top: rect.bottom + 8, left: rect.left });
+                                  const dropdownWidth = 176;
+                                  const left = Math.min(rect.left, window.innerWidth - dropdownWidth - 8);
+                                  setWalletStatusMenuPos({ top: rect.bottom + 8, left: Math.max(8, left) });
                                 }
                                 setWalletStatusMenuOpen((current) => !current);
                               }}
@@ -828,12 +837,12 @@ export default function AgentBalance() {
                               <div
                                 ref={walletStatusDropdownRef}
                                 style={{ position: 'fixed', top: walletStatusMenuPos.top, left: walletStatusMenuPos.left }}
-                                className="z-[1000] w-56 rounded-xl border border-[#e5e5e7] bg-white p-2 shadow-xl dark:border-[#3a3a3d] dark:bg-[#2a2a2d]"
+                                className="z-[9999] w-44 rounded-xl border border-[#e5e5e7] bg-white p-2 shadow-xl dark:border-[#3a3a3d] dark:bg-[#2a2a2d]"
                                 onClick={(event) => event.stopPropagation()}
                               >
                                 <div className="px-2 py-1.5 text-[10px] font-semibold uppercase tracking-[0.24em] text-[#6b7280] dark:text-[#a0a0a0]">Filter</div>
-                                <div className="max-h-60 overflow-y-auto">
-                                  <label className="flex w-full items-center gap-2 rounded-xl px-2 py-2 text-sm text-[#6b7280] hover:bg-[#f5f5f7] dark:text-[#a0a0a0] dark:hover:bg-slate-800">
+                                <div className="max-h-56 overflow-y-auto">
+                                  <label className="flex w-full items-center gap-2 rounded-xl px-3 py-1.5 text-[10px] text-[#6b7280] hover:bg-[#f5f5f7] dark:text-[#a0a0a0] dark:hover:bg-slate-800">
                                     <input
                                       type="checkbox"
                                       checked={allWalletStatusesChecked}
@@ -847,7 +856,7 @@ export default function AgentBalance() {
                                     <span>All</span>
                                   </label>
                                   {WALLET_STATUS_OPTIONS.map((status) => (
-                                    <label key={status} className="flex w-full items-center gap-2 rounded-xl px-2 py-2 text-sm text-[#6b7280] hover:bg-[#f5f5f7] dark:text-[#a0a0a0] dark:hover:bg-slate-800">
+                                    <label key={status} className="flex w-full items-center gap-2 rounded-xl px-3 py-1.5 text-[10px] text-[#6b7280] hover:bg-[#f5f5f7] dark:text-[#a0a0a0] dark:hover:bg-slate-800">
                                       <input
                                         type="checkbox"
                                         checked={walletStatusFilter[status]}
