@@ -2,7 +2,8 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { AlertCircle, ChevronDown, ChevronUp, Filter, Loader2, RefreshCw, Search } from 'lucide-react';
+import { AlertCircle, ChevronDown, ChevronUp, Download, Filter, Loader2, RefreshCw, Search } from 'lucide-react';
+import * as XLSX from 'xlsx';
 import ThemeToggle from '../components/ThemeToggle';
 import { rawVal } from '@/app/lib/format';
 
@@ -96,6 +97,10 @@ function displayNum(val: string | number | null | undefined): string {
     maximumFractionDigits: 2,
   });
   return num < 0 ? `-${formatted}` : formatted;
+}
+
+function numOrBlank(num: number): number | undefined {
+  return Math.abs(num) < 0.01 ? undefined : num;
 }
 
 function parseNumber(val: string): number {
@@ -222,48 +227,48 @@ function headerCellClasses(isSorted: boolean) {
 function renderCell(row: MergedRow, key: ColumnKey) {
   switch (key) {
     case 'leader':
-      return <td key={key} className="whitespace-nowrap px-3 py-1 text-center text-[10px] text-slate-700 dark:text-slate-300">{row.leader}</td>;
+      return <td key={key} className="whitespace-nowrap px-3 py-1 text-center text-[9px] text-slate-700 dark:text-slate-300">{row.leader}</td>;
     case 'walletName':
-      return <td key={key} className="whitespace-nowrap px-3 py-1 text-center text-[10px] font-bold text-slate-900 dark:text-white">{row.agentName}</td>;
+      return <td key={key} className="whitespace-nowrap px-3 py-1 text-center text-[9px] font-bold text-slate-900 dark:text-white">{row.agentName}</td>;
     case 'sdp':
-      return <td key={key} className="whitespace-nowrap px-3 py-1 text-center text-[10px] text-slate-700 dark:text-slate-300">{displayNum(row.sdp)}</td>;
+      return <td key={key} className="whitespace-nowrap px-3 py-1 text-center text-[9px] text-slate-700 dark:text-slate-300">{displayNum(row.sdp)}</td>;
     case 'opening':
-      return <td key={key} className="whitespace-nowrap px-3 py-1 text-center text-[10px] text-slate-700 dark:text-slate-300">{displayNum(row.openingBal)}</td>;
+      return <td key={key} className="whitespace-nowrap px-3 py-1 text-center text-[9px] text-slate-700 dark:text-slate-300">{displayNum(row.openingBal)}</td>;
     case 'totalDP':
-      return <td key={key} className="whitespace-nowrap px-3 py-1 text-center text-[10px] text-slate-700 dark:text-slate-300">{displayNum(row.agentTotalDP)}</td>;
+      return <td key={key} className="whitespace-nowrap px-3 py-1 text-center text-[9px] text-slate-700 dark:text-slate-300">{displayNum(row.agentTotalDP)}</td>;
     case 'totalWD':
-      return <td key={key} className="whitespace-nowrap px-3 py-1 text-center text-[10px] text-slate-700 dark:text-slate-300">{displayNum(row.agentTotalWD)}</td>;
+      return <td key={key} className="whitespace-nowrap px-3 py-1 text-center text-[9px] text-slate-700 dark:text-slate-300">{displayNum(row.agentTotalWD)}</td>;
     case 'topUp':
-      return <td key={key} className="whitespace-nowrap px-3 py-1 text-center text-[10px] text-slate-700 dark:text-slate-300">{displayNum(row.totalTopUp)}</td>;
+      return <td key={key} className="whitespace-nowrap px-3 py-1 text-center text-[9px] text-slate-700 dark:text-slate-300">{displayNum(row.totalTopUp)}</td>;
     case 'settlement': {
       const settlementDisplay = displayNum(row.totalStlm);
       return (
-        <td key={key} className="whitespace-nowrap px-3 py-1 text-center text-[10px] text-slate-700 dark:text-slate-300">
+        <td key={key} className="whitespace-nowrap px-3 py-1 text-center text-[9px] text-slate-700 dark:text-slate-300">
           {settlementDisplay}
         </td>
       );
     }
     case 'balanceInside':
       return (
-        <td key={key} className="px-3 py-1.5 text-[10px] text-center text-slate-700 dark:text-slate-300">
+        <td key={key} className="px-3 py-1.5 text-[9px] text-center text-slate-700 dark:text-slate-300">
           {displayNum(String(row.balanceInside ?? 0))}
         </td>
       );
     case 'agentWithdrawal':
       return (
-        <td key={key} className="px-3 py-1.5 text-[10px] text-center text-slate-700 dark:text-slate-300">
+        <td key={key} className="px-3 py-1.5 text-[9px] text-center text-slate-700 dark:text-slate-300">
           {displayNum(String(row.agentWithdrawal))}
         </td>
       );
     case 'sdpVsBalance':
       return (
-        <td key={key} className="px-3 py-1.5 text-[10px] text-center text-slate-700 dark:text-slate-300">
+        <td key={key} className="px-3 py-1.5 text-[9px] text-center text-slate-700 dark:text-slate-300">
           {row.sdpVsBalance > 0 ? displayNum(String(Math.abs(row.sdpVsBalance))) : '−'}
         </td>
       );
     case 'walletStatus':
       return (
-        <td key={key} className={`whitespace-nowrap px-3 py-1 text-center text-[10px] ${row.walletStatus === 'No Record' ? 'text-slate-400 dark:text-slate-500' : 'text-slate-700 dark:text-slate-300'}`}>
+        <td key={key} className={`whitespace-nowrap px-3 py-1 text-center text-[9px] ${row.walletStatus === 'No Record' ? 'text-slate-400 dark:text-slate-500' : 'text-slate-700 dark:text-slate-300'}`}>
           {row.walletStatus}
         </td>
       );
@@ -277,7 +282,7 @@ function renderCell(row: MergedRow, key: ColumnKey) {
           ? 'text-rose-600 dark:text-rose-400'
           : 'text-slate-900 dark:text-white';
       return (
-        <td key={key} className={`whitespace-nowrap px-3 py-1 text-center text-[10px] font-bold ${companyBalanceColor}`}>
+        <td key={key} className={`whitespace-nowrap px-3 py-1 text-center text-[9px] font-bold ${companyBalanceColor}`}>
           {companyBalanceDisplay}
         </td>
       );
@@ -591,6 +596,39 @@ export default function AgentBalance() {
   const endIndex = startIndex + rowsPerPage;
   const pagedRows = sortedRows.slice(startIndex, endIndex);
 
+  const handleExport = useCallback(() => {
+    const headers = [
+      'Leader', 'Wallet Name', 'SDP', 'Opening', 'Total DP', 'Total WD',
+      'Top Up', 'Settlement', 'Company Balance', 'Balance Inside',
+      'Agent Withdrawal', 'SDP VS Balance', 'Wallet Status',
+    ];
+
+    const data = sortedRows.map((row) => [
+      row.leader,
+      row.agentName,
+      numOrBlank(parseNumber(row.sdp)),
+      numOrBlank(parseNumber(row.openingBal)),
+      numOrBlank(row.agentTotalDP),
+      numOrBlank(row.agentTotalWD),
+      numOrBlank(row.totalTopUp),
+      numOrBlank(row.totalStlm),
+      numOrBlank(row.runningBalance),
+      numOrBlank(row.balanceInside),
+      numOrBlank(row.agentWithdrawal),
+      row.sdpVsBalance > 0 ? Math.abs(row.sdpVsBalance) : undefined,
+      row.walletStatus,
+    ]);
+
+    const worksheet = XLSX.utils.aoa_to_sheet([headers, ...data]);
+    worksheet['!cols'] = headers.map(() => ({ wch: 16 }));
+
+    const workbook = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(workbook, worksheet, 'Agent Balance');
+
+    const today = new Date().toISOString().slice(0, 10);
+    XLSX.writeFile(workbook, `agent-balance-${today}.xlsx`);
+  }, [sortedRows]);
+
   useEffect(() => {
     if (page !== currentPage) {
       setPage(currentPage);
@@ -727,6 +765,14 @@ export default function AgentBalance() {
                     document.body
                   )}
                 </div>
+                <button
+                  type="button"
+                  onClick={handleExport}
+                  title="Export to Excel"
+                  className="flex items-center justify-center rounded-xl border border-[#e5e5e7] p-1.5 text-[#6b7280] transition hover:bg-slate-50 dark:border-[#3a3a3d] dark:text-[#a0a0a0] dark:hover:bg-white/10"
+                >
+                  <Download size={14} />
+                </button>
               </div>
             </div>
             <div className="max-h-[calc(100vh-140px)] overflow-y-auto">
@@ -922,7 +968,7 @@ export default function AgentBalance() {
                     </tr>
                   )) : (
                     <tr>
-                      <td colSpan={Math.max(visibleColumns.length, 1)} className="px-3 py-8 text-center text-[10px] text-[#6b7280] dark:text-[#a0a0a0]">
+                      <td colSpan={Math.max(visibleColumns.length, 1)} className="px-3 py-8 text-center text-[9px] text-[#6b7280] dark:text-[#a0a0a0]">
                         No matching accounts found.
                       </td>
                     </tr>

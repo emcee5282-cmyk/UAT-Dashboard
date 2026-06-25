@@ -129,8 +129,8 @@ export default function TopUpPage() {
 
         {!loading && !error && (
           <div className="rounded-xl border border-[#e5e5e7] bg-white dark:border-[#3a3a3d] dark:bg-[#2a2a2d]">
-            <div className="flex items-center justify-between gap-3 border-b border-[#e5e5e7] px-2 py-1.5 dark:border-[#3a3a3d]">
-              <span className="text-[10px] font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400">{filteredRows.length} records</span>
+            <div className="flex items-center justify-end gap-3 border-b border-[#e5e5e7] px-2 py-1.5 dark:border-[#3a3a3d]">
+              <span className="text-[10px] font-semibold text-slate-500 dark:text-slate-400">{filteredRows.length} records</span>
             </div>
             <div className="max-h-[calc(100vh-140px)] overflow-y-auto">
               <table className="w-full min-w-[700px] text-sm">
@@ -144,14 +144,14 @@ export default function TopUpPage() {
                 <tbody>
                   {filteredRows.length > 0 ? filteredRows.map((row, i) => (
                     <tr key={i}>
-                      <td className="whitespace-nowrap px-3 py-2 text-center text-[10px] text-slate-700 dark:text-slate-300">{getBrand(row.toAgent)}</td>
-                      <td className="px-3 py-2 text-center text-[10px] font-bold text-slate-900 dark:text-white">{row.agentName}</td>
-                      <td className="px-3 py-2 text-center text-[10px] text-slate-700 dark:text-slate-300">{row.wallet}</td>
-                      <td className="px-3 py-2 text-center text-[10px] text-slate-700 dark:text-slate-300">{fmtNum(row.amount)}</td>
-                      <td className="px-3 py-2 text-center text-[10px] text-slate-700 dark:text-slate-300">{row.type}</td>
-                      <td className="px-3 py-2 text-center text-[10px] text-slate-700 dark:text-slate-300">{row.date}</td>
+                      <td className="whitespace-nowrap px-3 py-2 text-center text-[9px] text-slate-700 dark:text-slate-300">{getBrand(row.toAgent)}</td>
+                      <td className="px-3 py-2 text-center text-[9px] font-bold text-slate-900 dark:text-white">{row.agentName}</td>
+                      <td className="px-3 py-2 text-center text-[9px] text-slate-700 dark:text-slate-300">{row.wallet}</td>
+                      <td className="px-3 py-2 text-center text-[9px] text-slate-700 dark:text-slate-300">{fmtNum(row.amount)}</td>
+                      <td className="px-3 py-2 text-center text-[9px] text-slate-700 dark:text-slate-300">{row.type}</td>
+                      <td className="px-3 py-2 text-center text-[9px] text-slate-700 dark:text-slate-300">{row.date}</td>
                     </tr>
-                  )) : <tr><td colSpan={6} className="px-3 py-8 text-center text-[10px] text-slate-500 dark:text-slate-400">No matching records found.</td></tr>}
+                  )) : <tr><td colSpan={6} className="px-3 py-8 text-center text-[9px] text-slate-500 dark:text-slate-400">No matching records found.</td></tr>}
                 </tbody>
               </table>
             </div>
