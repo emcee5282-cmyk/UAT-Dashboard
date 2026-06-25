@@ -105,18 +105,39 @@ function parseNumber(val: string): number {
   return isNaN(num) ? 0 : num;
 }
 
-function computeWalletStatus(statuses: string[]): string {
-  const normalized = statuses.map((s) => s.trim().toLowerCase()).filter((s) => s !== '');
-  const has = (label: string) => normalized.includes(label.toLowerCase());
+function normalizeWalletStatus(raw: string): string | null {
+  const trimmed = raw.trim();
+  if (trimmed === '') return null;
 
-  if (has('DP + WD') || (has('DP Only') && has('WD Only'))) return 'DP + WD';
+  const lower = trimmed.toLowerCase();
+  if (lower.includes('dp + wd')) return 'DP+WD';
+  if (lower.includes('dp only')) return 'DP Only';
+  if (lower.includes('wd only')) return 'WD Only';
+  if (lower.includes('top up')) return 'Top Up Acc.';
+  if (lower.includes('wallet with issue')) return 'Wallet With Issue';
+  if (lower.includes('x group') || lower.includes('disconnected')) return 'Disconnected';
+  if (lower.includes('check account problem')) return 'Account Problem';
+  return 'Not Connected';
+}
+
+function computeWalletStatus(statuses: string[]): string {
+  const normalized = statuses
+    .map((s) => normalizeWalletStatus(s))
+    .filter((s): s is string => s !== null);
+
+  if (normalized.length === 0) return 'Not Connected';
+
+  const has = (label: string) => normalized.includes(label);
+
+  if (has('DP+WD')) return 'DP + WD';
+  if (has('DP Only') && has('WD Only')) return 'DP + WD';
   if (has('DP Only')) return 'DP Only';
   if (has('WD Only')) return 'WD Only';
-  if (has('Top Up Only')) return 'Top Up Acc.';
+  if (has('Top Up Acc.')) return 'Top Up Acc.';
   if (has('Wallet With Issue')) return 'Wallet With Issue';
-  if (has('Disconnected') || has('X Group')) return 'Disconnected';
-  if (has('Check Account Problem')) return 'Account Problem';
-  return 'Not Connected';
+  if (has('Account Problem')) return 'Account Problem';
+
+  return 'Disconnected';
 }
 
 function walletStatusColor(status: string): string {
@@ -139,6 +160,27 @@ function walletStatusColor(status: string): string {
     default:
       return 'text-slate-400 dark:text-slate-500';
   }
+}
+
+const WALLET_STATUS_OPTIONS = ['DP + WD', 'DP Only', 'WD Only', 'Top Up Acc.', 'Wallet With Issue', 'Disconnected', 'Account Problem', 'Not Connected'];
+
+const EXCLUDED_SDP_LEADERS = [
+  'AFF JAR', 'AIMAN', 'ALADDIN', 'JISAN', 'MIR', 'MR LEE',
+  'MUNIM', 'NIHJUM', 'NURNOBY', 'ONEMEN', 'OSMAN', 'MOTIN',
+  'ROSE', 'SAM', 'XYZ', 'SHAKIL', 'SHARIF', 'SVEN', 'TANVIR', 'ZUBAIR'
+];
+
+function computeSdpVsBalance(leader: string, sdpRaw: string, sdpNum: number, companyBalance: number): number {
+  const normalizedLeader = leader.trim().toUpperCase();
+  if (EXCLUDED_SDP_LEADERS.includes(normalizedLeader)) return 0;
+
+  const sdpTrimmed = sdpRaw.trim().toUpperCase();
+  const value = sdpTrimmed === 'NO SDP' || sdpNum === 0 ? companyBalance : companyBalance - sdpNum;
+
+  if (value < 30000) return 0;
+  if (companyBalance <= 0) return 0;
+
+  return value;
 }
 
 type ColumnKey = 'leader' | 'walletName' | 'sdp' | 'opening' | 'totalDP' | 'totalWD' | 'topUp' | 'settlement' | 'companyBalance' | 'balanceInside' | 'agentWithdrawal' | 'sdpVsBalance' | 'walletStatus';
@@ -214,7 +256,7 @@ function renderCell(row: MergedRow, key: ColumnKey) {
     case 'sdpVsBalance':
       return (
         <td key={key} className="px-3 py-1.5 text-[10px] text-center text-slate-700 dark:text-slate-300">
-          {row.runningBalance > 0 && row.sdpVsBalance !== 0 ? displayNum(String(Math.abs(row.sdpVsBalance))) : '−'}
+          {row.sdpVsBalance > 0 ? displayNum(String(Math.abs(row.sdpVsBalance))) : '−'}
         </td>
       );
     case 'walletStatus':
@@ -250,12 +292,19 @@ export default function AgentBalance() {
   const [columnVisibility, setColumnVisibility] = useState<Record<ColumnKey, boolean>>(
     () => Object.fromEntries(columnDefs.map((col) => [col.key, true])) as Record<ColumnKey, boolean>
   );
+  const [walletStatusFilter, setWalletStatusFilter] = useState<Record<string, boolean>>(
+    () => Object.fromEntries(WALLET_STATUS_OPTIONS.map((status) => [status, true]))
+  );
+  const [walletStatusMenuOpen, setWalletStatusMenuOpen] = useState(false);
+  const [walletStatusMenuPos, setWalletStatusMenuPos] = useState({ top: 0, left: 0 });
   const [page, setPage] = useState(1);
   const rowsPerPage = 50;
   const leaderButtonRef = useRef<HTMLButtonElement>(null);
   const leaderDropdownRef = useRef<HTMLDivElement>(null);
   const columnButtonRef = useRef<HTMLButtonElement>(null);
   const columnDropdownRef = useRef<HTMLDivElement>(null);
+  const walletStatusButtonRef = useRef<HTMLButtonElement>(null);
+  const walletStatusDropdownRef = useRef<HTMLDivElement>(null);
 
   const fetchData = useCallback(async () => {
     try {
@@ -363,7 +412,7 @@ export default function AgentBalance() {
           balanceInside,
           runningBalance,
           agentWithdrawal: runningBalance - balanceInside,
-          sdpVsBalance: runningBalance - sdpNum,
+          sdpVsBalance: computeSdpVsBalance(opening.leader, opening.sdp, sdpNum, runningBalance),
           walletStatus,
         };
       });
@@ -384,7 +433,7 @@ export default function AgentBalance() {
 
   useEffect(() => {
     setPage(1);
-  }, [searchTerm, leaderFilter, sortColumn, sortDirection]);
+  }, [searchTerm, leaderFilter, walletStatusFilter, sortColumn, sortDirection]);
 
   useEffect(() => {
     if (!leaderMenuOpen) return;
@@ -420,9 +469,28 @@ export default function AgentBalance() {
     return () => document.removeEventListener('mousedown', handlePointerDown);
   }, [columnMenuOpen]);
 
+  useEffect(() => {
+    if (!walletStatusMenuOpen) return;
+
+    const handlePointerDown = (event: MouseEvent) => {
+      const target = event.target as Node;
+      if (
+        walletStatusButtonRef.current && !walletStatusButtonRef.current.contains(target) &&
+        walletStatusDropdownRef.current && !walletStatusDropdownRef.current.contains(target)
+      ) {
+        setWalletStatusMenuOpen(false);
+      }
+    };
+
+    document.addEventListener('mousedown', handlePointerDown);
+    return () => document.removeEventListener('mousedown', handlePointerDown);
+  }, [walletStatusMenuOpen]);
+
   const visibleColumns = useMemo(() => columnDefs.filter((col) => columnVisibility[col.key]), [columnVisibility]);
   const allColumnsChecked = columnDefs.every((col) => columnVisibility[col.key]);
   const anyColumnHidden = columnDefs.some((col) => !columnVisibility[col.key]);
+  const allWalletStatusesChecked = WALLET_STATUS_OPTIONS.every((status) => walletStatusFilter[status]);
+  const anyWalletStatusUnchecked = WALLET_STATUS_OPTIONS.some((status) => !walletStatusFilter[status]);
 
   const leaderOptions = useMemo(() => {
     const leaders = Array.from(new Set(rows.map((row) => row.leader).filter(Boolean))).sort((a, b) => a.localeCompare(b));
@@ -440,9 +508,15 @@ export default function AgentBalance() {
   }, [rows, searchTerm]);
 
   const filteredRows = useMemo(() => {
-    if (leaderFilter === 'All Leaders') return searchedRows;
-    return searchedRows.filter((row) => row.leader === leaderFilter);
-  }, [leaderFilter, searchedRows]);
+    let list = searchedRows;
+    if (leaderFilter !== 'All Leaders') {
+      list = list.filter((row) => row.leader === leaderFilter);
+    }
+    if (WALLET_STATUS_OPTIONS.some((status) => !walletStatusFilter[status])) {
+      list = list.filter((row) => walletStatusFilter[row.walletStatus]);
+    }
+    return list;
+  }, [leaderFilter, walletStatusFilter, searchedRows]);
 
   const sortedRows = useMemo(() => {
     const list = [...filteredRows];
@@ -712,6 +786,77 @@ export default function AgentBalance() {
                                       <span>{leader}</span>
                                       {leaderFilter === leader && <Filter size={12} />}
                                     </button>
+                                  ))}
+                                </div>
+                              </div>,
+                              document.body
+                            )}
+                          </div>
+                        ) : col.key === 'walletStatus' ? (
+                          <div className="relative flex items-center justify-center gap-1">
+                            <button
+                              type="button"
+                              onClick={() => {
+                                if (sortColumn === 'walletStatus') {
+                                  setSortDirection((current) => current === 'asc' ? 'desc' : 'asc');
+                                } else {
+                                  setSortColumn('walletStatus');
+                                  setSortDirection('asc');
+                                }
+                              }}
+                              className="flex items-center gap-1 text-center text-[#6b7280] transition hover:opacity-80 dark:text-[#a0a0a0]"
+                            >
+                              <span>{col.label}</span>
+                              {sortColumn === 'walletStatus' && (sortDirection === 'asc' ? <ChevronUp size={13} /> : <ChevronDown size={13} />)}
+                            </button>
+                            <button
+                              type="button"
+                              ref={walletStatusButtonRef}
+                              onClick={(event) => {
+                                event.stopPropagation();
+                                const rect = walletStatusButtonRef.current?.getBoundingClientRect();
+                                if (rect) {
+                                  setWalletStatusMenuPos({ top: rect.bottom + 8, left: rect.left });
+                                }
+                                setWalletStatusMenuOpen((current) => !current);
+                              }}
+                              className={`flex items-center justify-center rounded-full p-1 transition ${anyWalletStatusUnchecked ? 'bg-indigo-100 text-indigo-700 dark:bg-indigo-500/30 dark:text-indigo-200' : 'text-[#6b7280] hover:bg-slate-200 dark:text-[#a0a0a0] dark:hover:bg-white/10'}`}
+                            >
+                              <Filter size={12} className={anyWalletStatusUnchecked ? 'opacity-100' : 'opacity-70'} />
+                            </button>
+                            {walletStatusMenuOpen && typeof document !== 'undefined' && createPortal(
+                              <div
+                                ref={walletStatusDropdownRef}
+                                style={{ position: 'fixed', top: walletStatusMenuPos.top, left: walletStatusMenuPos.left }}
+                                className="z-[1000] w-56 rounded-xl border border-[#e5e5e7] bg-white p-2 shadow-xl dark:border-[#3a3a3d] dark:bg-[#2a2a2d]"
+                                onClick={(event) => event.stopPropagation()}
+                              >
+                                <div className="px-2 py-1.5 text-[10px] font-semibold uppercase tracking-[0.24em] text-[#6b7280] dark:text-[#a0a0a0]">Filter</div>
+                                <div className="max-h-60 overflow-y-auto">
+                                  <label className="flex w-full items-center gap-2 rounded-xl px-2 py-2 text-sm text-[#6b7280] hover:bg-[#f5f5f7] dark:text-[#a0a0a0] dark:hover:bg-slate-800">
+                                    <input
+                                      type="checkbox"
+                                      checked={allWalletStatusesChecked}
+                                      onChange={() => {
+                                        const nextValue = !allWalletStatusesChecked;
+                                        setWalletStatusFilter(
+                                          Object.fromEntries(WALLET_STATUS_OPTIONS.map((status) => [status, nextValue]))
+                                        );
+                                      }}
+                                    />
+                                    <span>All</span>
+                                  </label>
+                                  {WALLET_STATUS_OPTIONS.map((status) => (
+                                    <label key={status} className="flex w-full items-center gap-2 rounded-xl px-2 py-2 text-sm text-[#6b7280] hover:bg-[#f5f5f7] dark:text-[#a0a0a0] dark:hover:bg-slate-800">
+                                      <input
+                                        type="checkbox"
+                                        checked={walletStatusFilter[status]}
+                                        onChange={() => {
+                                          setWalletStatusFilter((current) => ({ ...current, [status]: !current[status] }));
+                                        }}
+                                      />
+                                      <span>{status}</span>
+                                    </label>
                                   ))}
                                 </div>
                               </div>,
