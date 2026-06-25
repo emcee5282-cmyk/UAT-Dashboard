@@ -75,15 +75,14 @@ export default function Summary() {
 
   return (
     <div className="min-h-screen bg-[#f5f5f7] text-[#1a1a1a] transition-colors duration-300 dark:bg-[#1c1c1e] dark:text-white">
-      <header className="border-b border-[#e5e5e7] bg-white/80 px-4 py-4 backdrop-blur dark:border-[#3a3a3d] dark:bg-[#2a2a2d]/80 md:px-8">
-        <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
-          <div>
-            <p className="text-[10px] font-semibold uppercase tracking-[0.28em] text-[#6b7280] dark:text-[#a0a0a0]">Agent Summary</p>
-            <h1 className="text-2xl font-semibold text-[#1a1a1a] dark:text-white">Opening Balance</h1>
+      <header className="border-b border-[#e5e5e7] bg-white px-4 py-2 dark:border-[#3a3a3d] dark:bg-[#2a2a2d] md:px-8">
+        <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+          <div className="flex items-baseline gap-2">
+            <h1 className="text-lg font-semibold text-slate-900 dark:text-white">Opening Balance</h1>
           </div>
-          <div className="flex items-center gap-3">
-            <label className="flex items-center gap-2 rounded-xl border border-[#e5e5e7] bg-[#f5f5f7] px-3 py-2 text-sm text-[#6b7280] dark:border-[#3a3a3d] dark:bg-slate-800 dark:text-[#a0a0a0]">
-              <Search size={15} />
+          <div className="flex flex-wrap items-center gap-3">
+            <label className="flex items-center gap-2 rounded-xl border border-[#e5e5e7] px-2 py-1.5 text-[11px] text-[#6b7280] dark:border-[#3a3a3d] dark:text-[#a0a0a0]">
+              <Search size={12} />
               <input
                 value={searchTerm}
                 onChange={(event) => setSearchTerm(event.target.value)}
@@ -91,13 +90,17 @@ export default function Summary() {
                 placeholder="Search"
               />
             </label>
+            <span className="flex items-center gap-1.5 text-[11px] text-[#6b7280] dark:text-[#a0a0a0]">
+              <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-emerald-500" />
+              {lastUpdated || '—'}
+            </span>
             <ThemeToggle />
             <button
               onClick={fetchData}
               disabled={spinning}
-              className="flex items-center gap-2 rounded-xl border border-[#e5e5e7] bg-white px-3 py-2 text-sm font-medium text-[#6b7280] shadow-sm transition-all disabled:opacity-50 dark:border-[#3a3a3d] dark:bg-slate-800 dark:text-[#a0a0a0]"
+              className="flex items-center gap-2 rounded-xl border border-[#e5e5e7] px-2 py-1.5 text-[11px] font-medium text-[#6b7280] transition-all disabled:opacity-50 dark:border-[#3a3a3d] dark:text-[#a0a0a0]"
             >
-              <RefreshCw size={15} className={spinning ? 'animate-spin' : ''} />
+              <RefreshCw size={12} className={spinning ? 'animate-spin' : ''} />
               Refresh
             </button>
           </div>
@@ -148,10 +151,10 @@ export default function Summary() {
             </div>
             <div className="overflow-x-auto">
               <table className="w-full text-sm">
-                <thead className="bg-[#f5f5f7] dark:bg-slate-800/70">
-                  <tr className="border-b border-[#e5e5e7] text-left text-[10px] font-semibold uppercase tracking-[0.24em] text-[#6b7280] dark:border-[#3a3a3d] dark:text-[#a0a0a0]">
+                <thead>
+                  <tr className="border-b border-slate-200 dark:border-slate-700">
                     {['Leader', 'Agent Name', 'Opening Bal.', 'SDP'].map((col) => (
-                      <th key={col} className="px-5 py-3 whitespace-nowrap text-[10px]">{col}</th>
+                      <th key={col} className="whitespace-nowrap px-5 py-3 text-center text-[10px] font-semibold uppercase text-slate-500 dark:text-slate-400">{col}</th>
                     ))}
                   </tr>
                 </thead>

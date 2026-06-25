@@ -118,7 +118,7 @@ function normalizeWalletStatus(raw: string): string | null {
   if (lower.includes('wallet with issue')) return 'Wallet With Issue';
   if (lower.includes('x group') || lower.includes('disconnected')) return 'Disconnected';
   if (lower.includes('check account problem')) return 'Account Problem';
-  return 'Not Connected';
+  return 'Disconnected';
 }
 
 function computeWalletStatus(statuses: string[]): string {
@@ -126,7 +126,7 @@ function computeWalletStatus(statuses: string[]): string {
     .map((s) => normalizeWalletStatus(s))
     .filter((s): s is string => s !== null);
 
-  if (normalized.length === 0) return 'Not Connected';
+  if (normalized.length === 0) return 'Disconnected';
 
   const has = (label: string) => normalized.includes(label);
 
@@ -141,29 +141,7 @@ function computeWalletStatus(statuses: string[]): string {
   return 'Disconnected';
 }
 
-function walletStatusColor(status: string): string {
-  switch (status) {
-    case 'DP + WD':
-      return 'text-emerald-600 dark:text-emerald-400';
-    case 'DP Only':
-      return 'text-cyan-600 dark:text-cyan-400';
-    case 'WD Only':
-      return 'text-amber-600 dark:text-amber-400';
-    case 'Top Up Acc.':
-      return 'text-indigo-600 dark:text-indigo-400';
-    case 'Wallet With Issue':
-      return 'text-rose-600 dark:text-rose-400';
-    case 'Disconnected':
-      return 'text-slate-500 dark:text-slate-400';
-    case 'Account Problem':
-      return 'text-orange-600 dark:text-orange-400';
-    case 'Not Connected':
-    default:
-      return 'text-slate-400 dark:text-slate-500';
-  }
-}
-
-const WALLET_STATUS_OPTIONS = ['DP + WD', 'DP Only', 'WD Only', 'Top Up Acc.', 'Wallet With Issue', 'Disconnected', 'Account Problem', 'Not Connected'];
+const WALLET_STATUS_OPTIONS = ['DP + WD', 'DP Only', 'WD Only', 'Top Up Acc.', 'Wallet With Issue', 'Disconnected', 'Account Problem', 'No Record'];
 
 const EXCLUDED_SDP_LEADERS = [
   'AFF JAR', 'AIMAN', 'ALADDIN', 'JISAN', 'MIR', 'MR LEE',
@@ -218,26 +196,49 @@ const columnWidths: Record<ColumnKey, string> = {
   walletStatus: '130px',
 };
 
+function SortIcon({ active, direction }: { active: boolean; direction: 'asc' | 'desc' }) {
+  if (!active) {
+    return (
+      <span className="flex flex-col items-center justify-center leading-none text-slate-400 opacity-40">
+        <ChevronUp size={10} className="-mb-0.5" />
+        <ChevronDown size={10} />
+      </span>
+    );
+  }
+  return direction === 'asc' ? (
+    <ChevronUp size={10} className="text-indigo-600 dark:text-indigo-400" />
+  ) : (
+    <ChevronDown size={10} className="text-indigo-600 dark:text-indigo-400" />
+  );
+}
+
+function headerCellClasses(isSorted: boolean) {
+  const bg = isSorted ? 'bg-indigo-50 dark:bg-indigo-500/10' : 'bg-white dark:bg-[#2a2a2d]';
+  const color = isSorted ? 'text-indigo-600 dark:text-indigo-400' : 'text-slate-500 dark:text-slate-400';
+  const rounded = isSorted ? 'rounded-md' : '';
+  return `sticky top-0 z-10 whitespace-nowrap border-b border-slate-200 px-3 py-1 text-center text-[10px] font-semibold uppercase dark:border-slate-700 ${bg} ${color} ${rounded}`;
+}
+
 function renderCell(row: MergedRow, key: ColumnKey) {
   switch (key) {
     case 'leader':
-      return <td key={key} className="whitespace-nowrap px-3 py-1 text-center text-[10px] text-indigo-600 dark:text-indigo-400">{row.leader}</td>;
+      return <td key={key} className="whitespace-nowrap px-3 py-1 text-center text-[10px] text-slate-700 dark:text-slate-300">{row.leader}</td>;
     case 'walletName':
-      return <td key={key} className="whitespace-nowrap px-3 py-1 text-center text-[10px] text-[#6b7280] dark:text-[#a0a0a0]">{row.agentName}</td>;
+      return <td key={key} className="whitespace-nowrap px-3 py-1 text-center text-[10px] font-bold text-slate-900 dark:text-white">{row.agentName}</td>;
     case 'sdp':
-      return <td key={key} className="whitespace-nowrap px-3 py-1 text-center text-[10px] text-[#6b7280] dark:text-[#a0a0a0]">{displayNum(row.sdp)}</td>;
+      return <td key={key} className="whitespace-nowrap px-3 py-1 text-center text-[10px] text-slate-700 dark:text-slate-300">{displayNum(row.sdp)}</td>;
     case 'opening':
-      return <td key={key} className="whitespace-nowrap px-3 py-1 text-center text-[10px] text-[#6b7280] dark:text-[#a0a0a0]">{displayNum(row.openingBal)}</td>;
+      return <td key={key} className="whitespace-nowrap px-3 py-1 text-center text-[10px] text-slate-700 dark:text-slate-300">{displayNum(row.openingBal)}</td>;
     case 'totalDP':
-      return <td key={key} className="whitespace-nowrap px-3 py-1 text-center text-[10px] text-[#6b7280] dark:text-[#a0a0a0]">{displayNum(row.agentTotalDP)}</td>;
+      return <td key={key} className="whitespace-nowrap px-3 py-1 text-center text-[10px] text-slate-700 dark:text-slate-300">{displayNum(row.agentTotalDP)}</td>;
     case 'totalWD':
-      return <td key={key} className="whitespace-nowrap px-3 py-1 text-center text-[10px] text-[#6b7280] dark:text-[#a0a0a0]">{displayNum(row.agentTotalWD)}</td>;
+      return <td key={key} className="whitespace-nowrap px-3 py-1 text-center text-[10px] text-slate-700 dark:text-slate-300">{displayNum(row.agentTotalWD)}</td>;
     case 'topUp':
-      return <td key={key} className="whitespace-nowrap px-3 py-1 text-center text-[10px] text-teal-700/70 dark:text-teal-300/70">{displayNum(row.totalTopUp)}</td>;
+      return <td key={key} className="whitespace-nowrap px-3 py-1 text-center text-[10px] text-slate-700 dark:text-slate-300">{displayNum(row.totalTopUp)}</td>;
     case 'settlement': {
       const settlementDisplay = displayNum(row.totalStlm);
       return (
-        <td key={key} className={`whitespace-nowrap px-3 py-1 text-center text-[10px] ${settlementDisplay !== '−' ? 'text-orange-600 dark:text-orange-400' : 'text-[#6b7280] dark:text-[#a0a0a0]'}`}>
+        <td key={key} className="whitespace-nowrap px-3 py-1 text-center text-[10px] text-slate-700 dark:text-slate-300">
           {settlementDisplay}
         </td>
       );
@@ -262,17 +263,25 @@ function renderCell(row: MergedRow, key: ColumnKey) {
       );
     case 'walletStatus':
       return (
-        <td key={key} className={`whitespace-nowrap px-3 py-1 text-center text-[10px] ${walletStatusColor(row.walletStatus)}`}>
+        <td key={key} className={`whitespace-nowrap px-3 py-1 text-center text-[10px] ${row.walletStatus === 'No Record' ? 'text-slate-400 dark:text-slate-500' : 'text-slate-700 dark:text-slate-300'}`}>
           {row.walletStatus}
         </td>
       );
     case 'companyBalance':
-    default:
+    default: {
+      const companyBalanceDisplay = displayNum(row.runningBalance);
+      const companyBalanceColor =
+        companyBalanceDisplay === '−'
+          ? 'text-slate-900 dark:text-white'
+          : row.runningBalance < 0
+          ? 'text-rose-600 dark:text-rose-400'
+          : 'text-slate-900 dark:text-white';
       return (
-        <td key={key} className={`whitespace-nowrap px-3 py-1 text-center text-[10px] ${row.runningBalance < 0 ? 'text-rose-600 dark:text-rose-400' : 'text-[#6b7280] dark:text-[#a0a0a0]'}`}>
-          {displayNum(row.runningBalance)}
+        <td key={key} className={`whitespace-nowrap px-3 py-1 text-center text-[10px] font-bold ${companyBalanceColor}`}>
+          {companyBalanceDisplay}
         </td>
       );
+    }
   }
 }
 
@@ -350,6 +359,7 @@ export default function AgentBalance() {
         }))
         .filter((row) => row.walletName && row.walletName !== '-');
 
+      const balWalletNames = new Set(balRows.map((bal) => bal.walletName));
       const balanceTotals = new Map<string, { dp: number; wd: number }>();
       const balanceInsideTotals = new Map<string, number>();
       const walletStatusValues = new Map<string, string[]>();
@@ -403,7 +413,9 @@ export default function AgentBalance() {
         const balanceInside = balanceInsideTotals.get(opening.agentName) ?? 0;
         const runningBalance = parseNumber(opening.openingBal) + totals.dp + totalTopUp - totals.wd - totalStlm;
         const sdpNum = parseNumber(opening.sdp);
-        const walletStatus = computeWalletStatus(walletStatusValues.get(opening.agentName) ?? []);
+        const walletStatus = balWalletNames.has(opening.agentName)
+          ? computeWalletStatus(walletStatusValues.get(opening.agentName) ?? [])
+          : 'No Record';
         return {
           ...opening,
           agentTotalDP: totals.dp,
@@ -587,14 +599,14 @@ export default function AgentBalance() {
 
   return (
     <div className="min-h-screen bg-[#f5f5f7] text-[#1a1a1a] transition-colors duration-300 dark:bg-[#1c1c1e] dark:text-white">
-      <header className="border-b border-[#e5e5e7] bg-white px-4 py-3 dark:border-[#3a3a3d] dark:bg-[#2a2a2d] md:px-8">
+      <header className="border-b border-[#e5e5e7] bg-white px-4 py-2 dark:border-[#3a3a3d] dark:bg-[#2a2a2d] md:px-8">
         <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
           <div className="flex items-baseline gap-2">
-            <h1 className="text-2xl font-bold text-[#1a1a1a] dark:text-white">Agent Balance</h1>
+            <h1 className="text-lg font-semibold text-slate-900 dark:text-white">Agent Balance</h1>
           </div>
           <div className="flex flex-wrap items-center gap-3">
-            <label className="flex items-center gap-2 rounded-xl border border-[#e5e5e7] px-3 py-1.5 text-sm text-[#6b7280] dark:border-[#3a3a3d] dark:text-[#a0a0a0]">
-              <Search size={15} />
+            <label className="flex items-center gap-2 rounded-xl border border-[#e5e5e7] px-2 py-1.5 text-[11px] text-[#6b7280] dark:border-[#3a3a3d] dark:text-[#a0a0a0]">
+              <Search size={12} />
               <input
                 value={searchTerm}
                 onChange={(event) => setSearchTerm(event.target.value)}
@@ -602,17 +614,17 @@ export default function AgentBalance() {
                 placeholder="Search"
               />
             </label>
-            <span className="flex items-center gap-1.5 text-sm text-[#6b7280] dark:text-[#a0a0a0]">
-              <span className="h-2 w-2 animate-pulse rounded-full bg-emerald-500" />
+            <span className="flex items-center gap-1.5 text-[11px] text-[#6b7280] dark:text-[#a0a0a0]">
+              <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-emerald-500" />
               {lastUpdated || '—'}
             </span>
             <ThemeToggle />
             <button
               onClick={fetchData}
               disabled={spinning}
-              className="flex items-center gap-2 rounded-xl border border-[#e5e5e7] px-3 py-1.5 text-sm font-medium text-[#6b7280] transition-all disabled:opacity-50 dark:border-[#3a3a3d] dark:text-[#a0a0a0]"
+              className="flex items-center gap-2 rounded-xl border border-[#e5e5e7] px-2 py-1.5 text-[11px] font-medium text-[#6b7280] transition-all disabled:opacity-50 dark:border-[#3a3a3d] dark:text-[#a0a0a0]"
             >
-              <RefreshCw size={15} className={spinning ? 'animate-spin' : ''} />
+              <RefreshCw size={12} className={spinning ? 'animate-spin' : ''} />
               Refresh
             </button>
           </div>
@@ -639,23 +651,23 @@ export default function AgentBalance() {
         {!loading && !error && (
           <div className="overflow-hidden rounded-xl border border-[#e5e5e7] bg-white dark:border-[#3a3a3d] dark:bg-[#2a2a2d]">
             <div className="flex items-center justify-between gap-3 border-b border-[#e5e5e7] px-2 py-1.5 dark:border-[#3a3a3d]">
-              <span className="text-xs font-normal text-[#6b7280] dark:text-[#a0a0a0]">{sortedRows.length} accounts</span>
+              <span className="text-[10px] font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400">{sortedRows.length} accounts</span>
               <div className="flex items-center gap-3">
-              <div className="flex items-center gap-1.5 rounded-xl border border-[#e5e5e7] px-2 py-0.5 text-xs font-medium text-[#6b7280] dark:border-[#3a3a3d] dark:text-[#a0a0a0]">
+              <div className="flex items-center gap-1.5 rounded-xl border border-[#e5e5e7] px-2 py-0.5 dark:border-[#3a3a3d]">
                 <button
                   type="button"
                   onClick={() => setPage((current) => Math.max(1, current - 1))}
                   disabled={currentPage === 1}
-                  className="rounded-xl px-1.5 py-0.5 transition disabled:cursor-not-allowed disabled:opacity-40"
+                  className="rounded-xl px-1.5 py-0.5 text-[10px] font-semibold text-slate-600 transition disabled:cursor-not-allowed disabled:opacity-40 dark:text-slate-300"
                 >
                   Previous
                 </button>
-                <span>Page {currentPage} of {totalPages}</span>
+                <span className="text-[10px] text-slate-500 dark:text-slate-400">Page {currentPage} of {totalPages}</span>
                 <button
                   type="button"
                   onClick={() => setPage((current) => Math.min(totalPages, current + 1))}
                   disabled={currentPage === totalPages}
-                  className="rounded-xl px-1.5 py-0.5 transition disabled:cursor-not-allowed disabled:opacity-40"
+                  className="rounded-xl px-1.5 py-0.5 text-[10px] font-semibold text-slate-600 transition disabled:cursor-not-allowed disabled:opacity-40 dark:text-slate-300"
                 >
                   Next
                 </button>
@@ -680,13 +692,14 @@ export default function AgentBalance() {
                     <div
                       ref={columnDropdownRef}
                       style={{ position: 'fixed', top: columnMenuPos.top, left: columnMenuPos.left }}
-                      className="z-[1000] w-56 rounded-xl border border-[#e5e5e7] bg-white p-2 shadow-xl dark:border-[#3a3a3d] dark:bg-[#2a2a2d]"
+                      className="z-[1000] w-56 rounded-xl border border-slate-200 bg-white p-3 shadow-md dark:border-[#3a3a3d] dark:bg-[#2a2a2d]"
                       onClick={(event) => event.stopPropagation()}
                     >
-                      <div className="px-2 py-1.5 text-[10px] font-semibold uppercase tracking-[0.24em] text-[#6b7280] dark:text-[#a0a0a0]">Columns</div>
-                      <label className="flex w-full items-center gap-2 rounded-xl px-2 py-2 text-sm text-[#6b7280] hover:bg-[#f5f5f7] dark:text-[#a0a0a0] dark:hover:bg-slate-800">
+                      <div className="mb-2 border-b border-slate-200 pb-2 text-[10px] font-semibold uppercase tracking-wide text-slate-500 dark:border-[#3a3a3d] dark:text-slate-400">Columns</div>
+                      <label className="flex w-full items-center gap-2 rounded px-2 py-1 text-[10px] text-slate-700 hover:bg-slate-50 dark:text-slate-300 dark:hover:bg-slate-800/50">
                         <input
                           type="checkbox"
+                          className="accent-indigo-500"
                           checked={allColumnsChecked}
                           onChange={() => {
                             const nextValue = !allColumnsChecked;
@@ -698,9 +711,10 @@ export default function AgentBalance() {
                         <span>Check All</span>
                       </label>
                       {columnDefs.map((col) => (
-                        <label key={col.key} className="flex w-full items-center gap-2 rounded-xl px-2 py-2 text-sm text-[#6b7280] hover:bg-[#f5f5f7] dark:text-[#a0a0a0] dark:hover:bg-slate-800">
+                        <label key={col.key} className="flex w-full items-center gap-2 rounded px-2 py-1 text-[10px] text-slate-700 hover:bg-slate-50 dark:text-slate-300 dark:hover:bg-slate-800/50">
                           <input
                             type="checkbox"
+                            className="accent-indigo-500"
                             checked={columnVisibility[col.key]}
                             onChange={() => {
                               setColumnVisibility((current) => ({ ...current, [col.key]: !current[col.key] }));
@@ -722,10 +736,13 @@ export default function AgentBalance() {
                     <col key={col.key} style={{ width: columnWidths[col.key] }} />
                   ))}
                 </colgroup>
-                <thead className="sticky top-0 z-10 border-b border-[#e5e5e7] bg-slate-100 dark:border-[#3a3a3d] dark:bg-[#232326]">
-                  <tr className="text-center text-xs font-semibold uppercase tracking-wide text-slate-500 dark:text-[#a0a0a0]">
+                <thead className="sticky top-0 z-10 border-b border-slate-200 bg-white dark:border-slate-700 dark:bg-[#2a2a2d]">
+                  <tr className="text-center text-[10px] font-semibold uppercase text-slate-500 dark:text-slate-400">
                     {visibleColumns.map((col) => (
-                      <th key={col.key} className="sticky top-0 z-10 border-b border-[#e5e5e7] bg-slate-100 px-3 py-1 text-center text-[10px] font-semibold uppercase tracking-wide text-slate-500 dark:border-[#3a3a3d] dark:bg-[#232326] dark:text-[#a0a0a0]">
+                      <th
+                        key={col.key}
+                        style={{ minWidth: columnWidths[col.key] }}
+                        className={headerCellClasses(sortColumn === col.key)}>
                         {col.key === 'leader' ? (
                           <div className="relative flex items-center justify-center gap-1">
                             <button
@@ -738,10 +755,10 @@ export default function AgentBalance() {
                                   setSortDirection('asc');
                                 }
                               }}
-                              className="flex items-center gap-1 text-center text-[#6b7280] transition hover:opacity-80 dark:text-[#a0a0a0]"
+                              className="flex items-center gap-1 text-center transition hover:opacity-80"
                             >
                               <span>{col.label}</span>
-                              {sortColumn === 'leader' && (sortDirection === 'asc' ? <ChevronUp size={13} /> : <ChevronDown size={13} />)}
+                              <SortIcon active={sortColumn === 'leader'} direction={sortDirection} />
                             </button>
                             <button
                               type="button"
@@ -811,10 +828,10 @@ export default function AgentBalance() {
                                   setSortDirection('asc');
                                 }
                               }}
-                              className="flex items-center gap-1 text-center text-[#6b7280] transition hover:opacity-80 dark:text-[#a0a0a0]"
+                              className="flex items-center gap-1 text-center transition hover:opacity-80"
                             >
                               <span>{col.label}</span>
-                              {sortColumn === 'walletStatus' && (sortDirection === 'asc' ? <ChevronUp size={13} /> : <ChevronDown size={13} />)}
+                              <SortIcon active={sortColumn === 'walletStatus'} direction={sortDirection} />
                             </button>
                             <button
                               type="button"
@@ -883,10 +900,10 @@ export default function AgentBalance() {
                                 setSortDirection('asc');
                               }
                             }}
-                            className="flex w-full items-center justify-center gap-1.5 text-center text-[#6b7280] transition hover:opacity-80 dark:text-[#a0a0a0]"
+                            className="flex w-full items-center justify-center gap-1.5 text-center transition hover:opacity-80"
                           >
                             <span>{col.label}</span>
-                            {sortColumn === col.key && (sortDirection === 'asc' ? <ChevronUp size={13} /> : <ChevronDown size={13} />)}
+                            <SortIcon active={sortColumn === col.key} direction={sortDirection} />
                           </button>
                         ) : (
                           col.label

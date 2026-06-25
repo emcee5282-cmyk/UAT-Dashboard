@@ -25,10 +25,13 @@ function fmt(num: number): string {
   });
 }
 
-function numColor(num: number): string {
-  if (num < 0) return 'text-red-500';
-  if (num > 0) return 'text-emerald-600';
-  return 'text-[#6b7280]';
+function fmtCell(num: number, showSign = false): string {
+  if (Math.abs(num) < 0.01) return '—';
+  const formatted = Math.abs(num).toLocaleString('en-PH', {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  });
+  return showSign && num < 0 ? `-${formatted}` : formatted;
 }
 
 export default function Dashboard() {
@@ -101,15 +104,14 @@ export default function Dashboard() {
 
   return (
     <div className="min-h-screen bg-[#f5f5f7] text-[#1a1a1a] transition-colors duration-300 dark:bg-[#1c1c1e] dark:text-white">
-      <header className="border-b border-[#e5e5e7] bg-white/80 px-4 py-4 backdrop-blur dark:border-[#3a3a3d] dark:bg-[#2a2a2d]/80 md:px-8">
-        <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
-          <div>
-            <p className="text-[10px] font-semibold uppercase tracking-[0.28em] text-[#6b7280] dark:text-[#a0a0a0]">Operations Overview</p>
-            <h1 className="text-2xl font-semibold text-[#1a1a1a] dark:text-white">Cash Out Wallets</h1>
+      <header className="border-b border-[#e5e5e7] bg-white px-4 py-2 dark:border-[#3a3a3d] dark:bg-[#2a2a2d] md:px-8">
+        <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+          <div className="flex items-baseline gap-2">
+            <h1 className="text-lg font-semibold text-slate-900 dark:text-white">Cash Out Wallets</h1>
           </div>
-          <div className="flex items-center gap-3">
-            <label className="flex items-center gap-2 rounded-xl border border-[#e5e5e7] bg-[#f5f5f7] px-3 py-2 text-sm text-[#6b7280] dark:border-[#3a3a3d] dark:bg-slate-800 dark:text-[#a0a0a0]">
-              <Search size={15} />
+          <div className="flex flex-wrap items-center gap-3">
+            <label className="flex items-center gap-2 rounded-xl border border-[#e5e5e7] px-2 py-1.5 text-[11px] text-[#6b7280] dark:border-[#3a3a3d] dark:text-[#a0a0a0]">
+              <Search size={12} />
               <input
                 value={searchTerm}
                 onChange={(event) => setSearchTerm(event.target.value)}
@@ -117,20 +119,17 @@ export default function Dashboard() {
                 placeholder="Search"
               />
             </label>
+            <span className="flex items-center gap-1.5 text-[11px] text-[#6b7280] dark:text-[#a0a0a0]">
+              <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-emerald-500" />
+              {lastUpdated || '—'}
+            </span>
             <ThemeToggle />
-            <div className="flex items-center gap-2 rounded-xl border border-[#e5e5e7] bg-white px-2.5 py-2 shadow-sm dark:border-[#3a3a3d] dark:bg-slate-800">
-              <div className="flex h-9 w-9 items-center justify-center rounded-full bg-indigo-100 font-semibold text-indigo-600 dark:bg-indigo-500/20 dark:text-indigo-300">A</div>
-              <div>
-                <p className="text-sm font-semibold text-[#1a1a1a] dark:text-white">Admin</p>
-                <p className="text-[11px] text-[#6b7280] dark:text-[#a0a0a0]">Operations</p>
-              </div>
-            </div>
             <button
               onClick={fetchData}
               disabled={spinning}
-              className="flex items-center gap-2 rounded-xl border border-[#e5e5e7] bg-white px-3 py-2 text-sm font-medium text-[#6b7280] shadow-sm transition-all disabled:opacity-50 dark:border-[#3a3a3d] dark:bg-slate-800 dark:text-[#a0a0a0]"
+              className="flex items-center gap-2 rounded-xl border border-[#e5e5e7] px-2 py-1.5 text-[11px] font-medium text-[#6b7280] transition-all disabled:opacity-50 dark:border-[#3a3a3d] dark:text-[#a0a0a0]"
             >
-              <RefreshCw size={15} className={spinning ? 'animate-spin' : ''} />
+              <RefreshCw size={12} className={spinning ? 'animate-spin' : ''} />
               Refresh
             </button>
           </div>
@@ -187,57 +186,69 @@ export default function Dashboard() {
               })}
             </section>
 
-            <section className="grid gap-6 xl:grid-cols-[1.3fr_0.7fr]">
-              <div className="rounded-2xl border border-[#e5e5e7] bg-white p-6 shadow-[0_16px_60px_-30px_rgba(15,23,42,0.35)] dark:border-[#3a3a3d] dark:bg-[#2a2a2d]">
-                <div className="mb-6 flex items-center justify-between">
-                  <div>
-                    <p className="text-[10px] font-semibold uppercase tracking-[0.24em] text-[#6b7280] dark:text-[#a0a0a0]">Performance</p>
-                    <h2 className="text-lg font-semibold text-[#1a1a1a] dark:text-white">Balance trend</h2>
-                  </div>
-                  <div className="rounded-full border border-indigo-200 bg-indigo-50 px-3 py-1 text-sm font-medium text-indigo-700 dark:border-indigo-800/70 dark:bg-indigo-500/10 dark:text-indigo-300">Benchmark +7.3%</div>
-                </div>
-                <div className="rounded-xl bg-[#f5f5f7] p-4 dark:bg-slate-800/70">
-                  <svg viewBox="0 0 320 160" className="h-48 w-full">
-                    <line x1="12" y1="140" x2="308" y2="140" stroke="currentColor" strokeWidth="1" className="text-[#e5e5e7] dark:text-[#3a3a3d]" />
-                    <line x1="12" y1="100" x2="308" y2="100" stroke="currentColor" strokeWidth="1" className="text-[#e5e5e7] dark:text-[#3a3a3d]" />
-                    <line x1="12" y1="60" x2="308" y2="60" stroke="currentColor" strokeWidth="1" className="text-[#e5e5e7] dark:text-[#3a3a3d]" />
-                    <path d={linePath} fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" className="text-indigo-500 dark:text-indigo-400" />
-                    <path d={benchmarkPath} fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeDasharray="6 6" className="text-[#6b7280] dark:text-[#a0a0a0]" />
-                    {chartPoints.map((value, index) => (
-                      <circle key={index} cx={index * 48 + 12} cy={150 - value} r="4" fill="currentColor" className="text-indigo-500 dark:text-indigo-400" />
-                    ))}
-                  </svg>
-                  <div className="mt-4 flex items-center gap-5 text-sm text-[#6b7280] dark:text-[#a0a0a0]">
-                    <div className="flex items-center gap-2"><span className="h-2.5 w-2.5 rounded-full bg-indigo-600" />Portfolio</div>
-                    <div className="flex items-center gap-2"><span className="h-2.5 w-2.5 rounded-full bg-slate-400" />Benchmark</div>
-                  </div>
+            <section className="rounded-2xl border border-[#e5e5e7] bg-white p-6 shadow-[0_16px_60px_-30px_rgba(15,23,42,0.35)] dark:border-[#3a3a3d] dark:bg-[#2a2a2d]">
+              <div className="mb-6 flex items-center justify-between">
+                <div>
+                  <p className="text-[10px] font-semibold uppercase tracking-[0.24em] text-[#6b7280] dark:text-[#a0a0a0]">Holdings</p>
+                  <h2 className="text-lg font-semibold text-[#1a1a1a] dark:text-white">Wallet breakdown</h2>
                 </div>
               </div>
+              <div className="overflow-x-auto">
+                <table className="w-full min-w-[800px] text-sm">
+                  <thead>
+                    <tr className="border-b border-slate-200 dark:border-slate-700">
+                      <th className="whitespace-nowrap px-4 py-3 text-center text-[10px] font-semibold uppercase text-slate-500 dark:text-slate-400">Wallet</th>
+                      <th className="whitespace-nowrap px-4 py-3 text-center text-[10px] font-semibold uppercase text-slate-500 dark:text-slate-400">Total DP</th>
+                      <th className="whitespace-nowrap px-4 py-3 text-center text-[10px] font-semibold uppercase text-slate-500 dark:text-slate-400">Total WD</th>
+                      <th className="whitespace-nowrap px-4 py-3 text-center text-[10px] font-semibold uppercase text-slate-500 dark:text-slate-400">BD-Transfer IN</th>
+                      <th className="whitespace-nowrap px-4 py-3 text-center text-[10px] font-semibold uppercase text-slate-500 dark:text-slate-400">STLM</th>
+                      <th className="whitespace-nowrap px-4 py-3 text-center text-[10px] font-semibold uppercase text-slate-500 dark:text-slate-400">Actual Bal.</th>
+                      <th className="whitespace-nowrap px-4 py-3 text-center text-[10px] font-semibold uppercase text-slate-500 dark:text-slate-400">Running Bal.</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {filteredRows.length > 0 ? filteredRows.map((row) => (
+                      <tr key={row.wallet}>
+                        <td className="px-4 py-3 text-left font-bold text-slate-900 dark:text-white">{row.wallet}</td>
+                        <td className="px-4 py-3 text-right text-emerald-600 dark:text-emerald-400">{fmtCell(row.totalDP)}</td>
+                        <td className="px-4 py-3 text-right text-rose-600 dark:text-rose-400">{fmtCell(row.totalWD, true)}</td>
+                        <td className="px-4 py-3 text-right text-slate-700 dark:text-slate-300">{fmtCell(row.bdTransferIn)}</td>
+                        <td className="px-4 py-3 text-right text-slate-700 dark:text-slate-300">{fmtCell(row.stlm, true)}</td>
+                        <td className="px-4 py-3 text-right text-slate-700 dark:text-slate-300">{fmtCell(row.actualBal)}</td>
+                        <td className="px-4 py-3 text-right font-semibold text-slate-700 dark:text-slate-300">{fmtCell(row.runningBal)}</td>
+                      </tr>
+                    )) : (
+                      <tr>
+                        <td colSpan={7} className="px-4 py-8 text-center text-sm text-slate-500 dark:text-slate-400">No matching wallets found.</td>
+                      </tr>
+                    )}
+                  </tbody>
+                </table>
+              </div>
+            </section>
 
-              <div className="rounded-2xl border border-[#e5e5e7] bg-white p-6 shadow-[0_16px_60px_-30px_rgba(15,23,42,0.35)] dark:border-[#3a3a3d] dark:bg-[#2a2a2d]">
-                <div className="mb-6 flex items-center justify-between">
-                  <div>
-                    <p className="text-[10px] font-semibold uppercase tracking-[0.24em] text-[#6b7280] dark:text-[#a0a0a0]">Holdings</p>
-                    <h2 className="text-lg font-semibold text-[#1a1a1a] dark:text-white">Wallet breakdown</h2>
-                  </div>
-                  <button className="text-sm font-medium text-indigo-600 dark:text-indigo-400">View all</button>
+            <section className="rounded-2xl border border-[#e5e5e7] bg-white p-6 shadow-[0_16px_60px_-30px_rgba(15,23,42,0.35)] dark:border-[#3a3a3d] dark:bg-[#2a2a2d]">
+              <div className="mb-6 flex items-center justify-between">
+                <div>
+                  <p className="text-[10px] font-semibold uppercase tracking-[0.24em] text-[#6b7280] dark:text-[#a0a0a0]">Performance</p>
+                  <h2 className="text-lg font-semibold text-[#1a1a1a] dark:text-white">Balance trend</h2>
                 </div>
-                <div className="space-y-3">
-                  {filteredRows.length > 0 ? filteredRows.slice(0, 5).map((row) => {
-                    const weight = totalRow ? ((row.actualBal / totalRow.actualBal) * 100) : 0;
-                    return (
-                      <div key={row.wallet} className="flex items-center justify-between rounded-xl border border-[#e5e5e7] bg-[#f5f5f7] px-3 py-3 dark:border-[#3a3a3d] dark:bg-slate-800/70">
-                        <div>
-                          <p className="font-semibold text-[#1a1a1a] dark:text-white">{row.wallet}</p>
-                          <p className="text-sm text-[#6b7280] dark:text-[#a0a0a0]">{weight.toFixed(1)}% weight</p>
-                        </div>
-                        <div className="text-right">
-                          <p className="font-semibold text-[#1a1a1a] dark:text-white">{fmt(row.actualBal)}</p>
-                          <p className={`text-sm ${numColor(row.actualBal)}`}>{row.runningBal >= 0 ? '+' : ''}{fmt(row.runningBal)}</p>
-                        </div>
-                      </div>
-                    );
-                  }) : <div className="rounded-xl border border-dashed border-[#e5e5e7] px-3 py-4 text-sm text-[#6b7280] dark:border-[#3a3a3d] dark:text-[#a0a0a0]">No matching wallets found.</div>}
+                <div className="rounded-full border border-indigo-200 bg-indigo-50 px-3 py-1 text-sm font-medium text-indigo-700 dark:border-indigo-800/70 dark:bg-indigo-500/10 dark:text-indigo-300">Benchmark +7.3%</div>
+              </div>
+              <div className="rounded-xl bg-[#f5f5f7] p-4 dark:bg-slate-800/70">
+                <svg viewBox="0 0 320 160" className="h-48 w-full">
+                  <line x1="12" y1="140" x2="308" y2="140" stroke="currentColor" strokeWidth="1" className="text-[#e5e5e7] dark:text-[#3a3a3d]" />
+                  <line x1="12" y1="100" x2="308" y2="100" stroke="currentColor" strokeWidth="1" className="text-[#e5e5e7] dark:text-[#3a3a3d]" />
+                  <line x1="12" y1="60" x2="308" y2="60" stroke="currentColor" strokeWidth="1" className="text-[#e5e5e7] dark:text-[#3a3a3d]" />
+                  <path d={linePath} fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" className="text-indigo-500 dark:text-indigo-400" />
+                  <path d={benchmarkPath} fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeDasharray="6 6" className="text-[#6b7280] dark:text-[#a0a0a0]" />
+                  {chartPoints.map((value, index) => (
+                    <circle key={index} cx={index * 48 + 12} cy={150 - value} r="4" fill="currentColor" className="text-indigo-500 dark:text-indigo-400" />
+                  ))}
+                </svg>
+                <div className="mt-4 flex items-center gap-5 text-sm text-[#6b7280] dark:text-[#a0a0a0]">
+                  <div className="flex items-center gap-2"><span className="h-2.5 w-2.5 rounded-full bg-indigo-600" />Portfolio</div>
+                  <div className="flex items-center gap-2"><span className="h-2.5 w-2.5 rounded-full bg-slate-400" />Benchmark</div>
                 </div>
               </div>
             </section>
