@@ -1,8 +1,10 @@
 'use client';
 
-import { Fragment, useCallback, useEffect, useMemo, useState } from 'react';
-import { AlertCircle, ChevronDown, Loader2, RefreshCw, Search, Wallet2 } from 'lucide-react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
+import { AlertCircle, ChevronDown, ChevronUp, Filter, Loader2, RefreshCw, Search } from 'lucide-react';
 import ThemeToggle from '../components/ThemeToggle';
+import { rawVal } from '@/app/lib/format';
 
 type OpeningRow = {
   agentName: string;
@@ -11,22 +13,17 @@ type OpeningRow = {
   leader: string;
 };
 
-type BalRow = {
-  walletName: string;
-  totalDP: string;
-  totalWD: string;
-};
-
 type MergedRow = OpeningRow & {
   agentTotalDP: number;
   agentTotalWD: number;
   totalTopUp: number;
   totalStlm: number;
+  balanceInside: number;
+  runningBalance: number;
+  agentWithdrawal: number;
+  sdpVsBalance: number;
+  walletStatus: string;
 };
-
-function rawVal(val: string): string {
-  return (val ?? '').replace(/"/g, '').trim() || '-';
-}
 
 function parseCsvLines(text: string): string[][] {
   const rows: string[][] = [];
@@ -80,30 +77,160 @@ function parseCsvLines(text: string): string[][] {
   return rows;
 }
 
-function fmtNum(val: string): string {
-  const cleaned = (val ?? '').replace(/"/g, '').replace(/,/g, '').trim();
-  if (cleaned === '-' || cleaned === '') return '-';
-  const num = parseFloat(cleaned);
-  if (isNaN(num)) return '-';
-  return Math.abs(num).toLocaleString('en-PH', {
+function displayNum(val: string | number | null | undefined): string {
+  if (val === null || val === undefined) return '−';
+
+  let num: number;
+  if (typeof val === 'number') {
+    num = val;
+  } else {
+    const cleaned = val.replace(/"/g, '').replace(/,/g, '').trim();
+    if (cleaned === '-' || cleaned === '') return '−';
+    num = parseFloat(cleaned);
+  }
+
+  if (isNaN(num) || Math.abs(num) < 0.01) return '−';
+
+  const formatted = Math.abs(num).toLocaleString('en-PH', {
     minimumFractionDigits: 2,
     maximumFractionDigits: 2,
   });
+  return num < 0 ? `-${formatted}` : formatted;
 }
 
-function statusColor(status: string): string {
-  const s = status.toLowerCase();
-  if (s === 'active') return 'text-emerald-600 dark:text-emerald-400';
-  if (s === 'inactive') return 'text-rose-600 dark:text-rose-400';
-  return 'text-slate-500 dark:text-slate-400';
+function parseNumber(val: string): number {
+  const cleaned = (val ?? '').replace(/"/g, '').replace(/,/g, '').trim();
+  if (cleaned === '-' || cleaned === '') return 0;
+  const num = parseFloat(cleaned);
+  return isNaN(num) ? 0 : num;
 }
 
-function accountStatusColor(status: string): string {
-  const s = status.toLowerCase();
-  if (s === 'dp + wd') return 'text-emerald-600 dark:text-emerald-400';
-  if (s === 'dp only') return 'text-cyan-600 dark:text-cyan-400';
-  if (s === 'wd only') return 'text-amber-600 dark:text-amber-400';
-  return 'text-slate-500 dark:text-slate-400';
+function computeWalletStatus(statuses: string[]): string {
+  const normalized = statuses.map((s) => s.trim().toLowerCase()).filter((s) => s !== '');
+  const has = (label: string) => normalized.includes(label.toLowerCase());
+
+  if (has('DP + WD') || (has('DP Only') && has('WD Only'))) return 'DP + WD';
+  if (has('DP Only')) return 'DP Only';
+  if (has('WD Only')) return 'WD Only';
+  if (has('Top Up Only')) return 'Top Up Acc.';
+  if (has('Wallet With Issue')) return 'Wallet With Issue';
+  if (has('Disconnected') || has('X Group')) return 'Disconnected';
+  if (has('Check Account Problem')) return 'Account Problem';
+  return 'Not Connected';
+}
+
+function walletStatusColor(status: string): string {
+  switch (status) {
+    case 'DP + WD':
+      return 'text-emerald-600 dark:text-emerald-400';
+    case 'DP Only':
+      return 'text-cyan-600 dark:text-cyan-400';
+    case 'WD Only':
+      return 'text-amber-600 dark:text-amber-400';
+    case 'Top Up Acc.':
+      return 'text-indigo-600 dark:text-indigo-400';
+    case 'Wallet With Issue':
+      return 'text-rose-600 dark:text-rose-400';
+    case 'Disconnected':
+      return 'text-slate-500 dark:text-slate-400';
+    case 'Account Problem':
+      return 'text-orange-600 dark:text-orange-400';
+    case 'Not Connected':
+    default:
+      return 'text-slate-400 dark:text-slate-500';
+  }
+}
+
+type ColumnKey = 'leader' | 'walletName' | 'sdp' | 'opening' | 'totalDP' | 'totalWD' | 'topUp' | 'settlement' | 'companyBalance' | 'balanceInside' | 'agentWithdrawal' | 'sdpVsBalance' | 'walletStatus';
+
+const columnDefs: { key: ColumnKey; label: string; sortable: boolean }[] = [
+  { key: 'leader', label: 'Leader', sortable: true },
+  { key: 'walletName', label: 'Wallet Name', sortable: true },
+  { key: 'sdp', label: 'SDP', sortable: true },
+  { key: 'opening', label: 'Opening', sortable: true },
+  { key: 'totalDP', label: 'Total DP', sortable: true },
+  { key: 'totalWD', label: 'Total WD', sortable: true },
+  { key: 'topUp', label: 'Top Up', sortable: true },
+  { key: 'settlement', label: 'Settlement', sortable: true },
+  { key: 'companyBalance', label: 'Company Balance', sortable: true },
+  { key: 'balanceInside', label: 'Balance Inside', sortable: true },
+  { key: 'agentWithdrawal', label: 'Agent Withdrawal', sortable: true },
+  { key: 'sdpVsBalance', label: 'SDP VS Balance', sortable: true },
+  { key: 'walletStatus', label: 'Wallet Status', sortable: true },
+];
+
+const columnWidths: Record<ColumnKey, string> = {
+  leader: '90px',
+  walletName: '220px',
+  sdp: '100px',
+  opening: '110px',
+  totalDP: '110px',
+  totalWD: '110px',
+  topUp: '110px',
+  settlement: '110px',
+  companyBalance: '140px',
+  balanceInside: '120px',
+  agentWithdrawal: '130px',
+  sdpVsBalance: '130px',
+  walletStatus: '130px',
+};
+
+function renderCell(row: MergedRow, key: ColumnKey) {
+  switch (key) {
+    case 'leader':
+      return <td key={key} className="whitespace-nowrap px-3 py-1 text-center text-[10px] text-indigo-600 dark:text-indigo-400">{row.leader}</td>;
+    case 'walletName':
+      return <td key={key} className="whitespace-nowrap px-3 py-1 text-center text-[10px] text-[#6b7280] dark:text-[#a0a0a0]">{row.agentName}</td>;
+    case 'sdp':
+      return <td key={key} className="whitespace-nowrap px-3 py-1 text-center text-[10px] text-[#6b7280] dark:text-[#a0a0a0]">{displayNum(row.sdp)}</td>;
+    case 'opening':
+      return <td key={key} className="whitespace-nowrap px-3 py-1 text-center text-[10px] text-[#6b7280] dark:text-[#a0a0a0]">{displayNum(row.openingBal)}</td>;
+    case 'totalDP':
+      return <td key={key} className="whitespace-nowrap px-3 py-1 text-center text-[10px] text-[#6b7280] dark:text-[#a0a0a0]">{displayNum(row.agentTotalDP)}</td>;
+    case 'totalWD':
+      return <td key={key} className="whitespace-nowrap px-3 py-1 text-center text-[10px] text-[#6b7280] dark:text-[#a0a0a0]">{displayNum(row.agentTotalWD)}</td>;
+    case 'topUp':
+      return <td key={key} className="whitespace-nowrap px-3 py-1 text-center text-[10px] text-teal-700/70 dark:text-teal-300/70">{displayNum(row.totalTopUp)}</td>;
+    case 'settlement': {
+      const settlementDisplay = displayNum(row.totalStlm);
+      return (
+        <td key={key} className={`whitespace-nowrap px-3 py-1 text-center text-[10px] ${settlementDisplay !== '−' ? 'text-orange-600 dark:text-orange-400' : 'text-[#6b7280] dark:text-[#a0a0a0]'}`}>
+          {settlementDisplay}
+        </td>
+      );
+    }
+    case 'balanceInside':
+      return (
+        <td key={key} className="px-3 py-1.5 text-[10px] text-center text-slate-700 dark:text-slate-300">
+          {displayNum(String(row.balanceInside ?? 0))}
+        </td>
+      );
+    case 'agentWithdrawal':
+      return (
+        <td key={key} className="px-3 py-1.5 text-[10px] text-center text-slate-700 dark:text-slate-300">
+          {displayNum(String(row.agentWithdrawal))}
+        </td>
+      );
+    case 'sdpVsBalance':
+      return (
+        <td key={key} className="px-3 py-1.5 text-[10px] text-center text-slate-700 dark:text-slate-300">
+          {row.runningBalance > 0 && row.sdpVsBalance !== 0 ? displayNum(String(Math.abs(row.sdpVsBalance))) : '−'}
+        </td>
+      );
+    case 'walletStatus':
+      return (
+        <td key={key} className={`whitespace-nowrap px-3 py-1 text-center text-[10px] ${walletStatusColor(row.walletStatus)}`}>
+          {row.walletStatus}
+        </td>
+      );
+    case 'companyBalance':
+    default:
+      return (
+        <td key={key} className={`whitespace-nowrap px-3 py-1 text-center text-[10px] ${row.runningBalance < 0 ? 'text-rose-600 dark:text-rose-400' : 'text-[#6b7280] dark:text-[#a0a0a0]'}`}>
+          {displayNum(row.runningBalance)}
+        </td>
+      );
+  }
 }
 
 export default function AgentBalance() {
@@ -113,9 +240,22 @@ export default function AgentBalance() {
   const [lastUpdated, setLastUpdated] = useState('');
   const [spinning, setSpinning] = useState(false);
   const [searchTerm, setSearchTerm] = useState('');
-  const [expandedAgent, setExpandedAgent] = useState<string | null>(null);
+  const [leaderFilter, setLeaderFilter] = useState('All Leaders');
+  const [sortColumn, setSortColumn] = useState<ColumnKey>('companyBalance');
+  const [sortDirection, setSortDirection] = useState<'asc' | 'desc'>('desc');
+  const [leaderMenuOpen, setLeaderMenuOpen] = useState(false);
+  const [leaderMenuPos, setLeaderMenuPos] = useState({ top: 0, left: 0 });
+  const [columnMenuOpen, setColumnMenuOpen] = useState(false);
+  const [columnMenuPos, setColumnMenuPos] = useState({ top: 0, left: 0 });
+  const [columnVisibility, setColumnVisibility] = useState<Record<ColumnKey, boolean>>(
+    () => Object.fromEntries(columnDefs.map((col) => [col.key, true])) as Record<ColumnKey, boolean>
+  );
   const [page, setPage] = useState(1);
   const rowsPerPage = 50;
+  const leaderButtonRef = useRef<HTMLButtonElement>(null);
+  const leaderDropdownRef = useRef<HTMLDivElement>(null);
+  const columnButtonRef = useRef<HTMLButtonElement>(null);
+  const columnDropdownRef = useRef<HTMLDivElement>(null);
 
   const fetchData = useCallback(async () => {
     try {
@@ -147,11 +287,6 @@ export default function AgentBalance() {
         }))
         .filter((row) => row.agentName && row.agentName !== 'OLD');
 
-      const openingMap = new Map<string, OpeningRow>();
-      openingRows.forEach((row) => {
-        openingMap.set(row.agentName, row);
-      });
-
       const balRows = parseCsvLines(balText)
         .slice(1)
         .filter((row) => row.some((cell) => cell.trim() !== ''))
@@ -159,10 +294,15 @@ export default function AgentBalance() {
           walletName: rawVal(row[1]),
           totalDP: rawVal(row[11]),
           totalWD: rawVal(row[13]),
+          balance: rawVal(row[8]),
+          login: rawVal(row[15]),
+          accountStatus: rawVal(row[2]),
         }))
         .filter((row) => row.walletName && row.walletName !== '-');
 
       const balanceTotals = new Map<string, { dp: number; wd: number }>();
+      const balanceInsideTotals = new Map<string, number>();
+      const walletStatusValues = new Map<string, string[]>();
       balRows.forEach((bal) => {
         const name = bal.walletName;
         const dp = parseFloat(bal.totalDP.replace(/,/g, '')) || 0;
@@ -172,6 +312,17 @@ export default function AgentBalance() {
           dp: existing.dp + dp,
           wd: existing.wd + wd,
         });
+
+        if (bal.accountStatus && bal.accountStatus !== '-') {
+          const statuses = walletStatusValues.get(name) ?? [];
+          statuses.push(bal.accountStatus);
+          walletStatusValues.set(name, statuses);
+        }
+
+        if (bal.login.trim().toLowerCase() === 'yes') {
+          const balance = parseFloat(bal.balance.replace(/,/g, '')) || 0;
+          balanceInsideTotals.set(name, (balanceInsideTotals.get(name) ?? 0) + balance);
+        }
       });
 
       const topUpTotals = new Map<string, number>();
@@ -197,17 +348,28 @@ export default function AgentBalance() {
 
       const merged: MergedRow[] = openingRows.map((opening) => {
         const totals = balanceTotals.get(opening.agentName) ?? { dp: 0, wd: 0 };
+        const totalTopUp = topUpTotals.get(opening.agentName) ?? 0;
+        const totalStlm = stlmTotals.get(opening.agentName) ?? 0;
+        const balanceInside = balanceInsideTotals.get(opening.agentName) ?? 0;
+        const runningBalance = parseNumber(opening.openingBal) + totals.dp + totalTopUp - totals.wd - totalStlm;
+        const sdpNum = parseNumber(opening.sdp);
+        const walletStatus = computeWalletStatus(walletStatusValues.get(opening.agentName) ?? []);
         return {
           ...opening,
           agentTotalDP: totals.dp,
           agentTotalWD: totals.wd,
-          totalTopUp: topUpTotals.get(opening.agentName) ?? 0,
-          totalStlm: stlmTotals.get(opening.agentName) ?? 0,
+          totalTopUp,
+          totalStlm,
+          balanceInside,
+          runningBalance,
+          agentWithdrawal: runningBalance - balanceInside,
+          sdpVsBalance: runningBalance - sdpNum,
+          walletStatus,
         };
       });
 
       setRows(merged);
-      setLastUpdated(new Date().toLocaleTimeString('en-PH'));
+      setLastUpdated(new Date().toLocaleTimeString('en-PH', { hour: 'numeric', minute: '2-digit', hour12: true }));
     } catch {
       setError('Unable to load data. Check your Google Sheet or network connection.');
     } finally {
@@ -222,17 +384,52 @@ export default function AgentBalance() {
 
   useEffect(() => {
     setPage(1);
-  }, [searchTerm]);
+  }, [searchTerm, leaderFilter, sortColumn, sortDirection]);
 
-  const columns = [
-    'Leader',
-    'Agent Name',
-    'Opening',
-    'Total DP',
-    'Total WD',
-  ];
+  useEffect(() => {
+    if (!leaderMenuOpen) return;
 
-  const filteredRows = useMemo(() => {
+    const handlePointerDown = (event: MouseEvent) => {
+      const target = event.target as Node;
+      if (
+        leaderButtonRef.current && !leaderButtonRef.current.contains(target) &&
+        leaderDropdownRef.current && !leaderDropdownRef.current.contains(target)
+      ) {
+        setLeaderMenuOpen(false);
+      }
+    };
+
+    document.addEventListener('mousedown', handlePointerDown);
+    return () => document.removeEventListener('mousedown', handlePointerDown);
+  }, [leaderMenuOpen]);
+
+  useEffect(() => {
+    if (!columnMenuOpen) return;
+
+    const handlePointerDown = (event: MouseEvent) => {
+      const target = event.target as Node;
+      if (
+        columnButtonRef.current && !columnButtonRef.current.contains(target) &&
+        columnDropdownRef.current && !columnDropdownRef.current.contains(target)
+      ) {
+        setColumnMenuOpen(false);
+      }
+    };
+
+    document.addEventListener('mousedown', handlePointerDown);
+    return () => document.removeEventListener('mousedown', handlePointerDown);
+  }, [columnMenuOpen]);
+
+  const visibleColumns = useMemo(() => columnDefs.filter((col) => columnVisibility[col.key]), [columnVisibility]);
+  const allColumnsChecked = columnDefs.every((col) => columnVisibility[col.key]);
+  const anyColumnHidden = columnDefs.some((col) => !columnVisibility[col.key]);
+
+  const leaderOptions = useMemo(() => {
+    const leaders = Array.from(new Set(rows.map((row) => row.leader).filter(Boolean))).sort((a, b) => a.localeCompare(b));
+    return leaders;
+  }, [rows]);
+
+  const searchedRows = useMemo(() => {
     const query = searchTerm.toLowerCase();
     if (!query) return rows;
 
@@ -242,11 +439,66 @@ export default function AgentBalance() {
     });
   }, [rows, searchTerm]);
 
-  const totalPages = Math.max(1, Math.ceil(filteredRows.length / rowsPerPage));
+  const filteredRows = useMemo(() => {
+    if (leaderFilter === 'All Leaders') return searchedRows;
+    return searchedRows.filter((row) => row.leader === leaderFilter);
+  }, [leaderFilter, searchedRows]);
+
+  const sortedRows = useMemo(() => {
+    const list = [...filteredRows];
+    list.sort((a, b) => {
+      const getValue = (row: typeof a, column: ColumnKey) => {
+        switch (column) {
+          case 'leader':
+            return row.leader.toLowerCase();
+          case 'walletName':
+            return row.agentName.toLowerCase();
+          case 'sdp':
+            return parseNumber(row.sdp);
+          case 'opening':
+            return parseNumber(row.openingBal);
+          case 'totalDP':
+            return row.agentTotalDP;
+          case 'totalWD':
+            return row.agentTotalWD;
+          case 'topUp':
+            return row.totalTopUp;
+          case 'settlement':
+            return row.totalStlm;
+          case 'balanceInside':
+            return row.balanceInside;
+          case 'agentWithdrawal':
+            return row.agentWithdrawal;
+          case 'sdpVsBalance':
+            return row.sdpVsBalance;
+          case 'walletStatus':
+            return row.walletStatus.toLowerCase();
+          case 'companyBalance':
+          default:
+            return row.runningBalance;
+        }
+      };
+
+      const valueA = getValue(a, sortColumn);
+      const valueB = getValue(b, sortColumn);
+
+      if (sortColumn === 'walletName' || sortColumn === 'leader' || sortColumn === 'walletStatus') {
+        const comparison = String(valueA).localeCompare(String(valueB), undefined, { sensitivity: 'base' });
+        return sortDirection === 'asc' ? comparison : -comparison;
+      }
+
+      const comparison = Number(valueA) - Number(valueB);
+      return sortDirection === 'asc' ? comparison : -comparison;
+    });
+
+    return list;
+  }, [filteredRows, sortColumn, sortDirection]);
+
+  const totalPages = Math.max(1, Math.ceil(sortedRows.length / rowsPerPage));
   const currentPage = Math.min(page, totalPages);
   const startIndex = (currentPage - 1) * rowsPerPage;
   const endIndex = startIndex + rowsPerPage;
-  const pagedRows = filteredRows.slice(startIndex, endIndex);
+  const pagedRows = sortedRows.slice(startIndex, endIndex);
 
   useEffect(() => {
     if (page !== currentPage) {
@@ -255,15 +507,14 @@ export default function AgentBalance() {
   }, [page, currentPage]);
 
   return (
-    <div className="min-h-screen bg-slate-50 text-slate-800 transition-colors duration-300 dark:bg-slate-950 dark:text-slate-100">
-      <header className="border-b border-slate-200 bg-white/80 px-4 py-4 backdrop-blur dark:border-slate-800 dark:bg-slate-900/80 md:px-8">
-        <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
-          <div>
-            <p className="text-[10px] font-semibold uppercase tracking-[0.28em] text-slate-500 dark:text-slate-400">Agent Balance</p>
-            <h1 className="text-2xl font-semibold text-slate-900 dark:text-slate-100">Merged Agent Data</h1>
+    <div className="min-h-screen bg-[#f5f5f7] text-[#1a1a1a] transition-colors duration-300 dark:bg-[#1c1c1e] dark:text-white">
+      <header className="border-b border-[#e5e5e7] bg-white px-4 py-3 dark:border-[#3a3a3d] dark:bg-[#2a2a2d] md:px-8">
+        <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+          <div className="flex items-baseline gap-2">
+            <h1 className="text-2xl font-bold text-[#1a1a1a] dark:text-white">Agent Balance</h1>
           </div>
-          <div className="flex items-center gap-3">
-            <label className="flex items-center gap-2 rounded-2xl border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-500 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-400">
+          <div className="flex flex-wrap items-center gap-3">
+            <label className="flex items-center gap-2 rounded-xl border border-[#e5e5e7] px-3 py-1.5 text-sm text-[#6b7280] dark:border-[#3a3a3d] dark:text-[#a0a0a0]">
               <Search size={15} />
               <input
                 value={searchTerm}
@@ -272,11 +523,15 @@ export default function AgentBalance() {
                 placeholder="Search"
               />
             </label>
+            <span className="flex items-center gap-1.5 text-sm text-[#6b7280] dark:text-[#a0a0a0]">
+              <span className="h-2 w-2 animate-pulse rounded-full bg-emerald-500" />
+              {lastUpdated || '—'}
+            </span>
             <ThemeToggle />
             <button
               onClick={fetchData}
               disabled={spinning}
-              className="flex items-center gap-2 rounded-2xl border border-slate-200 bg-white px-3 py-2 text-sm font-medium text-slate-700 shadow-sm transition-all disabled:opacity-50 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-200"
+              className="flex items-center gap-2 rounded-xl border border-[#e5e5e7] px-3 py-1.5 text-sm font-medium text-[#6b7280] transition-all disabled:opacity-50 dark:border-[#3a3a3d] dark:text-[#a0a0a0]"
             >
               <RefreshCw size={15} className={spinning ? 'animate-spin' : ''} />
               Refresh
@@ -285,26 +540,10 @@ export default function AgentBalance() {
         </div>
       </header>
 
-      <main className="space-y-6 px-4 py-6 md:px-8 md:py-8">
-        <div className="rounded-3xl border border-slate-200 bg-white p-5 shadow-[0_16px_60px_-30px_rgba(15,23,42,0.35)] dark:border-slate-800 dark:bg-slate-900">
-          <div className="flex flex-wrap items-center justify-between gap-3">
-            <div className="flex items-center gap-3">
-              <div className="rounded-2xl bg-indigo-50 p-2.5 text-indigo-600 dark:bg-indigo-500/10 dark:text-indigo-300"><Wallet2 size={16} /></div>
-              <div>
-                <p className="text-[10px] font-semibold uppercase tracking-[0.24em] text-slate-500 dark:text-slate-400">Live sync</p>
-                <p className="text-sm text-slate-600 dark:text-slate-300">Updated at {lastUpdated || '—'}</p>
-              </div>
-            </div>
-            <div className="rounded-full border border-emerald-200 bg-emerald-50 px-3 py-1 text-sm font-medium text-emerald-600 dark:border-emerald-900/50 dark:bg-emerald-500/10 dark:text-emerald-400">
-              <span className="mr-2 inline-block h-2 w-2 rounded-full bg-emerald-500" />
-              Tracking live
-            </div>
-          </div>
-        </div>
-
+      <main className="space-y-2 p-3">
         {loading && (
-          <div className="flex min-h-[280px] items-center justify-center rounded-3xl border border-slate-200 bg-white shadow-[0_16px_60px_-30px_rgba(15,23,42,0.35)] dark:border-slate-800 dark:bg-slate-900">
-            <div className="flex items-center gap-3 text-slate-500 dark:text-slate-400">
+          <div className="flex min-h-[160px] items-center justify-center rounded-2xl border border-[#e5e5e7] dark:border-[#3a3a3d]">
+            <div className="flex items-center gap-3 text-[#6b7280] dark:text-[#a0a0a0]">
               <Loader2 size={18} className="animate-spin text-indigo-500" />
               <span>Fetching latest data...</span>
             </div>
@@ -312,94 +551,211 @@ export default function AgentBalance() {
         )}
 
         {!loading && error && (
-          <div className="flex items-center gap-3 rounded-3xl border border-rose-200 bg-rose-50 px-5 py-4 text-sm text-rose-600 dark:border-rose-900/60 dark:bg-rose-500/10 dark:text-rose-300">
+          <div className="flex items-center gap-3 rounded-2xl border border-rose-200 px-5 py-4 text-sm text-rose-600 dark:border-rose-900/60 dark:text-rose-300">
             <AlertCircle size={15} />
             {error}
           </div>
         )}
 
         {!loading && !error && (
-          <div className="overflow-hidden rounded-3xl border border-slate-200 bg-white shadow-[0_16px_60px_-30px_rgba(15,23,42,0.35)] dark:border-slate-800 dark:bg-slate-900">
-            <div className="flex items-center justify-between border-b border-slate-200 px-6 py-4 dark:border-slate-800">
-              <div>
-                <p className="text-[10px] font-semibold uppercase tracking-[0.24em] text-slate-500 dark:text-slate-400">Agent Balance</p>
-                <h2 className="text-lg font-semibold text-slate-900 dark:text-slate-100">Merged accounts</h2>
-              </div>
+          <div className="overflow-hidden rounded-xl border border-[#e5e5e7] bg-white dark:border-[#3a3a3d] dark:bg-[#2a2a2d]">
+            <div className="flex items-center justify-between gap-3 border-b border-[#e5e5e7] px-2 py-1.5 dark:border-[#3a3a3d]">
+              <span className="text-xs font-normal text-[#6b7280] dark:text-[#a0a0a0]">{sortedRows.length} accounts</span>
               <div className="flex items-center gap-3">
-                <div className="rounded-full bg-slate-100 px-3 py-1 text-sm font-medium text-slate-600 dark:bg-slate-800 dark:text-slate-300">{filteredRows.length} accounts</div>
-                <div className="flex items-center gap-2 rounded-full border border-slate-200 bg-white px-3 py-1.5 text-sm font-medium text-slate-600 shadow-sm dark:border-slate-700 dark:bg-slate-800 dark:text-slate-300">
+              <div className="flex items-center gap-1.5 rounded-xl border border-[#e5e5e7] px-2 py-0.5 text-xs font-medium text-[#6b7280] dark:border-[#3a3a3d] dark:text-[#a0a0a0]">
+                <button
+                  type="button"
+                  onClick={() => setPage((current) => Math.max(1, current - 1))}
+                  disabled={currentPage === 1}
+                  className="rounded-xl px-1.5 py-0.5 transition disabled:cursor-not-allowed disabled:opacity-40"
+                >
+                  Previous
+                </button>
+                <span>Page {currentPage} of {totalPages}</span>
+                <button
+                  type="button"
+                  onClick={() => setPage((current) => Math.min(totalPages, current + 1))}
+                  disabled={currentPage === totalPages}
+                  className="rounded-xl px-1.5 py-0.5 transition disabled:cursor-not-allowed disabled:opacity-40"
+                >
+                  Next
+                </button>
+              </div>
+              <div className="relative">
                   <button
                     type="button"
-                    onClick={() => setPage((current) => Math.max(1, current - 1))}
-                    disabled={currentPage === 1}
-                    className="rounded-full px-2 py-1 transition disabled:cursor-not-allowed disabled:opacity-40"
+                    ref={columnButtonRef}
+                    onClick={(event) => {
+                      event.stopPropagation();
+                      const rect = columnButtonRef.current?.getBoundingClientRect();
+                      if (rect) {
+                        setColumnMenuPos({ top: rect.bottom + 8, left: rect.right - 224 });
+                      }
+                      setColumnMenuOpen((current) => !current);
+                    }}
+                    className={`flex items-center justify-center rounded-xl border p-1.5 transition ${anyColumnHidden ? 'border-indigo-200 text-indigo-700 dark:border-indigo-900/50 dark:text-indigo-300' : 'border-[#e5e5e7] text-[#6b7280] dark:border-[#3a3a3d] dark:text-[#a0a0a0]'}`}
                   >
-                    Previous
+                    <Filter size={14} />
                   </button>
-                  <span>Page {currentPage} of {totalPages}</span>
-                  <button
-                    type="button"
-                    onClick={() => setPage((current) => Math.min(totalPages, current + 1))}
-                    disabled={currentPage === totalPages}
-                    className="rounded-full px-2 py-1 transition disabled:cursor-not-allowed disabled:opacity-40"
-                  >
-                    Next
-                  </button>
+                  {columnMenuOpen && typeof document !== 'undefined' && createPortal(
+                    <div
+                      ref={columnDropdownRef}
+                      style={{ position: 'fixed', top: columnMenuPos.top, left: columnMenuPos.left }}
+                      className="z-[1000] w-56 rounded-xl border border-[#e5e5e7] bg-white p-2 shadow-xl dark:border-[#3a3a3d] dark:bg-[#2a2a2d]"
+                      onClick={(event) => event.stopPropagation()}
+                    >
+                      <div className="px-2 py-1.5 text-[10px] font-semibold uppercase tracking-[0.24em] text-[#6b7280] dark:text-[#a0a0a0]">Columns</div>
+                      <label className="flex w-full items-center gap-2 rounded-xl px-2 py-2 text-sm text-[#6b7280] hover:bg-[#f5f5f7] dark:text-[#a0a0a0] dark:hover:bg-slate-800">
+                        <input
+                          type="checkbox"
+                          checked={allColumnsChecked}
+                          onChange={() => {
+                            const nextValue = !allColumnsChecked;
+                            setColumnVisibility(
+                              Object.fromEntries(columnDefs.map((col) => [col.key, nextValue])) as Record<ColumnKey, boolean>
+                            );
+                          }}
+                        />
+                        <span>Check All</span>
+                      </label>
+                      {columnDefs.map((col) => (
+                        <label key={col.key} className="flex w-full items-center gap-2 rounded-xl px-2 py-2 text-sm text-[#6b7280] hover:bg-[#f5f5f7] dark:text-[#a0a0a0] dark:hover:bg-slate-800">
+                          <input
+                            type="checkbox"
+                            checked={columnVisibility[col.key]}
+                            onChange={() => {
+                              setColumnVisibility((current) => ({ ...current, [col.key]: !current[col.key] }));
+                            }}
+                          />
+                          <span>{col.label}</span>
+                        </label>
+                      ))}
+                    </div>,
+                    document.body
+                  )}
                 </div>
               </div>
             </div>
-            <div className="overflow-x-auto">
-              <table className="w-full min-w-[900px] text-sm">
-                <thead className="bg-slate-50 dark:bg-slate-800/70">
-                  <tr className="border-b border-slate-200 text-left text-[10px] font-semibold uppercase tracking-[0.24em] text-slate-500 dark:border-slate-700 dark:text-slate-400">
-                    {columns.map((col) => <th key={col} className="px-4 py-3 whitespace-nowrap">{col}</th>)}
+            <div className="max-h-[calc(100vh-140px)] overflow-y-auto">
+              <table className="w-full table-auto text-xs">
+                <colgroup>
+                  {visibleColumns.map((col) => (
+                    <col key={col.key} style={{ width: columnWidths[col.key] }} />
+                  ))}
+                </colgroup>
+                <thead className="sticky top-0 z-10 border-b border-[#e5e5e7] bg-slate-100 dark:border-[#3a3a3d] dark:bg-[#232326]">
+                  <tr className="text-center text-xs font-semibold uppercase tracking-wide text-slate-500 dark:text-[#a0a0a0]">
+                    {visibleColumns.map((col) => (
+                      <th key={col.key} className="sticky top-0 z-10 border-b border-[#e5e5e7] bg-slate-100 px-3 py-1 text-center text-[10px] font-semibold uppercase tracking-wide text-slate-500 dark:border-[#3a3a3d] dark:bg-[#232326] dark:text-[#a0a0a0]">
+                        {col.key === 'leader' ? (
+                          <div className="relative flex items-center justify-center gap-1">
+                            <button
+                              type="button"
+                              onClick={() => {
+                                if (sortColumn === 'leader') {
+                                  setSortDirection((current) => current === 'asc' ? 'desc' : 'asc');
+                                } else {
+                                  setSortColumn('leader');
+                                  setSortDirection('asc');
+                                }
+                              }}
+                              className="flex items-center gap-1 text-center text-[#6b7280] transition hover:opacity-80 dark:text-[#a0a0a0]"
+                            >
+                              <span>{col.label}</span>
+                              {sortColumn === 'leader' && (sortDirection === 'asc' ? <ChevronUp size={13} /> : <ChevronDown size={13} />)}
+                            </button>
+                            <button
+                              type="button"
+                              ref={leaderButtonRef}
+                              onClick={(event) => {
+                                event.stopPropagation();
+                                const rect = leaderButtonRef.current?.getBoundingClientRect();
+                                if (rect) {
+                                  setLeaderMenuPos({ top: rect.bottom + 8, left: rect.left });
+                                }
+                                setLeaderMenuOpen((current) => !current);
+                              }}
+                              className={`flex items-center justify-center rounded-full p-1 transition ${leaderFilter !== 'All Leaders' ? 'bg-indigo-100 text-indigo-700 dark:bg-indigo-500/30 dark:text-indigo-200' : 'text-[#6b7280] hover:bg-slate-200 dark:text-[#a0a0a0] dark:hover:bg-white/10'}`}
+                            >
+                              <Filter size={12} className={leaderFilter !== 'All Leaders' ? 'opacity-100' : 'opacity-70'} />
+                            </button>
+                            {leaderMenuOpen && typeof document !== 'undefined' && createPortal(
+                              <div
+                                ref={leaderDropdownRef}
+                                style={{ position: 'fixed', top: leaderMenuPos.top, left: leaderMenuPos.left }}
+                                className="z-[1000] w-64 rounded-xl border border-[#e5e5e7] bg-white p-2 shadow-xl dark:border-[#3a3a3d] dark:bg-[#2a2a2d]"
+                                onClick={(event) => event.stopPropagation()}
+                              >
+                                <div className="px-2 py-1.5 text-[10px] font-semibold uppercase tracking-[0.24em] text-[#6b7280] dark:text-[#a0a0a0]">Filter</div>
+                                <div className="max-h-60 overflow-y-auto">
+                                  <button
+                                    type="button"
+                                    onClick={() => {
+                                      setLeaderFilter('All Leaders');
+                                      setLeaderMenuOpen(false);
+                                    }}
+                                    className={`flex w-full items-center justify-between rounded-xl px-2 py-2 text-sm transition ${leaderFilter === 'All Leaders' ? 'bg-indigo-50 text-indigo-700 dark:bg-indigo-500/10 dark:text-indigo-300' : 'text-[#6b7280] hover:bg-[#f5f5f7] dark:text-[#a0a0a0] dark:hover:bg-slate-800'}`}
+                                  >
+                                    <span>All Leaders</span>
+                                    {leaderFilter === 'All Leaders' && <Filter size={12} />}
+                                  </button>
+                                  {leaderOptions.map((leader) => (
+                                    <button
+                                      key={leader}
+                                      type="button"
+                                      onClick={() => {
+                                        setLeaderFilter(leader);
+                                        setLeaderMenuOpen(false);
+                                      }}
+                                      className={`flex w-full items-center justify-between rounded-xl px-2 py-2 text-sm transition ${leaderFilter === leader ? 'bg-indigo-50 text-indigo-700 dark:bg-indigo-500/10 dark:text-indigo-300' : 'text-[#6b7280] hover:bg-[#f5f5f7] dark:text-[#a0a0a0] dark:hover:bg-slate-800'}`}
+                                    >
+                                      <span>{leader}</span>
+                                      {leaderFilter === leader && <Filter size={12} />}
+                                    </button>
+                                  ))}
+                                </div>
+                              </div>,
+                              document.body
+                            )}
+                          </div>
+                        ) : col.sortable ? (
+                          <button
+                            type="button"
+                            onClick={() => {
+                              if (sortColumn === col.key) {
+                                setSortDirection((current) => current === 'asc' ? 'desc' : 'asc');
+                              } else {
+                                setSortColumn(col.key);
+                                setSortDirection('asc');
+                              }
+                            }}
+                            className="flex w-full items-center justify-center gap-1.5 text-center text-[#6b7280] transition hover:opacity-80 dark:text-[#a0a0a0]"
+                          >
+                            <span>{col.label}</span>
+                            {sortColumn === col.key && (sortDirection === 'asc' ? <ChevronUp size={13} /> : <ChevronDown size={13} />)}
+                          </button>
+                        ) : (
+                          col.label
+                        )}
+                      </th>
+                    ))}
                   </tr>
                 </thead>
                 <tbody>
-                  {pagedRows.length > 0 ? pagedRows.map((row, i) => {
-                    const isExpanded = expandedAgent === row.agentName;
-                    return (
-                      <Fragment key={row.agentName || i}>
-                        <tr
-                          onClick={() => setExpandedAgent((current) => current === row.agentName ? null : row.agentName)}
-                          className="cursor-pointer border-b border-slate-100 hover:bg-slate-50 dark:border-slate-800 dark:hover:bg-slate-800/70"
-                        >
-                          <td className="px-4 py-3 text-[11px] font-semibold uppercase tracking-[0.24em] text-indigo-600 dark:text-indigo-400">{row.leader}</td>
-                          <td className="px-4 py-3 font-semibold text-slate-800 dark:text-slate-100">
-                            <div className="flex items-center gap-2">
-                              <span>{row.agentName}</span>
-                              <ChevronDown size={14} className={`transition-transform ${isExpanded ? 'rotate-180' : ''}`} />
-                            </div>
-                          </td>
-                          <td className="px-4 py-3 font-mono text-slate-700 dark:text-slate-300">{fmtNum(row.openingBal)}</td>
-                          <td className="px-4 py-3 font-mono font-semibold text-emerald-600 dark:text-emerald-400">{fmtNum(String(row.agentTotalDP))}</td>
-                          <td className="px-4 py-3 font-mono font-semibold text-rose-600 dark:text-rose-400">{fmtNum(String(row.agentTotalWD))}</td>
-                        </tr>
-                        {isExpanded && (
-                          <tr className="border-b border-slate-100 bg-slate-50/70 dark:border-slate-800 dark:bg-slate-800/50">
-                            <td colSpan={5} className="px-4 py-4">
-                              <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm dark:border-slate-700 dark:bg-slate-900/70">
-                                <div className="grid gap-3 sm:grid-cols-3">
-                                  <div className="rounded-2xl bg-slate-50 p-3 dark:bg-slate-800/80">
-                                    <p className="text-[10px] font-semibold uppercase tracking-[0.24em] text-slate-500 dark:text-slate-400">SDP</p>
-                                    <p className="mt-1 font-mono text-sm font-semibold text-slate-800 dark:text-slate-100">{fmtNum(row.sdp)}</p>
-                                  </div>
-                                  <div className="rounded-2xl bg-slate-50 p-3 dark:bg-slate-800/80">
-                                    <p className="text-[10px] font-semibold uppercase tracking-[0.24em] text-slate-500 dark:text-slate-400">Total Top Up</p>
-                                    <p className="mt-1 font-mono text-sm font-semibold text-emerald-600 dark:text-emerald-400">{fmtNum(String(row.totalTopUp))}</p>
-                                  </div>
-                                  <div className="rounded-2xl bg-slate-50 p-3 dark:bg-slate-800/80">
-                                    <p className="text-[10px] font-semibold uppercase tracking-[0.24em] text-slate-500 dark:text-slate-400">Total STLM</p>
-                                    <p className="mt-1 font-mono text-sm font-semibold text-amber-600 dark:text-amber-400">{fmtNum(String(row.totalStlm))}</p>
-                                  </div>
-                                </div>
-                              </div>
-                            </td>
-                          </tr>
-                        )}
-                      </Fragment>
-                    );
-                  }) : <tr><td colSpan={5} className="px-4 py-8 text-center text-sm text-slate-500 dark:text-slate-400">No matching accounts found.</td></tr>}
+                  {pagedRows.length > 0 ? pagedRows.map((row, i) => (
+                    <tr
+                      key={row.agentName || i}
+                      className={i % 2 === 0 ? 'bg-[#f5f5f7] dark:bg-slate-800/40' : 'bg-white dark:bg-[#2a2a2d]'}
+                    >
+                      {visibleColumns.map((col) => renderCell(row, col.key))}
+                    </tr>
+                  )) : (
+                    <tr>
+                      <td colSpan={Math.max(visibleColumns.length, 1)} className="px-3 py-8 text-center text-[10px] text-[#6b7280] dark:text-[#a0a0a0]">
+                        No matching accounts found.
+                      </td>
+                    </tr>
+                  )}
                 </tbody>
               </table>
             </div>
