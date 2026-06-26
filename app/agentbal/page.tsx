@@ -196,6 +196,14 @@ function computeBrand(groups: string[]): string {
   return tied[0];
 }
 
+const BRAND_CODES = ['M1', 'M2', 'B1', 'B2', 'B3', 'B4', 'B5', 'K1', 'J1', 'T1'];
+
+function resolveBrand(groups: string[], agentName: string): string {
+  const brand = computeBrand(groups);
+  if (brand !== '−') return brand;
+  return BRAND_CODES.find((code) => agentName.toUpperCase().includes(code)) ?? '−';
+}
+
 type ColumnKey = 'brand' | 'leader' | 'walletName' | 'sdp' | 'opening' | 'totalDP' | 'totalWD' | 'topUp' | 'settlement' | 'companyBalance' | 'balanceInside' | 'agentWithdrawal' | 'sdpVsBalance' | 'walletStatus';
 
 const columnDefs: { key: ColumnKey; label: string; sortable: boolean }[] = [
@@ -482,7 +490,7 @@ export default function AgentBalance() {
           agentWithdrawal: runningBalance - balanceInside,
           sdpVsBalance: computeSdpVsBalance(opening.leader, opening.sdp, sdpNum, runningBalance),
           walletStatus,
-          brand: computeBrand(brandGroups.get(opening.agentName) ?? []),
+          brand: resolveBrand(brandGroups.get(opening.agentName) ?? [], opening.agentName),
         };
       });
 
@@ -781,8 +789,15 @@ export default function AgentBalance() {
         {!error && (
           <div className="overflow-hidden rounded-xl border border-[#e5e5e7] bg-white dark:border-[#3a3a3d] dark:bg-[#2a2a2d]">
             <div className="flex items-center justify-between gap-3 border-b border-[#e5e5e7] px-2 py-1.5 dark:border-[#3a3a3d]">
-              <span className="text-[10px] font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400">{sortedRows.length} accounts</span>
+              {loading ? (
+                <div className="h-2.5 w-24 rounded-md bg-slate-200 dark:bg-slate-700 animate-pulse" />
+              ) : (
+                <span className="text-[10px] font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400">{sortedRows.length} accounts</span>
+              )}
               <div className="flex items-center gap-3">
+              {loading ? (
+                <div className="h-2.5 w-32 rounded-md bg-slate-200 dark:bg-slate-700 animate-pulse" />
+              ) : (
               <div className="flex items-center gap-1.5 rounded-xl border border-[#e5e5e7] px-2 py-0.5 dark:border-[#3a3a3d]">
                 <button
                   type="button"
@@ -802,6 +817,7 @@ export default function AgentBalance() {
                   Next
                 </button>
               </div>
+              )}
               <div className="relative">
                   <button
                     type="button"
