@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useState, useCallback } from 'react';
-import { RefreshCw, Loader2, AlertCircle, Search } from 'lucide-react';
+import { RefreshCw, AlertCircle, Search, Loader2 } from 'lucide-react';
 import ThemeToggle from '../components/ThemeToggle';
 
 type Row = {
@@ -107,24 +107,24 @@ export default function Summary() {
         </div>
       </header>
 
-      <main className="space-y-2 p-3">
+      <main className={`relative space-y-2 p-3 ${loading ? 'pointer-events-none' : ''}`}>
         {loading && (
-          <div className="flex min-h-[160px] items-center justify-center rounded-2xl border border-[#e5e5e7] dark:border-[#3a3a3d]">
-            <div className="flex items-center gap-3 text-[#6b7280] dark:text-[#a0a0a0]">
-              <Loader2 size={18} className="animate-spin text-indigo-500" />
-              <span>Fetching latest data...</span>
-            </div>
+          <div
+            className="fixed z-[9998] flex items-center justify-center bg-white/30 dark:bg-black/30"
+            style={{ top: 0, left: '256px', right: 0, bottom: 0 }}
+          >
+            <Loader2 size={28} className="animate-spin text-indigo-500" />
           </div>
         )}
 
-        {!loading && error && (
+        {error && (
           <div className="flex items-center gap-3 rounded-2xl border border-rose-200 px-5 py-4 text-sm text-rose-600 dark:border-rose-900/60 dark:text-rose-300">
             <AlertCircle size={15} />
             {error}
           </div>
         )}
 
-        {!loading && !error && (
+        {!error && (
           <div className="rounded-xl border border-[#e5e5e7] bg-white dark:border-[#3a3a3d] dark:bg-[#2a2a2d]">
             <div className="flex items-center justify-end gap-3 border-b border-[#e5e5e7] px-2 py-1.5 dark:border-[#3a3a3d]">
               <span className="text-[10px] font-semibold text-slate-500 dark:text-slate-400">{filteredRows.length} agents</span>
@@ -140,7 +140,7 @@ export default function Summary() {
                 </thead>
                 <tbody>
                   {filteredRows.length > 0 ? filteredRows.map((row, i) => (
-                    <tr key={i}>
+                    <tr key={i} className="bg-white dark:bg-[#2a2a2d]">
                       <td className="px-3 py-2 text-center text-[9px] text-slate-700 dark:text-slate-300">{row.leader}</td>
                       <td className="px-3 py-2 text-center text-[9px] font-bold text-slate-900 dark:text-white">{row.agentName}</td>
                       <td className="px-3 py-2 text-center text-[9px] text-slate-700 dark:text-slate-300">{fmt(row.openingBal)}</td>

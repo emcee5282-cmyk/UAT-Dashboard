@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useState, useCallback } from 'react';
-import { Activity, RefreshCw, Loader2, AlertCircle, TrendingUp, TrendingDown, Wallet2, Search, ArrowUpRight, Sparkles, ChevronRight, BarChart3 } from 'lucide-react';
+import { Activity, RefreshCw, AlertCircle, TrendingUp, TrendingDown, Wallet2, Search, ArrowUpRight, Sparkles, ChevronRight, BarChart3 } from 'lucide-react';
 import ThemeToggle from './components/ThemeToggle';
 
 type Row = {
@@ -149,11 +149,20 @@ export default function Dashboard() {
         </div>
 
         {loading && (
-          <div className="flex min-h-[280px] items-center justify-center rounded-2xl border border-[#e5e5e7] bg-white shadow-[0_16px_60px_-30px_rgba(15,23,42,0.35)] dark:border-[#3a3a3d] dark:bg-[#2a2a2d]">
-            <div className="flex items-center gap-3 text-[#6b7280] dark:text-[#a0a0a0]">
-              <Loader2 size={18} className="animate-spin text-indigo-500" />
-              <span>Fetching latest data...</span>
-            </div>
+          <div className="overflow-hidden rounded-2xl border border-[#e5e5e7] bg-white shadow-[0_16px_60px_-30px_rgba(15,23,42,0.35)] dark:border-[#3a3a3d] dark:bg-[#2a2a2d]">
+            <table className="w-full text-sm">
+              <tbody>
+                {Array.from({ length: 10 }).map((_, rowIndex) => (
+                  <tr key={rowIndex}>
+                    {Array.from({ length: 7 }).map((_, colIndex) => (
+                      <td key={colIndex} className="px-3 py-2">
+                        <div className="skeleton h-3 w-full rounded-md" />
+                      </td>
+                    ))}
+                  </tr>
+                ))}
+              </tbody>
+            </table>
           </div>
         )}
 

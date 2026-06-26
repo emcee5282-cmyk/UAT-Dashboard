@@ -24,6 +24,7 @@ type MergedRow = OpeningRow & {
   agentWithdrawal: number;
   sdpVsBalance: number;
   walletStatus: string;
+  brand: string;
 };
 
 function parseCsvLines(text: string): string[][] {
@@ -167,10 +168,39 @@ function computeSdpVsBalance(leader: string, sdpRaw: string, sdpNum: number, com
   return value;
 }
 
-type ColumnKey = 'leader' | 'walletName' | 'sdp' | 'opening' | 'totalDP' | 'totalWD' | 'topUp' | 'settlement' | 'companyBalance' | 'balanceInside' | 'agentWithdrawal' | 'sdpVsBalance' | 'walletStatus';
+const BRAND_PRIORITY = ['M1', 'M2', 'B1', 'B2', 'B3', 'B4', 'B5', 'K1', 'J1', 'T1'];
+const SKIP_GROUPS = ['wallet with issue', 'disconnected', 'dc account'];
+
+function computeBrand(groups: string[]): string {
+  const counts = new Map<string, number>();
+  groups.forEach((group) => {
+    const trimmed = (group ?? '').trim();
+    if (!trimmed || trimmed === '-') return;
+    if (SKIP_GROUPS.some((skip) => trimmed.toLowerCase().includes(skip))) return;
+    const code = trimmed.slice(0, 2).toUpperCase();
+    counts.set(code, (counts.get(code) ?? 0) + 1);
+  });
+
+  if (counts.size === 0) return '−';
+
+  const maxCount = Math.max(...counts.values());
+  const tied = Array.from(counts.keys()).filter((code) => counts.get(code) === maxCount);
+  const priorityTied = tied.filter((code) => BRAND_PRIORITY.includes(code));
+
+  if (priorityTied.length > 0) {
+    priorityTied.sort((a, b) => BRAND_PRIORITY.indexOf(a) - BRAND_PRIORITY.indexOf(b));
+    return priorityTied[0];
+  }
+
+  tied.sort((a, b) => a.localeCompare(b));
+  return tied[0];
+}
+
+type ColumnKey = 'brand' | 'leader' | 'walletName' | 'sdp' | 'opening' | 'totalDP' | 'totalWD' | 'topUp' | 'settlement' | 'companyBalance' | 'balanceInside' | 'agentWithdrawal' | 'sdpVsBalance' | 'walletStatus';
 
 const columnDefs: { key: ColumnKey; label: string; sortable: boolean }[] = [
-  { key: 'leader', label: 'Leader', sortable: true },
+  { key: 'brand', label: 'Brand', sortable: false },
+  { key: 'leader', label: 'Leader', sortable: false },
   { key: 'walletName', label: 'Wallet Name', sortable: true },
   { key: 'sdp', label: 'SDP', sortable: true },
   { key: 'opening', label: 'Opening', sortable: true },
@@ -186,6 +216,7 @@ const columnDefs: { key: ColumnKey; label: string; sortable: boolean }[] = [
 ];
 
 const columnWidths: Record<ColumnKey, string> = {
+  brand: '70px',
   leader: '90px',
   walletName: '220px',
   sdp: '100px',
@@ -226,6 +257,8 @@ function headerCellClasses(isSorted: boolean) {
 
 function renderCell(row: MergedRow, key: ColumnKey) {
   switch (key) {
+    case 'brand':
+      return <td key={key} className="whitespace-nowrap px-3 py-1 text-center text-[9px] text-slate-700 dark:text-slate-300">{row.brand}</td>;
     case 'leader':
       return <td key={key} className="whitespace-nowrap px-3 py-1 text-center text-[9px] text-slate-700 dark:text-slate-300">{row.leader}</td>;
     case 'walletName':
@@ -250,19 +283,19 @@ function renderCell(row: MergedRow, key: ColumnKey) {
     }
     case 'balanceInside':
       return (
-        <td key={key} className="px-3 py-1.5 text-[9px] text-center text-slate-700 dark:text-slate-300">
+        <td key={key} className="px-3 py-1 text-[9px] text-center text-slate-700 dark:text-slate-300">
           {displayNum(String(row.balanceInside ?? 0))}
         </td>
       );
     case 'agentWithdrawal':
       return (
-        <td key={key} className="px-3 py-1.5 text-[9px] text-center text-slate-700 dark:text-slate-300">
+        <td key={key} className="px-3 py-1 text-[9px] text-center text-slate-700 dark:text-slate-300">
           {displayNum(String(row.agentWithdrawal))}
         </td>
       );
     case 'sdpVsBalance':
       return (
-        <td key={key} className="px-3 py-1.5 text-[9px] text-center text-slate-700 dark:text-slate-300">
+        <td key={key} className="px-3 py-1 text-[9px] text-center text-slate-700 dark:text-slate-300">
           {row.sdpVsBalance > 0 ? displayNum(String(Math.abs(row.sdpVsBalance))) : '−'}
         </td>
       );
@@ -296,12 +329,16 @@ export default function AgentBalance() {
   const [error, setError] = useState('');
   const [lastUpdated, setLastUpdated] = useState('');
   const [spinning, setSpinning] = useState(false);
+  const hasLoadedRef = useRef(false);
   const [searchTerm, setSearchTerm] = useState('');
   const [leaderFilter, setLeaderFilter] = useState<Record<string, boolean>>({});
+  const [brandFilter, setBrandFilter] = useState<Record<string, boolean>>({});
   const [sortColumn, setSortColumn] = useState<ColumnKey>('companyBalance');
   const [sortDirection, setSortDirection] = useState<'asc' | 'desc'>('desc');
   const [leaderMenuOpen, setLeaderMenuOpen] = useState(false);
   const [leaderMenuPos, setLeaderMenuPos] = useState({ top: 0, left: 0 });
+  const [brandMenuOpen, setBrandMenuOpen] = useState(false);
+  const [brandMenuPos, setBrandMenuPos] = useState({ top: 0, left: 0 });
   const [columnMenuOpen, setColumnMenuOpen] = useState(false);
   const [columnMenuPos, setColumnMenuPos] = useState({ top: 0, left: 0 });
   const [columnVisibility, setColumnVisibility] = useState<Record<ColumnKey, boolean>>(
@@ -316,17 +353,22 @@ export default function AgentBalance() {
   const rowsPerPage = 50;
   const leaderButtonRef = useRef<HTMLButtonElement>(null);
   const leaderDropdownRef = useRef<HTMLDivElement>(null);
+  const brandButtonRef = useRef<HTMLButtonElement>(null);
+  const brandDropdownRef = useRef<HTMLDivElement>(null);
   const columnButtonRef = useRef<HTMLButtonElement>(null);
   const columnDropdownRef = useRef<HTMLDivElement>(null);
   const walletStatusButtonRef = useRef<HTMLButtonElement>(null);
   const walletStatusDropdownRef = useRef<HTMLDivElement>(null);
+  const scrollRef = useRef<number>(0);
 
   const fetchData = useCallback(async () => {
+    scrollRef.current = window.scrollY;
     try {
       setSpinning(true);
-      setLoading(true);
+      if (!hasLoadedRef.current) {
+        setLoading(true);
+      }
       setError('');
-      setRows([]);
 
       const [openingRes, balRes, stlmRes] = await Promise.all([
         fetch(`/api/opening?t=${Date.now()}`),
@@ -361,6 +403,7 @@ export default function AgentBalance() {
           balance: rawVal(row[8]),
           login: rawVal(row[15]),
           accountStatus: rawVal(row[2]),
+          group: rawVal(row[6]),
         }))
         .filter((row) => row.walletName && row.walletName !== '-');
 
@@ -368,6 +411,7 @@ export default function AgentBalance() {
       const balanceTotals = new Map<string, { dp: number; wd: number }>();
       const balanceInsideTotals = new Map<string, number>();
       const walletStatusValues = new Map<string, string[]>();
+      const brandGroups = new Map<string, string[]>();
       balRows.forEach((bal) => {
         const name = bal.walletName;
         const dp = parseFloat(bal.totalDP.replace(/,/g, '')) || 0;
@@ -377,6 +421,12 @@ export default function AgentBalance() {
           dp: existing.dp + dp,
           wd: existing.wd + wd,
         });
+
+        if (bal.group && bal.group !== '-') {
+          const groups = brandGroups.get(name) ?? [];
+          groups.push(bal.group);
+          brandGroups.set(name, groups);
+        }
 
         if (bal.accountStatus && bal.accountStatus !== '-') {
           const statuses = walletStatusValues.get(name) ?? [];
@@ -432,11 +482,20 @@ export default function AgentBalance() {
           agentWithdrawal: runningBalance - balanceInside,
           sdpVsBalance: computeSdpVsBalance(opening.leader, opening.sdp, sdpNum, runningBalance),
           walletStatus,
+          brand: computeBrand(brandGroups.get(opening.agentName) ?? []),
         };
       });
 
       setRows(merged);
+      hasLoadedRef.current = true;
       setLastUpdated(new Date().toLocaleTimeString('en-PH', { hour: 'numeric', minute: '2-digit', hour12: true }));
+      setTimeout(() => {
+        requestAnimationFrame(() => {
+          requestAnimationFrame(() => {
+            window.scrollTo({ top: scrollRef.current, behavior: 'instant' });
+          });
+        });
+      }, 50);
     } catch {
       setError('Unable to load data. Check your Google Sheet or network connection.');
     } finally {
@@ -451,7 +510,7 @@ export default function AgentBalance() {
 
   useEffect(() => {
     setPage(1);
-  }, [searchTerm, leaderFilter, walletStatusFilter, sortColumn, sortDirection]);
+  }, [searchTerm, leaderFilter, brandFilter, walletStatusFilter, sortColumn, sortDirection]);
 
   useEffect(() => {
     if (!leaderMenuOpen) return;
@@ -469,6 +528,23 @@ export default function AgentBalance() {
     document.addEventListener('mousedown', handlePointerDown);
     return () => document.removeEventListener('mousedown', handlePointerDown);
   }, [leaderMenuOpen]);
+
+  useEffect(() => {
+    if (!brandMenuOpen) return;
+
+    const handlePointerDown = (event: MouseEvent) => {
+      const target = event.target as Node;
+      if (
+        brandButtonRef.current && !brandButtonRef.current.contains(target) &&
+        brandDropdownRef.current && !brandDropdownRef.current.contains(target)
+      ) {
+        setBrandMenuOpen(false);
+      }
+    };
+
+    document.addEventListener('mousedown', handlePointerDown);
+    return () => document.removeEventListener('mousedown', handlePointerDown);
+  }, [brandMenuOpen]);
 
   useEffect(() => {
     if (!columnMenuOpen) return;
@@ -519,6 +595,15 @@ export default function AgentBalance() {
   const allLeadersChecked = leaderOptions.every((name) => isLeaderChecked(name));
   const anyLeaderUnchecked = leaderOptions.some((name) => !isLeaderChecked(name));
 
+  const brandOptions = useMemo(() => {
+    const brands = Array.from(new Set(rows.map((row) => row.brand).filter(Boolean))).sort((a, b) => a.localeCompare(b));
+    return brands;
+  }, [rows]);
+
+  const isBrandChecked = (name: string) => brandFilter[name] !== false;
+  const allBrandsChecked = brandOptions.every((name) => isBrandChecked(name));
+  const anyBrandUnchecked = brandOptions.some((name) => !isBrandChecked(name));
+
   const searchedRows = useMemo(() => {
     const query = searchTerm.toLowerCase();
     if (!query) return rows;
@@ -534,17 +619,22 @@ export default function AgentBalance() {
     if (leaderOptions.some((name) => leaderFilter[name] === false)) {
       list = list.filter((row) => leaderFilter[row.leader] !== false);
     }
+    if (brandOptions.some((name) => brandFilter[name] === false)) {
+      list = list.filter((row) => brandFilter[row.brand] !== false);
+    }
     if (WALLET_STATUS_OPTIONS.some((status) => !walletStatusFilter[status])) {
       list = list.filter((row) => walletStatusFilter[row.walletStatus]);
     }
     return list;
-  }, [leaderFilter, leaderOptions, walletStatusFilter, searchedRows]);
+  }, [leaderFilter, leaderOptions, brandFilter, brandOptions, walletStatusFilter, searchedRows]);
 
   const sortedRows = useMemo(() => {
     const list = [...filteredRows];
     list.sort((a, b) => {
       const getValue = (row: typeof a, column: ColumnKey) => {
         switch (column) {
+          case 'brand':
+            return row.brand.toLowerCase();
           case 'leader':
             return row.leader.toLowerCase();
           case 'walletName':
@@ -578,7 +668,7 @@ export default function AgentBalance() {
       const valueA = getValue(a, sortColumn);
       const valueB = getValue(b, sortColumn);
 
-      if (sortColumn === 'walletName' || sortColumn === 'leader' || sortColumn === 'walletStatus') {
+      if (sortColumn === 'walletName' || sortColumn === 'leader' || sortColumn === 'walletStatus' || sortColumn === 'brand') {
         const comparison = String(valueA).localeCompare(String(valueB), undefined, { sensitivity: 'base' });
         return sortDirection === 'asc' ? comparison : -comparison;
       }
@@ -598,12 +688,13 @@ export default function AgentBalance() {
 
   const handleExport = useCallback(() => {
     const headers = [
-      'Leader', 'Wallet Name', 'SDP', 'Opening', 'Total DP', 'Total WD',
+      'Brand', 'Leader', 'Wallet Name', 'SDP', 'Opening', 'Total DP', 'Total WD',
       'Top Up', 'Settlement', 'Company Balance', 'Balance Inside',
       'Agent Withdrawal', 'SDP VS Balance', 'Wallet Status',
     ];
 
     const data = sortedRows.map((row) => [
+      row.brand,
       row.leader,
       row.agentName,
       numOrBlank(parseNumber(row.sdp)),
@@ -636,7 +727,7 @@ export default function AgentBalance() {
   }, [page, currentPage]);
 
   return (
-    <div className="min-h-screen bg-[#f5f5f7] text-[#1a1a1a] transition-colors duration-300 dark:bg-[#1c1c1e] dark:text-white">
+    <div className="min-h-screen overflow-y-hidden bg-[#f5f5f7] text-[#1a1a1a] transition-colors duration-300 dark:bg-[#1c1c1e] dark:text-white">
       <header className="border-b border-[#e5e5e7] bg-white px-4 py-2 dark:border-[#3a3a3d] dark:bg-[#2a2a2d] md:px-8">
         <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
           <div className="flex items-baseline gap-2">
@@ -648,18 +739,19 @@ export default function AgentBalance() {
               <input
                 value={searchTerm}
                 onChange={(event) => setSearchTerm(event.target.value)}
-                className="w-32 bg-transparent outline-none md:w-48"
+                disabled={loading}
+                className="w-32 bg-transparent outline-none disabled:opacity-50 md:w-48"
                 placeholder="Search"
               />
             </label>
             <span className="flex items-center gap-1.5 text-[11px] text-[#6b7280] dark:text-[#a0a0a0]">
               <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-emerald-500" />
-              {lastUpdated || '—'}
+              {loading ? '—' : (lastUpdated || '—')}
             </span>
             <ThemeToggle />
             <button
               onClick={fetchData}
-              disabled={spinning}
+              disabled={spinning || loading}
               className="flex items-center gap-2 rounded-xl border border-[#e5e5e7] px-2 py-1.5 text-[11px] font-medium text-[#6b7280] transition-all disabled:opacity-50 dark:border-[#3a3a3d] dark:text-[#a0a0a0]"
             >
               <RefreshCw size={12} className={spinning ? 'animate-spin' : ''} />
@@ -669,24 +761,24 @@ export default function AgentBalance() {
         </div>
       </header>
 
-      <main className="space-y-2 p-3">
+      <main className="relative space-y-2 p-3">
         {loading && (
-          <div className="flex min-h-[160px] items-center justify-center rounded-2xl border border-[#e5e5e7] dark:border-[#3a3a3d]">
-            <div className="flex items-center gap-3 text-[#6b7280] dark:text-[#a0a0a0]">
-              <Loader2 size={18} className="animate-spin text-indigo-500" />
-              <span>Fetching latest data...</span>
-            </div>
+          <div
+            className="fixed z-[9998] flex items-center justify-center bg-white/30 dark:bg-black/30"
+            style={{ top: 0, left: '256px', right: 0, bottom: 0 }}
+          >
+            <Loader2 size={28} className="animate-spin text-indigo-500" />
           </div>
         )}
 
-        {!loading && error && (
+        {error && (
           <div className="flex items-center gap-3 rounded-2xl border border-rose-200 px-5 py-4 text-sm text-rose-600 dark:border-rose-900/60 dark:text-rose-300">
             <AlertCircle size={15} />
             {error}
           </div>
         )}
 
-        {!loading && !error && (
+        {!error && (
           <div className="overflow-hidden rounded-xl border border-[#e5e5e7] bg-white dark:border-[#3a3a3d] dark:bg-[#2a2a2d]">
             <div className="flex items-center justify-between gap-3 border-b border-[#e5e5e7] px-2 py-1.5 dark:border-[#3a3a3d]">
               <span className="text-[10px] font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400">{sortedRows.length} accounts</span>
@@ -775,7 +867,7 @@ export default function AgentBalance() {
                 </button>
               </div>
             </div>
-            <div className="max-h-[calc(100vh-140px)] overflow-y-auto">
+            <div className="max-h-[calc(100vh-140px)] overflow-y-auto overflow-x-scroll">
               <table className="w-full table-auto text-xs">
                 <colgroup>
                   {visibleColumns.map((col) => (
@@ -789,23 +881,68 @@ export default function AgentBalance() {
                         key={col.key}
                         style={{ minWidth: columnWidths[col.key] }}
                         className={headerCellClasses(sortColumn === col.key)}>
-                        {col.key === 'leader' ? (
+                        {col.key === 'brand' ? (
                           <div className="relative flex items-center justify-center gap-1">
+                            <span>{col.label}</span>
                             <button
                               type="button"
-                              onClick={() => {
-                                if (sortColumn === 'leader') {
-                                  setSortDirection((current) => current === 'asc' ? 'desc' : 'asc');
-                                } else {
-                                  setSortColumn('leader');
-                                  setSortDirection('asc');
+                              ref={brandButtonRef}
+                              onClick={(event) => {
+                                event.stopPropagation();
+                                const rect = brandButtonRef.current?.getBoundingClientRect();
+                                if (rect) {
+                                  const dropdownWidth = 176;
+                                  const left = Math.min(rect.left, window.innerWidth - dropdownWidth - 8);
+                                  setBrandMenuPos({ top: rect.bottom + 8, left: Math.max(8, left) });
                                 }
+                                setBrandMenuOpen((current) => !current);
                               }}
-                              className="flex items-center gap-1 text-center transition hover:opacity-80"
+                              className={`flex items-center justify-center rounded-full p-1 transition ${anyBrandUnchecked ? 'bg-indigo-100 text-indigo-700 dark:bg-indigo-500/30 dark:text-indigo-200' : 'text-[#6b7280] hover:bg-slate-200 dark:text-[#a0a0a0] dark:hover:bg-white/10'}`}
                             >
-                              <span>{col.label}</span>
-                              <SortIcon active={sortColumn === 'leader'} direction={sortDirection} />
+                              <Filter size={12} className={anyBrandUnchecked ? 'opacity-100' : 'opacity-70'} />
                             </button>
+                            {brandMenuOpen && typeof document !== 'undefined' && createPortal(
+                              <div
+                                ref={brandDropdownRef}
+                                style={{ position: 'fixed', top: brandMenuPos.top, left: brandMenuPos.left }}
+                                className="z-[9999] w-44 rounded-xl border border-[#e5e5e7] bg-white p-2 shadow-xl dark:border-[#3a3a3d] dark:bg-[#2a2a2d]"
+                                onClick={(event) => event.stopPropagation()}
+                              >
+                                <div className="px-2 py-1.5 text-center text-[10px] font-semibold uppercase tracking-[0.24em] text-[#6b7280] dark:text-[#a0a0a0]">Filter</div>
+                                <div className="max-h-56 overflow-y-auto">
+                                  <label className="flex w-full items-center justify-center gap-2 rounded-xl px-3 py-1.5 text-center text-[10px] text-[#6b7280] hover:bg-[#f5f5f7] dark:text-[#a0a0a0] dark:hover:bg-slate-800">
+                                    <input
+                                      type="checkbox"
+                                      checked={allBrandsChecked}
+                                      onChange={() => {
+                                        const nextValue = !allBrandsChecked;
+                                        setBrandFilter(
+                                          Object.fromEntries(brandOptions.map((name) => [name, nextValue]))
+                                        );
+                                      }}
+                                    />
+                                    <span>All</span>
+                                  </label>
+                                  {brandOptions.map((brand) => (
+                                    <label key={brand} className="flex w-full items-center justify-center gap-2 rounded-xl px-3 py-1.5 text-center text-[10px] text-[#6b7280] hover:bg-[#f5f5f7] dark:text-[#a0a0a0] dark:hover:bg-slate-800">
+                                      <input
+                                        type="checkbox"
+                                        checked={isBrandChecked(brand)}
+                                        onChange={() => {
+                                          setBrandFilter((current) => ({ ...current, [brand]: !isBrandChecked(brand) }));
+                                        }}
+                                      />
+                                      <span>{brand}</span>
+                                    </label>
+                                  ))}
+                                </div>
+                              </div>,
+                              document.body
+                            )}
+                          </div>
+                        ) : col.key === 'leader' ? (
+                          <div className="relative flex items-center justify-center gap-1">
+                            <span>{col.label}</span>
                             <button
                               type="button"
                               ref={leaderButtonRef}
@@ -962,11 +1099,11 @@ export default function AgentBalance() {
                   {pagedRows.length > 0 ? pagedRows.map((row, i) => (
                     <tr
                       key={row.agentName || i}
-                      className={i % 2 === 0 ? 'bg-[#f5f5f7] dark:bg-slate-800/40' : 'bg-white dark:bg-[#2a2a2d]'}
+                      className="bg-white dark:bg-[#2a2a2d]"
                     >
                       {visibleColumns.map((col) => renderCell(row, col.key))}
                     </tr>
-                  )) : (
+                  )) : !loading && (
                     <tr>
                       <td colSpan={Math.max(visibleColumns.length, 1)} className="px-3 py-8 text-center text-[9px] text-[#6b7280] dark:text-[#a0a0a0]">
                         No matching accounts found.

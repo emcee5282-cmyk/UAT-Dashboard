@@ -3,7 +3,7 @@
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import { LayoutDashboard, BookOpen, Wallet, ArrowLeftRight, Sparkles, Menu, X, ChevronRight, CircleDollarSign, BarChart3 } from 'lucide-react';
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 
 const groups = [
   {
@@ -26,6 +26,11 @@ const groups = [
 export default function Sidebar() {
   const pathname = usePathname();
   const [mobileOpen, setMobileOpen] = useState(false);
+  const [mounted, setMounted] = useState(false);
+
+  useEffect(() => {
+    setMounted(true);
+  }, []);
 
   const NavContent = () => (
     <>
@@ -45,7 +50,13 @@ export default function Sidebar() {
       </div>
 
       <div className="flex-1 space-y-6 px-3 py-5">
-        {groups.map((group) => (
+        {!mounted ? (
+          <div className="space-y-2 px-3">
+            {Array.from({ length: 4 }).map((_, i) => (
+              <div key={i} className="skeleton h-4 w-3/4 rounded-md" />
+            ))}
+          </div>
+        ) : groups.map((group) => (
           <div key={group.title}>
             <p className="mb-2 px-3 text-[10px] font-semibold uppercase tracking-[0.28em] text-[#a0a0a0]">
               {group.title}
