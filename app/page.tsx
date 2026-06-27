@@ -702,11 +702,17 @@ export default function Dashboard() {
                       NG
                     </label>
                   </div>
-                  <div className="h-[320px] px-2 py-4">
+                  <div className="h-[320px] px-2 py-4 outline-none select-none" style={{ outline: 'none', userSelect: 'none' }}>
                     <ResponsiveContainer width="100%" height="100%">
                       <BarChart data={cashGoPeriod === 'week' ? cashGoWeekData : cashGoMonthData} margin={{ top: 5, right: 10, left: 0, bottom: 0 }}>
                         <CartesianGrid vertical={false} stroke="#e5e5e7" strokeDasharray="3 3" />
-                        <XAxis dataKey="day" tick={{ fontSize: 10, fill: '#6b7280' }} axisLine={false} tickLine={false} />
+                        <XAxis
+                          dataKey="day"
+                          tick={{ fontSize: 10, fill: '#6b7280' }}
+                          axisLine={false}
+                          tickLine={false}
+                          interval={(cashGoPeriod === 'week' ? cashGoWeekData : cashGoMonthData).length > 10 ? 1 : 0}
+                        />
                         <YAxis
                           domain={[0, 100]}
                           ticks={[0, 20, 40, 60, 80, 100]}
