@@ -439,7 +439,7 @@ export default function Dashboard() {
 
   const top50Agents = agentRows
     .filter((agent) => agent.totalDP > 0 && agent.runningBalance > 30000 && agent.runningBalance - agent.opening > 0)
-    .sort((a, b) => b.totalDP - a.totalDP || (b.runningBalance - b.opening) - (a.runningBalance - a.opening))
+    .sort((a, b) => (b.runningBalance - b.opening) - (a.runningBalance - a.opening))
     .slice(0, 50);
 
   const summaryCards: Array<{
@@ -769,7 +769,7 @@ export default function Dashboard() {
                   <thead>
                     <tr className="border-b border-slate-200 dark:border-slate-700">
                       {walletColumns.map((col) => (
-                        <th key={col.key} className="whitespace-nowrap px-3 py-2 text-center text-[10px] font-semibold text-slate-500 dark:text-slate-400">
+                        <th key={col.key} className="whitespace-nowrap px-3 py-2 text-center text-[11px] font-semibold text-slate-500 dark:text-slate-400">
                           {col.label}
                         </th>
                       ))}
@@ -778,15 +778,15 @@ export default function Dashboard() {
                   <tbody>
                     {filteredRows.length > 0 ? filteredRows.map((row) => (
                       <tr key={row.wallet} className="transition-colors hover:bg-slate-50 dark:hover:bg-slate-800/40">
-                        <td className="px-3 py-2 text-center text-[9px] font-bold text-slate-900 dark:text-white">{row.wallet}</td>
-                        <td className="px-3 py-2 text-center text-[9px] text-emerald-600 dark:text-emerald-400">{fmtCell(row.totalDP)}</td>
-                        <td className="px-3 py-2 text-center text-[9px] text-rose-600 dark:text-rose-400">{fmtCell(row.totalWD, true)}</td>
-                        <td className="px-3 py-2 text-center text-[9px] text-slate-700 dark:text-slate-300">{fmtCell(row.bdTransferIn)}</td>
-                        <td className="px-3 py-2 text-center text-[9px] text-slate-700 dark:text-slate-300">{fmtCell(row.stlm, true)}</td>
-                        <td className="px-3 py-2 text-center text-[9px] text-slate-700 dark:text-slate-300">{fmtCell(row.actualBal)}</td>
+                        <td className="px-3 py-2 text-center text-[10px] font-bold text-slate-900 dark:text-white">{row.wallet}</td>
+                        <td className="px-3 py-2 text-center text-[10px] text-emerald-600 dark:text-emerald-400">{fmtCell(row.totalDP)}</td>
+                        <td className="px-3 py-2 text-center text-[10px] text-rose-600 dark:text-rose-400">{fmtCell(row.totalWD, true)}</td>
+                        <td className="px-3 py-2 text-center text-[10px] text-slate-700 dark:text-slate-300">{fmtCell(row.bdTransferIn)}</td>
+                        <td className="px-3 py-2 text-center text-[10px] text-slate-700 dark:text-slate-300">{fmtCell(row.stlm, true)}</td>
+                        <td className="px-3 py-2 text-center text-[10px] text-slate-700 dark:text-slate-300">{fmtCell(row.actualBal)}</td>
                         <td className="px-3 py-2 text-center">
-                          <div className={`text-[9px] font-semibold ${row.runningBal < 0 ? 'text-rose-600 dark:text-rose-400' : 'text-slate-700 dark:text-slate-300'}`}>{fmtCell(row.runningBal, true)}</div>
-                          <div className={`mt-0.5 text-[8px] font-medium ${row.runningBal >= row.opening ? 'text-emerald-600 dark:text-emerald-400' : 'text-rose-600 dark:text-rose-400'}`}>
+                          <div className={`text-[10px] font-semibold ${row.runningBal < 0 ? 'text-rose-600 dark:text-rose-400' : 'text-slate-700 dark:text-slate-300'}`}>{fmtCell(row.runningBal, true)}</div>
+                          <div className={`mt-0.5 text-[9px] font-medium ${row.runningBal >= row.opening ? 'text-emerald-600 dark:text-emerald-400' : 'text-rose-600 dark:text-rose-400'}`}>
                             {row.runningBal >= row.opening ? '▲' : '▼'} {fmtCell(row.runningBal - row.opening)}
                           </div>
                         </td>
