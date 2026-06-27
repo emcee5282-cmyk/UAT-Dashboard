@@ -4,6 +4,7 @@ import { useEffect, useState, useCallback } from 'react';
 import { Activity, RefreshCw, AlertCircle, Search, ArrowUpRight, ArrowDownRight } from 'lucide-react';
 import { Bar, BarChart, ResponsiveContainer, XAxis, YAxis, Tooltip, CartesianGrid } from 'recharts';
 import ThemeToggle from './components/ThemeToggle';
+import { useTheme } from './components/ThemeProvider';
 
 type CashGoPoint = {
   day: string;
@@ -159,7 +160,7 @@ function fmtTooltipAbbrev(num: number): string {
   return `${str}${suffix}`;
 }
 
-function renderTooltipLine(label: string, amount: number, quota: number, boldLabel: boolean) {
+function renderTooltipLine(label: string, amount: number, quota: number, boldLabel: boolean, pct?: number) {
   const labelClassName = boldLabel ? 'font-bold text-slate-900 dark:text-white' : 'font-normal text-slate-600 dark:text-slate-300';
   if (quota === 0) {
     return (
@@ -171,6 +172,7 @@ function renderTooltipLine(label: string, amount: number, quota: number, boldLab
   return (
     <>
       <span className={labelClassName}>{label}:</span> {fmtTooltipAbbrev(amount)} / {fmtTooltipAbbrev(quota)}
+      {pct !== undefined && ` (${pct.toFixed(0)}%)`}
     </>
   );
 }
@@ -188,7 +190,7 @@ function CashGoTooltip({ active, payload }: { active?: boolean; payload?: Array<
         <>
           <p className="text-slate-600 dark:text-slate-300">{renderTooltipLine('Bkash', point.bkAmount, point.bkQuota, false)}</p>
           <p className="text-slate-600 dark:text-slate-300">{renderTooltipLine('Nagad', point.ngAmount, point.ngQuota, false)}</p>
-          <p className="mt-1.5 text-slate-600 dark:text-slate-300">{renderTooltipLine('Total', point.totalAmount, point.totalQuota, true)}</p>
+          <p className="mt-1.5 text-slate-600 dark:text-slate-300">{renderTooltipLine('Total', point.totalAmount, point.totalQuota, true, point.totalPct)}</p>
         </>
       )}
     </div>
@@ -208,6 +210,8 @@ const walletColumns: { key: WalletColumnKey; label: string }[] = [
 ];
 
 export default function Dashboard() {
+  const { theme } = useTheme();
+  const isDark = theme === 'dark';
   const [rows, setRows] = useState<Row[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
@@ -708,23 +712,23 @@ export default function Dashboard() {
                         <CartesianGrid vertical={false} stroke="#e5e5e7" strokeDasharray="3 3" />
                         <XAxis
                           dataKey="day"
-                          tick={{ fontSize: 10, fill: '#6b7280' }}
-                          axisLine={false}
-                          tickLine={false}
+                          tick={{ fontSize: 11, fontWeight: 600, fill: isDark ? '#cbd5e1' : '#334155' }}
+                          axisLine={{ stroke: isDark ? '#475569' : '#94a3b8' }}
+                          tickLine={{ stroke: isDark ? '#475569' : '#94a3b8' }}
                           interval={(cashGoPeriod === 'week' ? cashGoWeekData : cashGoMonthData).length > 10 ? 1 : 0}
                         />
                         <YAxis
                           domain={[0, 100]}
                           ticks={[0, 20, 40, 60, 80, 100]}
-                          tick={{ fontSize: 10, fill: '#6b7280' }}
-                          axisLine={false}
-                          tickLine={false}
+                          tick={{ fontSize: 11, fontWeight: 600, fill: isDark ? '#cbd5e1' : '#334155' }}
+                          axisLine={{ stroke: isDark ? '#475569' : '#94a3b8' }}
+                          tickLine={{ stroke: isDark ? '#475569' : '#94a3b8' }}
                           tickFormatter={(value: number) => `${value}%`}
                         />
                         <Tooltip content={<CashGoTooltip />} />
-                        <Bar dataKey="totalPct" name="Total Combined %" fill="#1f2937" radius={[3, 3, 0, 0]} activeBar={{ fill: '#0f172a' }} />
-                        {showBk && <Bar dataKey="bkPct" name="BK Usage %" fill="#cbd5e1" radius={[3, 3, 0, 0]} activeBar={{ fill: '#334155' }} />}
-                        {showNg && <Bar dataKey="ngPct" name="NG Usage %" fill="#d4d4d8" radius={[3, 3, 0, 0]} activeBar={{ fill: '#334155' }} />}
+                        <Bar dataKey="totalPct" name="Total Combined %" fill={isDark ? '#f1f5f9' : '#1f2937'} radius={[3, 3, 0, 0]} activeBar={{ fill: isDark ? '#f1f5f9' : '#64748b', fillOpacity: 0.35 }} />
+                        {showBk && <Bar dataKey="bkPct" name="BK Usage %" fill={isDark ? '#64748b' : '#cbd5e1'} radius={[3, 3, 0, 0]} activeBar={{ fill: isDark ? '#f1f5f9' : '#64748b', fillOpacity: 0.35 }} />}
+                        {showNg && <Bar dataKey="ngPct" name="NG Usage %" fill={isDark ? '#71717a' : '#d4d4d8'} radius={[3, 3, 0, 0]} activeBar={{ fill: isDark ? '#f1f5f9' : '#64748b', fillOpacity: 0.35 }} />}
                       </BarChart>
                     </ResponsiveContainer>
                   </div>
@@ -743,14 +747,14 @@ export default function Dashboard() {
                       <div key={agent.agentName} className="flex items-start gap-3 px-4 py-2">
                         <span className="w-5 shrink-0 text-[9px] font-semibold text-slate-400 dark:text-slate-500">{index + 1}</span>
                         <div className="min-w-0 flex-1">
-                          <p className="truncate text-[10px] font-medium text-slate-900 dark:text-white">{agent.agentName}</p>
-                          <p className="text-[8px] text-slate-500 dark:text-slate-400">Bal. Inside: {fmtCell(agent.balanceInside)}</p>
+                          <p className="truncate text-[11px] font-medium text-slate-900 dark:text-white">{agent.agentName}</p>
+                          <p className="text-[9px] text-slate-500 dark:text-slate-400">Bal. Inside: {fmtCell(agent.balanceInside)}</p>
                         </div>
                         <div className="shrink-0 text-right">
-                          <p className={`text-[9px] font-semibold ${agent.runningBalance < 0 ? 'text-rose-600 dark:text-rose-400' : 'text-slate-700 dark:text-slate-300'}`}>
+                          <p className={`text-[10px] font-semibold ${agent.runningBalance < 0 ? 'text-rose-600 dark:text-rose-400' : 'text-slate-700 dark:text-slate-300'}`}>
                             {fmtCell(agent.runningBalance, true)}
                           </p>
-                          <p className={`text-[8px] font-medium ${up ? 'text-emerald-600 dark:text-emerald-400' : 'text-rose-600 dark:text-rose-400'}`}>
+                          <p className={`text-[9px] font-medium ${up ? 'text-emerald-600 dark:text-emerald-400' : 'text-rose-600 dark:text-rose-400'}`}>
                             {up ? '▲' : '▼'} {fmtCell(diff)}
                           </p>
                         </div>

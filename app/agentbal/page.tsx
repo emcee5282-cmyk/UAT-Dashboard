@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { AlertCircle, ChevronDown, ChevronUp, Download, Filter, Loader2, RefreshCw, Search } from 'lucide-react';
+import { AlertCircle, ChevronDown, ChevronUp, Download, Filter, RefreshCw, Search } from 'lucide-react';
 import * as XLSX from 'xlsx';
 import ThemeToggle from '../components/ThemeToggle';
 import { rawVal } from '@/app/lib/format';
@@ -260,56 +260,56 @@ function headerCellClasses(isSorted: boolean) {
   const bg = isSorted ? 'bg-indigo-50 dark:bg-indigo-500/10' : 'bg-white dark:bg-[#2a2a2d]';
   const color = isSorted ? 'text-indigo-600 dark:text-indigo-400' : 'text-slate-500 dark:text-slate-400';
   const rounded = isSorted ? 'rounded-md' : '';
-  return `sticky top-0 z-10 whitespace-nowrap border-b border-slate-200 px-3 py-1 text-center text-[10px] font-semibold uppercase dark:border-slate-700 ${bg} ${color} ${rounded}`;
+  return `sticky top-0 z-10 whitespace-nowrap border-b border-slate-200 px-4 py-3 text-center text-[10px] font-semibold uppercase dark:border-slate-700 ${bg} ${color} ${rounded}`;
 }
 
 function renderCell(row: MergedRow, key: ColumnKey) {
   switch (key) {
     case 'brand':
-      return <td key={key} className="whitespace-nowrap px-3 py-1 text-center text-[9px] text-slate-700 dark:text-slate-300">{row.brand}</td>;
+      return <td key={key} className="whitespace-nowrap px-4 py-2 text-center text-[9px] text-slate-700 dark:text-slate-300">{row.brand}</td>;
     case 'leader':
-      return <td key={key} className="whitespace-nowrap px-3 py-1 text-center text-[9px] text-slate-700 dark:text-slate-300">{row.leader}</td>;
+      return <td key={key} className="whitespace-nowrap px-4 py-2 text-center text-[9px] text-slate-700 dark:text-slate-300">{row.leader}</td>;
     case 'walletName':
-      return <td key={key} className="whitespace-nowrap px-3 py-1 text-center text-[9px] font-bold text-slate-900 dark:text-white">{row.agentName}</td>;
+      return <td key={key} className="whitespace-nowrap px-4 py-2 text-center text-[9px] font-bold text-slate-900 dark:text-white">{row.agentName}</td>;
     case 'sdp':
-      return <td key={key} className="whitespace-nowrap px-3 py-1 text-center text-[9px] text-slate-700 dark:text-slate-300">{displayNum(row.sdp)}</td>;
+      return <td key={key} className="whitespace-nowrap px-4 py-2 text-center text-[9px] text-slate-700 dark:text-slate-300">{displayNum(row.sdp)}</td>;
     case 'opening':
-      return <td key={key} className="whitespace-nowrap px-3 py-1 text-center text-[9px] text-slate-700 dark:text-slate-300">{displayNum(row.openingBal)}</td>;
+      return <td key={key} className="whitespace-nowrap px-4 py-2 text-center text-[9px] text-slate-700 dark:text-slate-300">{displayNum(row.openingBal)}</td>;
     case 'totalDP':
-      return <td key={key} className="whitespace-nowrap px-3 py-1 text-center text-[9px] text-slate-700 dark:text-slate-300">{displayNum(row.agentTotalDP)}</td>;
+      return <td key={key} className="whitespace-nowrap px-4 py-2 text-center text-[9px] text-slate-700 dark:text-slate-300">{displayNum(row.agentTotalDP)}</td>;
     case 'totalWD':
-      return <td key={key} className="whitespace-nowrap px-3 py-1 text-center text-[9px] text-slate-700 dark:text-slate-300">{displayNum(row.agentTotalWD)}</td>;
+      return <td key={key} className="whitespace-nowrap px-4 py-2 text-center text-[9px] text-slate-700 dark:text-slate-300">{displayNum(row.agentTotalWD)}</td>;
     case 'topUp':
-      return <td key={key} className="whitespace-nowrap px-3 py-1 text-center text-[9px] text-slate-700 dark:text-slate-300">{displayNum(row.totalTopUp)}</td>;
+      return <td key={key} className="whitespace-nowrap px-4 py-2 text-center text-[9px] text-slate-700 dark:text-slate-300">{displayNum(row.totalTopUp)}</td>;
     case 'settlement': {
       const settlementDisplay = displayNum(row.totalStlm);
       return (
-        <td key={key} className="whitespace-nowrap px-3 py-1 text-center text-[9px] text-slate-700 dark:text-slate-300">
+        <td key={key} className="whitespace-nowrap px-4 py-2 text-center text-[9px] text-slate-700 dark:text-slate-300">
           {settlementDisplay}
         </td>
       );
     }
     case 'balanceInside':
       return (
-        <td key={key} className="px-3 py-1 text-[9px] text-center text-slate-700 dark:text-slate-300">
+        <td key={key} className="px-4 py-2 text-[9px] text-center text-slate-700 dark:text-slate-300">
           {displayNum(String(row.balanceInside ?? 0))}
         </td>
       );
     case 'agentWithdrawal':
       return (
-        <td key={key} className="px-3 py-1 text-[9px] text-center text-slate-700 dark:text-slate-300">
+        <td key={key} className="px-4 py-2 text-[9px] text-center text-slate-700 dark:text-slate-300">
           {displayNum(String(row.agentWithdrawal))}
         </td>
       );
     case 'sdpVsBalance':
       return (
-        <td key={key} className="px-3 py-1 text-[9px] text-center text-slate-700 dark:text-slate-300">
+        <td key={key} className="px-4 py-2 text-[9px] text-center text-slate-700 dark:text-slate-300">
           {row.sdpVsBalance > 0 ? displayNum(String(Math.abs(row.sdpVsBalance))) : '−'}
         </td>
       );
     case 'walletStatus':
       return (
-        <td key={key} className={`whitespace-nowrap px-3 py-1 text-center text-[9px] ${row.walletStatus === 'No Record' ? 'text-slate-400 dark:text-slate-500' : 'text-slate-700 dark:text-slate-300'}`}>
+        <td key={key} className={`whitespace-nowrap px-4 py-2 text-center text-[9px] ${row.walletStatus === 'No Record' ? 'text-slate-400 dark:text-slate-500' : 'text-slate-700 dark:text-slate-300'}`}>
           {row.walletStatus}
         </td>
       );
@@ -323,7 +323,7 @@ function renderCell(row: MergedRow, key: ColumnKey) {
           ? 'text-rose-600 dark:text-rose-400'
           : 'text-slate-900 dark:text-white';
       return (
-        <td key={key} className={`whitespace-nowrap px-3 py-1 text-center text-[9px] font-bold ${companyBalanceColor}`}>
+        <td key={key} className={`whitespace-nowrap px-4 py-2 text-center text-[9px] font-bold ${companyBalanceColor}`}>
           {companyBalanceDisplay}
         </td>
       );
@@ -337,7 +337,6 @@ export default function AgentBalance() {
   const [error, setError] = useState('');
   const [lastUpdated, setLastUpdated] = useState('');
   const [spinning, setSpinning] = useState(false);
-  const hasLoadedRef = useRef(false);
   const [searchTerm, setSearchTerm] = useState('');
   const [leaderFilter, setLeaderFilter] = useState<Record<string, boolean>>({});
   const [brandFilter, setBrandFilter] = useState<Record<string, boolean>>({});
@@ -373,9 +372,7 @@ export default function AgentBalance() {
     scrollRef.current = window.scrollY;
     try {
       setSpinning(true);
-      if (!hasLoadedRef.current) {
-        setLoading(true);
-      }
+      setLoading(true);
       setError('');
 
       const [openingRes, balRes, stlmRes] = await Promise.all([
@@ -495,7 +492,6 @@ export default function AgentBalance() {
       });
 
       setRows(merged);
-      hasLoadedRef.current = true;
       setLastUpdated(new Date().toLocaleTimeString('en-PH', { hour: 'numeric', minute: '2-digit', hour12: true }));
       setTimeout(() => {
         requestAnimationFrame(() => {
@@ -743,14 +739,19 @@ export default function AgentBalance() {
           </div>
           <div className="flex flex-wrap items-center gap-3">
             <label className="flex items-center gap-2 rounded-xl border border-[#e5e5e7] px-2 py-1.5 text-[11px] text-[#6b7280] dark:border-[#3a3a3d] dark:text-[#a0a0a0]">
-              <Search size={12} />
-              <input
-                value={searchTerm}
-                onChange={(event) => setSearchTerm(event.target.value)}
-                disabled={loading}
-                className="w-32 bg-transparent outline-none disabled:opacity-50 md:w-48"
-                placeholder="Search"
-              />
+              {loading ? (
+                <div className="h-3 w-32 animate-pulse rounded-md bg-slate-200 dark:bg-slate-700 md:w-48" />
+              ) : (
+                <>
+                  <Search size={12} />
+                  <input
+                    value={searchTerm}
+                    onChange={(event) => setSearchTerm(event.target.value)}
+                    className="w-32 bg-transparent outline-none md:w-48"
+                    placeholder="Search"
+                  />
+                </>
+              )}
             </label>
             <span className="flex items-center gap-1.5 text-[11px] text-[#6b7280] dark:text-[#a0a0a0]">
               <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-emerald-500" />
@@ -770,15 +771,6 @@ export default function AgentBalance() {
       </header>
 
       <main className="relative space-y-2 p-3">
-        {loading && (
-          <div
-            className="fixed z-[9998] flex items-center justify-center bg-white/30 dark:bg-black/30"
-            style={{ top: 0, left: '256px', right: 0, bottom: 0 }}
-          >
-            <Loader2 size={28} className="animate-spin text-indigo-500" />
-          </div>
-        )}
-
         {error && (
           <div className="flex items-center gap-3 rounded-2xl border border-rose-200 px-5 py-4 text-sm text-rose-600 dark:border-rose-900/60 dark:text-rose-300">
             <AlertCircle size={15} />
@@ -792,7 +784,7 @@ export default function AgentBalance() {
               {loading ? (
                 <div className="h-2.5 w-24 rounded-md bg-slate-200 dark:bg-slate-700 animate-pulse" />
               ) : (
-                <span className="text-[10px] font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400">{sortedRows.length} accounts</span>
+                <span className="text-[11px] font-semibold text-slate-700 dark:text-slate-300">Total Accounts: {sortedRows.length.toLocaleString('en-PH')}</span>
               )}
               <div className="flex items-center gap-3">
               {loading ? (
@@ -818,7 +810,9 @@ export default function AgentBalance() {
                 </button>
               </div>
               )}
+              {loading && <div className="h-7 w-20 animate-pulse rounded-xl bg-slate-200 dark:bg-slate-700" />}
               <div className="relative">
+                  {!loading && (
                   <button
                     type="button"
                     ref={columnButtonRef}
@@ -834,6 +828,7 @@ export default function AgentBalance() {
                   >
                     <Filter size={14} />
                   </button>
+                  )}
                   {columnMenuOpen && typeof document !== 'undefined' && createPortal(
                     <div
                       ref={columnDropdownRef}
@@ -873,6 +868,7 @@ export default function AgentBalance() {
                     document.body
                   )}
                 </div>
+                {!loading && (
                 <button
                   type="button"
                   onClick={handleExport}
@@ -881,6 +877,7 @@ export default function AgentBalance() {
                 >
                   <Download size={14} />
                 </button>
+                )}
               </div>
             </div>
             <div className="max-h-[calc(100vh-140px)] overflow-y-auto overflow-x-scroll">
@@ -897,9 +894,11 @@ export default function AgentBalance() {
                         key={col.key}
                         style={{ minWidth: columnWidths[col.key] }}
                         className={headerCellClasses(sortColumn === col.key)}>
-                        {col.key === 'brand' ? (
+                        {loading ? (
+                          <div className="mx-auto h-2.5 w-12 animate-pulse rounded-md bg-slate-200 dark:bg-slate-700" />
+                        ) : col.key === 'brand' ? (
                           <div className="relative flex items-center justify-center gap-1">
-                            <span>{col.label}</span>
+                            <span className="normal-case font-semibold text-slate-700 dark:text-slate-300">{col.label}</span>
                             <button
                               type="button"
                               ref={brandButtonRef}
@@ -958,7 +957,7 @@ export default function AgentBalance() {
                           </div>
                         ) : col.key === 'leader' ? (
                           <div className="relative flex items-center justify-center gap-1">
-                            <span>{col.label}</span>
+                            <span className="normal-case font-semibold text-slate-700 dark:text-slate-300">{col.label}</span>
                             <button
                               type="button"
                               ref={leaderButtonRef}
@@ -1112,14 +1111,22 @@ export default function AgentBalance() {
                   </tr>
                 </thead>
                 <tbody>
-                  {pagedRows.length > 0 ? pagedRows.map((row, i) => (
+                  {loading ? (
+                    Array.from({ length: 12 }).map((_, rowIndex) => (
+                      <tr key={rowIndex} className="bg-white dark:bg-[#2a2a2d]">
+                        <td colSpan={Math.max(visibleColumns.length, 1)} className="px-4 py-2">
+                          <div className="h-2.5 w-full animate-pulse rounded-md bg-slate-200 dark:bg-slate-700" />
+                        </td>
+                      </tr>
+                    ))
+                  ) : pagedRows.length > 0 ? pagedRows.map((row, i) => (
                     <tr
                       key={row.agentName || i}
                       className="bg-white dark:bg-[#2a2a2d]"
                     >
                       {visibleColumns.map((col) => renderCell(row, col.key))}
                     </tr>
-                  )) : !loading && (
+                  )) : (
                     <tr>
                       <td colSpan={Math.max(visibleColumns.length, 1)} className="px-3 py-8 text-center text-[9px] text-[#6b7280] dark:text-[#a0a0a0]">
                         No matching accounts found.
