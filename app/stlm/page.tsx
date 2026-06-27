@@ -83,6 +83,8 @@ export default function StlmPage() {
   const [brandFilter, setBrandFilter] = useState<Record<string, boolean>>({});
   const [brandMenuOpen, setBrandMenuOpen] = useState(false);
   const [brandMenuPos, setBrandMenuPos] = useState({ top: 0, left: 0 });
+  const [page, setPage] = useState(1);
+  const rowsPerPage = 50;
   const brandButtonRef = useRef<HTMLButtonElement>(null);
   const brandDropdownRef = useRef<HTMLDivElement>(null);
 
@@ -129,6 +131,10 @@ export default function StlmPage() {
   useEffect(() => {
     fetchData();
   }, [fetchData]);
+
+  useEffect(() => {
+    setPage(1);
+  }, [searchTerm, brandFilter, sortColumn, sortDirection]);
 
   useEffect(() => {
     if (!brandMenuOpen) return;
@@ -199,6 +205,18 @@ export default function StlmPage() {
     return list;
   }, [filteredRows, sortColumn, sortDirection]);
 
+  const totalPages = Math.max(1, Math.ceil(sortedRows.length / rowsPerPage));
+  const currentPage = Math.min(page, totalPages);
+  const startIndex = (currentPage - 1) * rowsPerPage;
+  const endIndex = startIndex + rowsPerPage;
+  const pagedRows = sortedRows.slice(startIndex, endIndex);
+
+  useEffect(() => {
+    if (page !== currentPage) {
+      setPage(currentPage);
+    }
+  }, [page, currentPage]);
+
   return (
     <div className="min-h-screen bg-[#f5f5f7] text-[#1a1a1a] transition-colors duration-300 dark:bg-[#1c1c1e] dark:text-white">
       <header className="border-b border-[#e5e5e7] bg-white px-4 py-2 dark:border-[#3a3a3d] dark:bg-[#2a2a2d] md:px-8">
@@ -252,11 +270,34 @@ export default function StlmPage() {
 
         {!error && (
           <div className="rounded-xl border border-[#e5e5e7] bg-white dark:border-[#3a3a3d] dark:bg-[#2a2a2d]">
-            <div className="flex items-center justify-end gap-3 border-b border-[#e5e5e7] px-2 py-1.5 dark:border-[#3a3a3d]">
+            <div className="flex items-center justify-between gap-3 border-b border-[#e5e5e7] px-2 py-1.5 dark:border-[#3a3a3d]">
               {loading ? (
                 <div className="h-2.5 w-24 rounded-md bg-slate-200 dark:bg-slate-700 animate-pulse" />
               ) : (
                 <span className="text-[10px] font-semibold text-slate-500 dark:text-slate-400">{sortedRows.length} records</span>
+              )}
+              {loading ? (
+                <div className="h-2.5 w-32 rounded-md bg-slate-200 dark:bg-slate-700 animate-pulse" />
+              ) : (
+                <div className="flex items-center gap-1.5 rounded-xl border border-[#e5e5e7] px-2 py-0.5 dark:border-[#3a3a3d]">
+                  <button
+                    type="button"
+                    onClick={() => setPage((current) => Math.max(1, current - 1))}
+                    disabled={currentPage === 1}
+                    className="rounded-xl px-1.5 py-0.5 text-[10px] font-semibold text-slate-600 transition disabled:cursor-not-allowed disabled:opacity-40 dark:text-slate-300"
+                  >
+                    Previous
+                  </button>
+                  <span className="text-[10px] text-slate-500 dark:text-slate-400">Page {currentPage} of {totalPages}</span>
+                  <button
+                    type="button"
+                    onClick={() => setPage((current) => Math.min(totalPages, current + 1))}
+                    disabled={currentPage === totalPages}
+                    className="rounded-xl px-1.5 py-0.5 text-[10px] font-semibold text-slate-600 transition disabled:cursor-not-allowed disabled:opacity-40 dark:text-slate-300"
+                  >
+                    Next
+                  </button>
+                </div>
               )}
             </div>
             <div className="max-h-[calc(100vh-140px)] overflow-y-auto">
@@ -346,7 +387,7 @@ export default function StlmPage() {
                   </tr>
                 </thead>
                 <tbody>
-                  {sortedRows.length > 0 ? sortedRows.map((row, i) => (
+                  {pagedRows.length > 0 ? pagedRows.map((row, i) => (
                     <tr key={i} className="bg-white dark:bg-[#2a2a2d]">
                       <td className="px-3 py-2 text-center text-[9px] text-slate-700 dark:text-slate-300">{mapBrand(row.brand)}</td>
                       <td className="px-3 py-2 text-center text-[9px] font-bold text-slate-900 dark:text-white">{row.agentName}</td>
