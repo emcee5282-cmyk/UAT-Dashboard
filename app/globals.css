@@ -19,6 +19,13 @@
   box-sizing: border-box;
 }
 
+.recharts-wrapper:focus,
+.recharts-wrapper *:focus,
+.recharts-surface:focus,
+.recharts-surface *:focus {
+  outline: none !important;
+}
+
 html {
   background: var(--background);
 }
