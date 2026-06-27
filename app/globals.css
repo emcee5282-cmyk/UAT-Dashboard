@@ -19,6 +19,11 @@
   box-sizing: border-box;
 }
 
+html,
+body {
+  min-width: 1280px;
+}
+
 .recharts-wrapper:focus,
 .recharts-wrapper *:focus,
 .recharts-surface:focus,
