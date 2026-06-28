@@ -48,7 +48,7 @@ export default function Sidebar() {
           <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-indigo-50 ring-1 ring-indigo-100 dark:bg-indigo-500/15 dark:ring-indigo-400/20">
             <Sparkles size={16} className="text-indigo-500 dark:text-indigo-300" />
           </div>
-          <div className={`overflow-hidden whitespace-nowrap transition-all duration-300 ${expanded ? 'w-auto opacity-100' : 'w-0 opacity-0'}`}>
+          <div className={`overflow-hidden whitespace-nowrap transition-all duration-300 ${expanded ? 'max-w-[160px] opacity-100' : 'max-w-0 opacity-0'}`}>
             <p className="text-sm font-semibold text-slate-900 dark:text-white">Operations</p>
             <p className="text-[10px] text-slate-400 dark:text-[#a0a0a0]">Dashboard</p>
           </div>
@@ -92,7 +92,7 @@ export default function Sidebar() {
                     }`}
                   >
                     <Icon size={15} className="shrink-0" />
-                    <span className={`overflow-hidden whitespace-nowrap transition-all duration-300 ${expanded ? 'w-auto opacity-100' : 'w-0 opacity-0'}`}>
+                    <span className={`overflow-hidden whitespace-nowrap transition-all duration-300 ${expanded ? 'max-w-[160px] opacity-100' : 'max-w-0 opacity-0'}`}>
                       {item.label}
                     </span>
                   </Link>
@@ -115,7 +115,7 @@ export default function Sidebar() {
                   >
                     <span className={`flex items-center gap-3 ${expanded ? '' : 'justify-center'}`}>
                       <ParentIcon size={15} className="shrink-0" />
-                      <span className={`overflow-hidden whitespace-nowrap transition-all duration-300 ${expanded ? 'w-auto opacity-100' : 'w-0 opacity-0'}`}>
+                      <span className={`overflow-hidden whitespace-nowrap transition-all duration-300 ${expanded ? 'max-w-[160px] opacity-100' : 'max-w-0 opacity-0'}`}>
                         {item.label}
                       </span>
                     </span>
@@ -137,7 +137,7 @@ export default function Sidebar() {
                             key={child.href}
                             href={child.href}
                             onClick={() => setMobileOpen(false)}
-                            className={`flex items-center gap-2.5 rounded-lg px-3 py-2 text-[13px] font-medium transition-colors ${
+                            className={`flex items-center gap-2.5 whitespace-nowrap rounded-lg px-3 py-2 text-[13px] font-medium transition-colors ${
                               active
                                 ? 'bg-slate-100 text-slate-900 dark:bg-white/10 dark:text-white'
                                 : 'text-slate-500 hover:bg-slate-50 hover:text-slate-900 dark:text-[#a0a0a0] dark:hover:bg-white/5 dark:hover:text-white'
@@ -162,7 +162,7 @@ export default function Sidebar() {
           <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-slate-100 text-[12px] font-semibold text-slate-600 dark:bg-white/10 dark:text-white">
             OP
           </div>
-          <div className={`min-w-0 overflow-hidden whitespace-nowrap transition-all duration-300 ${expanded ? 'w-auto opacity-100' : 'w-0 opacity-0'}`}>
+          <div className={`min-w-0 overflow-hidden whitespace-nowrap transition-all duration-300 ${expanded ? 'max-w-[160px] opacity-100' : 'max-w-0 opacity-0'}`}>
             <p className="truncate text-[13px] font-medium text-slate-900 dark:text-white">Operations Admin</p>
             <p className="truncate text-[11px] text-slate-400 dark:text-[#a0a0a0]">admin@operations.com</p>
           </div>
