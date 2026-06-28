@@ -15,6 +15,7 @@ import {
   Sparkles,
 } from 'lucide-react';
 import { useEffect, useState } from 'react';
+import { fetchTransferQueueCount } from '@/app/lib/transferQueueCount';
 
 const navItems = [
   { href: '/', label: 'Dashboard', icon: LayoutDashboard },
@@ -26,6 +27,7 @@ const navItems = [
       { href: '/summary', label: 'Opening', icon: BookOpen },
       { href: '/stlm', label: 'Settlement', icon: ArrowLeftRight },
       { href: '/topup', label: 'Top Up', icon: PlusCircle },
+      { href: '/transfer-queue', label: 'Transfer Queue', icon: ArrowLeftRight },
     ],
   },
 ];
@@ -36,9 +38,16 @@ export default function Sidebar() {
   const [mounted, setMounted] = useState(false);
   const [agentOpen, setAgentOpen] = useState(true);
   const [isExpanded, setIsExpanded] = useState(false);
+  const [transferQueueCount, setTransferQueueCount] = useState<number | null>(null);
 
   useEffect(() => {
     setMounted(true);
+  }, []);
+
+  useEffect(() => {
+    fetchTransferQueueCount()
+      .then(setTransferQueueCount)
+      .catch(() => setTransferQueueCount(null));
   }, []);
 
   const NavContent = ({ expanded }: { expanded: boolean }) => (
@@ -114,10 +123,22 @@ export default function Sidebar() {
                     }`}
                   >
                     <span className={`flex items-center gap-3 ${expanded ? '' : 'justify-center'}`}>
-                      <ParentIcon size={15} className="shrink-0" />
+                      <span className="relative shrink-0">
+                        <ParentIcon size={15} className="shrink-0" />
+                        {!expanded && !!transferQueueCount && transferQueueCount > 0 && (
+                          <span className="absolute -right-1.5 -top-1.5 flex h-3 min-w-[12px] items-center justify-center rounded-full bg-slate-200 px-0.5 text-[7px] font-semibold leading-none text-slate-700 dark:bg-slate-700 dark:text-slate-300">
+                            {transferQueueCount > 99 ? '99+' : transferQueueCount}
+                          </span>
+                        )}
+                      </span>
                       <span className={`overflow-hidden whitespace-nowrap transition-all duration-300 ${expanded ? 'max-w-[160px] opacity-100' : 'max-w-0 opacity-0'}`}>
                         {item.label}
                       </span>
+                      {expanded && !!transferQueueCount && transferQueueCount > 0 && (
+                        <span className="flex h-4 min-w-[16px] shrink-0 items-center justify-center rounded-full bg-slate-200 px-1 text-[10px] font-semibold leading-none text-slate-700 dark:bg-slate-700 dark:text-slate-300">
+                          {transferQueueCount > 99 ? '99+' : transferQueueCount}
+                        </span>
+                      )}
                     </span>
                     {expanded && (
                       <ChevronDown
@@ -132,19 +153,30 @@ export default function Sidebar() {
                       {item.children.map((child) => {
                         const ChildIcon = child.icon;
                         const active = pathname === child.href;
+                        const isTransferQueue = child.href === '/transfer-queue';
                         return (
                           <Link
                             key={child.href}
                             href={child.href}
                             onClick={() => setMobileOpen(false)}
-                            className={`flex items-center gap-2.5 whitespace-nowrap rounded-lg px-3 py-2 text-[13px] font-medium transition-colors ${
+                            className={`flex items-center justify-between gap-2.5 whitespace-nowrap rounded-lg px-3 py-2 text-[13px] font-medium transition-colors ${
                               active
                                 ? 'bg-slate-100 text-slate-900 dark:bg-white/10 dark:text-white'
                                 : 'text-slate-500 hover:bg-slate-50 hover:text-slate-900 dark:text-[#a0a0a0] dark:hover:bg-white/5 dark:hover:text-white'
                             }`}
                           >
-                            <ChildIcon size={14} className="shrink-0" />
-                            {child.label}
+                            <span className="flex items-center gap-2.5">
+                              <ChildIcon size={14} className="shrink-0" />
+                              {child.label}
+                            </span>
+                            {isTransferQueue && !!transferQueueCount && transferQueueCount > 0 && (
+                              <span
+                                title={`${transferQueueCount} agent${transferQueueCount === 1 ? '' : 's'} need transfer`}
+                                className="flex h-4 min-w-[16px] shrink-0 items-center justify-center rounded-full bg-slate-200 px-1 text-[10px] font-semibold leading-none text-slate-700 dark:bg-slate-700 dark:text-slate-300"
+                              >
+                                {transferQueueCount > 99 ? '99+' : transferQueueCount}
+                              </span>
+                            )}
                           </Link>
                         );
                       })}
@@ -189,8 +221,8 @@ export default function Sidebar() {
       <aside
         onMouseEnter={() => setIsExpanded(true)}
         onMouseLeave={() => setIsExpanded(false)}
-        className={`hidden h-screen shrink-0 flex-col overflow-hidden border-r border-[#e5e5e7] bg-white text-slate-900 transition-all duration-300 dark:border-[#3a3a3d] dark:bg-[#1c1c1e] dark:text-white md:flex ${
-          isExpanded ? 'w-64' : 'w-16'
+        className={`fixed left-0 top-0 z-40 hidden h-screen flex-col overflow-hidden border-r border-[#e5e5e7] bg-white text-slate-900 transition-all duration-300 dark:border-[#3a3a3d] dark:bg-[#1c1c1e] dark:text-white md:flex ${
+          isExpanded ? 'w-64 shadow-xl' : 'w-16'
         }`}
       >
         <NavContent expanded={isExpanded} />

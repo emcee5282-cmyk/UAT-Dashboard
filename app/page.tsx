@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useState, useCallback } from 'react';
-import { Activity, RefreshCw, AlertCircle, Search, ArrowUpRight, ArrowDownRight } from 'lucide-react';
+import { RefreshCw, AlertCircle, Search } from 'lucide-react';
 import { Bar, BarChart, ResponsiveContainer, XAxis, YAxis, Tooltip, CartesianGrid } from 'recharts';
 import ThemeToggle from './components/ThemeToggle';
 import { useTheme } from './components/ThemeProvider';
@@ -446,44 +446,47 @@ export default function Dashboard() {
     .sort((a, b) => (b.runningBalance - b.opening) - (a.runningBalance - a.opening))
     .slice(0, 50);
 
+  const actualBalTotal = dataRows.reduce((sum, row) => sum + row.actualBal, 0);
+
   const summaryCards: Array<{
     label: string;
     bigValue: string;
     bigNegative: boolean;
-    subArrow: string;
     subAmount: string;
     subSuffix?: string;
     subPositive: boolean;
-    icon: typeof Activity;
+    showArrow?: boolean;
   }> = totalRow
     ? [
         {
           label: 'Total Deposit',
           bigValue: fmtAbbrev(totalRow.totalDP),
           bigNegative: false,
-          subArrow: '↗',
           subAmount: fmt(totalRow.totalDP),
           subPositive: true,
-          icon: ArrowUpRight,
         },
         {
           label: 'Total Withdrawal',
           bigValue: fmtAbbrev(totalRow.totalWD),
           bigNegative: false,
-          subArrow: '↘',
           subAmount: fmt(totalRow.totalWD),
           subPositive: false,
-          icon: ArrowDownRight,
+        },
+        {
+          label: 'Actual Balance',
+          bigValue: fmtAbbrev(actualBalTotal),
+          bigNegative: actualBalTotal < 0,
+          subAmount: fmt(actualBalTotal),
+          subPositive: actualBalTotal >= 0,
         },
         {
           label: 'Running Balance',
           bigValue: fmtAbbrev(runningBalTotal),
           bigNegative: runningBalTotal < 0,
-          subArrow: runningVsOpening >= 0 ? '▲' : '▼',
           subAmount: fmt(runningVsOpening),
           subSuffix: 'vs opening',
           subPositive: runningVsOpening >= 0,
-          icon: Activity,
+          showArrow: true,
         },
       ]
     : [];
@@ -527,15 +530,12 @@ export default function Dashboard() {
           <>
             <div className="relative flex flex-col gap-4">
               <div className="flex flex-col gap-4 lg:w-[70%]">
-                <section className="grid gap-3 sm:grid-cols-3">
-                  {Array.from({ length: 3 }).map((_, index) => (
-                    <div key={index} className="rounded-2xl border border-[#e5e5e7] bg-white p-3 shadow-sm dark:border-[#3a3a3d] dark:bg-[#2a2a2d]">
-                      <div className="flex items-center justify-between gap-2">
-                        <div className="h-3 w-20 animate-pulse rounded-md bg-slate-200 dark:bg-slate-700" />
-                        <div className="h-3 w-3 animate-pulse rounded-full bg-slate-200 dark:bg-slate-700" />
-                      </div>
-                      <div className="mt-1.5 h-5 w-24 animate-pulse rounded-md bg-slate-200 dark:bg-slate-700" />
-                      <div className="mt-1.5 h-3 w-28 animate-pulse rounded-md bg-slate-200 dark:bg-slate-700" />
+                <section className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+                  {Array.from({ length: 4 }).map((_, index) => (
+                    <div key={index} className="rounded-2xl border border-[#e5e5e7] bg-white p-2.5 shadow-sm dark:border-[#3a3a3d] dark:bg-[#2a2a2d]">
+                      <div className="h-2.5 w-16 animate-pulse rounded-md bg-slate-200 dark:bg-slate-700" />
+                      <div className="mt-1 h-4 w-20 animate-pulse rounded-md bg-slate-200 dark:bg-slate-700" />
+                      <div className="mt-1 h-2.5 w-24 animate-pulse rounded-md bg-slate-200 dark:bg-slate-700" />
                     </div>
                   ))}
                 </section>
@@ -620,26 +620,20 @@ export default function Dashboard() {
           <>
             <div className="relative flex flex-col gap-4">
               <div className="flex flex-col gap-4 lg:w-[70%]">
-                <section className="grid gap-3 sm:grid-cols-3">
-                  {summaryCards.map((card) => {
-                    const Icon = card.icon;
-                    return (
-                      <div key={card.label} className="rounded-2xl border border-[#e5e5e7] bg-white p-3 shadow-sm dark:border-[#3a3a3d] dark:bg-[#2a2a2d]">
-                        <div className="flex items-center justify-between gap-2">
-                          <span className="text-[11px] font-medium text-[#6b7280] dark:text-[#a0a0a0]">{card.label}</span>
-                          <Icon size={13} className="text-slate-300 dark:text-slate-600" />
-                        </div>
-                        <p className={`mt-1.5 text-lg font-bold ${card.bigNegative ? 'text-rose-600 dark:text-rose-400' : 'text-[#1a1a1a] dark:text-white'}`}>
-                          {card.bigNegative ? '-' : ''}{card.bigValue}
-                        </p>
-                        <div className={`mt-0.5 flex items-center gap-1 text-[10px] font-medium ${card.subPositive ? 'text-emerald-600 dark:text-emerald-400' : 'text-rose-600 dark:text-rose-400'}`}>
-                          <span>{card.subArrow}</span>
-                          <span>{card.subAmount}</span>
-                          {card.subSuffix && <span className="font-normal text-[#6b7280] dark:text-[#a0a0a0]">{card.subSuffix}</span>}
-                        </div>
+                <section className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+                  {summaryCards.map((card) => (
+                    <div key={card.label} className="rounded-2xl border border-[#e5e5e7] bg-white p-2.5 shadow-sm dark:border-[#3a3a3d] dark:bg-[#2a2a2d]">
+                      <span className="text-[10px] font-medium text-[#6b7280] dark:text-[#a0a0a0]">{card.label}</span>
+                      <p className={`mt-1 text-base font-bold ${card.bigNegative ? 'text-rose-600 dark:text-rose-400' : 'text-[#1a1a1a] dark:text-white'}`}>
+                        {card.bigNegative ? '-' : ''}{card.bigValue}
+                      </p>
+                      <div className={`mt-0.5 flex items-center gap-1 text-[10px] font-medium ${card.subPositive ? 'text-emerald-600 dark:text-emerald-400' : 'text-rose-600 dark:text-rose-400'}`}>
+                        {card.showArrow && <span>{card.subPositive ? '▲' : '▼'}</span>}
+                        <span>{card.subAmount}</span>
+                        {card.subSuffix && <span className="font-normal text-[#6b7280] dark:text-[#a0a0a0]">{card.subSuffix}</span>}
                       </div>
-                    );
-                  })}
+                    </div>
+                  ))}
                 </section>
 
                 <section className="overflow-hidden rounded-2xl border border-[#e5e5e7] bg-white shadow-sm dark:border-[#3a3a3d] dark:bg-[#2a2a2d]">

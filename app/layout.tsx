@@ -34,7 +34,7 @@ export default function RootLayout({
       <body className={`${outfit.variable} font-sans flex min-h-screen overflow-x-auto overflow-y-hidden bg-[#f5f5f7] text-[#1a1a1a] transition-colors duration-300 dark:bg-[#1c1c1e] dark:text-white`}>
         <ThemeProvider>
           <Sidebar />
-          <main className="h-screen flex-1 overflow-y-auto">{children}</main>
+          <main className="h-screen flex-1 overflow-y-auto md:ml-16">{children}</main>
         </ThemeProvider>
       </body>
     </html>
