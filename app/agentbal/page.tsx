@@ -25,6 +25,7 @@ type MergedRow = OpeningRow & {
   sdpVsBalance: number;
   walletStatus: string;
   brand: string;
+  walletType: string;
 };
 
 function parseCsvLines(text: string): string[][] {
@@ -149,6 +150,32 @@ function computeWalletStatus(statuses: string[]): string {
 
 const WALLET_STATUS_OPTIONS = ['DP + WD', 'DP Only', 'WD Only', 'Top Up Acc.', 'Wallet With Issue', 'Disconnected', 'Account Problem', 'No Record'];
 
+const WALLET_TYPE_ORDER = [
+  { match: 'BKASH', abbreviation: 'BK' },
+  { match: 'NAGAD', abbreviation: 'NG' },
+  { match: 'ROCKET', abbreviation: 'RK' },
+  { match: 'UPAY', abbreviation: 'UP' },
+];
+
+function computeWalletType(types: string[]): string {
+  const normalized = new Set(types.map((raw) => raw.trim().toUpperCase()).filter((t) => t && t !== '-'));
+
+  const abbreviations = WALLET_TYPE_ORDER
+    .filter(({ match }) => normalized.has(match))
+    .map(({ abbreviation }) => abbreviation);
+
+  return abbreviations.length > 0 ? abbreviations.join(' | ') : '−';
+}
+
+const WALLET_TYPE_FILTER_OPTIONS = [
+  { label: 'Bkash', abbreviation: 'BK' },
+  { label: 'Nagad', abbreviation: 'NG' },
+  { label: 'Rocket', abbreviation: 'RK' },
+  { label: 'UPay', abbreviation: 'UP' },
+];
+
+const WALLET_TYPE_FILTER_LABELS = [...WALLET_TYPE_FILTER_OPTIONS.map((opt) => opt.label), '—'];
+
 const EXCLUDED_SDP_LEADERS = [
   'AFF JAR', 'AIMAN', 'ALADDIN', 'JISAN', 'MIR', 'MR LEE',
   'MUNIM', 'NIHJUM', 'NURNOBY', 'ONEMEN', 'OSMAN', 'MOTIN',
@@ -204,12 +231,13 @@ function resolveBrand(groups: string[], agentName: string): string {
   return BRAND_CODES.find((code) => agentName.toUpperCase().includes(code)) ?? '−';
 }
 
-type ColumnKey = 'brand' | 'leader' | 'walletName' | 'sdp' | 'opening' | 'totalDP' | 'totalWD' | 'topUp' | 'settlement' | 'companyBalance' | 'balanceInside' | 'agentWithdrawal' | 'sdpVsBalance' | 'walletStatus';
+type ColumnKey = 'brand' | 'leader' | 'walletName' | 'walletType' | 'sdp' | 'opening' | 'totalDP' | 'totalWD' | 'topUp' | 'settlement' | 'companyBalance' | 'balanceInside' | 'agentWithdrawal' | 'sdpVsBalance' | 'walletStatus';
 
 const columnDefs: { key: ColumnKey; label: string; sortable: boolean }[] = [
   { key: 'brand', label: 'Brand', sortable: false },
   { key: 'leader', label: 'Leader', sortable: false },
-  { key: 'walletName', label: 'Wallet Name', sortable: true },
+  { key: 'walletName', label: 'Shop Name', sortable: true },
+  { key: 'walletType', label: 'Type', sortable: false },
   { key: 'sdp', label: 'SDP', sortable: true },
   { key: 'opening', label: 'Opening', sortable: true },
   { key: 'totalDP', label: 'Total DP', sortable: true },
@@ -227,6 +255,7 @@ const columnWidths: Record<ColumnKey, string> = {
   brand: '70px',
   leader: '90px',
   walletName: '220px',
+  walletType: '90px',
   sdp: '100px',
   opening: '110px',
   totalDP: '110px',
@@ -271,6 +300,8 @@ function renderCell(row: MergedRow, key: ColumnKey) {
       return <td key={key} className="whitespace-nowrap px-4 py-2 text-center text-[9px] text-slate-700 dark:text-slate-300">{row.leader}</td>;
     case 'walletName':
       return <td key={key} className="whitespace-nowrap px-4 py-2 text-center text-[9px] font-bold text-slate-900 dark:text-white">{row.agentName}</td>;
+    case 'walletType':
+      return <td key={key} className="whitespace-nowrap px-4 py-2 text-center text-[9px] text-slate-700 dark:text-slate-300">{row.walletType}</td>;
     case 'sdp':
       return <td key={key} className="whitespace-nowrap px-4 py-2 text-center text-[9px] text-slate-700 dark:text-slate-300">{displayNum(row.sdp)}</td>;
     case 'opening':
@@ -340,12 +371,15 @@ export default function AgentBalance() {
   const [searchTerm, setSearchTerm] = useState('');
   const [leaderFilter, setLeaderFilter] = useState<Record<string, boolean>>({});
   const [brandFilter, setBrandFilter] = useState<Record<string, boolean>>({});
+  const [walletTypeFilter, setWalletTypeFilter] = useState<Record<string, boolean>>({});
   const [sortColumn, setSortColumn] = useState<ColumnKey>('companyBalance');
   const [sortDirection, setSortDirection] = useState<'asc' | 'desc'>('desc');
   const [leaderMenuOpen, setLeaderMenuOpen] = useState(false);
   const [leaderMenuPos, setLeaderMenuPos] = useState({ top: 0, left: 0 });
   const [brandMenuOpen, setBrandMenuOpen] = useState(false);
   const [brandMenuPos, setBrandMenuPos] = useState({ top: 0, left: 0 });
+  const [walletTypeMenuOpen, setWalletTypeMenuOpen] = useState(false);
+  const [walletTypeMenuPos, setWalletTypeMenuPos] = useState({ top: 0, left: 0 });
   const [columnMenuOpen, setColumnMenuOpen] = useState(false);
   const [columnMenuPos, setColumnMenuPos] = useState({ top: 0, left: 0 });
   const [columnVisibility, setColumnVisibility] = useState<Record<ColumnKey, boolean>>(
@@ -362,6 +396,8 @@ export default function AgentBalance() {
   const leaderDropdownRef = useRef<HTMLDivElement>(null);
   const brandButtonRef = useRef<HTMLButtonElement>(null);
   const brandDropdownRef = useRef<HTMLDivElement>(null);
+  const walletTypeButtonRef = useRef<HTMLButtonElement>(null);
+  const walletTypeDropdownRef = useRef<HTMLDivElement>(null);
   const columnButtonRef = useRef<HTMLButtonElement>(null);
   const columnDropdownRef = useRef<HTMLDivElement>(null);
   const walletStatusButtonRef = useRef<HTMLButtonElement>(null);
@@ -403,6 +439,7 @@ export default function AgentBalance() {
         .filter((row) => row.some((cell) => cell.trim() !== ''))
         .map((row) => ({
           walletName: rawVal(row[1]),
+          walletType: rawVal(row[4]),
           totalDP: rawVal(row[11]),
           totalWD: rawVal(row[13]),
           balance: rawVal(row[8]),
@@ -417,6 +454,7 @@ export default function AgentBalance() {
       const balanceInsideTotals = new Map<string, number>();
       const walletStatusValues = new Map<string, string[]>();
       const brandGroups = new Map<string, string[]>();
+      const walletTypeValues = new Map<string, string[]>();
       balRows.forEach((bal) => {
         const name = bal.walletName;
         const dp = parseFloat(bal.totalDP.replace(/,/g, '')) || 0;
@@ -437,6 +475,12 @@ export default function AgentBalance() {
           const statuses = walletStatusValues.get(name) ?? [];
           statuses.push(bal.accountStatus);
           walletStatusValues.set(name, statuses);
+        }
+
+        if (bal.walletType && bal.walletType !== '-' && bal.login.trim().toLowerCase() === 'yes') {
+          const types = walletTypeValues.get(name) ?? [];
+          types.push(bal.walletType);
+          walletTypeValues.set(name, types);
         }
 
         if (bal.login.trim().toLowerCase() === 'yes') {
@@ -488,6 +532,7 @@ export default function AgentBalance() {
           sdpVsBalance: computeSdpVsBalance(opening.leader, opening.sdp, sdpNum, runningBalance),
           walletStatus,
           brand: resolveBrand(brandGroups.get(opening.agentName) ?? [], opening.agentName),
+          walletType: computeWalletType(walletTypeValues.get(opening.agentName) ?? []),
         };
       });
 
@@ -514,7 +559,7 @@ export default function AgentBalance() {
 
   useEffect(() => {
     setPage(1);
-  }, [searchTerm, leaderFilter, brandFilter, walletStatusFilter, sortColumn, sortDirection]);
+  }, [searchTerm, leaderFilter, brandFilter, walletStatusFilter, walletTypeFilter, sortColumn, sortDirection]);
 
   useEffect(() => {
     if (!leaderMenuOpen) return;
@@ -549,6 +594,23 @@ export default function AgentBalance() {
     document.addEventListener('mousedown', handlePointerDown);
     return () => document.removeEventListener('mousedown', handlePointerDown);
   }, [brandMenuOpen]);
+
+  useEffect(() => {
+    if (!walletTypeMenuOpen) return;
+
+    const handlePointerDown = (event: MouseEvent) => {
+      const target = event.target as Node;
+      if (
+        walletTypeButtonRef.current && !walletTypeButtonRef.current.contains(target) &&
+        walletTypeDropdownRef.current && !walletTypeDropdownRef.current.contains(target)
+      ) {
+        setWalletTypeMenuOpen(false);
+      }
+    };
+
+    document.addEventListener('mousedown', handlePointerDown);
+    return () => document.removeEventListener('mousedown', handlePointerDown);
+  }, [walletTypeMenuOpen]);
 
   useEffect(() => {
     if (!columnMenuOpen) return;
@@ -608,6 +670,12 @@ export default function AgentBalance() {
   const allBrandsChecked = brandOptions.every((name) => isBrandChecked(name));
   const anyBrandUnchecked = brandOptions.some((name) => !isBrandChecked(name));
 
+  const walletTypeOptions = WALLET_TYPE_FILTER_LABELS;
+
+  const isWalletTypeChecked = (name: string) => walletTypeFilter[name] !== false;
+  const allWalletTypesChecked = walletTypeOptions.every((name) => isWalletTypeChecked(name));
+  const anyWalletTypeUnchecked = walletTypeOptions.some((name) => !isWalletTypeChecked(name));
+
   const searchedRows = useMemo(() => {
     const query = searchTerm.toLowerCase();
     if (!query) return rows;
@@ -629,8 +697,17 @@ export default function AgentBalance() {
     if (WALLET_STATUS_OPTIONS.some((status) => !walletStatusFilter[status])) {
       list = list.filter((row) => walletStatusFilter[row.walletStatus]);
     }
+    if (walletTypeOptions.some((name) => walletTypeFilter[name] === false)) {
+      list = list.filter((row) => {
+        if (row.walletType === '−') return isWalletTypeChecked('—');
+        const rowAbbreviations = row.walletType.split(' | ');
+        return WALLET_TYPE_FILTER_OPTIONS.some(
+          (opt) => rowAbbreviations.includes(opt.abbreviation) && isWalletTypeChecked(opt.label)
+        );
+      });
+    }
     return list;
-  }, [leaderFilter, leaderOptions, brandFilter, brandOptions, walletStatusFilter, searchedRows]);
+  }, [leaderFilter, leaderOptions, brandFilter, brandOptions, walletStatusFilter, walletTypeFilter, walletTypeOptions, searchedRows]);
 
   const sortedRows = useMemo(() => {
     const list = [...filteredRows];
@@ -643,6 +720,8 @@ export default function AgentBalance() {
             return row.leader.toLowerCase();
           case 'walletName':
             return row.agentName.toLowerCase();
+          case 'walletType':
+            return row.walletType.toLowerCase();
           case 'sdp':
             return parseNumber(row.sdp);
           case 'opening':
@@ -672,7 +751,7 @@ export default function AgentBalance() {
       const valueA = getValue(a, sortColumn);
       const valueB = getValue(b, sortColumn);
 
-      if (sortColumn === 'walletName' || sortColumn === 'leader' || sortColumn === 'walletStatus' || sortColumn === 'brand') {
+      if (sortColumn === 'walletName' || sortColumn === 'walletType' || sortColumn === 'leader' || sortColumn === 'walletStatus' || sortColumn === 'brand') {
         const comparison = String(valueA).localeCompare(String(valueB), undefined, { sensitivity: 'base' });
         return sortDirection === 'asc' ? comparison : -comparison;
       }
@@ -692,7 +771,7 @@ export default function AgentBalance() {
 
   const handleExport = useCallback(() => {
     const headers = [
-      'Brand', 'Leader', 'Wallet Name', 'SDP', 'Opening', 'Total DP', 'Total WD',
+      'Brand', 'Leader', 'Shop Name', 'Type', 'SDP', 'Opening', 'Total DP', 'Total WD',
       'Top Up', 'Settlement', 'Company Balance', 'Balance Inside',
       'Agent Withdrawal', 'SDP VS Balance', 'Wallet Status',
     ];
@@ -701,6 +780,7 @@ export default function AgentBalance() {
       row.brand,
       row.leader,
       row.agentName,
+      row.walletType,
       numOrBlank(parseNumber(row.sdp)),
       numOrBlank(parseNumber(row.openingBal)),
       numOrBlank(row.agentTotalDP),
@@ -948,6 +1028,65 @@ export default function AgentBalance() {
                                         }}
                                       />
                                       <span>{brand}</span>
+                                    </label>
+                                  ))}
+                                </div>
+                              </div>,
+                              document.body
+                            )}
+                          </div>
+                        ) : col.key === 'walletType' ? (
+                          <div className="relative flex items-center justify-center gap-1">
+                            <span className="normal-case font-semibold text-slate-700 dark:text-slate-300">{col.label}</span>
+                            <button
+                              type="button"
+                              ref={walletTypeButtonRef}
+                              onClick={(event) => {
+                                event.stopPropagation();
+                                const rect = walletTypeButtonRef.current?.getBoundingClientRect();
+                                if (rect) {
+                                  const dropdownWidth = 176;
+                                  const left = Math.min(rect.left, window.innerWidth - dropdownWidth - 8);
+                                  setWalletTypeMenuPos({ top: rect.bottom + 8, left: Math.max(8, left) });
+                                }
+                                setWalletTypeMenuOpen((current) => !current);
+                              }}
+                              className={`flex items-center justify-center rounded-full p-1 transition ${anyWalletTypeUnchecked ? 'bg-indigo-100 text-indigo-700 dark:bg-indigo-500/30 dark:text-indigo-200' : 'text-[#6b7280] hover:bg-slate-200 dark:text-[#a0a0a0] dark:hover:bg-white/10'}`}
+                            >
+                              <Filter size={12} className={anyWalletTypeUnchecked ? 'opacity-100' : 'opacity-70'} />
+                            </button>
+                            {walletTypeMenuOpen && typeof document !== 'undefined' && createPortal(
+                              <div
+                                ref={walletTypeDropdownRef}
+                                style={{ position: 'fixed', top: walletTypeMenuPos.top, left: walletTypeMenuPos.left }}
+                                className="z-[9999] w-44 rounded-xl border border-[#e5e5e7] bg-white p-2 shadow-xl dark:border-[#3a3a3d] dark:bg-[#2a2a2d]"
+                                onClick={(event) => event.stopPropagation()}
+                              >
+                                <div className="px-2 py-1.5 text-center text-[10px] font-semibold uppercase tracking-[0.24em] text-[#6b7280] dark:text-[#a0a0a0]">Filter</div>
+                                <div className="max-h-56 overflow-y-auto">
+                                  <label className="flex w-full items-center justify-start gap-2 whitespace-nowrap rounded-xl px-3 py-1.5 text-left text-[10px] text-[#6b7280] hover:bg-[#f5f5f7] dark:text-[#a0a0a0] dark:hover:bg-slate-800">
+                                    <input
+                                      type="checkbox"
+                                      checked={allWalletTypesChecked}
+                                      onChange={() => {
+                                        const nextValue = !allWalletTypesChecked;
+                                        setWalletTypeFilter(
+                                          Object.fromEntries(walletTypeOptions.map((name) => [name, nextValue]))
+                                        );
+                                      }}
+                                    />
+                                    <span>All</span>
+                                  </label>
+                                  {walletTypeOptions.map((type) => (
+                                    <label key={type} className="flex w-full items-center justify-start gap-2 whitespace-nowrap rounded-xl px-3 py-1.5 text-left text-[10px] text-[#6b7280] hover:bg-[#f5f5f7] dark:text-[#a0a0a0] dark:hover:bg-slate-800">
+                                      <input
+                                        type="checkbox"
+                                        checked={isWalletTypeChecked(type)}
+                                        onChange={() => {
+                                          setWalletTypeFilter((current) => ({ ...current, [type]: !isWalletTypeChecked(type) }));
+                                        }}
+                                      />
+                                      <span>{type}</span>
                                     </label>
                                   ))}
                                 </div>

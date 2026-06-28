@@ -61,6 +61,8 @@ type AgentRow = {
   balanceInside: number;
 };
 
+const RANK_LABELS = ['1st', '2nd', '3rd', '4th'];
+
 function clean(val: string): number {
   return parseFloat((val ?? '0').replace(/"/g, '').replace(/,/g, '').trim()) || 0;
 }
@@ -446,6 +448,10 @@ export default function Dashboard() {
     .sort((a, b) => (b.runningBalance - b.opening) - (a.runningBalance - a.opening))
     .slice(0, 50);
 
+  const walletGainRanking = dataRows
+    .map((row) => ({ wallet: row.wallet, gain: row.totalDP + row.totalWD, actualBal: row.actualBal }))
+    .sort((a, b) => a.gain - b.gain);
+
   const actualBalTotal = dataRows.reduce((sum, row) => sum + row.actualBal, 0);
 
   const summaryCards: Array<{
@@ -580,7 +586,7 @@ export default function Dashboard() {
               </section>
             </div>
 
-            <section className="overflow-hidden rounded-2xl border border-[#e5e5e7] bg-white shadow-sm dark:border-[#3a3a3d] dark:bg-[#2a2a2d]">
+            <section className="overflow-hidden rounded-2xl border border-[#e5e5e7] bg-white shadow-sm dark:border-[#3a3a3d] dark:bg-[#2a2a2d] lg:w-[70%]">
               <div className="overflow-x-auto">
                 <table className="w-full min-w-[800px] text-sm">
                   <thead>
@@ -618,8 +624,8 @@ export default function Dashboard() {
 
         {!loading && !error && (
           <>
-            <div className="relative flex flex-col gap-4">
-              <div className="flex flex-col gap-4 lg:w-[70%]">
+            <div className="relative flex flex-col gap-4 lg:flex-row">
+              <div className="flex flex-1 flex-col gap-4 lg:w-[calc(100%-296px)] lg:flex-none">
                 <section className="grid grid-cols-2 gap-2 sm:grid-cols-4">
                   {summaryCards.map((card) => (
                     <div key={card.label} className="rounded-2xl border border-[#e5e5e7] bg-white p-2.5 shadow-sm dark:border-[#3a3a3d] dark:bg-[#2a2a2d]">
@@ -727,41 +733,8 @@ export default function Dashboard() {
                     </ResponsiveContainer>
                   </div>
                 </section>
-              </div>
 
-              <section className="flex max-h-[420px] flex-col overflow-hidden rounded-2xl border border-[#e5e5e7] bg-white shadow-sm dark:border-[#3a3a3d] dark:bg-[#2a2a2d] lg:absolute lg:inset-y-0 lg:right-0 lg:max-h-none lg:w-[28%]">
-                <div className="border-b border-[#e5e5e7] px-4 py-3 dark:border-[#3a3a3d]">
-                  <h2 className="text-[13px] font-semibold text-slate-900 dark:text-white">Top {top50Agents.length} High Volume Agents</h2>
-                </div>
-                <div className="min-h-0 flex-1 overflow-y-auto">
-                  {top50Agents.length > 0 ? top50Agents.map((agent, index) => {
-                    const diff = agent.runningBalance - agent.opening;
-                    const up = diff >= 0;
-                    return (
-                      <div key={agent.agentName} className="flex items-start gap-3 px-4 py-2">
-                        <span className="w-5 shrink-0 text-[9px] font-semibold text-slate-400 dark:text-slate-500">{index + 1}</span>
-                        <div className="min-w-0 flex-1">
-                          <p className="truncate text-[11px] font-medium text-slate-900 dark:text-white">{agent.agentName}</p>
-                          <p className="text-[9px] text-slate-500 dark:text-slate-400">Bal. Inside: {fmtCell(agent.balanceInside)}</p>
-                        </div>
-                        <div className="shrink-0 text-right">
-                          <p className={`text-[10px] font-semibold ${agent.runningBalance < 0 ? 'text-rose-600 dark:text-rose-400' : 'text-slate-700 dark:text-slate-300'}`}>
-                            {fmtCell(agent.runningBalance, true)}
-                          </p>
-                          <p className={`text-[9px] font-medium ${up ? 'text-emerald-600 dark:text-emerald-400' : 'text-rose-600 dark:text-rose-400'}`}>
-                            {up ? '▲' : '▼'} {fmtCell(diff)}
-                          </p>
-                        </div>
-                      </div>
-                    );
-                  }) : (
-                    <p className="px-4 py-8 text-center text-[11px] text-slate-500 dark:text-slate-400">No agent data found.</p>
-                  )}
-                </div>
-              </section>
-            </div>
-
-            <section className="overflow-hidden rounded-2xl border border-[#e5e5e7] bg-white shadow-sm dark:border-[#3a3a3d] dark:bg-[#2a2a2d]">
+                <section className="overflow-hidden rounded-2xl border border-[#e5e5e7] bg-white shadow-sm dark:border-[#3a3a3d] dark:bg-[#2a2a2d]">
               <div className="overflow-x-auto">
                 <table className="w-full min-w-[800px] text-sm">
                   <thead>
@@ -797,7 +770,79 @@ export default function Dashboard() {
                   </tbody>
                 </table>
               </div>
-            </section>
+                </section>
+              </div>
+
+              <aside className="flex flex-col gap-4 lg:absolute lg:inset-y-0 lg:right-0 lg:w-[280px]">
+                <section className="overflow-hidden rounded-2xl border border-[#e5e5e7] bg-white shadow-sm dark:border-[#3a3a3d] dark:bg-[#2a2a2d]">
+                  <div className="border-b border-[#e5e5e7] px-4 py-3 dark:border-[#3a3a3d]">
+                    <h2 className="text-[13px] font-semibold text-slate-900 dark:text-white">Top Performer Wallet</h2>
+                  </div>
+                  <div>
+                    {walletGainRanking.map((item, index) => (
+                      <div
+                        key={item.wallet}
+                        className={`flex items-center justify-between gap-2 px-4 py-2.5 ${index === 0 ? 'bg-rose-50 dark:bg-rose-500/10' : ''}`}
+                      >
+                        <div className="flex items-center gap-2">
+                          <span className="text-[10px] font-semibold text-slate-400 dark:text-slate-500">{RANK_LABELS[index]}</span>
+                          <div>
+                            <p className={`text-[11px] font-medium ${index === 0 ? 'text-rose-700 dark:text-rose-300' : 'text-slate-700 dark:text-slate-300'}`}>
+                              {item.wallet}
+                            </p>
+                            <p className="text-[9px] text-slate-500 dark:text-slate-400">
+                              Actual Bal: {fmtCell(item.actualBal, true)}
+                            </p>
+                          </div>
+                        </div>
+                        <span
+                          className={`text-[11px] font-bold ${
+                            item.gain < 0
+                              ? 'text-rose-600 dark:text-rose-400'
+                              : index === 0
+                              ? 'text-rose-700 dark:text-rose-300'
+                              : 'text-slate-900 dark:text-white'
+                          }`}
+                        >
+                          {fmtCell(item.gain, true)}
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                </section>
+
+                <section className="flex max-h-[420px] flex-col overflow-hidden rounded-2xl border border-[#e5e5e7] bg-white shadow-sm dark:border-[#3a3a3d] dark:bg-[#2a2a2d] lg:max-h-none lg:min-h-0 lg:flex-1">
+                  <div className="border-b border-[#e5e5e7] px-4 py-3 dark:border-[#3a3a3d]">
+                    <h2 className="text-[13px] font-semibold text-slate-900 dark:text-white">Top {top50Agents.length} High Volume Agents</h2>
+                  </div>
+                  <div className="min-h-0 flex-1 overflow-y-auto">
+                    {top50Agents.length > 0 ? top50Agents.map((agent, index) => {
+                      const diff = agent.runningBalance - agent.opening;
+                      const up = diff >= 0;
+                      return (
+                        <div key={agent.agentName} className="flex items-start gap-3 px-4 py-2">
+                          <span className="w-5 shrink-0 text-[9px] font-semibold text-slate-400 dark:text-slate-500">{index + 1}</span>
+                          <div className="min-w-0 flex-1">
+                            <p className="truncate text-[11px] font-medium text-slate-900 dark:text-white">{agent.agentName}</p>
+                            <p className="text-[9px] text-slate-500 dark:text-slate-400">Bal. Inside: {fmtCell(agent.balanceInside)}</p>
+                          </div>
+                          <div className="shrink-0 text-right">
+                            <p className={`text-[10px] font-semibold ${agent.runningBalance < 0 ? 'text-rose-600 dark:text-rose-400' : 'text-slate-700 dark:text-slate-300'}`}>
+                              {fmtCell(agent.runningBalance, true)}
+                            </p>
+                            <p className={`text-[9px] font-medium ${up ? 'text-emerald-600 dark:text-emerald-400' : 'text-rose-600 dark:text-rose-400'}`}>
+                              {up ? '▲' : '▼'} {fmtCell(diff)}
+                            </p>
+                          </div>
+                        </div>
+                      );
+                    }) : (
+                      <p className="px-4 py-8 text-center text-[11px] text-slate-500 dark:text-slate-400">No agent data found.</p>
+                    )}
+                  </div>
+                </section>
+              </aside>
+            </div>
           </>
         )}
       </main>

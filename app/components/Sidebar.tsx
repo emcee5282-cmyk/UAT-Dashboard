@@ -50,6 +50,9 @@ export default function Sidebar() {
       .catch(() => setTransferQueueCount(null));
   }, []);
 
+  const isMockup = pathname.startsWith('/mockup');
+  const displayCount = isMockup ? 150 : transferQueueCount;
+
   const NavContent = ({ expanded }: { expanded: boolean }) => (
     <>
       <div className={`flex items-center border-b border-[#e5e5e7] py-5 dark:border-[#3a3a3d] ${expanded ? 'justify-between px-5' : 'justify-center px-2'}`}>
@@ -125,18 +128,18 @@ export default function Sidebar() {
                     <span className={`flex items-center gap-3 ${expanded ? '' : 'justify-center'}`}>
                       <span className="relative shrink-0">
                         <ParentIcon size={15} className="shrink-0" />
-                        {!expanded && !!transferQueueCount && transferQueueCount > 0 && (
+                        {!expanded && !!displayCount && displayCount > 0 && (
                           <span className="absolute -right-1.5 -top-1.5 flex h-3 min-w-[12px] items-center justify-center rounded-full bg-slate-200 px-0.5 text-[7px] font-semibold leading-none text-slate-700 dark:bg-slate-700 dark:text-slate-300">
-                            {transferQueueCount > 99 ? '99+' : transferQueueCount}
+                            {displayCount > 99 ? '99+' : displayCount}
                           </span>
                         )}
                       </span>
                       <span className={`overflow-hidden whitespace-nowrap transition-all duration-300 ${expanded ? 'max-w-[160px] opacity-100' : 'max-w-0 opacity-0'}`}>
                         {item.label}
                       </span>
-                      {expanded && !!transferQueueCount && transferQueueCount > 0 && (
+                      {expanded && !!displayCount && displayCount > 0 && (
                         <span className="flex h-4 min-w-[16px] shrink-0 items-center justify-center rounded-full bg-slate-200 px-1 text-[10px] font-semibold leading-none text-slate-700 dark:bg-slate-700 dark:text-slate-300">
-                          {transferQueueCount > 99 ? '99+' : transferQueueCount}
+                          {displayCount > 99 ? '99+' : displayCount}
                         </span>
                       )}
                     </span>
@@ -169,12 +172,12 @@ export default function Sidebar() {
                               <ChildIcon size={14} className="shrink-0" />
                               {child.label}
                             </span>
-                            {isTransferQueue && !!transferQueueCount && transferQueueCount > 0 && (
+                            {isTransferQueue && !!displayCount && displayCount > 0 && (
                               <span
-                                title={`${transferQueueCount} agent${transferQueueCount === 1 ? '' : 's'} need transfer`}
+                                title={`${displayCount} agent${displayCount === 1 ? '' : 's'} need transfer`}
                                 className="flex h-4 min-w-[16px] shrink-0 items-center justify-center rounded-full bg-slate-200 px-1 text-[10px] font-semibold leading-none text-slate-700 dark:bg-slate-700 dark:text-slate-300"
                               >
-                                {transferQueueCount > 99 ? '99+' : transferQueueCount}
+                                {displayCount > 99 ? '99+' : displayCount}
                               </span>
                             )}
                           </Link>

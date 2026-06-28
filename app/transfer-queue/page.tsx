@@ -255,6 +255,13 @@ function normalizeGroup(s: string): string {
   return s.toUpperCase().replace(/[\s-]+/g, '');
 }
 
+function stripAccountPrefix(raw: string): string {
+  const trimmed = raw.trim();
+  const idx = trimmed.indexOf(' - ');
+  if (idx === -1) return trimmed;
+  return trimmed.slice(idx + 3).trim();
+}
+
 function determineBaseLabel(rawGroup: string): string | null {
   const trimmed = rawGroup.trim();
   if (!trimmed || trimmed === '-') return null;
@@ -312,6 +319,7 @@ function resolveCorrectGroup(rawGroup: string, companyBalance: number, sdpVsBala
 type QueueRow = {
   key: string;
   shopName: string;
+  account: string;
   brand: string;
   currentGroup: string;
   correctGroup: string;
@@ -432,6 +440,7 @@ export default function TransferQueue() {
         .filter((row) => row.some((cell) => cell.trim() !== ''))
         .map((row) => ({
           walletName: rawVal(row[1]),
+          account: rawVal(row[7]),
           totalDP: rawVal(row[11]),
           totalWD: rawVal(row[13]),
           balance: rawVal(row[8]),
@@ -529,6 +538,7 @@ export default function TransferQueue() {
         queue.push({
           key: `${bal.walletName}-${index}`,
           shopName: bal.walletName,
+          account: stripAccountPrefix(bal.account),
           brand: info.brand,
           currentGroup,
           correctGroup: resolved.groupName,
@@ -635,7 +645,7 @@ export default function TransferQueue() {
           case 'brand':
             return row.brand.toLowerCase();
           case 'shopName':
-            return row.shopName.toLowerCase();
+            return row.account.toLowerCase();
           case 'companyBalance':
             return row.companyBalance;
           case 'balanceInside':
@@ -680,7 +690,7 @@ export default function TransferQueue() {
 
     const data = sortedRows.map((row) => [
       row.brand,
-      row.shopName,
+      row.account,
       row.balanceInside,
       row.companyBalance,
       row.discrepancy,
@@ -964,7 +974,7 @@ export default function TransferQueue() {
                   ) : pagedRows.length > 0 ? pagedRows.map((row) => (
                     <tr key={row.key} className="bg-white dark:bg-[#2a2a2d]">
                       <td className="text-[9px] text-center px-4 py-2 text-slate-700 dark:text-slate-300">{row.brand}</td>
-                      <td className="text-[9px] text-center px-4 py-2 text-slate-700 dark:text-slate-300">{row.shopName}</td>
+                      <td className="text-[9px] text-center px-4 py-2 text-slate-700 dark:text-slate-300">{row.account}</td>
                       <td className={`text-[9px] text-center px-4 py-2 ${row.companyBalance < 0 ? 'text-rose-600 dark:text-rose-400' : 'text-slate-700 dark:text-slate-300'}`}>
                         {displayNum(row.companyBalance)}
                       </td>
