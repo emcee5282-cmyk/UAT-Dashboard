@@ -360,6 +360,7 @@ export async function fetchTransferQueueCount(): Promise<number> {
     if (EXCLUDED_WALLET_STATUSES.includes(info.walletStatus)) return;
 
     const currentGroup = bal.group.trim();
+    if (currentGroup.toLowerCase().includes('top up')) return;
     const correctGroupName = resolveCorrectGroupName(currentGroup, info.companyBalance, info.sdpVsBalance, info.discrepancy);
     if (!correctGroupName) return;
     if (normalizeGroup(currentGroup) === normalizeGroup(correctGroupName)) return;

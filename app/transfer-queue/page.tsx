@@ -336,6 +336,30 @@ const columnDefs: { key: ColumnKey; label: string }[] = [
   { key: 'remarks', label: 'Remarks' },
 ];
 
+const headerSkeletonWidths: Record<ColumnKey, string> = {
+  brand: 'w-10',
+  shopName: 'w-14',
+  companyBalance: 'w-20',
+  balanceInside: 'w-20',
+  discrepancy: 'w-16',
+  sdpVsBalance: 'w-20',
+  currentGroup: 'w-24',
+  correctGroup: 'w-24',
+  remarks: 'w-14',
+};
+
+const rowSkeletonWidths: Record<ColumnKey, string[]> = {
+  brand: ['w-8', 'w-10', 'w-9'],
+  shopName: ['w-20', 'w-24', 'w-16'],
+  companyBalance: ['w-14', 'w-16', 'w-12'],
+  balanceInside: ['w-14', 'w-16', 'w-12'],
+  discrepancy: ['w-12', 'w-14', 'w-10'],
+  sdpVsBalance: ['w-14', 'w-16', 'w-12'],
+  currentGroup: ['w-24', 'w-28', 'w-20'],
+  correctGroup: ['w-24', 'w-28', 'w-20'],
+  remarks: ['w-28', 'w-32', 'w-24'],
+};
+
 function SortIcon({ active, direction }: { active: boolean; direction: 'asc' | 'desc' }) {
   if (!active) {
     return (
@@ -497,6 +521,7 @@ export default function TransferQueue() {
         if (EXCLUDED_WALLET_STATUSES.includes(info.walletStatus)) return;
 
         const currentGroup = bal.group.trim();
+        if (currentGroup.toLowerCase().includes('top up')) return;
         const resolved = resolveCorrectGroup(currentGroup, info.companyBalance, info.sdpVsBalance, info.discrepancy);
         if (!resolved) return;
         if (normalizeGroup(currentGroup) === normalizeGroup(resolved.groupName)) return;
@@ -575,18 +600,18 @@ export default function TransferQueue() {
     );
   }, [queueRows, searchTerm]);
 
-  const brandOptions = useMemo(
-    () => Array.from(new Set(queueRows.map((row) => row.brand).filter(Boolean))).sort((a, b) => a.localeCompare(b)),
-    [queueRows]
-  );
+  const brandOptions = useMemo(() => {
+    const rows = searchedRows.filter((row) => correctGroupFilter[row.correctGroup] !== false);
+    return Array.from(new Set(rows.map((row) => row.brand).filter(Boolean))).sort((a, b) => a.localeCompare(b));
+  }, [searchedRows, correctGroupFilter]);
   const isBrandChecked = (name: string) => brandFilter[name] !== false;
   const allBrandsChecked = brandOptions.every((name) => isBrandChecked(name));
   const anyBrandUnchecked = brandOptions.some((name) => !isBrandChecked(name));
 
-  const correctGroupOptions = useMemo(
-    () => Array.from(new Set(queueRows.map((row) => row.correctGroup).filter(Boolean))).sort((a, b) => a.localeCompare(b)),
-    [queueRows]
-  );
+  const correctGroupOptions = useMemo(() => {
+    const rows = searchedRows.filter((row) => brandFilter[row.brand] !== false);
+    return Array.from(new Set(rows.map((row) => row.correctGroup).filter(Boolean))).sort((a, b) => a.localeCompare(b));
+  }, [searchedRows, brandFilter]);
   const isCorrectGroupChecked = (name: string) => correctGroupFilter[name] !== false;
   const allCorrectGroupsChecked = correctGroupOptions.every((name) => isCorrectGroupChecked(name));
   const anyCorrectGroupUnchecked = correctGroupOptions.some((name) => !isCorrectGroupChecked(name));
@@ -736,7 +761,11 @@ export default function TransferQueue() {
               )}
               <div className="flex items-center gap-3">
               {loading ? (
-                <div className="h-2.5 w-32 rounded-md bg-slate-200 dark:bg-slate-700 animate-pulse" />
+                <div className="flex items-center gap-1.5 rounded-xl border border-[#e5e5e7] px-2 py-0.5 dark:border-[#3a3a3d]">
+                  <div className="h-2.5 w-12 animate-pulse rounded-md bg-slate-200 dark:bg-slate-700" />
+                  <div className="h-2.5 w-16 animate-pulse rounded-md bg-slate-200 dark:bg-slate-700" />
+                  <div className="h-2.5 w-8 animate-pulse rounded-md bg-slate-200 dark:bg-slate-700" />
+                </div>
               ) : (
                 <div className="flex items-center gap-1.5 rounded-xl border border-[#e5e5e7] px-2 py-0.5 dark:border-[#3a3a3d]">
                   <button
@@ -758,7 +787,9 @@ export default function TransferQueue() {
                   </button>
                 </div>
               )}
-              {!loading && (
+              {loading ? (
+                <div className="h-7 w-7 animate-pulse rounded-xl bg-slate-200 dark:bg-slate-700" />
+              ) : (
                 <button
                   type="button"
                   onClick={handleExport}
@@ -777,7 +808,7 @@ export default function TransferQueue() {
                     {columnDefs.map((col) => (
                       <th key={col.key} className="text-[10px] font-semibold text-slate-500 dark:text-slate-400 text-center whitespace-nowrap px-4 py-3">
                         {loading ? (
-                          <div className="mx-auto h-2.5 w-16 animate-pulse rounded-md bg-slate-200 dark:bg-slate-700" />
+                          <div className={`mx-auto h-2.5 animate-pulse rounded-md bg-slate-200 dark:bg-slate-700 ${headerSkeletonWidths[col.key]}`} />
                         ) : (
                           <div className="relative flex items-center justify-center gap-1">
                             <button
@@ -861,7 +892,7 @@ export default function TransferQueue() {
                                     event.stopPropagation();
                                     const rect = correctGroupButtonRef.current?.getBoundingClientRect();
                                     if (rect) {
-                                      const dropdownWidth = 176;
+                                      const dropdownWidth = 288;
                                       const left = Math.min(rect.left, window.innerWidth - dropdownWidth - 8);
                                       setCorrectGroupMenuPos({ top: rect.bottom + 8, left: Math.max(8, left) });
                                     }
@@ -875,12 +906,12 @@ export default function TransferQueue() {
                                   <div
                                     ref={correctGroupDropdownRef}
                                     style={{ position: 'fixed', top: correctGroupMenuPos.top, left: correctGroupMenuPos.left }}
-                                    className="z-[9999] w-44 rounded-xl border border-[#e5e5e7] bg-white p-2 shadow-xl dark:border-[#3a3a3d] dark:bg-[#2a2a2d]"
+                                    className="z-[9999] w-72 max-w-[90vw] rounded-xl border border-[#e5e5e7] bg-white p-2 shadow-xl dark:border-[#3a3a3d] dark:bg-[#2a2a2d]"
                                     onClick={(event) => event.stopPropagation()}
                                   >
                                     <div className="px-2 py-1.5 text-center text-[10px] font-semibold uppercase tracking-[0.24em] text-[#6b7280] dark:text-[#a0a0a0]">Filter</div>
                                     <div className="max-h-56 overflow-y-auto">
-                                      <label className="flex w-full items-center justify-center gap-2 rounded-xl px-3 py-1.5 text-center text-[10px] text-[#6b7280] hover:bg-[#f5f5f7] dark:text-[#a0a0a0] dark:hover:bg-slate-800">
+                                      <label className="flex w-full items-center justify-start gap-2 whitespace-nowrap rounded-xl px-3 py-1.5 text-left text-[10px] text-[#6b7280] hover:bg-[#f5f5f7] dark:text-[#a0a0a0] dark:hover:bg-slate-800">
                                         <input
                                           type="checkbox"
                                           checked={allCorrectGroupsChecked}
@@ -892,7 +923,7 @@ export default function TransferQueue() {
                                         <span>All</span>
                                       </label>
                                       {correctGroupOptions.map((group) => (
-                                        <label key={group} className="flex w-full items-center justify-center gap-2 rounded-xl px-3 py-1.5 text-center text-[10px] text-[#6b7280] hover:bg-[#f5f5f7] dark:text-[#a0a0a0] dark:hover:bg-slate-800">
+                                        <label key={group} className="flex w-full items-center justify-start gap-2 whitespace-nowrap rounded-xl px-3 py-1.5 text-left text-[10px] text-[#6b7280] hover:bg-[#f5f5f7] dark:text-[#a0a0a0] dark:hover:bg-slate-800">
                                           <input
                                             type="checkbox"
                                             checked={isCorrectGroupChecked(group)}
@@ -919,9 +950,15 @@ export default function TransferQueue() {
                   {loading ? (
                     Array.from({ length: 12 }).map((_, rowIndex) => (
                       <tr key={rowIndex} className="bg-white dark:bg-[#2a2a2d]">
-                        <td colSpan={9} className="px-4 py-2">
-                          <div className="h-2.5 w-full animate-pulse rounded-md bg-slate-200 dark:bg-slate-700" />
-                        </td>
+                        {columnDefs.map((col) => {
+                          const widths = rowSkeletonWidths[col.key];
+                          const width = widths[rowIndex % widths.length];
+                          return (
+                            <td key={col.key} className="px-4 py-2">
+                              <div className={`mx-auto h-2.5 animate-pulse rounded-md bg-slate-100 dark:bg-slate-800 ${width}`} />
+                            </td>
+                          );
+                        })}
                       </tr>
                     ))
                   ) : pagedRows.length > 0 ? pagedRows.map((row) => (
