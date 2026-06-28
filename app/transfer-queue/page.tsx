@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { AlertCircle, Download, Filter, RefreshCw, Search } from 'lucide-react';
+import { AlertCircle, ChevronDown, ChevronUp, Download, Filter, RefreshCw, Search } from 'lucide-react';
 import * as XLSX from 'xlsx';
 import ThemeToggle from '../components/ThemeToggle';
 import { rawVal } from '@/app/lib/format';
@@ -322,6 +322,36 @@ type QueueRow = {
   remarks: string;
 };
 
+type ColumnKey = 'brand' | 'shopName' | 'companyBalance' | 'balanceInside' | 'discrepancy' | 'sdpVsBalance' | 'currentGroup' | 'correctGroup' | 'remarks';
+
+const columnDefs: { key: ColumnKey; label: string }[] = [
+  { key: 'brand', label: 'Brand' },
+  { key: 'shopName', label: 'Agent' },
+  { key: 'companyBalance', label: 'Company Money' },
+  { key: 'balanceInside', label: 'Balance Inside' },
+  { key: 'discrepancy', label: 'Discrepancy' },
+  { key: 'sdpVsBalance', label: 'SDP VS Balance' },
+  { key: 'currentGroup', label: 'Current Group' },
+  { key: 'correctGroup', label: 'Correct Group' },
+  { key: 'remarks', label: 'Remarks' },
+];
+
+function SortIcon({ active, direction }: { active: boolean; direction: 'asc' | 'desc' }) {
+  if (!active) {
+    return (
+      <span className="flex flex-col items-center justify-center leading-none text-slate-400 opacity-40">
+        <ChevronUp size={10} className="-mb-0.5" />
+        <ChevronDown size={10} />
+      </span>
+    );
+  }
+  return direction === 'asc' ? (
+    <ChevronUp size={10} className="text-indigo-600 dark:text-indigo-400" />
+  ) : (
+    <ChevronDown size={10} className="text-indigo-600 dark:text-indigo-400" />
+  );
+}
+
 export default function TransferQueue() {
   const [queueRows, setQueueRows] = useState<QueueRow[]>([]);
   const [loading, setLoading] = useState(true);
@@ -329,16 +359,18 @@ export default function TransferQueue() {
   const [lastUpdated, setLastUpdated] = useState('');
   const [spinning, setSpinning] = useState(false);
   const [searchTerm, setSearchTerm] = useState('');
+  const [sortColumn, setSortColumn] = useState<ColumnKey>('companyBalance');
+  const [sortDirection, setSortDirection] = useState<'asc' | 'desc'>('desc');
   const [brandFilter, setBrandFilter] = useState<Record<string, boolean>>({});
-  const [currentGroupFilter, setCurrentGroupFilter] = useState<Record<string, boolean>>({});
+  const [correctGroupFilter, setCorrectGroupFilter] = useState<Record<string, boolean>>({});
   const [brandMenuOpen, setBrandMenuOpen] = useState(false);
   const [brandMenuPos, setBrandMenuPos] = useState({ top: 0, left: 0 });
-  const [currentGroupMenuOpen, setCurrentGroupMenuOpen] = useState(false);
-  const [currentGroupMenuPos, setCurrentGroupMenuPos] = useState({ top: 0, left: 0 });
+  const [correctGroupMenuOpen, setCorrectGroupMenuOpen] = useState(false);
+  const [correctGroupMenuPos, setCorrectGroupMenuPos] = useState({ top: 0, left: 0 });
   const brandButtonRef = useRef<HTMLButtonElement>(null);
   const brandDropdownRef = useRef<HTMLDivElement>(null);
-  const currentGroupButtonRef = useRef<HTMLButtonElement>(null);
-  const currentGroupDropdownRef = useRef<HTMLDivElement>(null);
+  const correctGroupButtonRef = useRef<HTMLButtonElement>(null);
+  const correctGroupDropdownRef = useRef<HTMLDivElement>(null);
   const [page, setPage] = useState(1);
   const rowsPerPage = 50;
 
@@ -499,7 +531,7 @@ export default function TransferQueue() {
 
   useEffect(() => {
     setPage(1);
-  }, [searchTerm, brandFilter, currentGroupFilter]);
+  }, [searchTerm, brandFilter, correctGroupFilter, sortColumn, sortDirection]);
 
   useEffect(() => {
     if (!brandMenuOpen) return;
@@ -519,21 +551,21 @@ export default function TransferQueue() {
   }, [brandMenuOpen]);
 
   useEffect(() => {
-    if (!currentGroupMenuOpen) return;
+    if (!correctGroupMenuOpen) return;
 
     const handlePointerDown = (event: MouseEvent) => {
       const target = event.target as Node;
       if (
-        currentGroupButtonRef.current && !currentGroupButtonRef.current.contains(target) &&
-        currentGroupDropdownRef.current && !currentGroupDropdownRef.current.contains(target)
+        correctGroupButtonRef.current && !correctGroupButtonRef.current.contains(target) &&
+        correctGroupDropdownRef.current && !correctGroupDropdownRef.current.contains(target)
       ) {
-        setCurrentGroupMenuOpen(false);
+        setCorrectGroupMenuOpen(false);
       }
     };
 
     document.addEventListener('mousedown', handlePointerDown);
     return () => document.removeEventListener('mousedown', handlePointerDown);
-  }, [currentGroupMenuOpen]);
+  }, [correctGroupMenuOpen]);
 
   const searchedRows = useMemo(() => {
     const query = searchTerm.toLowerCase();
@@ -551,34 +583,77 @@ export default function TransferQueue() {
   const allBrandsChecked = brandOptions.every((name) => isBrandChecked(name));
   const anyBrandUnchecked = brandOptions.some((name) => !isBrandChecked(name));
 
-  const currentGroupOptions = useMemo(
-    () => Array.from(new Set(queueRows.map((row) => row.currentGroup).filter(Boolean))).sort((a, b) => a.localeCompare(b)),
+  const correctGroupOptions = useMemo(
+    () => Array.from(new Set(queueRows.map((row) => row.correctGroup).filter(Boolean))).sort((a, b) => a.localeCompare(b)),
     [queueRows]
   );
-  const isCurrentGroupChecked = (name: string) => currentGroupFilter[name] !== false;
-  const allCurrentGroupsChecked = currentGroupOptions.every((name) => isCurrentGroupChecked(name));
-  const anyCurrentGroupUnchecked = currentGroupOptions.some((name) => !isCurrentGroupChecked(name));
+  const isCorrectGroupChecked = (name: string) => correctGroupFilter[name] !== false;
+  const allCorrectGroupsChecked = correctGroupOptions.every((name) => isCorrectGroupChecked(name));
+  const anyCorrectGroupUnchecked = correctGroupOptions.some((name) => !isCorrectGroupChecked(name));
 
   const filteredRows = useMemo(() => {
     let list = searchedRows;
     if (brandOptions.some((name) => brandFilter[name] === false)) {
       list = list.filter((row) => brandFilter[row.brand] !== false);
     }
-    if (currentGroupOptions.some((name) => currentGroupFilter[name] === false)) {
-      list = list.filter((row) => currentGroupFilter[row.currentGroup] !== false);
+    if (correctGroupOptions.some((name) => correctGroupFilter[name] === false)) {
+      list = list.filter((row) => correctGroupFilter[row.correctGroup] !== false);
     }
     return list;
-  }, [searchedRows, brandFilter, brandOptions, currentGroupFilter, currentGroupOptions]);
+  }, [searchedRows, brandFilter, brandOptions, correctGroupFilter, correctGroupOptions]);
 
-  const totalPages = Math.max(1, Math.ceil(filteredRows.length / rowsPerPage));
+  const sortedRows = useMemo(() => {
+    const list = [...filteredRows];
+    list.sort((a, b) => {
+      const getValue = (row: QueueRow, column: ColumnKey) => {
+        switch (column) {
+          case 'brand':
+            return row.brand.toLowerCase();
+          case 'shopName':
+            return row.shopName.toLowerCase();
+          case 'companyBalance':
+            return row.companyBalance;
+          case 'balanceInside':
+            return row.balanceInside;
+          case 'discrepancy':
+            return row.discrepancy;
+          case 'sdpVsBalance':
+            return row.sdpVsBalance;
+          case 'currentGroup':
+            return row.currentGroup.toLowerCase();
+          case 'correctGroup':
+            return row.correctGroup.toLowerCase();
+          case 'remarks':
+            return row.remarks.toLowerCase();
+          default:
+            return row.companyBalance;
+        }
+      };
+
+      const valueA = getValue(a, sortColumn);
+      const valueB = getValue(b, sortColumn);
+
+      if (typeof valueA === 'string' || typeof valueB === 'string') {
+        const comparison = String(valueA).localeCompare(String(valueB), undefined, { sensitivity: 'base' });
+        return sortDirection === 'asc' ? comparison : -comparison;
+      }
+
+      const comparison = Number(valueA) - Number(valueB);
+      return sortDirection === 'asc' ? comparison : -comparison;
+    });
+
+    return list;
+  }, [filteredRows, sortColumn, sortDirection]);
+
+  const totalPages = Math.max(1, Math.ceil(sortedRows.length / rowsPerPage));
   const currentPage = Math.min(page, totalPages);
   const startIndex = (currentPage - 1) * rowsPerPage;
-  const pagedRows = filteredRows.slice(startIndex, startIndex + rowsPerPage);
+  const pagedRows = sortedRows.slice(startIndex, startIndex + rowsPerPage);
 
   const handleExport = useCallback(() => {
     const headers = ['Brand', 'Agent', 'Balance Inside', 'Company Money', 'Discrepancy', 'SDP VS Balance', 'Current Group', 'Correct Group', 'Remarks'];
 
-    const data = filteredRows.map((row) => [
+    const data = sortedRows.map((row) => [
       row.brand,
       row.shopName,
       row.balanceInside,
@@ -597,7 +672,7 @@ export default function TransferQueue() {
     XLSX.utils.book_append_sheet(workbook, worksheet, 'Transfer Queue');
 
     XLSX.writeFile(workbook, 'transfer-queue.xlsx');
-  }, [filteredRows]);
+  }, [sortedRows]);
 
   useEffect(() => {
     if (page !== currentPage) setPage(currentPage);
@@ -699,145 +774,142 @@ export default function TransferQueue() {
               <table className="w-full table-auto text-xs">
                 <thead className="sticky top-0 z-[50] bg-white dark:bg-[#2a2a2d]">
                   <tr>
-                    <th className="text-[10px] font-semibold text-slate-500 dark:text-slate-400 text-center whitespace-nowrap px-4 py-3">
-                      {loading ? (
-                        <div className="mx-auto h-2.5 w-16 animate-pulse rounded-md bg-slate-200 dark:bg-slate-700" />
-                      ) : (
-                        <div className="relative flex items-center justify-center gap-1">
-                          <span>Brand</span>
-                          <button
-                            type="button"
-                            ref={brandButtonRef}
-                            onClick={(event) => {
-                              event.stopPropagation();
-                              const rect = brandButtonRef.current?.getBoundingClientRect();
-                              if (rect) {
-                                const dropdownWidth = 176;
-                                const left = Math.min(rect.left, window.innerWidth - dropdownWidth - 8);
-                                setBrandMenuPos({ top: rect.bottom + 8, left: Math.max(8, left) });
-                              }
-                              setBrandMenuOpen((current) => !current);
-                            }}
-                            className={`flex items-center justify-center rounded-full p-1 transition ${anyBrandUnchecked ? 'bg-indigo-100 text-indigo-700 dark:bg-indigo-500/30 dark:text-indigo-200' : 'text-[#6b7280] hover:bg-slate-200 dark:text-[#a0a0a0] dark:hover:bg-white/10'}`}
-                          >
-                            <Filter size={12} className={anyBrandUnchecked ? 'opacity-100' : 'opacity-70'} />
-                          </button>
-                          {brandMenuOpen && typeof document !== 'undefined' && createPortal(
-                            <div
-                              ref={brandDropdownRef}
-                              style={{ position: 'fixed', top: brandMenuPos.top, left: brandMenuPos.left }}
-                              className="z-[9999] w-44 rounded-xl border border-[#e5e5e7] bg-white p-2 shadow-xl dark:border-[#3a3a3d] dark:bg-[#2a2a2d]"
-                              onClick={(event) => event.stopPropagation()}
-                            >
-                              <div className="px-2 py-1.5 text-center text-[10px] font-semibold uppercase tracking-[0.24em] text-[#6b7280] dark:text-[#a0a0a0]">Filter</div>
-                              <div className="max-h-56 overflow-y-auto">
-                                <label className="flex w-full items-center justify-center gap-2 rounded-xl px-3 py-1.5 text-center text-[10px] text-[#6b7280] hover:bg-[#f5f5f7] dark:text-[#a0a0a0] dark:hover:bg-slate-800">
-                                  <input
-                                    type="checkbox"
-                                    checked={allBrandsChecked}
-                                    onChange={() => {
-                                      const nextValue = !allBrandsChecked;
-                                      setBrandFilter(Object.fromEntries(brandOptions.map((name) => [name, nextValue])));
-                                    }}
-                                  />
-                                  <span>All</span>
-                                </label>
-                                {brandOptions.map((brand) => (
-                                  <label key={brand} className="flex w-full items-center justify-center gap-2 rounded-xl px-3 py-1.5 text-center text-[10px] text-[#6b7280] hover:bg-[#f5f5f7] dark:text-[#a0a0a0] dark:hover:bg-slate-800">
-                                    <input
-                                      type="checkbox"
-                                      checked={isBrandChecked(brand)}
-                                      onChange={() => {
-                                        setBrandFilter((current) => ({ ...current, [brand]: !isBrandChecked(brand) }));
-                                      }}
-                                    />
-                                    <span>{brand}</span>
-                                  </label>
-                                ))}
-                              </div>
-                            </div>,
-                            document.body
-                          )}
-                        </div>
-                      )}
-                    </th>
-                    {['Agent', 'Company Money', 'Balance Inside', 'Discrepancy', 'SDP VS Balance'].map((label) => (
-                      <th key={label} className="text-[10px] font-semibold text-slate-500 dark:text-slate-400 text-center whitespace-nowrap px-4 py-3">
+                    {columnDefs.map((col) => (
+                      <th key={col.key} className="text-[10px] font-semibold text-slate-500 dark:text-slate-400 text-center whitespace-nowrap px-4 py-3">
                         {loading ? (
                           <div className="mx-auto h-2.5 w-16 animate-pulse rounded-md bg-slate-200 dark:bg-slate-700" />
                         ) : (
-                          label
-                        )}
-                      </th>
-                    ))}
-                    <th className="text-[10px] font-semibold text-slate-500 dark:text-slate-400 text-center whitespace-nowrap px-4 py-3">
-                      {loading ? (
-                        <div className="mx-auto h-2.5 w-16 animate-pulse rounded-md bg-slate-200 dark:bg-slate-700" />
-                      ) : (
-                        <div className="relative flex items-center justify-center gap-1">
-                          <span>Current Group</span>
-                          <button
-                            type="button"
-                            ref={currentGroupButtonRef}
-                            onClick={(event) => {
-                              event.stopPropagation();
-                              const rect = currentGroupButtonRef.current?.getBoundingClientRect();
-                              if (rect) {
-                                const dropdownWidth = 176;
-                                const left = Math.min(rect.left, window.innerWidth - dropdownWidth - 8);
-                                setCurrentGroupMenuPos({ top: rect.bottom + 8, left: Math.max(8, left) });
-                              }
-                              setCurrentGroupMenuOpen((current) => !current);
-                            }}
-                            className={`flex items-center justify-center rounded-full p-1 transition ${anyCurrentGroupUnchecked ? 'bg-indigo-100 text-indigo-700 dark:bg-indigo-500/30 dark:text-indigo-200' : 'text-[#6b7280] hover:bg-slate-200 dark:text-[#a0a0a0] dark:hover:bg-white/10'}`}
-                          >
-                            <Filter size={12} className={anyCurrentGroupUnchecked ? 'opacity-100' : 'opacity-70'} />
-                          </button>
-                          {currentGroupMenuOpen && typeof document !== 'undefined' && createPortal(
-                            <div
-                              ref={currentGroupDropdownRef}
-                              style={{ position: 'fixed', top: currentGroupMenuPos.top, left: currentGroupMenuPos.left }}
-                              className="z-[9999] w-44 rounded-xl border border-[#e5e5e7] bg-white p-2 shadow-xl dark:border-[#3a3a3d] dark:bg-[#2a2a2d]"
-                              onClick={(event) => event.stopPropagation()}
+                          <div className="relative flex items-center justify-center gap-1">
+                            <button
+                              type="button"
+                              onClick={() => {
+                                if (sortColumn === col.key) {
+                                  setSortDirection((current) => current === 'asc' ? 'desc' : 'asc');
+                                } else {
+                                  setSortColumn(col.key);
+                                  setSortDirection('asc');
+                                }
+                              }}
+                              className="flex items-center gap-1 text-center transition hover:opacity-80"
                             >
-                              <div className="px-2 py-1.5 text-center text-[10px] font-semibold uppercase tracking-[0.24em] text-[#6b7280] dark:text-[#a0a0a0]">Filter</div>
-                              <div className="max-h-56 overflow-y-auto">
-                                <label className="flex w-full items-center justify-center gap-2 rounded-xl px-3 py-1.5 text-center text-[10px] text-[#6b7280] hover:bg-[#f5f5f7] dark:text-[#a0a0a0] dark:hover:bg-slate-800">
-                                  <input
-                                    type="checkbox"
-                                    checked={allCurrentGroupsChecked}
-                                    onChange={() => {
-                                      const nextValue = !allCurrentGroupsChecked;
-                                      setCurrentGroupFilter(Object.fromEntries(currentGroupOptions.map((name) => [name, nextValue])));
-                                    }}
-                                  />
-                                  <span>All</span>
-                                </label>
-                                {currentGroupOptions.map((group) => (
-                                  <label key={group} className="flex w-full items-center justify-center gap-2 rounded-xl px-3 py-1.5 text-center text-[10px] text-[#6b7280] hover:bg-[#f5f5f7] dark:text-[#a0a0a0] dark:hover:bg-slate-800">
-                                    <input
-                                      type="checkbox"
-                                      checked={isCurrentGroupChecked(group)}
-                                      onChange={() => {
-                                        setCurrentGroupFilter((current) => ({ ...current, [group]: !isCurrentGroupChecked(group) }));
-                                      }}
-                                    />
-                                    <span>{group}</span>
-                                  </label>
-                                ))}
-                              </div>
-                            </div>,
-                            document.body
-                          )}
-                        </div>
-                      )}
-                    </th>
-                    {['Correct Group', 'Remarks'].map((label) => (
-                      <th key={label} className="text-[10px] font-semibold text-slate-500 dark:text-slate-400 text-center whitespace-nowrap px-4 py-3">
-                        {loading ? (
-                          <div className="mx-auto h-2.5 w-16 animate-pulse rounded-md bg-slate-200 dark:bg-slate-700" />
-                        ) : (
-                          label
+                              <span>{col.label}</span>
+                              <SortIcon active={sortColumn === col.key} direction={sortDirection} />
+                            </button>
+                            {col.key === 'brand' && (
+                              <>
+                                <button
+                                  type="button"
+                                  ref={brandButtonRef}
+                                  onClick={(event) => {
+                                    event.stopPropagation();
+                                    const rect = brandButtonRef.current?.getBoundingClientRect();
+                                    if (rect) {
+                                      const dropdownWidth = 176;
+                                      const left = Math.min(rect.left, window.innerWidth - dropdownWidth - 8);
+                                      setBrandMenuPos({ top: rect.bottom + 8, left: Math.max(8, left) });
+                                    }
+                                    setBrandMenuOpen((current) => !current);
+                                  }}
+                                  className={`flex items-center justify-center rounded-full p-1 transition ${anyBrandUnchecked ? 'bg-indigo-100 text-indigo-700 dark:bg-indigo-500/30 dark:text-indigo-200' : 'text-[#6b7280] hover:bg-slate-200 dark:text-[#a0a0a0] dark:hover:bg-white/10'}`}
+                                >
+                                  <Filter size={12} className={anyBrandUnchecked ? 'opacity-100' : 'opacity-70'} />
+                                </button>
+                                {brandMenuOpen && typeof document !== 'undefined' && createPortal(
+                                  <div
+                                    ref={brandDropdownRef}
+                                    style={{ position: 'fixed', top: brandMenuPos.top, left: brandMenuPos.left }}
+                                    className="z-[9999] w-44 rounded-xl border border-[#e5e5e7] bg-white p-2 shadow-xl dark:border-[#3a3a3d] dark:bg-[#2a2a2d]"
+                                    onClick={(event) => event.stopPropagation()}
+                                  >
+                                    <div className="px-2 py-1.5 text-center text-[10px] font-semibold uppercase tracking-[0.24em] text-[#6b7280] dark:text-[#a0a0a0]">Filter</div>
+                                    <div className="max-h-56 overflow-y-auto">
+                                      <label className="flex w-full items-center justify-center gap-2 rounded-xl px-3 py-1.5 text-center text-[10px] text-[#6b7280] hover:bg-[#f5f5f7] dark:text-[#a0a0a0] dark:hover:bg-slate-800">
+                                        <input
+                                          type="checkbox"
+                                          checked={allBrandsChecked}
+                                          onChange={() => {
+                                            const nextValue = !allBrandsChecked;
+                                            setBrandFilter(Object.fromEntries(brandOptions.map((name) => [name, nextValue])));
+                                          }}
+                                        />
+                                        <span>All</span>
+                                      </label>
+                                      {brandOptions.map((brand) => (
+                                        <label key={brand} className="flex w-full items-center justify-center gap-2 rounded-xl px-3 py-1.5 text-center text-[10px] text-[#6b7280] hover:bg-[#f5f5f7] dark:text-[#a0a0a0] dark:hover:bg-slate-800">
+                                          <input
+                                            type="checkbox"
+                                            checked={isBrandChecked(brand)}
+                                            onChange={() => {
+                                              setBrandFilter((current) => ({ ...current, [brand]: !isBrandChecked(brand) }));
+                                            }}
+                                          />
+                                          <span>{brand}</span>
+                                        </label>
+                                      ))}
+                                    </div>
+                                  </div>,
+                                  document.body
+                                )}
+                              </>
+                            )}
+                            {col.key === 'correctGroup' && (
+                              <>
+                                <button
+                                  type="button"
+                                  ref={correctGroupButtonRef}
+                                  onClick={(event) => {
+                                    event.stopPropagation();
+                                    const rect = correctGroupButtonRef.current?.getBoundingClientRect();
+                                    if (rect) {
+                                      const dropdownWidth = 176;
+                                      const left = Math.min(rect.left, window.innerWidth - dropdownWidth - 8);
+                                      setCorrectGroupMenuPos({ top: rect.bottom + 8, left: Math.max(8, left) });
+                                    }
+                                    setCorrectGroupMenuOpen((current) => !current);
+                                  }}
+                                  className={`flex items-center justify-center rounded-full p-1 transition ${anyCorrectGroupUnchecked ? 'bg-indigo-100 text-indigo-700 dark:bg-indigo-500/30 dark:text-indigo-200' : 'text-[#6b7280] hover:bg-slate-200 dark:text-[#a0a0a0] dark:hover:bg-white/10'}`}
+                                >
+                                  <Filter size={12} className={anyCorrectGroupUnchecked ? 'opacity-100' : 'opacity-70'} />
+                                </button>
+                                {correctGroupMenuOpen && typeof document !== 'undefined' && createPortal(
+                                  <div
+                                    ref={correctGroupDropdownRef}
+                                    style={{ position: 'fixed', top: correctGroupMenuPos.top, left: correctGroupMenuPos.left }}
+                                    className="z-[9999] w-44 rounded-xl border border-[#e5e5e7] bg-white p-2 shadow-xl dark:border-[#3a3a3d] dark:bg-[#2a2a2d]"
+                                    onClick={(event) => event.stopPropagation()}
+                                  >
+                                    <div className="px-2 py-1.5 text-center text-[10px] font-semibold uppercase tracking-[0.24em] text-[#6b7280] dark:text-[#a0a0a0]">Filter</div>
+                                    <div className="max-h-56 overflow-y-auto">
+                                      <label className="flex w-full items-center justify-center gap-2 rounded-xl px-3 py-1.5 text-center text-[10px] text-[#6b7280] hover:bg-[#f5f5f7] dark:text-[#a0a0a0] dark:hover:bg-slate-800">
+                                        <input
+                                          type="checkbox"
+                                          checked={allCorrectGroupsChecked}
+                                          onChange={() => {
+                                            const nextValue = !allCorrectGroupsChecked;
+                                            setCorrectGroupFilter(Object.fromEntries(correctGroupOptions.map((name) => [name, nextValue])));
+                                          }}
+                                        />
+                                        <span>All</span>
+                                      </label>
+                                      {correctGroupOptions.map((group) => (
+                                        <label key={group} className="flex w-full items-center justify-center gap-2 rounded-xl px-3 py-1.5 text-center text-[10px] text-[#6b7280] hover:bg-[#f5f5f7] dark:text-[#a0a0a0] dark:hover:bg-slate-800">
+                                          <input
+                                            type="checkbox"
+                                            checked={isCorrectGroupChecked(group)}
+                                            onChange={() => {
+                                              setCorrectGroupFilter((current) => ({ ...current, [group]: !isCorrectGroupChecked(group) }));
+                                            }}
+                                          />
+                                          <span>{group}</span>
+                                        </label>
+                                      ))}
+                                    </div>
+                                  </div>,
+                                  document.body
+                                )}
+                              </>
+                            )}
+                          </div>
                         )}
                       </th>
                     ))}

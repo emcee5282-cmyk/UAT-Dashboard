@@ -221,7 +221,7 @@ export default function Sidebar() {
       <aside
         onMouseEnter={() => setIsExpanded(true)}
         onMouseLeave={() => setIsExpanded(false)}
-        className={`fixed left-0 top-0 z-40 hidden h-screen flex-col overflow-hidden border-r border-[#e5e5e7] bg-white text-slate-900 transition-all duration-300 dark:border-[#3a3a3d] dark:bg-[#1c1c1e] dark:text-white md:flex ${
+        className={`fixed left-0 top-0 z-[60] hidden h-screen flex-col overflow-hidden border-r border-[#e5e5e7] bg-white text-slate-900 transition-all duration-300 dark:border-[#3a3a3d] dark:bg-[#1c1c1e] dark:text-white md:flex ${
           isExpanded ? 'w-64 shadow-xl' : 'w-16'
         }`}
       >
