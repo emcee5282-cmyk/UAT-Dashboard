@@ -75,14 +75,13 @@ const columns: { key: SortColumn; label: string }[] = [
 ];
 
 const columnWidths: Record<SortColumn, string> = {
-  '': '0px',
-  brand: '100px',
-  leader: '150px',
-  agentName: '200px',
-  openingBal: '160px',
-  sdp: '160px',
+  '': '0%',
+  brand: '18%',
+  leader: '20%',
+  agentName: '22%',
+  openingBal: '20%',
+  sdp: '20%',
 };
-const TABLE_MIN_WIDTH = '770px';
 
 function headerCellClasses(active: boolean) {
   const color = active ? 'text-indigo-600 dark:text-indigo-400' : 'text-foreground';
@@ -552,7 +551,7 @@ export default function Summary() {
               </div>
             </div>
             <div className="max-h-[calc(100vh-140px)] overflow-y-auto overflow-x-scroll">
-              <table className="table-fixed text-sm" style={{ minWidth: TABLE_MIN_WIDTH }}>
+              <table className="w-full table-fixed text-sm">
                 <colgroup>
                   {visibleColumns.map((col) => (
                     <col key={col.key} style={{ width: columnWidths[col.key] }} />

@@ -1196,10 +1196,7 @@ export default function AgentBalance() {
                     {visibleColumns.map((col) => (
                       <th
                         key={col.key}
-                        style={{
-                          width: columnWidths[col.key],
-                          ...(stickyLeft[col.key] !== undefined ? { position: 'sticky' as const, left: `${stickyLeft[col.key]}px`, zIndex: 52 } : {}),
-                        }}
+                        style={stickyLeft[col.key] !== undefined ? { position: 'sticky' as const, left: `${stickyLeft[col.key]}px`, zIndex: 52 } : undefined}
                         className={headerCellClasses(sortColumn === col.key)}>
                         {loading ? (
                           <div className="mx-auto h-2.5 w-12 animate-pulse rounded-md bg-slate-200 dark:bg-slate-700" />
