@@ -286,6 +286,9 @@ const columnWidths: Record<ColumnKey, string> = {
 
 const TABLE_MIN_WIDTH = '1680px';
 
+const STICKY_COLS: ColumnKey[] = ['brand', 'leader', 'walletName'];
+const DEFAULT_HIDDEN: ColumnKey[] = ['brand', 'sdp', 'settlement', 'topUp', 'sdpVsBalance'];
+
 function SortIcon({ active, direction }: { active: boolean; direction: 'asc' | 'desc' }) {
   if (!active) {
     return (
@@ -318,14 +321,20 @@ const WALLET_STATUS_TEXT_CLASSES: Record<string, string> = {
   'No Record': 'text-slate-400',
 };
 
-function renderCell(row: MergedRow, key: ColumnKey) {
+function renderCell(row: MergedRow, key: ColumnKey, stickyLeftPx?: number) {
+  const stickyStyle: React.CSSProperties | undefined = stickyLeftPx !== undefined
+    ? { position: 'sticky', left: `${stickyLeftPx}px`, zIndex: 1 }
+    : undefined;
+  const stickyBg = stickyLeftPx !== undefined ? ' bg-white dark:bg-[#2a2a2d]' : '';
+  const stickyBorder = '';
+
   switch (key) {
     case 'brand':
-      return <td key={key} className="whitespace-nowrap overflow-hidden text-ellipsis px-3 py-1 text-center text-[9px] text-foreground">{row.brand}</td>;
+      return <td key={key} style={stickyStyle} className={`whitespace-nowrap overflow-hidden text-ellipsis px-3 py-1 text-center text-[9px] text-foreground${stickyBg}${stickyBorder}`}>{row.brand}</td>;
     case 'leader':
-      return <td key={key} className="whitespace-nowrap overflow-hidden text-ellipsis px-3 py-1 text-center text-[9px] text-foreground">{row.leader}</td>;
+      return <td key={key} style={stickyStyle} className={`whitespace-nowrap overflow-hidden text-ellipsis px-3 py-1 text-center text-[9px] text-foreground${stickyBg}${stickyBorder}`}>{row.leader}</td>;
     case 'walletName':
-      return <td key={key} className="whitespace-nowrap overflow-hidden text-ellipsis px-3 py-1 text-center text-[9px] font-medium text-foreground">{row.agentName}</td>;
+      return <td key={key} style={stickyStyle} className={`whitespace-nowrap overflow-hidden text-ellipsis px-3 py-1 text-center text-[9px] font-medium text-foreground${stickyBg}${stickyBorder}`}>{row.agentName}</td>;
     case 'walletType':
       return <td key={key} className="whitespace-nowrap overflow-hidden text-ellipsis px-3 py-1 text-center text-[9px] text-foreground">{row.walletType}</td>;
     case 'sdp':
@@ -414,7 +423,7 @@ export default function AgentBalance() {
   const [walletStatusMenuOpen, setWalletStatusMenuOpen] = useState(false);
   const [walletStatusMenuPos, setWalletStatusMenuPos] = useState({ top: 0, left: 0 });
   const [columnVisibility, setColumnVisibility] = useState<Record<ColumnKey, boolean>>(
-    () => Object.fromEntries(columnDefs.map((col) => [col.key, true])) as Record<ColumnKey, boolean>
+    () => Object.fromEntries(columnDefs.map((col) => [col.key, !DEFAULT_HIDDEN.includes(col.key)])) as Record<ColumnKey, boolean>
   );
   const [walletStatusFilter, setWalletStatusFilter] = useState<Record<string, boolean>>(
     () => Object.fromEntries(WALLET_STATUS_OPTIONS.map((status) => [status, true]))
@@ -678,6 +687,20 @@ export default function AgentBalance() {
   const visibleColumns = useMemo(() => columnDefs.filter((col) => columnVisibility[col.key]), [columnVisibility]);
   const allColumnsChecked = columnDefs.every((col) => columnVisibility[col.key]);
   const anyColumnHidden = columnDefs.some((col) => !columnVisibility[col.key]);
+  const hiddenColumnCount = columnDefs.filter((col) => !columnVisibility[col.key]).length;
+
+  const stickyLeft = useMemo(() => {
+    const result: Partial<Record<ColumnKey, number>> = {};
+    let offset = 0;
+    for (const col of visibleColumns) {
+      if (STICKY_COLS.includes(col.key)) {
+        result[col.key] = offset;
+        offset += parseInt(columnWidths[col.key], 10);
+      }
+    }
+    return result;
+  }, [visibleColumns]);
+
   const walletStatusOptions = useMemo(() => {
     const present = new Set(rows.map((row) => row.walletStatus));
     return WALLET_STATUS_OPTIONS.filter((status) => present.has(status));
@@ -1074,6 +1097,11 @@ export default function AgentBalance() {
                     >
                       <Filter size={14} />
                       Filter
+                      {anyColumnHidden && (
+                        <span className="flex h-4 min-w-[16px] items-center justify-center rounded-full bg-indigo-600 px-1 text-[9px] font-semibold leading-none text-white">
+                          {hiddenColumnCount}
+                        </span>
+                      )}
                     </button>
                   )}
                 {filterMenuOpen && typeof document !== 'undefined' && createPortal(
@@ -1168,7 +1196,10 @@ export default function AgentBalance() {
                     {visibleColumns.map((col) => (
                       <th
                         key={col.key}
-                        style={{ width: columnWidths[col.key] }}
+                        style={{
+                          width: columnWidths[col.key],
+                          ...(stickyLeft[col.key] !== undefined ? { position: 'sticky' as const, left: `${stickyLeft[col.key]}px`, zIndex: 52 } : {}),
+                        }}
                         className={headerCellClasses(sortColumn === col.key)}>
                         {loading ? (
                           <div className="mx-auto h-2.5 w-12 animate-pulse rounded-md bg-slate-200 dark:bg-slate-700" />
@@ -1469,9 +1500,9 @@ export default function AgentBalance() {
                   {pagedRows.length > 0 ? pagedRows.map((row, i) => (
                     <tr
                       key={row.agentName || i}
-                      className={`border-b border-border last:border-0 hover:bg-muted/10 transition-colors ${i % 2 === 1 ? 'bg-muted/5' : ''}`}
+                      className="hover:bg-muted/10 transition-colors"
                     >
-                      {visibleColumns.map((col) => renderCell(row, col.key))}
+                      {visibleColumns.map((col) => renderCell(row, col.key, stickyLeft[col.key]))}
                     </tr>
                   )) : (
                     <tr>

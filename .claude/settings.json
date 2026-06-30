@@ -1,0 +1,17 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(taskkill //F //IM node.exe //FI \"WINDOWTITLE eq npm*\")",
+      "Bash(netstat -ano)",
+      "Bash(taskkill //F //PID 96800)",
+      "Bash(python3 -c ' *)",
+      "Bash(node -e ' *)",
+      "Bash(grep -n \"colSpan={Math.max\\(visibleColumns.length, 1\\)}\" app/agentbal/page.tsx)",
+      "Bash(grep -n \"<tr$\\\\|<tr>\\\\|<tr\\\\s*$\\\\|className={\\\\`border-b border-border\" app/agentbal/page.tsx)",
+      "Bash(grep -n \"col.key === 'brand'\\\\|col.key === 'correctGroup'\\\\|</div>$\" app/transfer-queue/page.tsx)",
+      "Bash(grep -n \"For Transfer:\\\\|flex items-center gap-3\\\\\">$\" app/transfer-queue/page.tsx)",
+      "Bash(grep -n \"document.body\\\\s*$\\\\|^\\\\s*\\)\\\\}\\\\s*$\" app/agentbal/page.tsx)",
+      "Bash(grep -n \"ChevronUp\\\\s*$\\\\|anyBrandUnchecked && \\(\" app/agentbal/page.tsx)"
+    ]
+  }
+}
