@@ -2,7 +2,8 @@
 
 import { useEffect, useState, useCallback, useMemo, useRef } from 'react';
 import { createPortal } from 'react-dom';
-import { RefreshCw, AlertCircle, Search, Loader2, Filter, ChevronUp, ChevronDown } from 'lucide-react';
+import { RefreshCw, AlertCircle, Search, Loader2, Filter, ChevronUp, ChevronDown, Download } from 'lucide-react';
+import * as XLSX from 'xlsx';
 import ThemeToggle from '../components/ThemeToggle';
 
 type Row = {
@@ -69,21 +70,28 @@ const columns: { key: SortColumn; label: string }[] = [
   { key: 'brand', label: 'Brand' },
   { key: 'leader', label: 'Leader' },
   { key: 'agentName', label: 'Agent Name' },
-  { key: 'openingBal', label: 'Opening Bal.' },
-  { key: 'sdp', label: 'SDP' },
+  { key: 'openingBal', label: 'Opening Balance' },
+  { key: 'sdp', label: 'Security Deposit' },
 ];
 
+const columnWidths: Record<SortColumn, string> = {
+  '': '0%',
+  brand: '18%',
+  leader: '20%',
+  agentName: '22%',
+  openingBal: '20%',
+  sdp: '20%',
+};
+
 function headerCellClasses(active: boolean) {
-  const bg = active ? 'bg-indigo-50 dark:bg-indigo-500/10' : '';
-  const color = active ? 'text-indigo-600 dark:text-indigo-400' : 'text-slate-500 dark:text-slate-400';
-  const rounded = active ? 'rounded-md' : '';
-  return `whitespace-nowrap px-3 py-2 text-center text-[10px] font-semibold ${bg} ${color} ${rounded}`;
+  const color = active ? 'text-indigo-600 dark:text-indigo-400' : 'text-foreground';
+  return `group text-center px-3 py-2 text-[10px] font-semibold whitespace-nowrap ${color}`;
 }
 
 function SortIcon({ active, direction }: { active: boolean; direction: 'asc' | 'desc' }) {
   if (!active) {
     return (
-      <span className="flex flex-col items-center justify-center leading-none text-slate-400 opacity-40">
+      <span className="flex flex-col items-center justify-center leading-none text-slate-400 opacity-0 transition-opacity duration-150 group-hover:opacity-40">
         <ChevronUp size={10} className="-mb-0.5" />
         <ChevronDown size={10} />
       </span>
@@ -96,6 +104,24 @@ function SortIcon({ active, direction }: { active: boolean; direction: 'asc' | '
   );
 }
 
+function renderCell(row: Row, key: SortColumn) {
+  const base = 'whitespace-nowrap overflow-hidden text-ellipsis px-3 py-1 text-center text-[9px]';
+  switch (key) {
+    case 'brand':
+      return <td key={key} className={`${base} text-slate-700 dark:text-slate-300`}>{row.brand}</td>;
+    case 'leader':
+      return <td key={key} className={`${base} text-slate-700 dark:text-slate-300`}>{row.leader}</td>;
+    case 'agentName':
+      return <td key={key} className={`${base} font-bold text-slate-900 dark:text-white`}>{row.agentName}</td>;
+    case 'openingBal':
+      return <td key={key} className={`${base} text-slate-700 dark:text-slate-300`}>{fmt(row.openingBal)}</td>;
+    case 'sdp':
+      return <td key={key} className={`${base} text-slate-700 dark:text-slate-300`}>{fmt(row.sdp)}</td>;
+    default:
+      return null;
+  }
+}
+
 export default function Summary() {
   const [rows, setRows] = useState<Row[]>([]);
   const [loading, setLoading] = useState(true);
@@ -105,13 +131,24 @@ export default function Summary() {
   const [searchTerm, setSearchTerm] = useState('');
   const [brandFilter, setBrandFilter] = useState<Record<string, boolean>>({});
   const [brandMenuOpen, setBrandMenuOpen] = useState(false);
-  const [brandMenuPos, setBrandMenuPos] = useState({ top: 0, left: 0 });
-  const [sortColumn, setSortColumn] = useState<SortColumn>('');
+  const [leaderFilter, setLeaderFilter] = useState<Record<string, boolean>>({});
+  const [leaderMenuOpen, setLeaderMenuOpen] = useState(false);
+  const [sortColumn, setSortColumn] = useState<SortColumn>('leader');
   const [sortDirection, setSortDirection] = useState<'asc' | 'desc'>('asc');
   const [page, setPage] = useState(1);
+  const [cardsExpanded, setCardsExpanded] = useState(false);
+  const [filterMenuOpen, setFilterMenuOpen] = useState(false);
+  const [filterMenuPos, setFilterMenuPos] = useState({ top: 0, left: 0 });
+  const [columnVisibility, setColumnVisibility] = useState<Record<SortColumn, boolean>>(
+    () => Object.fromEntries(columns.map((col) => [col.key, true])) as Record<SortColumn, boolean>
+  );
   const rowsPerPage = 50;
   const brandButtonRef = useRef<HTMLButtonElement>(null);
   const brandDropdownRef = useRef<HTMLDivElement>(null);
+  const leaderButtonRef = useRef<HTMLButtonElement>(null);
+  const leaderDropdownRef = useRef<HTMLDivElement>(null);
+  const filterButtonRef = useRef<HTMLButtonElement>(null);
+  const filterDropdownRef = useRef<HTMLDivElement>(null);
 
   const fetchData = useCallback(async () => {
     try {
@@ -173,7 +210,7 @@ export default function Summary() {
 
   useEffect(() => {
     setPage(1);
-  }, [searchTerm, brandFilter, sortColumn, sortDirection]);
+  }, [searchTerm, brandFilter, leaderFilter, sortColumn, sortDirection]);
 
   useEffect(() => {
     if (!brandMenuOpen) return;
@@ -192,6 +229,45 @@ export default function Summary() {
     return () => document.removeEventListener('mousedown', handlePointerDown);
   }, [brandMenuOpen]);
 
+  useEffect(() => {
+    if (!leaderMenuOpen) return;
+
+    const handlePointerDown = (event: MouseEvent) => {
+      const target = event.target as Node;
+      if (
+        leaderButtonRef.current && !leaderButtonRef.current.contains(target) &&
+        leaderDropdownRef.current && !leaderDropdownRef.current.contains(target)
+      ) {
+        setLeaderMenuOpen(false);
+      }
+    };
+
+    document.addEventListener('mousedown', handlePointerDown);
+    return () => document.removeEventListener('mousedown', handlePointerDown);
+  }, [leaderMenuOpen]);
+
+  useEffect(() => {
+    if (!filterMenuOpen) return;
+
+    const handlePointerDown = (event: MouseEvent) => {
+      const target = event.target as Node;
+      if (
+        filterButtonRef.current && !filterButtonRef.current.contains(target) &&
+        filterDropdownRef.current && !filterDropdownRef.current.contains(target)
+      ) {
+        setFilterMenuOpen(false);
+      }
+    };
+
+    document.addEventListener('mousedown', handlePointerDown);
+    return () => document.removeEventListener('mousedown', handlePointerDown);
+  }, [filterMenuOpen]);
+
+  const visibleColumns = useMemo(() => columns.filter((col) => columnVisibility[col.key]), [columnVisibility]);
+  const allColumnsChecked = columns.every((col) => columnVisibility[col.key]);
+  const anyColumnHidden = columns.some((col) => !columnVisibility[col.key]);
+  const anyFilterActive = anyColumnHidden;
+
   const brandOptions = useMemo(() => {
     return Array.from(new Set(rows.map((row) => row.brand).filter(Boolean))).sort((a, b) => a.localeCompare(b));
   }, [rows]);
@@ -199,15 +275,29 @@ export default function Summary() {
   const isBrandChecked = (name: string) => brandFilter[name] !== false;
   const allBrandsChecked = brandOptions.every((name) => isBrandChecked(name));
   const anyBrandUnchecked = brandOptions.some((name) => !isBrandChecked(name));
+  const selectedBrandCount = brandOptions.filter((name) => isBrandChecked(name)).length;
+
+  const leaderOptions = useMemo(() => {
+    return Array.from(new Set(rows.map((row) => row.leader).filter(Boolean))).sort((a, b) => a.localeCompare(b));
+  }, [rows]);
+
+  const isLeaderChecked = (name: string) => leaderFilter[name] !== false;
+  const allLeadersChecked = leaderOptions.every((name) => isLeaderChecked(name));
+  const anyLeaderUnchecked = leaderOptions.some((name) => !isLeaderChecked(name));
+  const selectedLeaderCount = leaderOptions.filter((name) => isLeaderChecked(name)).length;
 
   const searchedRows = rows.filter((row) => {
     const haystack = `${row.leader} ${row.agentName} ${fmt(row.openingBal)} ${fmt(row.sdp)}`.toLowerCase();
     return haystack.includes(searchTerm.toLowerCase());
   });
 
-  const filteredRows = brandOptions.some((name) => brandFilter[name] === false)
+  const brandedRows = brandOptions.some((name) => brandFilter[name] === false)
     ? searchedRows.filter((row) => brandFilter[row.brand] !== false)
     : searchedRows;
+
+  const filteredRows = leaderOptions.some((name) => leaderFilter[name] === false)
+    ? brandedRows.filter((row) => leaderFilter[row.leader] !== false)
+    : brandedRows;
 
   const sortedRows = useMemo(() => {
     if (!sortColumn) return filteredRows;
@@ -256,41 +346,71 @@ export default function Summary() {
     }
   }, [page, currentPage]);
 
+  const handleExport = useCallback(() => {
+    const getExportValue = (row: Row, key: SortColumn) => {
+      switch (key) {
+        case 'brand':
+          return row.brand;
+        case 'leader':
+          return row.leader;
+        case 'agentName':
+          return row.agentName;
+        case 'openingBal':
+          return fmt(row.openingBal);
+        case 'sdp':
+          return fmt(row.sdp);
+        default:
+          return '';
+      }
+    };
+
+    const headers = visibleColumns.map((col) => col.label);
+    const data = sortedRows.map((row) => visibleColumns.map((col) => getExportValue(row, col.key)));
+
+    const worksheet = XLSX.utils.aoa_to_sheet([headers, ...data]);
+    worksheet['!cols'] = headers.map(() => ({ wch: 16 }));
+
+    const workbook = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(workbook, worksheet, 'Opening Balance');
+
+    const now = new Date();
+    const datePart = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
+    const timePart = `${String(now.getHours()).padStart(2, '0')}${String(now.getMinutes()).padStart(2, '0')}`;
+    XLSX.writeFile(workbook, `SSP1_OPENING_BALANCE_${datePart}_${timePart}.xlsx`);
+  }, [sortedRows, visibleColumns]);
+
   return (
-    <div className="min-h-screen bg-[#f5f5f7] text-[#1a1a1a] transition-colors duration-300 dark:bg-[#1c1c1e] dark:text-white">
-      <header className="border-b border-[#e5e5e7] bg-white px-4 py-2 dark:border-[#3a3a3d] dark:bg-[#2a2a2d] md:px-8">
-        <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
-          <div className="flex items-baseline gap-2">
-            <h1 className="text-lg font-semibold text-slate-900 dark:text-white">Opening Balance</h1>
-          </div>
-          <div className="flex flex-wrap items-center gap-3">
-            <label className="flex items-center gap-2 rounded-xl border border-[#e5e5e7] px-2 py-1.5 text-[11px] text-[#6b7280] dark:border-[#3a3a3d] dark:text-[#a0a0a0]">
-              <Search size={12} />
-              <input
-                value={searchTerm}
-                onChange={(event) => setSearchTerm(event.target.value)}
-                className="w-32 bg-transparent outline-none md:w-48"
-                placeholder="Search"
-              />
-            </label>
-            <span className="flex items-center gap-1.5 text-[11px] text-[#6b7280] dark:text-[#a0a0a0]">
-              <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-emerald-500" />
-              {lastUpdated || '—'}
+    <div className="min-h-screen w-full bg-background font-[Inter,sans-serif] text-foreground transition-colors duration-300 dark:bg-[#1c1c1e]">
+      <header className="sticky top-0 z-30 border-b border-[#e5e5e7] bg-white px-4 py-2 dark:border-[#3a3a3d] dark:bg-[#2a2a2d] md:px-8">
+        <div className="flex items-center justify-between">
+          <h1 className="text-lg font-medium text-foreground">Opening Balance</h1>
+          <div className="flex items-center gap-3">
+            <span className="flex items-center gap-1.5 text-[10px] text-muted-foreground">
+              <span className="h-1 w-1 rounded-full bg-emerald-500" />
+              {loading ? '—' : (lastUpdated || '—')}
             </span>
             <ThemeToggle />
             <button
               onClick={fetchData}
-              disabled={spinning}
-              className="flex items-center gap-2 rounded-xl border border-[#e5e5e7] px-2 py-1.5 text-[11px] font-medium text-[#6b7280] transition-all disabled:opacity-50 dark:border-[#3a3a3d] dark:text-[#a0a0a0]"
+              disabled={spinning || loading}
+              className="flex items-center gap-1.5 px-3 py-2 text-[10px] font-medium text-indigo-600 border border-border rounded-lg hover:bg-muted transition-colors disabled:opacity-50"
             >
               <RefreshCw size={12} className={spinning ? 'animate-spin' : ''} />
               Refresh
+            </button>
+            <button
+              type="button"
+              onClick={() => setCardsExpanded((current) => !current)}
+              title={cardsExpanded ? 'Collapse' : 'Expand'}
+              className="flex items-center justify-center rounded-full p-1 text-indigo-600 transition hover:bg-slate-200 dark:hover:bg-white/10"
+            >
+              {cardsExpanded ? <ChevronUp size={12} /> : <ChevronDown size={12} />}
             </button>
           </div>
         </div>
       </header>
 
-      <main className={`relative space-y-2 p-3 ${loading ? 'pointer-events-none' : ''}`}>
+      <main className="px-6 pt-4 pb-6">
         {loading && (
           <div
             className="fixed z-[9998] flex items-center justify-center bg-white/30 dark:bg-black/30"
@@ -308,85 +428,172 @@ export default function Summary() {
         )}
 
         {!error && (
-          <div className="rounded-xl border border-[#e5e5e7] bg-white dark:border-[#3a3a3d] dark:bg-[#2a2a2d]">
-            <div className="flex items-center justify-between gap-3 border-b border-[#e5e5e7] px-2 py-1.5 dark:border-[#3a3a3d]">
-              {loading ? (
-                <div className="h-2.5 w-24 rounded-md bg-slate-200 dark:bg-slate-700 animate-pulse" />
-              ) : (
-                <span className="text-[10px] font-semibold text-slate-500 dark:text-slate-400">{sortedRows.length} agents</span>
-              )}
-              {loading ? (
-                <div className="h-2.5 w-32 rounded-md bg-slate-200 dark:bg-slate-700 animate-pulse" />
-              ) : (
-                <div className="flex items-center gap-1.5 rounded-xl border border-[#e5e5e7] px-2 py-0.5 dark:border-[#3a3a3d]">
-                  <button
-                    type="button"
-                    onClick={() => setPage((current) => Math.max(1, current - 1))}
-                    disabled={currentPage === 1}
-                    className="rounded-xl px-1.5 py-0.5 text-[10px] font-semibold text-slate-600 transition disabled:cursor-not-allowed disabled:opacity-40 dark:text-slate-300"
-                  >
-                    Previous
-                  </button>
-                  <span className="text-[10px] text-slate-500 dark:text-slate-400">Page {currentPage} of {totalPages}</span>
-                  <button
-                    type="button"
-                    onClick={() => setPage((current) => Math.min(totalPages, current + 1))}
-                    disabled={currentPage === totalPages}
-                    className="rounded-xl px-1.5 py-0.5 text-[10px] font-semibold text-slate-600 transition disabled:cursor-not-allowed disabled:opacity-40 dark:text-slate-300"
-                  >
-                    Next
-                  </button>
+          <div className="mb-1">
+            {loading ? (
+              <div className="h-2.5 w-24 rounded-md bg-slate-200 dark:bg-slate-700 animate-pulse" />
+            ) : (
+              <span className="text-[11px] font-semibold text-foreground">Total Accounts: <span className="text-indigo-600">{sortedRows.length.toLocaleString('en-PH')}</span></span>
+            )}
+          </div>
+        )}
+
+        {!error && (
+          <div className="bg-white rounded-xl border border-border overflow-hidden dark:bg-[#2a2a2d]">
+            <div className="px-3 py-1 border-b border-border bg-muted/20 flex items-center justify-between gap-3">
+              <div className="flex items-center gap-2">
+                <div className="flex w-52 items-center gap-2 bg-white border border-border rounded-full px-4 py-1.5 dark:bg-[#2a2a2d]">
+                  {loading ? (
+                    <div className="h-3 w-32 animate-pulse rounded-md bg-slate-200 dark:bg-slate-700" />
+                  ) : (
+                    <>
+                      <Search size={14} className="text-muted-foreground" />
+                      <input
+                        value={searchTerm}
+                        onChange={(event) => setSearchTerm(event.target.value)}
+                        className="flex-1 bg-transparent text-[10px] text-foreground placeholder:text-muted-foreground outline-none border-none"
+                        placeholder="Search shops or brands..."
+                      />
+                    </>
+                  )}
                 </div>
-              )}
+                <div className="relative">
+                  {!loading && (
+                    <button
+                      type="button"
+                      ref={filterButtonRef}
+                      onClick={(event) => {
+                        event.stopPropagation();
+                        const rect = filterButtonRef.current?.getBoundingClientRect();
+                        if (rect) {
+                          setFilterMenuPos({ top: rect.bottom + 8, left: rect.left });
+                        }
+                        setFilterMenuOpen((current) => !current);
+                      }}
+                      className={`flex items-center gap-1.5 px-3 py-1.5 text-[10px] font-medium border rounded-lg hover:bg-white transition-colors ${anyFilterActive ? 'border-indigo-200 text-indigo-700 dark:border-indigo-900/50 dark:text-indigo-300' : 'border-border text-foreground'}`}
+                    >
+                      <Filter size={14} />
+                      Filter
+                    </button>
+                  )}
+                  {filterMenuOpen && typeof document !== 'undefined' && createPortal(
+                    <div
+                      ref={filterDropdownRef}
+                      style={{ position: 'fixed', top: filterMenuPos.top, left: filterMenuPos.left }}
+                      className="z-[9999] w-56 max-h-[70vh] overflow-y-auto rounded-xl border border-[#e5e5e7] bg-white p-2 shadow-xl dark:border-[#3a3a3d] dark:bg-[#2a2a2d]"
+                      onClick={(event) => event.stopPropagation()}
+                    >
+                      <div className="px-2 py-1.5 text-[10px] font-semibold uppercase tracking-[0.24em] text-[#6b7280] dark:text-[#a0a0a0]">Columns</div>
+                      <label className="flex w-full items-center justify-start gap-2 whitespace-nowrap rounded-xl px-3 py-1.5 text-left text-[10px] text-[#6b7280] hover:bg-[#f5f5f7] dark:text-[#a0a0a0] dark:hover:bg-slate-800">
+                        <input
+                          type="checkbox"
+                          checked={allColumnsChecked}
+                          onChange={() => {
+                            const nextValue = !allColumnsChecked;
+                            setColumnVisibility(
+                              Object.fromEntries(columns.map((col) => [col.key, nextValue])) as Record<SortColumn, boolean>
+                            );
+                          }}
+                        />
+                        <span>Check All</span>
+                      </label>
+                      {columns.map((col) => (
+                        <label key={col.key} className="flex w-full items-center justify-start gap-2 whitespace-nowrap rounded-xl px-3 py-1.5 text-left text-[10px] text-[#6b7280] hover:bg-[#f5f5f7] dark:text-[#a0a0a0] dark:hover:bg-slate-800">
+                          <input
+                            type="checkbox"
+                            checked={columnVisibility[col.key]}
+                            onChange={() => {
+                              setColumnVisibility((current) => ({ ...current, [col.key]: !current[col.key] }));
+                            }}
+                          />
+                          <span>{col.label}</span>
+                        </label>
+                      ))}
+                    </div>,
+                    document.body
+                  )}
+                </div>
+              </div>
+              <div className="flex items-center gap-3">
+                {loading ? (
+                  <div className="h-2.5 w-32 rounded-md bg-slate-200 dark:bg-slate-700 animate-pulse" />
+                ) : (
+                  <div className="flex items-center gap-2">
+                    <span className="text-[10px] text-muted-foreground">Page {currentPage} of {totalPages}</span>
+                    <button
+                      type="button"
+                      onClick={() => setPage((current) => Math.max(1, current - 1))}
+                      disabled={currentPage === 1}
+                      className="px-2.5 py-1.5 text-[10px] font-medium text-foreground border border-border rounded-lg hover:bg-white transition-colors disabled:opacity-50"
+                    >
+                      Previous
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setPage((current) => Math.min(totalPages, current + 1))}
+                      disabled={currentPage === totalPages}
+                      className="px-2.5 py-1.5 text-[10px] font-medium text-foreground border border-border rounded-lg hover:bg-white transition-colors disabled:opacity-50"
+                    >
+                      Next
+                    </button>
+                  </div>
+                )}
+                {loading && <div className="h-7 w-20 animate-pulse rounded-xl bg-slate-200 dark:bg-slate-700" />}
+                {!loading && (
+                  <button
+                    type="button"
+                    onClick={handleExport}
+                    title="Export to Excel"
+                    className="p-1.5 rounded-lg hover:bg-white transition-colors border border-border text-foreground"
+                  >
+                    <Download size={14} />
+                  </button>
+                )}
+              </div>
             </div>
-            <div className="max-h-[calc(100vh-140px)] overflow-y-auto">
-              <table className="w-full text-sm">
-                <thead className="sticky top-0 z-[50] bg-white dark:bg-[#2a2a2d]">
-                  <tr className="border-b border-slate-200 dark:border-[#3a3a3d]">
-                    {columns.map((col) => (
-                      <th key={col.key} className={headerCellClasses(sortColumn === col.key)}>
+            <div className="max-h-[calc(100vh-140px)] overflow-y-auto overflow-x-scroll">
+              <table className="w-full table-fixed text-sm">
+                <colgroup>
+                  {visibleColumns.map((col) => (
+                    <col key={col.key} style={{ width: columnWidths[col.key] }} />
+                  ))}
+                </colgroup>
+                <thead className="sticky top-0 z-[50] border-b border-border bg-white dark:bg-[#2a2a2d]">
+                  <tr>
+                    {visibleColumns.map((col) => (
+                      <th
+                        key={col.key}
+                        style={{ width: columnWidths[col.key] }}
+                        className={headerCellClasses(sortColumn === col.key)}>
                         {col.key === 'brand' ? (
                           <div className="relative flex items-center justify-center gap-1">
-                            <button
-                              type="button"
-                              onClick={() => {
-                                if (sortColumn === 'brand') {
-                                  setSortDirection((current) => current === 'asc' ? 'desc' : 'asc');
-                                } else {
-                                  setSortColumn('brand');
-                                  setSortDirection('asc');
-                                }
-                              }}
-                              className="flex items-center gap-1 text-center transition hover:opacity-80"
-                            >
-                              <span>{col.label}</span>
-                              <SortIcon active={sortColumn === 'brand'} direction={sortDirection} />
-                            </button>
+                            <span>{col.label}</span>
                             <button
                               type="button"
                               ref={brandButtonRef}
                               onClick={(event) => {
                                 event.stopPropagation();
-                                const rect = brandButtonRef.current?.getBoundingClientRect();
-                                if (rect) {
-                                  const dropdownWidth = 176;
-                                  const left = Math.min(rect.left, window.innerWidth - dropdownWidth - 8);
-                                  setBrandMenuPos({ top: rect.bottom + 8, left: Math.max(8, left) });
-                                }
                                 setBrandMenuOpen((current) => !current);
                               }}
                               className={`flex items-center justify-center rounded-full p-1 transition ${anyBrandUnchecked ? 'bg-indigo-100 text-indigo-700 dark:bg-indigo-500/30 dark:text-indigo-200' : 'text-[#6b7280] hover:bg-slate-200 dark:text-[#a0a0a0] dark:hover:bg-white/10'}`}
                             >
-                              <Filter size={12} className={anyBrandUnchecked ? 'opacity-100' : 'opacity-70'} />
+                              {anyBrandUnchecked ? (
+                                <span className="flex h-3 min-w-[12px] items-center justify-center px-0.5 text-[10px] font-semibold leading-none">
+                                  {selectedBrandCount}
+                                </span>
+                              ) : (
+                                <ChevronUp
+                                  size={12}
+                                  className={`transition-transform duration-150 ease-in-out ${brandMenuOpen ? 'rotate-180' : ''} opacity-70`}
+                                />
+                              )}
                             </button>
-                            {brandMenuOpen && typeof document !== 'undefined' && createPortal(
+                            {brandMenuOpen && (
                               <div
                                 ref={brandDropdownRef}
-                                style={{ position: 'fixed', top: brandMenuPos.top, left: brandMenuPos.left }}
-                                className="z-[9999] w-44 rounded-xl border border-[#e5e5e7] bg-white p-2 shadow-xl dark:border-[#3a3a3d] dark:bg-[#2a2a2d]"
+                                className="absolute top-full left-0 mt-1 z-[9999] w-44 rounded-xl border border-[#e5e5e7] bg-white p-2 shadow-xl dark:border-[#3a3a3d] dark:bg-[#2a2a2d]"
                                 onClick={(event) => event.stopPropagation()}
                               >
-                                <div className="px-2 py-1.5 text-center text-[10px] font-semibold uppercase tracking-[0.24em] text-[#6b7280] dark:text-[#a0a0a0]">Filter</div>
+                                <div className="px-2 py-1.5 text-center text-[10px] font-semibold uppercase tracking-[0.24em] text-[#6b7280] dark:text-[#a0a0a0]">Brand</div>
                                 <div className="max-h-56 overflow-y-auto">
                                   <label className="flex w-full items-center justify-center gap-2 rounded-xl px-3 py-1.5 text-center text-[10px] text-[#6b7280] hover:bg-[#f5f5f7] dark:text-[#a0a0a0] dark:hover:bg-slate-800">
                                     <input
@@ -414,8 +621,67 @@ export default function Summary() {
                                     </label>
                                   ))}
                                 </div>
-                              </div>,
-                              document.body
+                              </div>
+                            )}
+                          </div>
+                        ) : col.key === 'leader' ? (
+                          <div className="relative flex items-center justify-center gap-1">
+                            <span>{col.label}</span>
+                            <button
+                              type="button"
+                              ref={leaderButtonRef}
+                              onClick={(event) => {
+                                event.stopPropagation();
+                                setLeaderMenuOpen((current) => !current);
+                              }}
+                              className={`flex items-center justify-center rounded-full p-1 transition ${anyLeaderUnchecked ? 'bg-indigo-100 text-indigo-700 dark:bg-indigo-500/30 dark:text-indigo-200' : 'text-[#6b7280] hover:bg-slate-200 dark:text-[#a0a0a0] dark:hover:bg-white/10'}`}
+                            >
+                              {anyLeaderUnchecked ? (
+                                <span className="flex h-3 min-w-[12px] items-center justify-center px-0.5 text-[10px] font-semibold leading-none">
+                                  {selectedLeaderCount}
+                                </span>
+                              ) : (
+                                <ChevronUp
+                                  size={12}
+                                  className={`transition-transform duration-150 ease-in-out ${leaderMenuOpen ? 'rotate-180' : ''} opacity-70`}
+                                />
+                              )}
+                            </button>
+                            {leaderMenuOpen && (
+                              <div
+                                ref={leaderDropdownRef}
+                                className="absolute top-full left-0 mt-1 z-[9999] w-44 rounded-xl border border-[#e5e5e7] bg-white p-2 shadow-xl dark:border-[#3a3a3d] dark:bg-[#2a2a2d]"
+                                onClick={(event) => event.stopPropagation()}
+                              >
+                                <div className="px-2 py-1.5 text-center text-[10px] font-semibold uppercase tracking-[0.24em] text-[#6b7280] dark:text-[#a0a0a0]">Leader</div>
+                                <div className="max-h-56 overflow-y-auto">
+                                  <label className="flex w-full items-center justify-center gap-2 rounded-xl px-3 py-1.5 text-center text-[10px] text-[#6b7280] hover:bg-[#f5f5f7] dark:text-[#a0a0a0] dark:hover:bg-slate-800">
+                                    <input
+                                      type="checkbox"
+                                      checked={allLeadersChecked}
+                                      onChange={() => {
+                                        const nextValue = !allLeadersChecked;
+                                        setLeaderFilter(
+                                          Object.fromEntries(leaderOptions.map((name) => [name, nextValue]))
+                                        );
+                                      }}
+                                    />
+                                    <span>All</span>
+                                  </label>
+                                  {leaderOptions.map((leader) => (
+                                    <label key={leader} className="flex w-full items-center justify-center gap-2 rounded-xl px-3 py-1.5 text-center text-[10px] text-[#6b7280] hover:bg-[#f5f5f7] dark:text-[#a0a0a0] dark:hover:bg-slate-800">
+                                      <input
+                                        type="checkbox"
+                                        checked={isLeaderChecked(leader)}
+                                        onChange={() => {
+                                          setLeaderFilter((current) => ({ ...current, [leader]: !isLeaderChecked(leader) }));
+                                        }}
+                                      />
+                                      <span>{leader}</span>
+                                    </label>
+                                  ))}
+                                </div>
+                              </div>
                             )}
                           </div>
                         ) : (
@@ -442,13 +708,9 @@ export default function Summary() {
                 <tbody>
                   {pagedRows.length > 0 ? pagedRows.map((row, i) => (
                     <tr key={i} className="bg-white dark:bg-[#2a2a2d]">
-                      <td className="px-3 py-1 text-center text-[9px] text-slate-700 dark:text-slate-300">{row.brand}</td>
-                      <td className="px-3 py-2 text-center text-[9px] text-slate-700 dark:text-slate-300">{row.leader}</td>
-                      <td className="px-3 py-2 text-center text-[9px] font-bold text-slate-900 dark:text-white">{row.agentName}</td>
-                      <td className="px-3 py-2 text-center text-[9px] text-slate-700 dark:text-slate-300">{fmt(row.openingBal)}</td>
-                      <td className="px-3 py-2 text-center text-[9px] text-slate-700 dark:text-slate-300">{fmt(row.sdp)}</td>
+                      {visibleColumns.map((col) => renderCell(row, col.key))}
                     </tr>
-                  )) : <tr><td colSpan={5} className="px-3 py-8 text-center text-[9px] text-slate-500 dark:text-slate-400">No matching agents found.</td></tr>}
+                  )) : <tr><td colSpan={visibleColumns.length} className="px-3 py-8 text-center text-[9px] text-slate-500 dark:text-slate-400">No matching agents found.</td></tr>}
                 </tbody>
               </table>
             </div>

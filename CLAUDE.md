@@ -6,7 +6,7 @@
 - Location: C:\Users\ejboy\Desktop\dashbaord_project
 - Live site: https://uat-dashboard.vercel.app
 - Tech stack: Next.js 14, TypeScript, Tailwind CSS v4, Vercel, GitHub
-- Font: Outfit (next/font/google) — NEVER use font-mono anywhere
+- Font: Inter (next/font/google) — NEVER use font-mono anywhere
 
 ## Pages
 - / → Cash Out Wallets — app/page.tsx
@@ -23,18 +23,29 @@
 - /api/agentbal → Agent Balance
 - /api/stlm → Settlement + Top Up (shared)
 
-## Design System (apply to ALL pages)
-- Font: Outfit — never font-mono
+## Design System v2 (current standard — applies going forward; migrate legacy pages opportunistically)
+- Font: Inter — never font-mono
+- Design tokens (defined in app/globals.css `:root`/`.dark`, mapped in tailwind.config.js): `--background`, `--foreground`, `--border`, `--muted`, `--muted-foreground` → use as `bg-background`, `text-foreground`, `border-border`, `bg-muted`/`text-muted-foreground`
+- KPI cards: container `flex gap-4 mb-6`; card `bg-white rounded-xl border border-border p-5 flex-1 min-w-0`; title `text-xs text-muted-foreground font-medium mb-1`; big value `text-[28px] font-bold text-foreground mb-1`; change text `text-[11px] font-medium` + `text-rose-600`/`text-emerald-600`/`text-foreground` (negative/positive/neutral)
+- Table outer container: `bg-white rounded-xl border border-border overflow-hidden`
+- Table toolbar: `px-4 py-3 border-b border-border bg-muted/20 flex items-center justify-between`
+- Single "Filter" button (funnel icon + label) replaces per-column filter icons — opens one dropdown with all filter sections
+- Table header row: `border-b border-border bg-muted/10`; header cell: `px-4 py-3 text-xs font-semibold text-muted-foreground whitespace-nowrap` + alignment (`text-left`/`text-right`/`text-center`)
+- Table body row: `border-b border-border last:border-0 hover:bg-muted/10 transition-colors`; alternate rows may add `bg-muted/5`
+- Table body cell: `px-4 py-3 text-xs text-foreground whitespace-nowrap` + alignment; bold values add `font-medium`
+- Status badges: `inline-flex items-center px-2.5 py-1 rounded-md text-[11px] font-medium border` + semantic bg/text/border color pair (e.g. amber for "WD Only", emerald for healthy/active states, rose for issues, slate for inactive/no-record)
+- Zero/empty values: still display "−" (U+2212 proper minus sign) — unchanged by the visual redesign
+- Page title: text-lg font-bold text-foreground
+- Header search/refresh controls: text-sm, border border-border rounded-lg
+
+### Legacy style (still used by pages not yet migrated: /, /summary, /stlm, /topup)
 - Table headers (th): text-[10px] font-semibold text-slate-500 dark:text-slate-400 text-center whitespace-nowrap px-3 py-2
 - Table cells (td): text-[9px] text-center px-3 py-1 text-slate-700 dark:text-slate-300
-- Zero/empty values: display "−" (U+2212 proper minus sign)
-- No row borders (no border-b on tr)
-- No zebra striping
+- No row borders (no border-b on tr), no zebra striping
 - Sticky thead: sticky top-0 z-[50] bg-white dark:bg-[#2a2a2d]
 - Page background: bg-[#f5f5f7] dark:bg-[#1c1c1e]
 - Card background: bg-white dark:bg-[#2a2a2d]
 - Border: border-[#e5e5e7] dark:border-[#3a3a3d]
-- Page title: text-lg font-semibold text-slate-900 dark:text-white
 - Header controls: text-[11px], compact (px-2 py-1.5)
 
 ## Column Colors
@@ -54,13 +65,13 @@ Leader, Wallet Name, SDP, Opening, Total DP, Total WD, Top Up, Settlement, Compa
 ### Features
 - Master list: Opening sheet (~3,486 agents)
 - Pagination: 50 rows per page
-- Leader filter: funnel icon on Leader header
-- Wallet Status filter: funnel icon on Wallet Status header
-- Column visibility: funnel icon after pagination
-- Export Excel: download icon (SheetJS/xlsx)
-- Sort arrows: always visible (ChevronUp/ChevronDown lucide-react)
+- Single "Filter" button (funnel icon + label) in table toolbar — opens one dropdown with Leader, Brand, Wallet Status, and Type filter sections (no per-column filter icons)
+- Column visibility: separate funnel icon next to pagination
+- Export Excel: download icon (SheetJS/xlsx) — respects column visibility
+- Sort arrows: always visible (ChevronUp/ChevronDown lucide-react) on sortable columns only
 - Default sort: Company Balance descending
 - Skeleton loader: first load only, subsequent refreshes keep existing data
+- Uses Design System v2 (see above) — first page migrated off the legacy table style
 
 ### Computed Columns
 - Company Balance = Opening + Total DP + Top Up - Total WD - Settlement
@@ -97,7 +108,7 @@ Leader | Agent Name | Opening Bal. | SDP
 - Show summary before applying changes
 - Never change data logic when fixing UI
 - Never add auto-refresh (fetch on open + manual refresh only)
-- Always use Outfit font, never font-mono
+- Always use Inter font, never font-mono
 - Shared formatting in app/lib/format.ts
 - Test locally before git push
 - One concern at a time — do not combine unrelated changes
@@ -105,10 +116,13 @@ Leader | Agent Name | Opening Bal. | SDP
 - Skeleton loader: match exact td padding (px-3 py-1) and row height of actual table
 
 ## Subagents (.claude/agents/)
-- code-reader.md (haiku) — read-only, explains code
-- code-auditor.md (sonnet) — security audit
-- code-checker.md (sonnet) — type/bug check
-- ui-reviewer.md (sonnet) — UI/UX audit
+- ONLY use subagents for major tasks (security audit, deep bug investigation)
+- For regular edits and fixes — NO subagents, direct instruction only
+- code-reader.md (haiku) — use ONLY when need to understand unfamiliar code
+- code-auditor.md (sonnet) — use ONLY before major deployments
+- code-checker.md (sonnet) — use ONLY after major refactors
+- ui-reviewer.md (sonnet) — use ONLY for full UI audit sessions
+- DEFAULT: skip all subagents for routine fixes, UI changes, and column updates
 
 ## Git Workflow
 - Edit locally → test on localhost:3000 → git add . → git commit → git push

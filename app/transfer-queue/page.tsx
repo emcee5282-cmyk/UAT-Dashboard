@@ -344,6 +344,18 @@ const columnDefs: { key: ColumnKey; label: string }[] = [
   { key: 'remarks', label: 'Remarks' },
 ];
 
+const columnWidths: Record<ColumnKey, string> = {
+  brand: '7%',
+  shopName: '14%',
+  companyBalance: '11%',
+  balanceInside: '11%',
+  discrepancy: '10%',
+  sdpVsBalance: '11%',
+  currentGroup: '13%',
+  correctGroup: '13%',
+  remarks: '10%',
+};
+
 const headerSkeletonWidths: Record<ColumnKey, string> = {
   brand: 'w-10',
   shopName: 'w-14',
@@ -368,10 +380,15 @@ const rowSkeletonWidths: Record<ColumnKey, string[]> = {
   remarks: ['w-28', 'w-32', 'w-24'],
 };
 
+function headerCellClasses(active: boolean) {
+  const color = active ? 'text-indigo-600 dark:text-indigo-400' : 'text-foreground';
+  return `group text-center px-3 py-2 text-[10px] font-semibold whitespace-nowrap ${color}`;
+}
+
 function SortIcon({ active, direction }: { active: boolean; direction: 'asc' | 'desc' }) {
   if (!active) {
     return (
-      <span className="flex flex-col items-center justify-center leading-none text-slate-400 opacity-40">
+      <span className="flex flex-col items-center justify-center leading-none text-slate-400 opacity-0 transition-opacity duration-150 group-hover:opacity-40">
         <ChevronUp size={10} className="-mb-0.5" />
         <ChevronDown size={10} />
       </span>
@@ -382,6 +399,46 @@ function SortIcon({ active, direction }: { active: boolean; direction: 'asc' | '
   ) : (
     <ChevronDown size={10} className="text-indigo-600 dark:text-indigo-400" />
   );
+}
+
+function renderCell(row: QueueRow, key: ColumnKey) {
+  const base = 'whitespace-nowrap overflow-hidden text-ellipsis text-[9px] text-center px-3 py-1';
+  switch (key) {
+    case 'brand':
+      return <td key={key} className={`${base} text-slate-700 dark:text-slate-300`}>{row.brand}</td>;
+    case 'shopName':
+      return <td key={key} className={`${base} text-slate-700 dark:text-slate-300`}>{row.account}</td>;
+    case 'companyBalance':
+      return (
+        <td key={key} className={`${base} ${row.companyBalance < 0 ? 'text-rose-600 dark:text-rose-400' : 'text-slate-700 dark:text-slate-300'}`}>
+          {displayNum(row.companyBalance)}
+        </td>
+      );
+    case 'balanceInside':
+      return (
+        <td key={key} className={`${base} ${row.balanceInside < 0 ? 'text-rose-600 dark:text-rose-400' : 'text-slate-700 dark:text-slate-300'}`}>
+          {displayNum(row.balanceInside)}
+        </td>
+      );
+    case 'discrepancy':
+      return (
+        <td key={key} className={`${base} ${row.discrepancy < 0 ? 'text-rose-600 dark:text-rose-400' : 'text-slate-700 dark:text-slate-300'}`}>
+          {displayNum(row.discrepancy)}
+        </td>
+      );
+    case 'sdpVsBalance':
+      return (
+        <td key={key} className={`${base} text-slate-700 dark:text-slate-300`}>
+          {row.sdpVsBalance > 0 ? displayNum(Math.abs(row.sdpVsBalance)) : '−'}
+        </td>
+      );
+    case 'currentGroup':
+      return <td key={key} className={`${base} text-slate-700 dark:text-slate-300`}>{row.currentGroup}</td>;
+    case 'correctGroup':
+      return <td key={key} className={`${base} text-slate-700 dark:text-slate-300`}>{row.correctGroup}</td>;
+    case 'remarks':
+      return <td key={key} className={`${base} text-slate-500`}>{row.remarks}</td>;
+  }
 }
 
 export default function TransferQueue() {
@@ -399,10 +456,17 @@ export default function TransferQueue() {
   const [brandMenuPos, setBrandMenuPos] = useState({ top: 0, left: 0 });
   const [correctGroupMenuOpen, setCorrectGroupMenuOpen] = useState(false);
   const [correctGroupMenuPos, setCorrectGroupMenuPos] = useState({ top: 0, left: 0 });
+  const [columnMenuOpen, setColumnMenuOpen] = useState(false);
+  const [columnMenuPos, setColumnMenuPos] = useState({ top: 0, left: 0 });
+  const [columnVisibility, setColumnVisibility] = useState<Record<ColumnKey, boolean>>(
+    () => Object.fromEntries(columnDefs.map((col) => [col.key, true])) as Record<ColumnKey, boolean>
+  );
   const brandButtonRef = useRef<HTMLButtonElement>(null);
   const brandDropdownRef = useRef<HTMLDivElement>(null);
   const correctGroupButtonRef = useRef<HTMLButtonElement>(null);
   const correctGroupDropdownRef = useRef<HTMLDivElement>(null);
+  const columnButtonRef = useRef<HTMLButtonElement>(null);
+  const columnDropdownRef = useRef<HTMLDivElement>(null);
   const [page, setPage] = useState(1);
   const rowsPerPage = 50;
 
@@ -602,6 +666,23 @@ export default function TransferQueue() {
     return () => document.removeEventListener('mousedown', handlePointerDown);
   }, [correctGroupMenuOpen]);
 
+  useEffect(() => {
+    if (!columnMenuOpen) return;
+
+    const handlePointerDown = (event: MouseEvent) => {
+      const target = event.target as Node;
+      if (
+        columnButtonRef.current && !columnButtonRef.current.contains(target) &&
+        columnDropdownRef.current && !columnDropdownRef.current.contains(target)
+      ) {
+        setColumnMenuOpen(false);
+      }
+    };
+
+    document.addEventListener('mousedown', handlePointerDown);
+    return () => document.removeEventListener('mousedown', handlePointerDown);
+  }, [columnMenuOpen]);
+
   const searchedRows = useMemo(() => {
     const query = searchTerm.toLowerCase();
     if (!query) return queueRows;
@@ -617,6 +698,7 @@ export default function TransferQueue() {
   const isBrandChecked = (name: string) => brandFilter[name] !== false;
   const allBrandsChecked = brandOptions.every((name) => isBrandChecked(name));
   const anyBrandUnchecked = brandOptions.some((name) => !isBrandChecked(name));
+  const selectedBrandCount = brandOptions.filter((name) => isBrandChecked(name)).length;
 
   const correctGroupOptions = useMemo(() => {
     const rows = searchedRows.filter((row) => brandFilter[row.brand] !== false);
@@ -625,6 +707,7 @@ export default function TransferQueue() {
   const isCorrectGroupChecked = (name: string) => correctGroupFilter[name] !== false;
   const allCorrectGroupsChecked = correctGroupOptions.every((name) => isCorrectGroupChecked(name));
   const anyCorrectGroupUnchecked = correctGroupOptions.some((name) => !isCorrectGroupChecked(name));
+  const selectedCorrectGroupCount = correctGroupOptions.filter((name) => isCorrectGroupChecked(name)).length;
 
   const filteredRows = useMemo(() => {
     let list = searchedRows;
@@ -685,20 +768,36 @@ export default function TransferQueue() {
   const startIndex = (currentPage - 1) * rowsPerPage;
   const pagedRows = sortedRows.slice(startIndex, startIndex + rowsPerPage);
 
-  const handleExport = useCallback(() => {
-    const headers = ['Brand', 'Agent', 'Balance Inside', 'Company Money', 'Discrepancy', 'SDP VS Balance', 'Current Group', 'Correct Group', 'Remarks'];
+  const visibleColumns = useMemo(() => columnDefs.filter((col) => columnVisibility[col.key]), [columnVisibility]);
+  const allColumnsChecked = columnDefs.every((col) => columnVisibility[col.key]);
+  const anyColumnHidden = columnDefs.some((col) => !columnVisibility[col.key]);
 
-    const data = sortedRows.map((row) => [
-      row.brand,
-      row.account,
-      row.balanceInside,
-      row.companyBalance,
-      row.discrepancy,
-      row.sdpVsBalance > 0 ? Math.abs(row.sdpVsBalance) : undefined,
-      row.currentGroup,
-      row.correctGroup,
-      row.remarks,
-    ]);
+  const handleExport = useCallback(() => {
+    const getExportValue = (row: QueueRow, key: ColumnKey) => {
+      switch (key) {
+        case 'brand':
+          return row.brand;
+        case 'shopName':
+          return row.account;
+        case 'companyBalance':
+          return row.companyBalance;
+        case 'balanceInside':
+          return row.balanceInside;
+        case 'discrepancy':
+          return row.discrepancy;
+        case 'sdpVsBalance':
+          return row.sdpVsBalance > 0 ? Math.abs(row.sdpVsBalance) : undefined;
+        case 'currentGroup':
+          return row.currentGroup;
+        case 'correctGroup':
+          return row.correctGroup;
+        case 'remarks':
+          return row.remarks;
+      }
+    };
+
+    const headers = visibleColumns.map((col) => col.label);
+    const data = sortedRows.map((row) => visibleColumns.map((col) => getExportValue(row, col.key)));
 
     const worksheet = XLSX.utils.aoa_to_sheet([headers, ...data]);
     worksheet['!cols'] = headers.map(() => ({ wch: 18 }));
@@ -706,45 +805,31 @@ export default function TransferQueue() {
     const workbook = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(workbook, worksheet, 'Transfer Queue');
 
-    XLSX.writeFile(workbook, 'transfer-queue.xlsx');
-  }, [sortedRows]);
+    const now = new Date();
+    const datePart = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
+    const timePart = `${String(now.getHours()).padStart(2, '0')}${String(now.getMinutes()).padStart(2, '0')}`;
+    XLSX.writeFile(workbook, `SSP1_TRANSFER_QUEUE_${datePart}_${timePart}.xlsx`);
+  }, [sortedRows, visibleColumns]);
 
   useEffect(() => {
     if (page !== currentPage) setPage(currentPage);
   }, [page, currentPage]);
 
   return (
-    <div className="min-h-screen overflow-y-hidden bg-[#f5f5f7] text-[#1a1a1a] transition-colors duration-300 dark:bg-[#1c1c1e] dark:text-white">
-      <header className="border-b border-[#e5e5e7] bg-white px-4 py-2 dark:border-[#3a3a3d] dark:bg-[#2a2a2d] md:px-8">
-        <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
-          <div className="flex items-baseline gap-2">
-            <h1 className="text-lg font-semibold text-slate-900 dark:text-white">Transfer Queue</h1>
-          </div>
-          <div className="flex flex-wrap items-center gap-3">
-            <label className="flex items-center gap-2 rounded-xl border border-[#e5e5e7] px-2 py-1.5 text-[11px] text-[#6b7280] dark:border-[#3a3a3d] dark:text-[#a0a0a0]">
-              {loading ? (
-                <div className="h-3 w-32 animate-pulse rounded-md bg-slate-200 dark:bg-slate-700 md:w-48" />
-              ) : (
-                <>
-                  <Search size={12} />
-                  <input
-                    value={searchTerm}
-                    onChange={(event) => setSearchTerm(event.target.value)}
-                    className="w-32 bg-transparent outline-none md:w-48"
-                    placeholder="Search"
-                  />
-                </>
-              )}
-            </label>
-            <span className="flex items-center gap-1.5 text-[11px] text-[#6b7280] dark:text-[#a0a0a0]">
-              <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-emerald-500" />
+    <div className="min-h-screen w-full bg-background font-[Inter,sans-serif] text-foreground transition-colors duration-300 dark:bg-[#1c1c1e]">
+      <header className="sticky top-0 z-30 border-b border-[#e5e5e7] bg-white px-4 py-2 dark:border-[#3a3a3d] dark:bg-[#2a2a2d] md:px-8">
+        <div className="flex items-center justify-between">
+          <h1 className="text-lg font-medium text-foreground">Transfer Queue</h1>
+          <div className="flex items-center gap-3">
+            <span className="flex items-center gap-1.5 text-[10px] text-muted-foreground">
+              <span className="h-1 w-1 rounded-full bg-emerald-500" />
               {loading ? '—' : (lastUpdated || '—')}
             </span>
             <ThemeToggle />
             <button
               onClick={fetchData}
               disabled={spinning || loading}
-              className="flex items-center gap-2 rounded-xl border border-[#e5e5e7] px-2 py-1.5 text-[11px] font-medium text-[#6b7280] transition-all disabled:opacity-50 dark:border-[#3a3a3d] dark:text-[#a0a0a0]"
+              className="flex items-center gap-1.5 px-3 py-2 text-[10px] font-medium text-indigo-600 border border-border rounded-lg hover:bg-muted transition-colors disabled:opacity-50"
             >
               <RefreshCw size={12} className={spinning ? 'animate-spin' : ''} />
               Refresh
@@ -753,7 +838,7 @@ export default function TransferQueue() {
         </div>
       </header>
 
-      <main className="relative space-y-2 p-3">
+      <main className="px-6 pt-4 pb-6">
         {error && (
           <div className="flex items-center gap-3 rounded-2xl border border-rose-200 px-5 py-4 text-sm text-rose-600 dark:border-rose-900/60 dark:text-rose-300">
             <AlertCircle size={15} />
@@ -762,195 +847,292 @@ export default function TransferQueue() {
         )}
 
         {!error && (
-          <div className="overflow-hidden rounded-xl border border-[#e5e5e7] bg-white dark:border-[#3a3a3d] dark:bg-[#2a2a2d]">
-            <div className="flex items-center justify-between gap-3 border-b border-[#e5e5e7] px-2 py-1.5 dark:border-[#3a3a3d]">
-              {loading ? (
-                <div className="h-2.5 w-24 rounded-md bg-slate-200 dark:bg-slate-700 animate-pulse" />
-              ) : (
-                <span className="text-[11px] font-semibold text-slate-700 dark:text-slate-300">For Transfer: {filteredRows.length.toLocaleString('en-PH')}</span>
-              )}
+          <div className="mb-1">
+            {loading ? (
+              <div className="h-2.5 w-24 rounded-md bg-slate-200 dark:bg-slate-700 animate-pulse" />
+            ) : (
+              <span className="text-[11px] font-semibold text-foreground">For Transfer: <span className="text-indigo-600">{filteredRows.length.toLocaleString('en-PH')}</span></span>
+            )}
+          </div>
+        )}
+
+        {!error && (
+          <div className="bg-white rounded-xl border border-border overflow-hidden dark:bg-[#2a2a2d]">
+            <div className="px-3 py-1 border-b border-border bg-muted/20 flex items-center justify-between gap-3">
+              <div className="flex items-center gap-2">
+                <div className="flex w-52 items-center gap-2 bg-white border border-border rounded-full px-4 py-1.5 dark:bg-[#2a2a2d]">
+                  {loading ? (
+                    <div className="h-3 w-32 animate-pulse rounded-md bg-slate-200 dark:bg-slate-700" />
+                  ) : (
+                    <>
+                      <Search size={14} className="text-muted-foreground" />
+                      <input
+                        value={searchTerm}
+                        onChange={(event) => setSearchTerm(event.target.value)}
+                        className="flex-1 bg-transparent text-[10px] text-foreground placeholder:text-muted-foreground outline-none border-none"
+                        placeholder="Search shops or brands..."
+                      />
+                    </>
+                  )}
+                </div>
+                <div className="relative">
+                  {!loading && (
+                    <button
+                      type="button"
+                      ref={columnButtonRef}
+                      onClick={(event) => {
+                        event.stopPropagation();
+                        const rect = columnButtonRef.current?.getBoundingClientRect();
+                        if (rect) {
+                          setColumnMenuPos({ top: rect.bottom + 8, left: rect.left });
+                        }
+                        setColumnMenuOpen((current) => !current);
+                      }}
+                      className={`flex items-center gap-1.5 px-3 py-1.5 text-[10px] font-medium border rounded-lg hover:bg-white transition-colors ${anyColumnHidden ? 'border-indigo-200 text-indigo-700 dark:border-indigo-900/50 dark:text-indigo-300' : 'border-border text-foreground'}`}
+                    >
+                      <Filter size={14} />
+                      Filter
+                    </button>
+                  )}
+                  {columnMenuOpen && typeof document !== 'undefined' && createPortal(
+                    <div
+                      ref={columnDropdownRef}
+                      style={{ position: 'fixed', top: columnMenuPos.top, left: columnMenuPos.left }}
+                      className="z-[9999] w-56 max-h-[70vh] overflow-y-auto rounded-xl border border-[#e5e5e7] bg-white p-2 shadow-xl dark:border-[#3a3a3d] dark:bg-[#2a2a2d]"
+                      onClick={(event) => event.stopPropagation()}
+                    >
+                      <div className="px-2 py-1.5 text-[10px] font-semibold uppercase tracking-[0.24em] text-[#6b7280] dark:text-[#a0a0a0]">Columns</div>
+                      <label className="flex w-full items-center justify-start gap-2 whitespace-nowrap rounded-xl px-3 py-1.5 text-left text-[10px] text-[#6b7280] hover:bg-[#f5f5f7] dark:text-[#a0a0a0] dark:hover:bg-slate-800">
+                        <input
+                          type="checkbox"
+                          checked={allColumnsChecked}
+                          onChange={() => {
+                            const nextValue = !allColumnsChecked;
+                            setColumnVisibility(
+                              Object.fromEntries(columnDefs.map((col) => [col.key, nextValue])) as Record<ColumnKey, boolean>
+                            );
+                          }}
+                        />
+                        <span>Check All</span>
+                      </label>
+                      {columnDefs.map((col) => (
+                        <label key={col.key} className="flex w-full items-center justify-start gap-2 whitespace-nowrap rounded-xl px-3 py-1.5 text-left text-[10px] text-[#6b7280] hover:bg-[#f5f5f7] dark:text-[#a0a0a0] dark:hover:bg-slate-800">
+                          <input
+                            type="checkbox"
+                            checked={columnVisibility[col.key]}
+                            onChange={() => {
+                              setColumnVisibility((current) => ({ ...current, [col.key]: !current[col.key] }));
+                            }}
+                          />
+                          <span>{col.label}</span>
+                        </label>
+                      ))}
+                    </div>,
+                    document.body
+                  )}
+                </div>
+              </div>
               <div className="flex items-center gap-3">
-              {loading ? (
-                <div className="flex items-center gap-1.5 rounded-xl border border-[#e5e5e7] px-2 py-0.5 dark:border-[#3a3a3d]">
-                  <div className="h-2.5 w-12 animate-pulse rounded-md bg-slate-200 dark:bg-slate-700" />
-                  <div className="h-2.5 w-16 animate-pulse rounded-md bg-slate-200 dark:bg-slate-700" />
-                  <div className="h-2.5 w-8 animate-pulse rounded-md bg-slate-200 dark:bg-slate-700" />
-                </div>
-              ) : (
-                <div className="flex items-center gap-1.5 rounded-xl border border-[#e5e5e7] px-2 py-0.5 dark:border-[#3a3a3d]">
+                {loading ? (
+                  <div className="h-2.5 w-32 rounded-md bg-slate-200 dark:bg-slate-700 animate-pulse" />
+                ) : (
+                  <div className="flex items-center gap-2">
+                    <span className="text-[10px] text-muted-foreground">Page {currentPage} of {totalPages}</span>
+                    <button
+                      type="button"
+                      onClick={() => setPage((current) => Math.max(1, current - 1))}
+                      disabled={currentPage === 1}
+                      className="px-2.5 py-1.5 text-[10px] font-medium text-foreground border border-border rounded-lg hover:bg-white transition-colors disabled:opacity-50"
+                    >
+                      Previous
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setPage((current) => Math.min(totalPages, current + 1))}
+                      disabled={currentPage === totalPages}
+                      className="px-2.5 py-1.5 text-[10px] font-medium text-foreground border border-border rounded-lg hover:bg-white transition-colors disabled:opacity-50"
+                    >
+                      Next
+                    </button>
+                  </div>
+                )}
+                {loading && <div className="h-7 w-20 animate-pulse rounded-xl bg-slate-200 dark:bg-slate-700" />}
+                {!loading && (
                   <button
                     type="button"
-                    onClick={() => setPage((current) => Math.max(1, current - 1))}
-                    disabled={currentPage === 1}
-                    className="rounded-xl px-1.5 py-0.5 text-[10px] font-semibold text-slate-600 transition disabled:cursor-not-allowed disabled:opacity-40 dark:text-slate-300"
+                    onClick={handleExport}
+                    title="Export to Excel"
+                    className="p-1.5 rounded-lg hover:bg-white transition-colors border border-border text-foreground"
                   >
-                    Previous
+                    <Download size={14} />
                   </button>
-                  <span className="text-[10px] text-slate-500 dark:text-slate-400">Page {currentPage} of {totalPages}</span>
-                  <button
-                    type="button"
-                    onClick={() => setPage((current) => Math.min(totalPages, current + 1))}
-                    disabled={currentPage === totalPages}
-                    className="rounded-xl px-1.5 py-0.5 text-[10px] font-semibold text-slate-600 transition disabled:cursor-not-allowed disabled:opacity-40 dark:text-slate-300"
-                  >
-                    Next
-                  </button>
-                </div>
-              )}
-              {loading ? (
-                <div className="h-7 w-7 animate-pulse rounded-xl bg-slate-200 dark:bg-slate-700" />
-              ) : (
-                <button
-                  type="button"
-                  onClick={handleExport}
-                  title="Export to Excel"
-                  className="flex items-center justify-center rounded-xl border border-[#e5e5e7] p-1.5 text-[#6b7280] transition hover:bg-slate-50 dark:border-[#3a3a3d] dark:text-[#a0a0a0] dark:hover:bg-white/10"
-                >
-                  <Download size={14} />
-                </button>
-              )}
+                )}
               </div>
             </div>
             <div className="max-h-[calc(100vh-140px)] overflow-y-auto overflow-x-scroll">
-              <table className="w-full table-auto text-xs">
-                <thead className="sticky top-0 z-[50] bg-white dark:bg-[#2a2a2d]">
+              <table className="w-full table-fixed text-xs">
+                <colgroup>
+                  {visibleColumns.map((col) => (
+                    <col key={col.key} style={{ width: columnWidths[col.key] }} />
+                  ))}
+                </colgroup>
+                <thead className="sticky top-0 z-[50] border-b border-border bg-white dark:bg-[#2a2a2d]">
                   <tr>
-                    {columnDefs.map((col) => (
-                      <th key={col.key} className="text-[10px] font-semibold text-slate-500 dark:text-slate-400 text-center whitespace-nowrap px-4 py-3">
+                    {visibleColumns.map((col) => (
+                      <th
+                        key={col.key}
+                        style={{ width: columnWidths[col.key] }}
+                        className={headerCellClasses(sortColumn === col.key)}>
                         {loading ? (
                           <div className={`mx-auto h-2.5 animate-pulse rounded-md bg-slate-200 dark:bg-slate-700 ${headerSkeletonWidths[col.key]}`} />
-                        ) : (
+                        ) : col.key === 'brand' ? (
                           <div className="relative flex items-center justify-center gap-1">
+                            <span>{col.label}</span>
                             <button
                               type="button"
-                              onClick={() => {
-                                if (sortColumn === col.key) {
-                                  setSortDirection((current) => current === 'asc' ? 'desc' : 'asc');
-                                } else {
-                                  setSortColumn(col.key);
-                                  setSortDirection('asc');
+                              ref={brandButtonRef}
+                              onClick={(event) => {
+                                event.stopPropagation();
+                                const rect = brandButtonRef.current?.getBoundingClientRect();
+                                if (rect) {
+                                  const dropdownWidth = 176;
+                                  const left = Math.min(rect.left, window.innerWidth - dropdownWidth - 8);
+                                  setBrandMenuPos({ top: rect.bottom + 8, left: Math.max(8, left) });
                                 }
+                                setBrandMenuOpen((current) => !current);
                               }}
-                              className="flex items-center gap-1 text-center transition hover:opacity-80"
+                              className={`flex items-center justify-center rounded-full p-1 transition ${anyBrandUnchecked ? 'bg-indigo-100 text-indigo-700 dark:bg-indigo-500/30 dark:text-indigo-200' : 'text-[#6b7280] hover:bg-slate-200 dark:text-[#a0a0a0] dark:hover:bg-white/10'}`}
                             >
-                              <span>{col.label}</span>
-                              <SortIcon active={sortColumn === col.key} direction={sortDirection} />
+                              {anyBrandUnchecked ? (
+                                <span className="flex h-3 min-w-[12px] items-center justify-center px-0.5 text-[10px] font-semibold leading-none">
+                                  {selectedBrandCount}
+                                </span>
+                              ) : (
+                                <ChevronUp
+                                  size={12}
+                                  className={`transition-transform duration-150 ease-in-out ${brandMenuOpen ? 'rotate-180' : ''} opacity-70`}
+                                />
+                              )}
                             </button>
-                            {col.key === 'brand' && (
-                              <>
-                                <button
-                                  type="button"
-                                  ref={brandButtonRef}
-                                  onClick={(event) => {
-                                    event.stopPropagation();
-                                    const rect = brandButtonRef.current?.getBoundingClientRect();
-                                    if (rect) {
-                                      const dropdownWidth = 176;
-                                      const left = Math.min(rect.left, window.innerWidth - dropdownWidth - 8);
-                                      setBrandMenuPos({ top: rect.bottom + 8, left: Math.max(8, left) });
-                                    }
-                                    setBrandMenuOpen((current) => !current);
-                                  }}
-                                  className={`flex items-center justify-center rounded-full p-1 transition ${anyBrandUnchecked ? 'bg-indigo-100 text-indigo-700 dark:bg-indigo-500/30 dark:text-indigo-200' : 'text-[#6b7280] hover:bg-slate-200 dark:text-[#a0a0a0] dark:hover:bg-white/10'}`}
-                                >
-                                  <Filter size={12} className={anyBrandUnchecked ? 'opacity-100' : 'opacity-70'} />
-                                </button>
-                                {brandMenuOpen && typeof document !== 'undefined' && createPortal(
-                                  <div
-                                    ref={brandDropdownRef}
-                                    style={{ position: 'fixed', top: brandMenuPos.top, left: brandMenuPos.left }}
-                                    className="z-[9999] w-44 rounded-xl border border-[#e5e5e7] bg-white p-2 shadow-xl dark:border-[#3a3a3d] dark:bg-[#2a2a2d]"
-                                    onClick={(event) => event.stopPropagation()}
-                                  >
-                                    <div className="px-2 py-1.5 text-center text-[10px] font-semibold uppercase tracking-[0.24em] text-[#6b7280] dark:text-[#a0a0a0]">Filter</div>
-                                    <div className="max-h-56 overflow-y-auto">
-                                      <label className="flex w-full items-center justify-center gap-2 rounded-xl px-3 py-1.5 text-center text-[10px] text-[#6b7280] hover:bg-[#f5f5f7] dark:text-[#a0a0a0] dark:hover:bg-slate-800">
-                                        <input
-                                          type="checkbox"
-                                          checked={allBrandsChecked}
-                                          onChange={() => {
-                                            const nextValue = !allBrandsChecked;
-                                            setBrandFilter(Object.fromEntries(brandOptions.map((name) => [name, nextValue])));
-                                          }}
-                                        />
-                                        <span>All</span>
-                                      </label>
-                                      {brandOptions.map((brand) => (
-                                        <label key={brand} className="flex w-full items-center justify-center gap-2 rounded-xl px-3 py-1.5 text-center text-[10px] text-[#6b7280] hover:bg-[#f5f5f7] dark:text-[#a0a0a0] dark:hover:bg-slate-800">
-                                          <input
-                                            type="checkbox"
-                                            checked={isBrandChecked(brand)}
-                                            onChange={() => {
-                                              setBrandFilter((current) => ({ ...current, [brand]: !isBrandChecked(brand) }));
-                                            }}
-                                          />
-                                          <span>{brand}</span>
-                                        </label>
-                                      ))}
-                                    </div>
-                                  </div>,
-                                  document.body
-                                )}
-                              </>
-                            )}
-                            {col.key === 'correctGroup' && (
-                              <>
-                                <button
-                                  type="button"
-                                  ref={correctGroupButtonRef}
-                                  onClick={(event) => {
-                                    event.stopPropagation();
-                                    const rect = correctGroupButtonRef.current?.getBoundingClientRect();
-                                    if (rect) {
-                                      const dropdownWidth = 288;
-                                      const left = Math.min(rect.left, window.innerWidth - dropdownWidth - 8);
-                                      setCorrectGroupMenuPos({ top: rect.bottom + 8, left: Math.max(8, left) });
-                                    }
-                                    setCorrectGroupMenuOpen((current) => !current);
-                                  }}
-                                  className={`flex items-center justify-center rounded-full p-1 transition ${anyCorrectGroupUnchecked ? 'bg-indigo-100 text-indigo-700 dark:bg-indigo-500/30 dark:text-indigo-200' : 'text-[#6b7280] hover:bg-slate-200 dark:text-[#a0a0a0] dark:hover:bg-white/10'}`}
-                                >
-                                  <Filter size={12} className={anyCorrectGroupUnchecked ? 'opacity-100' : 'opacity-70'} />
-                                </button>
-                                {correctGroupMenuOpen && typeof document !== 'undefined' && createPortal(
-                                  <div
-                                    ref={correctGroupDropdownRef}
-                                    style={{ position: 'fixed', top: correctGroupMenuPos.top, left: correctGroupMenuPos.left }}
-                                    className="z-[9999] w-72 max-w-[90vw] rounded-xl border border-[#e5e5e7] bg-white p-2 shadow-xl dark:border-[#3a3a3d] dark:bg-[#2a2a2d]"
-                                    onClick={(event) => event.stopPropagation()}
-                                  >
-                                    <div className="px-2 py-1.5 text-center text-[10px] font-semibold uppercase tracking-[0.24em] text-[#6b7280] dark:text-[#a0a0a0]">Filter</div>
-                                    <div className="max-h-56 overflow-y-auto">
-                                      <label className="flex w-full items-center justify-start gap-2 whitespace-nowrap rounded-xl px-3 py-1.5 text-left text-[10px] text-[#6b7280] hover:bg-[#f5f5f7] dark:text-[#a0a0a0] dark:hover:bg-slate-800">
-                                        <input
-                                          type="checkbox"
-                                          checked={allCorrectGroupsChecked}
-                                          onChange={() => {
-                                            const nextValue = !allCorrectGroupsChecked;
-                                            setCorrectGroupFilter(Object.fromEntries(correctGroupOptions.map((name) => [name, nextValue])));
-                                          }}
-                                        />
-                                        <span>All</span>
-                                      </label>
-                                      {correctGroupOptions.map((group) => (
-                                        <label key={group} className="flex w-full items-center justify-start gap-2 whitespace-nowrap rounded-xl px-3 py-1.5 text-left text-[10px] text-[#6b7280] hover:bg-[#f5f5f7] dark:text-[#a0a0a0] dark:hover:bg-slate-800">
-                                          <input
-                                            type="checkbox"
-                                            checked={isCorrectGroupChecked(group)}
-                                            onChange={() => {
-                                              setCorrectGroupFilter((current) => ({ ...current, [group]: !isCorrectGroupChecked(group) }));
-                                            }}
-                                          />
-                                          <span>{group}</span>
-                                        </label>
-                                      ))}
-                                    </div>
-                                  </div>,
-                                  document.body
-                                )}
-                              </>
+                            {brandMenuOpen && typeof document !== 'undefined' && createPortal(
+                              <div
+                                ref={brandDropdownRef}
+                                style={{ position: 'fixed', top: brandMenuPos.top, left: brandMenuPos.left }}
+                                className="z-[9999] w-44 rounded-xl border border-[#e5e5e7] bg-white p-2 shadow-xl dark:border-[#3a3a3d] dark:bg-[#2a2a2d]"
+                                onClick={(event) => event.stopPropagation()}
+                              >
+                                <div className="px-2 py-1.5 text-center text-[10px] font-semibold uppercase tracking-[0.24em] text-[#6b7280] dark:text-[#a0a0a0]">Brand</div>
+                                <div className="max-h-56 overflow-y-auto">
+                                  <label className="flex w-full items-center justify-center gap-2 rounded-xl px-3 py-1.5 text-center text-[10px] text-[#6b7280] hover:bg-[#f5f5f7] dark:text-[#a0a0a0] dark:hover:bg-slate-800">
+                                    <input
+                                      type="checkbox"
+                                      checked={allBrandsChecked}
+                                      onChange={() => {
+                                        const nextValue = !allBrandsChecked;
+                                        setBrandFilter(Object.fromEntries(brandOptions.map((name) => [name, nextValue])));
+                                      }}
+                                    />
+                                    <span>All</span>
+                                  </label>
+                                  {brandOptions.map((brand) => (
+                                    <label key={brand} className="flex w-full items-center justify-center gap-2 rounded-xl px-3 py-1.5 text-center text-[10px] text-[#6b7280] hover:bg-[#f5f5f7] dark:text-[#a0a0a0] dark:hover:bg-slate-800">
+                                      <input
+                                        type="checkbox"
+                                        checked={isBrandChecked(brand)}
+                                        onChange={() => {
+                                          setBrandFilter((current) => ({ ...current, [brand]: !isBrandChecked(brand) }));
+                                        }}
+                                      />
+                                      <span>{brand}</span>
+                                    </label>
+                                  ))}
+                                </div>
+                              </div>,
+                              document.body
                             )}
                           </div>
+                        ) : col.key === 'correctGroup' ? (
+                          <div className="relative flex items-center justify-center gap-1">
+                            <span>{col.label}</span>
+                            <button
+                              type="button"
+                              ref={correctGroupButtonRef}
+                              onClick={(event) => {
+                                event.stopPropagation();
+                                const rect = correctGroupButtonRef.current?.getBoundingClientRect();
+                                if (rect) {
+                                  const dropdownWidth = 288;
+                                  const left = Math.min(rect.left, window.innerWidth - dropdownWidth - 8);
+                                  setCorrectGroupMenuPos({ top: rect.bottom + 8, left: Math.max(8, left) });
+                                }
+                                setCorrectGroupMenuOpen((current) => !current);
+                              }}
+                              className={`flex items-center justify-center rounded-full p-1 transition ${anyCorrectGroupUnchecked ? 'bg-indigo-100 text-indigo-700 dark:bg-indigo-500/30 dark:text-indigo-200' : 'text-[#6b7280] hover:bg-slate-200 dark:text-[#a0a0a0] dark:hover:bg-white/10'}`}
+                            >
+                              {anyCorrectGroupUnchecked ? (
+                                <span className="flex h-3 min-w-[12px] items-center justify-center px-0.5 text-[10px] font-semibold leading-none">
+                                  {selectedCorrectGroupCount}
+                                </span>
+                              ) : (
+                                <ChevronUp
+                                  size={12}
+                                  className={`transition-transform duration-150 ease-in-out ${correctGroupMenuOpen ? 'rotate-180' : ''} opacity-70`}
+                                />
+                              )}
+                            </button>
+                            {correctGroupMenuOpen && typeof document !== 'undefined' && createPortal(
+                              <div
+                                ref={correctGroupDropdownRef}
+                                style={{ position: 'fixed', top: correctGroupMenuPos.top, left: correctGroupMenuPos.left }}
+                                className="z-[9999] w-72 max-w-[90vw] rounded-xl border border-[#e5e5e7] bg-white p-2 shadow-xl dark:border-[#3a3a3d] dark:bg-[#2a2a2d]"
+                                onClick={(event) => event.stopPropagation()}
+                              >
+                                <div className="px-2 py-1.5 text-center text-[10px] font-semibold uppercase tracking-[0.24em] text-[#6b7280] dark:text-[#a0a0a0]">Correct Group</div>
+                                <div className="max-h-56 overflow-y-auto">
+                                  <label className="flex w-full items-center justify-start gap-2 whitespace-nowrap rounded-xl px-3 py-1.5 text-left text-[10px] text-[#6b7280] hover:bg-[#f5f5f7] dark:text-[#a0a0a0] dark:hover:bg-slate-800">
+                                    <input
+                                      type="checkbox"
+                                      checked={allCorrectGroupsChecked}
+                                      onChange={() => {
+                                        const nextValue = !allCorrectGroupsChecked;
+                                        setCorrectGroupFilter(Object.fromEntries(correctGroupOptions.map((name) => [name, nextValue])));
+                                      }}
+                                    />
+                                    <span>All</span>
+                                  </label>
+                                  {correctGroupOptions.map((group) => (
+                                    <label key={group} className="flex w-full items-center justify-start gap-2 whitespace-nowrap rounded-xl px-3 py-1.5 text-left text-[10px] text-[#6b7280] hover:bg-[#f5f5f7] dark:text-[#a0a0a0] dark:hover:bg-slate-800">
+                                      <input
+                                        type="checkbox"
+                                        checked={isCorrectGroupChecked(group)}
+                                        onChange={() => {
+                                          setCorrectGroupFilter((current) => ({ ...current, [group]: !isCorrectGroupChecked(group) }));
+                                        }}
+                                      />
+                                      <span>{group}</span>
+                                    </label>
+                                  ))}
+                                </div>
+                              </div>,
+                              document.body
+                            )}
+                          </div>
+                        ) : (
+                          <button
+                            type="button"
+                            onClick={() => {
+                              if (sortColumn === col.key) {
+                                setSortDirection((current) => current === 'asc' ? 'desc' : 'asc');
+                              } else {
+                                setSortColumn(col.key);
+                                setSortDirection('asc');
+                              }
+                            }}
+                            className="flex w-full items-center justify-center gap-1.5 text-center transition hover:opacity-80"
+                          >
+                            <span>{col.label}</span>
+                            <SortIcon active={sortColumn === col.key} direction={sortDirection} />
+                          </button>
                         )}
                       </th>
                     ))}
@@ -960,11 +1142,11 @@ export default function TransferQueue() {
                   {loading ? (
                     Array.from({ length: 12 }).map((_, rowIndex) => (
                       <tr key={rowIndex} className="bg-white dark:bg-[#2a2a2d]">
-                        {columnDefs.map((col) => {
+                        {visibleColumns.map((col) => {
                           const widths = rowSkeletonWidths[col.key];
                           const width = widths[rowIndex % widths.length];
                           return (
-                            <td key={col.key} className="px-4 py-2">
+                            <td key={col.key} className="px-3 py-1">
                               <div className={`mx-auto h-2.5 animate-pulse rounded-md bg-slate-100 dark:bg-slate-800 ${width}`} />
                             </td>
                           );
@@ -973,27 +1155,11 @@ export default function TransferQueue() {
                     ))
                   ) : pagedRows.length > 0 ? pagedRows.map((row) => (
                     <tr key={row.key} className="bg-white dark:bg-[#2a2a2d]">
-                      <td className="text-[9px] text-center px-4 py-2 text-slate-700 dark:text-slate-300">{row.brand}</td>
-                      <td className="text-[9px] text-center px-4 py-2 text-slate-700 dark:text-slate-300">{row.account}</td>
-                      <td className={`text-[9px] text-center px-4 py-2 ${row.companyBalance < 0 ? 'text-rose-600 dark:text-rose-400' : 'text-slate-700 dark:text-slate-300'}`}>
-                        {displayNum(row.companyBalance)}
-                      </td>
-                      <td className={`text-[9px] text-center px-4 py-2 ${row.balanceInside < 0 ? 'text-rose-600 dark:text-rose-400' : 'text-slate-700 dark:text-slate-300'}`}>
-                        {displayNum(row.balanceInside)}
-                      </td>
-                      <td className={`text-[9px] text-center px-4 py-2 ${row.discrepancy < 0 ? 'text-rose-600 dark:text-rose-400' : 'text-slate-700 dark:text-slate-300'}`}>
-                        {displayNum(row.discrepancy)}
-                      </td>
-                      <td className="text-[9px] text-center px-4 py-2 text-slate-700 dark:text-slate-300">
-                        {row.sdpVsBalance > 0 ? displayNum(Math.abs(row.sdpVsBalance)) : '−'}
-                      </td>
-                      <td className="text-[9px] text-center px-4 py-2 text-slate-700 dark:text-slate-300">{row.currentGroup}</td>
-                      <td className="text-[9px] text-center px-4 py-2 text-slate-700 dark:text-slate-300">{row.correctGroup}</td>
-                      <td className="text-[9px] text-center px-4 py-2 text-slate-500">{row.remarks}</td>
+                      {visibleColumns.map((col) => renderCell(row, col.key))}
                     </tr>
                   )) : (
                     <tr>
-                      <td colSpan={9} className="px-3 py-8 text-center text-[9px] text-[#6b7280] dark:text-[#a0a0a0]">
+                      <td colSpan={Math.max(visibleColumns.length, 1)} className="px-3 py-8 text-center text-[9px] text-[#6b7280] dark:text-[#a0a0a0]">
                         No accounts need transfer.
                       </td>
                     </tr>

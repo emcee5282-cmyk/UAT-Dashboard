@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { AlertCircle, ChevronDown, ChevronUp, Download, Filter, RefreshCw, Search } from 'lucide-react';
+import { AlertCircle, ChevronDown, ChevronUp, Download, Filter, Loader2, RefreshCw, Search } from 'lucide-react';
 import * as XLSX from 'xlsx';
 import ThemeToggle from '../components/ThemeToggle';
 import { rawVal } from '@/app/lib/format';
@@ -103,6 +103,21 @@ function displayNum(val: string | number | null | undefined): string {
 
 function numOrBlank(num: number): number | undefined {
   return Math.abs(num) < 0.01 ? undefined : num;
+}
+
+function fmt(num: number): string {
+  return Math.abs(num).toLocaleString('en-PH', {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  });
+}
+
+function fmtAbbrev(num: number): string {
+  const abs = Math.abs(num);
+  if (abs >= 1e9) return `${(abs / 1e9).toFixed(2)}B`;
+  if (abs >= 1e6) return `${(abs / 1e6).toFixed(2)}M`;
+  if (abs >= 1e3) return `${(abs / 1e3).toFixed(2)}K`;
+  return abs.toFixed(2);
 }
 
 function parseNumber(val: string): number {
@@ -248,26 +263,28 @@ const columnDefs: { key: ColumnKey; label: string; sortable: boolean }[] = [
   { key: 'balanceInside', label: 'Balance Inside', sortable: true },
   { key: 'agentWithdrawal', label: 'Agent Withdrawal', sortable: true },
   { key: 'sdpVsBalance', label: 'SDP VS Balance', sortable: true },
-  { key: 'walletStatus', label: 'Wallet Status', sortable: true },
+  { key: 'walletStatus', label: 'Wallet Status', sortable: false },
 ];
 
 const columnWidths: Record<ColumnKey, string> = {
   brand: '70px',
   leader: '90px',
-  walletName: '220px',
-  walletType: '90px',
-  sdp: '100px',
-  opening: '110px',
-  totalDP: '110px',
-  totalWD: '110px',
-  topUp: '110px',
-  settlement: '110px',
-  companyBalance: '140px',
+  walletName: '140px',
+  walletType: '110px',
+  sdp: '105px',
+  opening: '105px',
+  totalDP: '105px',
+  totalWD: '105px',
+  topUp: '105px',
+  settlement: '105px',
+  companyBalance: '130px',
   balanceInside: '120px',
-  agentWithdrawal: '130px',
+  agentWithdrawal: '135px',
   sdpVsBalance: '130px',
-  walletStatus: '130px',
+  walletStatus: '125px',
 };
+
+const TABLE_MIN_WIDTH = '1680px';
 
 function SortIcon({ active, direction }: { active: boolean; direction: 'asc' | 'desc' }) {
   if (!active) {
@@ -286,75 +303,86 @@ function SortIcon({ active, direction }: { active: boolean; direction: 'asc' | '
 }
 
 function headerCellClasses(isSorted: boolean) {
-  const bg = isSorted ? 'bg-indigo-50 dark:bg-indigo-500/10' : 'bg-white dark:bg-[#2a2a2d]';
-  const color = isSorted ? 'text-indigo-600 dark:text-indigo-400' : 'text-slate-500 dark:text-slate-400';
-  const rounded = isSorted ? 'rounded-md' : '';
-  return `sticky top-0 z-10 whitespace-nowrap border-b border-slate-200 px-4 py-3 text-center text-[10px] font-semibold uppercase dark:border-slate-700 ${bg} ${color} ${rounded}`;
+  const color = isSorted ? 'text-indigo-600 dark:text-indigo-400' : 'text-foreground';
+  return `text-center px-3 py-2 text-[11px] font-semibold whitespace-nowrap ${color}`;
 }
+
+const WALLET_STATUS_TEXT_CLASSES: Record<string, string> = {
+  'DP + WD': 'text-emerald-700',
+  'DP Only': 'text-sky-700',
+  'WD Only': 'text-amber-700',
+  'Top Up Acc.': 'text-indigo-700',
+  'Wallet With Issue': 'text-rose-700',
+  'Disconnected': 'text-slate-600',
+  'Account Problem': 'text-rose-700',
+  'No Record': 'text-slate-400',
+};
 
 function renderCell(row: MergedRow, key: ColumnKey) {
   switch (key) {
     case 'brand':
-      return <td key={key} className="whitespace-nowrap px-4 py-2 text-center text-[9px] text-slate-700 dark:text-slate-300">{row.brand}</td>;
+      return <td key={key} className="whitespace-nowrap overflow-hidden text-ellipsis px-3 py-1 text-center text-[9px] text-foreground">{row.brand}</td>;
     case 'leader':
-      return <td key={key} className="whitespace-nowrap px-4 py-2 text-center text-[9px] text-slate-700 dark:text-slate-300">{row.leader}</td>;
+      return <td key={key} className="whitespace-nowrap overflow-hidden text-ellipsis px-3 py-1 text-center text-[9px] text-foreground">{row.leader}</td>;
     case 'walletName':
-      return <td key={key} className="whitespace-nowrap px-4 py-2 text-center text-[9px] font-bold text-slate-900 dark:text-white">{row.agentName}</td>;
+      return <td key={key} className="whitespace-nowrap overflow-hidden text-ellipsis px-3 py-1 text-center text-[9px] font-medium text-foreground">{row.agentName}</td>;
     case 'walletType':
-      return <td key={key} className="whitespace-nowrap px-4 py-2 text-center text-[9px] text-slate-700 dark:text-slate-300">{row.walletType}</td>;
+      return <td key={key} className="whitespace-nowrap overflow-hidden text-ellipsis px-3 py-1 text-center text-[9px] text-foreground">{row.walletType}</td>;
     case 'sdp':
-      return <td key={key} className="whitespace-nowrap px-4 py-2 text-center text-[9px] text-slate-700 dark:text-slate-300">{displayNum(row.sdp)}</td>;
+      return <td key={key} className="whitespace-nowrap overflow-hidden text-ellipsis px-3 py-1 text-center text-[10px] text-foreground">{displayNum(row.sdp)}</td>;
     case 'opening':
-      return <td key={key} className="whitespace-nowrap px-4 py-2 text-center text-[9px] text-slate-700 dark:text-slate-300">{displayNum(row.openingBal)}</td>;
+      return <td key={key} className="whitespace-nowrap overflow-hidden text-ellipsis px-3 py-1 text-center text-[10px] text-foreground">{displayNum(row.openingBal)}</td>;
     case 'totalDP':
-      return <td key={key} className="whitespace-nowrap px-4 py-2 text-center text-[9px] text-slate-700 dark:text-slate-300">{displayNum(row.agentTotalDP)}</td>;
+      return <td key={key} className="whitespace-nowrap overflow-hidden text-ellipsis px-3 py-1 text-center text-[10px] text-foreground">{displayNum(row.agentTotalDP)}</td>;
     case 'totalWD':
-      return <td key={key} className="whitespace-nowrap px-4 py-2 text-center text-[9px] text-slate-700 dark:text-slate-300">{displayNum(row.agentTotalWD)}</td>;
+      return <td key={key} className="whitespace-nowrap overflow-hidden text-ellipsis px-3 py-1 text-center text-[10px] text-foreground">{displayNum(row.agentTotalWD)}</td>;
     case 'topUp':
-      return <td key={key} className="whitespace-nowrap px-4 py-2 text-center text-[9px] text-slate-700 dark:text-slate-300">{displayNum(row.totalTopUp)}</td>;
+      return <td key={key} className="whitespace-nowrap overflow-hidden text-ellipsis px-3 py-1 text-center text-[10px] text-foreground">{displayNum(row.totalTopUp)}</td>;
     case 'settlement': {
       const settlementDisplay = displayNum(row.totalStlm);
       return (
-        <td key={key} className="whitespace-nowrap px-4 py-2 text-center text-[9px] text-slate-700 dark:text-slate-300">
+        <td key={key} className="whitespace-nowrap overflow-hidden text-ellipsis px-3 py-1 text-center text-[10px] text-foreground">
           {settlementDisplay}
         </td>
       );
     }
     case 'balanceInside':
       return (
-        <td key={key} className="px-4 py-2 text-[9px] text-center text-slate-700 dark:text-slate-300">
+        <td key={key} className="whitespace-nowrap overflow-hidden text-ellipsis px-3 py-1 text-center text-[10px] text-foreground">
           {displayNum(String(row.balanceInside ?? 0))}
         </td>
       );
     case 'agentWithdrawal':
       return (
-        <td key={key} className="px-4 py-2 text-[9px] text-center text-slate-700 dark:text-slate-300">
+        <td key={key} className="whitespace-nowrap overflow-hidden text-ellipsis px-3 py-1 text-center text-[10px] text-foreground">
           {displayNum(String(row.agentWithdrawal))}
         </td>
       );
     case 'sdpVsBalance':
       return (
-        <td key={key} className="px-4 py-2 text-[9px] text-center text-slate-700 dark:text-slate-300">
+        <td key={key} className="whitespace-nowrap overflow-hidden text-ellipsis px-3 py-1 text-center text-[10px] text-foreground">
           {row.sdpVsBalance > 0 ? displayNum(String(Math.abs(row.sdpVsBalance))) : '−'}
         </td>
       );
-    case 'walletStatus':
+    case 'walletStatus': {
+      const textColor = WALLET_STATUS_TEXT_CLASSES[row.walletStatus] ?? 'text-slate-600';
       return (
-        <td key={key} className={`whitespace-nowrap px-4 py-2 text-center text-[9px] ${row.walletStatus === 'No Record' ? 'text-slate-400 dark:text-slate-500' : 'text-slate-700 dark:text-slate-300'}`}>
+        <td key={key} className={`whitespace-nowrap overflow-hidden text-ellipsis px-3 py-1 text-center text-[9px] font-medium ${textColor}`}>
           {row.walletStatus}
         </td>
       );
+    }
     case 'companyBalance':
     default: {
       const companyBalanceDisplay = displayNum(row.runningBalance);
       const companyBalanceColor =
         companyBalanceDisplay === '−'
-          ? 'text-slate-900 dark:text-white'
+          ? 'text-foreground'
           : row.runningBalance < 0
-          ? 'text-rose-600 dark:text-rose-400'
-          : 'text-slate-900 dark:text-white';
+          ? 'text-rose-600'
+          : 'text-foreground';
       return (
-        <td key={key} className={`whitespace-nowrap px-4 py-2 text-center text-[9px] font-bold ${companyBalanceColor}`}>
+        <td key={key} className={`whitespace-nowrap overflow-hidden text-ellipsis px-3 py-1 text-center text-[10px] font-medium ${companyBalanceColor}`}>
           {companyBalanceDisplay}
         </td>
       );
@@ -368,38 +396,39 @@ export default function AgentBalance() {
   const [error, setError] = useState('');
   const [lastUpdated, setLastUpdated] = useState('');
   const [spinning, setSpinning] = useState(false);
+  const [cardsExpanded, setCardsExpanded] = useState(false);
   const [searchTerm, setSearchTerm] = useState('');
   const [leaderFilter, setLeaderFilter] = useState<Record<string, boolean>>({});
   const [brandFilter, setBrandFilter] = useState<Record<string, boolean>>({});
   const [walletTypeFilter, setWalletTypeFilter] = useState<Record<string, boolean>>({});
   const [sortColumn, setSortColumn] = useState<ColumnKey>('companyBalance');
   const [sortDirection, setSortDirection] = useState<'asc' | 'desc'>('desc');
-  const [leaderMenuOpen, setLeaderMenuOpen] = useState(false);
-  const [leaderMenuPos, setLeaderMenuPos] = useState({ top: 0, left: 0 });
+  const [filterMenuOpen, setFilterMenuOpen] = useState(false);
+  const [filterMenuPos, setFilterMenuPos] = useState({ top: 0, left: 0 });
   const [brandMenuOpen, setBrandMenuOpen] = useState(false);
   const [brandMenuPos, setBrandMenuPos] = useState({ top: 0, left: 0 });
+  const [leaderMenuOpen, setLeaderMenuOpen] = useState(false);
+  const [leaderMenuPos, setLeaderMenuPos] = useState({ top: 0, left: 0 });
   const [walletTypeMenuOpen, setWalletTypeMenuOpen] = useState(false);
   const [walletTypeMenuPos, setWalletTypeMenuPos] = useState({ top: 0, left: 0 });
-  const [columnMenuOpen, setColumnMenuOpen] = useState(false);
-  const [columnMenuPos, setColumnMenuPos] = useState({ top: 0, left: 0 });
+  const [walletStatusMenuOpen, setWalletStatusMenuOpen] = useState(false);
+  const [walletStatusMenuPos, setWalletStatusMenuPos] = useState({ top: 0, left: 0 });
   const [columnVisibility, setColumnVisibility] = useState<Record<ColumnKey, boolean>>(
     () => Object.fromEntries(columnDefs.map((col) => [col.key, true])) as Record<ColumnKey, boolean>
   );
   const [walletStatusFilter, setWalletStatusFilter] = useState<Record<string, boolean>>(
     () => Object.fromEntries(WALLET_STATUS_OPTIONS.map((status) => [status, true]))
   );
-  const [walletStatusMenuOpen, setWalletStatusMenuOpen] = useState(false);
-  const [walletStatusMenuPos, setWalletStatusMenuPos] = useState({ top: 0, left: 0 });
   const [page, setPage] = useState(1);
   const rowsPerPage = 50;
-  const leaderButtonRef = useRef<HTMLButtonElement>(null);
-  const leaderDropdownRef = useRef<HTMLDivElement>(null);
+  const filterButtonRef = useRef<HTMLButtonElement>(null);
+  const filterDropdownRef = useRef<HTMLDivElement>(null);
   const brandButtonRef = useRef<HTMLButtonElement>(null);
   const brandDropdownRef = useRef<HTMLDivElement>(null);
+  const leaderButtonRef = useRef<HTMLButtonElement>(null);
+  const leaderDropdownRef = useRef<HTMLDivElement>(null);
   const walletTypeButtonRef = useRef<HTMLButtonElement>(null);
   const walletTypeDropdownRef = useRef<HTMLDivElement>(null);
-  const columnButtonRef = useRef<HTMLButtonElement>(null);
-  const columnDropdownRef = useRef<HTMLDivElement>(null);
   const walletStatusButtonRef = useRef<HTMLButtonElement>(null);
   const walletStatusDropdownRef = useRef<HTMLDivElement>(null);
   const scrollRef = useRef<number>(0);
@@ -562,21 +591,21 @@ export default function AgentBalance() {
   }, [searchTerm, leaderFilter, brandFilter, walletStatusFilter, walletTypeFilter, sortColumn, sortDirection]);
 
   useEffect(() => {
-    if (!leaderMenuOpen) return;
+    if (!filterMenuOpen) return;
 
     const handlePointerDown = (event: MouseEvent) => {
       const target = event.target as Node;
       if (
-        leaderButtonRef.current && !leaderButtonRef.current.contains(target) &&
-        leaderDropdownRef.current && !leaderDropdownRef.current.contains(target)
+        filterButtonRef.current && !filterButtonRef.current.contains(target) &&
+        filterDropdownRef.current && !filterDropdownRef.current.contains(target)
       ) {
-        setLeaderMenuOpen(false);
+        setFilterMenuOpen(false);
       }
     };
 
     document.addEventListener('mousedown', handlePointerDown);
     return () => document.removeEventListener('mousedown', handlePointerDown);
-  }, [leaderMenuOpen]);
+  }, [filterMenuOpen]);
 
   useEffect(() => {
     if (!brandMenuOpen) return;
@@ -596,6 +625,23 @@ export default function AgentBalance() {
   }, [brandMenuOpen]);
 
   useEffect(() => {
+    if (!leaderMenuOpen) return;
+
+    const handlePointerDown = (event: MouseEvent) => {
+      const target = event.target as Node;
+      if (
+        leaderButtonRef.current && !leaderButtonRef.current.contains(target) &&
+        leaderDropdownRef.current && !leaderDropdownRef.current.contains(target)
+      ) {
+        setLeaderMenuOpen(false);
+      }
+    };
+
+    document.addEventListener('mousedown', handlePointerDown);
+    return () => document.removeEventListener('mousedown', handlePointerDown);
+  }, [leaderMenuOpen]);
+
+  useEffect(() => {
     if (!walletTypeMenuOpen) return;
 
     const handlePointerDown = (event: MouseEvent) => {
@@ -611,23 +657,6 @@ export default function AgentBalance() {
     document.addEventListener('mousedown', handlePointerDown);
     return () => document.removeEventListener('mousedown', handlePointerDown);
   }, [walletTypeMenuOpen]);
-
-  useEffect(() => {
-    if (!columnMenuOpen) return;
-
-    const handlePointerDown = (event: MouseEvent) => {
-      const target = event.target as Node;
-      if (
-        columnButtonRef.current && !columnButtonRef.current.contains(target) &&
-        columnDropdownRef.current && !columnDropdownRef.current.contains(target)
-      ) {
-        setColumnMenuOpen(false);
-      }
-    };
-
-    document.addEventListener('mousedown', handlePointerDown);
-    return () => document.removeEventListener('mousedown', handlePointerDown);
-  }, [columnMenuOpen]);
 
   useEffect(() => {
     if (!walletStatusMenuOpen) return;
@@ -649,8 +678,14 @@ export default function AgentBalance() {
   const visibleColumns = useMemo(() => columnDefs.filter((col) => columnVisibility[col.key]), [columnVisibility]);
   const allColumnsChecked = columnDefs.every((col) => columnVisibility[col.key]);
   const anyColumnHidden = columnDefs.some((col) => !columnVisibility[col.key]);
-  const allWalletStatusesChecked = WALLET_STATUS_OPTIONS.every((status) => walletStatusFilter[status]);
-  const anyWalletStatusUnchecked = WALLET_STATUS_OPTIONS.some((status) => !walletStatusFilter[status]);
+  const walletStatusOptions = useMemo(() => {
+    const present = new Set(rows.map((row) => row.walletStatus));
+    return WALLET_STATUS_OPTIONS.filter((status) => present.has(status));
+  }, [rows]);
+
+  const allWalletStatusesChecked = walletStatusOptions.every((status) => walletStatusFilter[status]);
+  const anyWalletStatusUnchecked = walletStatusOptions.some((status) => !walletStatusFilter[status]);
+  const selectedWalletStatusCount = walletStatusOptions.filter((status) => walletStatusFilter[status]).length;
 
   const leaderOptions = useMemo(() => {
     const leaders = Array.from(new Set(rows.map((row) => row.leader).filter(Boolean))).sort((a, b) => a.localeCompare(b));
@@ -660,6 +695,7 @@ export default function AgentBalance() {
   const isLeaderChecked = (name: string) => leaderFilter[name] !== false;
   const allLeadersChecked = leaderOptions.every((name) => isLeaderChecked(name));
   const anyLeaderUnchecked = leaderOptions.some((name) => !isLeaderChecked(name));
+  const selectedLeaderCount = leaderOptions.filter((name) => isLeaderChecked(name)).length;
 
   const brandOptions = useMemo(() => {
     const brands = Array.from(new Set(rows.map((row) => row.brand).filter(Boolean))).sort((a, b) => a.localeCompare(b));
@@ -669,12 +705,16 @@ export default function AgentBalance() {
   const isBrandChecked = (name: string) => brandFilter[name] !== false;
   const allBrandsChecked = brandOptions.every((name) => isBrandChecked(name));
   const anyBrandUnchecked = brandOptions.some((name) => !isBrandChecked(name));
+  const selectedBrandCount = brandOptions.filter((name) => isBrandChecked(name)).length;
 
   const walletTypeOptions = WALLET_TYPE_FILTER_LABELS;
 
   const isWalletTypeChecked = (name: string) => walletTypeFilter[name] !== false;
   const allWalletTypesChecked = walletTypeOptions.every((name) => isWalletTypeChecked(name));
   const anyWalletTypeUnchecked = walletTypeOptions.some((name) => !isWalletTypeChecked(name));
+  const selectedWalletTypeCount = walletTypeOptions.filter((name) => isWalletTypeChecked(name)).length;
+
+  const anyFilterActive = anyColumnHidden;
 
   const searchedRows = useMemo(() => {
     const query = searchTerm.toLowerCase();
@@ -694,7 +734,7 @@ export default function AgentBalance() {
     if (brandOptions.some((name) => brandFilter[name] === false)) {
       list = list.filter((row) => brandFilter[row.brand] !== false);
     }
-    if (WALLET_STATUS_OPTIONS.some((status) => !walletStatusFilter[status])) {
+    if (walletStatusOptions.some((status) => !walletStatusFilter[status])) {
       list = list.filter((row) => walletStatusFilter[row.walletStatus]);
     }
     if (walletTypeOptions.some((name) => walletTypeFilter[name] === false)) {
@@ -708,6 +748,80 @@ export default function AgentBalance() {
     }
     return list;
   }, [leaderFilter, leaderOptions, brandFilter, brandOptions, walletStatusFilter, walletTypeFilter, walletTypeOptions, searchedRows]);
+
+  const summaryCards = useMemo(() => {
+    const totalDP = filteredRows.reduce((sum, row) => sum + row.agentTotalDP, 0);
+    const totalWD = filteredRows.reduce((sum, row) => sum + row.agentTotalWD, 0);
+    const totalSdp = filteredRows.reduce((sum, row) => sum + parseNumber(row.sdp), 0);
+    const totalTopUp = filteredRows.reduce((sum, row) => sum + row.totalTopUp, 0);
+    const totalSettlement = filteredRows.reduce((sum, row) => sum + row.totalStlm, 0);
+    const totalBalanceInside = filteredRows.reduce((sum, row) => sum + row.balanceInside, 0);
+    const totalRunningBalance = filteredRows.reduce((sum, row) => sum + row.runningBalance, 0);
+    const totalOpening = filteredRows.reduce((sum, row) => sum + parseNumber(row.openingBal), 0);
+    const runningVsOpening = totalRunningBalance - totalOpening;
+
+    const cards: Array<{
+      label: string;
+      bigValue: string;
+      subAmount: string;
+      subSuffix?: string;
+      subPositive: boolean;
+      showArrow: boolean;
+    }> = [
+      {
+        label: 'Total DP',
+        bigValue: fmtAbbrev(totalDP),
+        subAmount: fmt(totalDP),
+        subPositive: false,
+        showArrow: false,
+      },
+      {
+        label: 'Total WD',
+        bigValue: fmtAbbrev(totalWD),
+        subAmount: fmt(totalWD),
+        subPositive: false,
+        showArrow: false,
+      },
+      {
+        label: 'SDP',
+        bigValue: fmtAbbrev(totalSdp),
+        subAmount: fmt(totalSdp),
+        subPositive: false,
+        showArrow: false,
+      },
+      {
+        label: 'Total Top Up',
+        bigValue: fmtAbbrev(totalTopUp),
+        subAmount: fmt(totalTopUp),
+        subPositive: false,
+        showArrow: false,
+      },
+      {
+        label: 'Total Settlement',
+        bigValue: fmtAbbrev(totalSettlement),
+        subAmount: fmt(totalSettlement),
+        subPositive: false,
+        showArrow: false,
+      },
+      {
+        label: 'Actual Balance',
+        bigValue: fmtAbbrev(totalBalanceInside),
+        subAmount: fmt(totalBalanceInside),
+        subPositive: false,
+        showArrow: false,
+      },
+      {
+        label: 'Running Balance',
+        bigValue: fmtAbbrev(totalRunningBalance),
+        subAmount: fmt(runningVsOpening),
+        subSuffix: 'vs opening',
+        subPositive: runningVsOpening >= 0,
+        showArrow: true,
+      },
+    ];
+
+    return cards;
+  }, [filteredRows]);
 
   const sortedRows = useMemo(() => {
     const list = [...filteredRows];
@@ -770,29 +884,43 @@ export default function AgentBalance() {
   const pagedRows = sortedRows.slice(startIndex, endIndex);
 
   const handleExport = useCallback(() => {
-    const headers = [
-      'Brand', 'Leader', 'Shop Name', 'Type', 'SDP', 'Opening', 'Total DP', 'Total WD',
-      'Top Up', 'Settlement', 'Company Balance', 'Balance Inside',
-      'Agent Withdrawal', 'SDP VS Balance', 'Wallet Status',
-    ];
+    const getExportValue = (row: MergedRow, key: ColumnKey) => {
+      switch (key) {
+        case 'brand':
+          return row.brand;
+        case 'leader':
+          return row.leader;
+        case 'walletName':
+          return row.agentName;
+        case 'walletType':
+          return row.walletType;
+        case 'sdp':
+          return numOrBlank(parseNumber(row.sdp));
+        case 'opening':
+          return numOrBlank(parseNumber(row.openingBal));
+        case 'totalDP':
+          return numOrBlank(row.agentTotalDP);
+        case 'totalWD':
+          return numOrBlank(row.agentTotalWD);
+        case 'topUp':
+          return numOrBlank(row.totalTopUp);
+        case 'settlement':
+          return numOrBlank(row.totalStlm);
+        case 'companyBalance':
+          return numOrBlank(row.runningBalance);
+        case 'balanceInside':
+          return numOrBlank(row.balanceInside);
+        case 'agentWithdrawal':
+          return numOrBlank(row.agentWithdrawal);
+        case 'sdpVsBalance':
+          return row.sdpVsBalance > 0 ? Math.abs(row.sdpVsBalance) : undefined;
+        case 'walletStatus':
+          return row.walletStatus;
+      }
+    };
 
-    const data = sortedRows.map((row) => [
-      row.brand,
-      row.leader,
-      row.agentName,
-      row.walletType,
-      numOrBlank(parseNumber(row.sdp)),
-      numOrBlank(parseNumber(row.openingBal)),
-      numOrBlank(row.agentTotalDP),
-      numOrBlank(row.agentTotalWD),
-      numOrBlank(row.totalTopUp),
-      numOrBlank(row.totalStlm),
-      numOrBlank(row.runningBalance),
-      numOrBlank(row.balanceInside),
-      numOrBlank(row.agentWithdrawal),
-      row.sdpVsBalance > 0 ? Math.abs(row.sdpVsBalance) : undefined,
-      row.walletStatus,
-    ]);
+    const headers = visibleColumns.map((col) => col.label);
+    const data = sortedRows.map((row) => visibleColumns.map((col) => getExportValue(row, col.key)));
 
     const worksheet = XLSX.utils.aoa_to_sheet([headers, ...data]);
     worksheet['!cols'] = headers.map(() => ({ wch: 16 }));
@@ -800,9 +928,11 @@ export default function AgentBalance() {
     const workbook = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(workbook, worksheet, 'Agent Balance');
 
-    const today = new Date().toISOString().slice(0, 10);
-    XLSX.writeFile(workbook, `agent-balance-${today}.xlsx`);
-  }, [sortedRows]);
+    const now = new Date();
+    const datePart = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
+    const timePart = `${String(now.getHours()).padStart(2, '0')}${String(now.getMinutes()).padStart(2, '0')}`;
+    XLSX.writeFile(workbook, `SSP1_BALANCES_SUMMARY_${datePart}_${timePart}.xlsx`);
+  }, [sortedRows, visibleColumns]);
 
   useEffect(() => {
     if (page !== currentPage) {
@@ -811,46 +941,51 @@ export default function AgentBalance() {
   }, [page, currentPage]);
 
   return (
-    <div className="min-h-screen overflow-y-hidden bg-[#f5f5f7] text-[#1a1a1a] transition-colors duration-300 dark:bg-[#1c1c1e] dark:text-white">
-      <header className="border-b border-[#e5e5e7] bg-white px-4 py-2 dark:border-[#3a3a3d] dark:bg-[#2a2a2d] md:px-8">
-        <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
-          <div className="flex items-baseline gap-2">
-            <h1 className="text-lg font-semibold text-slate-900 dark:text-white">Agent Balance</h1>
-          </div>
-          <div className="flex flex-wrap items-center gap-3">
-            <label className="flex items-center gap-2 rounded-xl border border-[#e5e5e7] px-2 py-1.5 text-[11px] text-[#6b7280] dark:border-[#3a3a3d] dark:text-[#a0a0a0]">
-              {loading ? (
-                <div className="h-3 w-32 animate-pulse rounded-md bg-slate-200 dark:bg-slate-700 md:w-48" />
-              ) : (
-                <>
-                  <Search size={12} />
-                  <input
-                    value={searchTerm}
-                    onChange={(event) => setSearchTerm(event.target.value)}
-                    className="w-32 bg-transparent outline-none md:w-48"
-                    placeholder="Search"
-                  />
-                </>
-              )}
-            </label>
-            <span className="flex items-center gap-1.5 text-[11px] text-[#6b7280] dark:text-[#a0a0a0]">
-              <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-emerald-500" />
-              {loading ? '—' : (lastUpdated || '—')}
-            </span>
-            <ThemeToggle />
-            <button
-              onClick={fetchData}
-              disabled={spinning || loading}
-              className="flex items-center gap-2 rounded-xl border border-[#e5e5e7] px-2 py-1.5 text-[11px] font-medium text-[#6b7280] transition-all disabled:opacity-50 dark:border-[#3a3a3d] dark:text-[#a0a0a0]"
-            >
-              <RefreshCw size={12} className={spinning ? 'animate-spin' : ''} />
-              Refresh
-            </button>
+    <div className="h-screen w-full flex flex-col overflow-hidden bg-background font-[Inter,sans-serif] text-foreground transition-colors duration-300 dark:bg-[#1c1c1e]">
+      <header className="shrink-0 border-b border-[#e5e5e7] bg-white px-4 py-2 dark:border-[#3a3a3d] dark:bg-[#2a2a2d] md:px-8">
+        <div className="flex items-center justify-between">
+          {loading ? (
+            <div className="h-4 w-28 animate-pulse rounded-md bg-slate-200 dark:bg-slate-700" />
+          ) : (
+            <h1 className="text-lg font-medium text-foreground">SSP Cashout</h1>
+          )}
+          <div className="flex items-center gap-3">
+            {loading ? (
+              <>
+                <div className="h-3 w-20 animate-pulse rounded-md bg-slate-200 dark:bg-slate-700" />
+                <div className="h-7 w-16 animate-pulse rounded-lg bg-slate-200 dark:bg-slate-700" />
+                <div className="h-6 w-6 animate-pulse rounded-full bg-slate-200 dark:bg-slate-700" />
+              </>
+            ) : (
+              <>
+                <span className="flex items-center gap-1.5 text-[10px] text-muted-foreground">
+                  <span className="h-1 w-1 rounded-full bg-emerald-500" />
+                  {lastUpdated || '—'}
+                </span>
+                <ThemeToggle />
+                <button
+                  onClick={fetchData}
+                  disabled={spinning || loading}
+                  className="flex items-center gap-1.5 px-3 py-2 text-[10px] font-medium text-indigo-600 border border-border rounded-lg hover:bg-muted transition-colors disabled:opacity-50"
+                >
+                  <RefreshCw size={12} className={spinning ? 'animate-spin' : ''} />
+                  Refresh
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setCardsExpanded((current) => !current)}
+                  title={cardsExpanded ? 'Hide summary cards' : 'Show summary cards'}
+                  className="flex items-center justify-center rounded-full p-1 text-indigo-600 transition hover:bg-slate-200 dark:hover:bg-white/10"
+                >
+                  {cardsExpanded ? <ChevronUp size={12} /> : <ChevronDown size={12} />}
+                </button>
+              </>
+            )}
           </div>
         </div>
       </header>
 
-      <main className="relative space-y-2 p-3">
+      <main className="flex-1 flex flex-col overflow-hidden px-6 pt-4 pb-6">
         {error && (
           <div className="flex items-center gap-3 rounded-2xl border border-rose-200 px-5 py-4 text-sm text-rose-600 dark:border-rose-900/60 dark:text-rose-300">
             <AlertCircle size={15} />
@@ -859,126 +994,187 @@ export default function AgentBalance() {
         )}
 
         {!error && (
-          <div className="overflow-hidden rounded-xl border border-[#e5e5e7] bg-white dark:border-[#3a3a3d] dark:bg-[#2a2a2d]">
-            <div className="flex items-center justify-between gap-3 border-b border-[#e5e5e7] px-2 py-1.5 dark:border-[#3a3a3d]">
+          <div className={`shrink-0 overflow-hidden transition-all duration-300 ease-in-out ${cardsExpanded ? 'max-h-40 opacity-100 mb-1' : 'max-h-0 opacity-0 mb-0'}`}>
+            <div className="flex gap-2">
               {loading ? (
-                <div className="h-2.5 w-24 rounded-md bg-slate-200 dark:bg-slate-700 animate-pulse" />
+                Array.from({ length: 7 }).map((_, index) => (
+                  <div key={index} className="bg-white dark:bg-[#2a2a2d] rounded-2xl border border-slate-200 dark:border-slate-700 shadow-[0_2px_12px_rgba(0,0,0,0.06)] p-2 flex-1 min-w-0">
+                    <div className="h-2.5 w-12 animate-pulse rounded-md bg-slate-200 dark:bg-slate-700" />
+                    <div className="mt-1 h-3.5 w-16 animate-pulse rounded-md bg-slate-200 dark:bg-slate-700" />
+                    <div className="mt-1 h-2.5 w-16 animate-pulse rounded-md bg-slate-200 dark:bg-slate-700" />
+                  </div>
+                ))
               ) : (
-                <span className="text-[11px] font-semibold text-slate-700 dark:text-slate-300">Total Accounts: {sortedRows.length.toLocaleString('en-PH')}</span>
+                summaryCards.map((card) => (
+                  <div key={card.label} className="bg-white dark:bg-[#2a2a2d] rounded-2xl border border-slate-200 dark:border-slate-700 shadow-[0_2px_12px_rgba(0,0,0,0.06)] p-2 flex-1 min-w-0">
+                    <p className="text-[9px] text-slate-700 dark:text-slate-300 font-medium truncate">{card.label}</p>
+                    <p className="mt-1 text-sm font-bold text-slate-700 dark:text-slate-300">
+                      {card.bigValue}
+                    </p>
+                    <div className={`mt-0.5 flex items-center gap-1 text-[9px] font-medium ${
+                      card.label === 'Total DP' ? 'text-emerald-600 dark:text-emerald-400' :
+                      card.label === 'Total WD' ? 'text-rose-600 dark:text-rose-400' :
+                      card.label === 'Running Balance' ? (card.subPositive ? 'text-emerald-600 dark:text-emerald-400' : 'text-rose-600 dark:text-rose-400') :
+                      'text-slate-700 dark:text-slate-300'
+                    }`}>
+                      {card.showArrow && <span>{card.subPositive ? '▲' : '▼'}</span>}
+                      <span>{card.subAmount}</span>
+                      {card.subSuffix && <span className="font-normal text-slate-500 dark:text-slate-400">{card.subSuffix}</span>}
+                    </div>
+                  </div>
+                ))
               )}
+            </div>
+          </div>
+        )}
+
+        {!error && (
+          <div className="shrink-0 mb-1">
+            {loading ? (
+              <div className="h-2.5 w-24 rounded-md bg-slate-200 dark:bg-slate-700 animate-pulse" />
+            ) : (
+              <span className="text-[11px] font-semibold text-foreground">Total Accounts: <span className="text-indigo-600">{sortedRows.length.toLocaleString('en-PH')}</span></span>
+            )}
+          </div>
+        )}
+
+        {!error && (
+          <div className="flex-1 flex flex-col min-h-0 bg-white rounded-xl border border-border overflow-hidden dark:bg-[#2a2a2d]">
+            <div className="shrink-0 px-3 py-1 border-b border-slate-200 dark:border-[#3a3a3d] bg-muted/20 flex items-center justify-between gap-3">
+              <div className="flex items-center gap-2">
+                <div className="flex w-52 items-center gap-2 bg-white border border-border rounded-full px-4 py-1.5 dark:bg-[#2a2a2d]">
+                  {loading ? (
+                    <div className="h-3 w-32 animate-pulse rounded-md bg-slate-200 dark:bg-slate-700" />
+                  ) : (
+                    <>
+                      <Search size={14} className="text-muted-foreground" />
+                      <input
+                        value={searchTerm}
+                        onChange={(event) => setSearchTerm(event.target.value)}
+                        className="flex-1 bg-transparent text-[10px] text-foreground placeholder:text-muted-foreground outline-none border-none"
+                        placeholder="Search shops or brands..."
+                      />
+                    </>
+                  )}
+                </div>
+                <div className="relative">
+                  {!loading && (
+                    <button
+                      type="button"
+                      ref={filterButtonRef}
+                      onClick={(event) => {
+                        event.stopPropagation();
+                        const rect = filterButtonRef.current?.getBoundingClientRect();
+                        if (rect) {
+                          setFilterMenuPos({ top: rect.bottom + 8, left: rect.left });
+                        }
+                        setFilterMenuOpen((current) => !current);
+                      }}
+                      className={`flex items-center gap-1.5 px-3 py-1.5 text-[10px] font-medium border rounded-lg hover:bg-white transition-colors ${anyFilterActive ? 'border-indigo-200 text-indigo-700 dark:border-indigo-900/50 dark:text-indigo-300' : 'border-border text-foreground'}`}
+                    >
+                      <Filter size={14} />
+                      Filter
+                    </button>
+                  )}
+                {filterMenuOpen && typeof document !== 'undefined' && createPortal(
+                  <div
+                    ref={filterDropdownRef}
+                    style={{ position: 'fixed', top: filterMenuPos.top, left: filterMenuPos.left }}
+                    className="z-[9999] w-56 max-h-[70vh] overflow-y-auto rounded-xl border border-[#e5e5e7] bg-white p-2 shadow-xl dark:border-[#3a3a3d] dark:bg-[#2a2a2d]"
+                    onClick={(event) => event.stopPropagation()}
+                  >
+                    <div className="px-2 py-1.5 text-[10px] font-semibold uppercase tracking-[0.24em] text-[#6b7280] dark:text-[#a0a0a0]">Columns</div>
+                    <label className="flex w-full items-center justify-start gap-2 whitespace-nowrap rounded-xl px-3 py-1.5 text-left text-[10px] text-[#6b7280] hover:bg-[#f5f5f7] dark:text-[#a0a0a0] dark:hover:bg-slate-800">
+                      <input
+                        type="checkbox"
+                        checked={allColumnsChecked}
+                        onChange={() => {
+                          const nextValue = !allColumnsChecked;
+                          setColumnVisibility(
+                            Object.fromEntries(columnDefs.map((col) => [col.key, nextValue])) as Record<ColumnKey, boolean>
+                          );
+                        }}
+                      />
+                      <span>Check All</span>
+                    </label>
+                    {columnDefs.map((col) => (
+                      <label key={col.key} className="flex w-full items-center justify-start gap-2 whitespace-nowrap rounded-xl px-3 py-1.5 text-left text-[10px] text-[#6b7280] hover:bg-[#f5f5f7] dark:text-[#a0a0a0] dark:hover:bg-slate-800">
+                        <input
+                          type="checkbox"
+                          checked={columnVisibility[col.key]}
+                          onChange={() => {
+                            setColumnVisibility((current) => ({ ...current, [col.key]: !current[col.key] }));
+                          }}
+                        />
+                        <span>{col.label}</span>
+                      </label>
+                    ))}
+                  </div>,
+                  document.body
+                )}
+              </div>
+              </div>
               <div className="flex items-center gap-3">
               {loading ? (
                 <div className="h-2.5 w-32 rounded-md bg-slate-200 dark:bg-slate-700 animate-pulse" />
               ) : (
-              <div className="flex items-center gap-1.5 rounded-xl border border-[#e5e5e7] px-2 py-0.5 dark:border-[#3a3a3d]">
+              <div className="flex items-center gap-2">
+                <span className="text-[10px] text-muted-foreground">Page {currentPage} of {totalPages}</span>
                 <button
                   type="button"
                   onClick={() => setPage((current) => Math.max(1, current - 1))}
                   disabled={currentPage === 1}
-                  className="rounded-xl px-1.5 py-0.5 text-[10px] font-semibold text-slate-600 transition disabled:cursor-not-allowed disabled:opacity-40 dark:text-slate-300"
+                  className="px-2.5 py-1.5 text-[10px] font-medium text-foreground border border-border rounded-lg hover:bg-white transition-colors disabled:opacity-50"
                 >
                   Previous
                 </button>
-                <span className="text-[10px] text-slate-500 dark:text-slate-400">Page {currentPage} of {totalPages}</span>
                 <button
                   type="button"
                   onClick={() => setPage((current) => Math.min(totalPages, current + 1))}
                   disabled={currentPage === totalPages}
-                  className="rounded-xl px-1.5 py-0.5 text-[10px] font-semibold text-slate-600 transition disabled:cursor-not-allowed disabled:opacity-40 dark:text-slate-300"
+                  className="px-2.5 py-1.5 text-[10px] font-medium text-foreground border border-border rounded-lg hover:bg-white transition-colors disabled:opacity-50"
                 >
                   Next
                 </button>
               </div>
               )}
               {loading && <div className="h-7 w-20 animate-pulse rounded-xl bg-slate-200 dark:bg-slate-700" />}
-              <div className="relative">
-                  {!loading && (
-                  <button
-                    type="button"
-                    ref={columnButtonRef}
-                    onClick={(event) => {
-                      event.stopPropagation();
-                      const rect = columnButtonRef.current?.getBoundingClientRect();
-                      if (rect) {
-                        setColumnMenuPos({ top: rect.bottom + 8, left: rect.right - 224 });
-                      }
-                      setColumnMenuOpen((current) => !current);
-                    }}
-                    className={`flex items-center justify-center rounded-xl border p-1.5 transition ${anyColumnHidden ? 'border-indigo-200 text-indigo-700 dark:border-indigo-900/50 dark:text-indigo-300' : 'border-[#e5e5e7] text-[#6b7280] dark:border-[#3a3a3d] dark:text-[#a0a0a0]'}`}
-                  >
-                    <Filter size={14} />
-                  </button>
-                  )}
-                  {columnMenuOpen && typeof document !== 'undefined' && createPortal(
-                    <div
-                      ref={columnDropdownRef}
-                      style={{ position: 'fixed', top: columnMenuPos.top, left: columnMenuPos.left }}
-                      className="z-[1000] w-56 rounded-xl border border-slate-200 bg-white p-3 shadow-md dark:border-[#3a3a3d] dark:bg-[#2a2a2d]"
-                      onClick={(event) => event.stopPropagation()}
-                    >
-                      <div className="mb-2 border-b border-slate-200 pb-2 text-[10px] font-semibold uppercase tracking-wide text-slate-500 dark:border-[#3a3a3d] dark:text-slate-400">Columns</div>
-                      <label className="flex w-full items-center gap-2 rounded px-2 py-1 text-[10px] text-slate-700 hover:bg-slate-50 dark:text-slate-300 dark:hover:bg-slate-800/50">
-                        <input
-                          type="checkbox"
-                          className="accent-indigo-500"
-                          checked={allColumnsChecked}
-                          onChange={() => {
-                            const nextValue = !allColumnsChecked;
-                            setColumnVisibility(
-                              Object.fromEntries(columnDefs.map((col) => [col.key, nextValue])) as Record<ColumnKey, boolean>
-                            );
-                          }}
-                        />
-                        <span>Check All</span>
-                      </label>
-                      {columnDefs.map((col) => (
-                        <label key={col.key} className="flex w-full items-center gap-2 rounded px-2 py-1 text-[10px] text-slate-700 hover:bg-slate-50 dark:text-slate-300 dark:hover:bg-slate-800/50">
-                          <input
-                            type="checkbox"
-                            className="accent-indigo-500"
-                            checked={columnVisibility[col.key]}
-                            onChange={() => {
-                              setColumnVisibility((current) => ({ ...current, [col.key]: !current[col.key] }));
-                            }}
-                          />
-                          <span>{col.label}</span>
-                        </label>
-                      ))}
-                    </div>,
-                    document.body
-                  )}
-                </div>
                 {!loading && (
                 <button
                   type="button"
                   onClick={handleExport}
                   title="Export to Excel"
-                  className="flex items-center justify-center rounded-xl border border-[#e5e5e7] p-1.5 text-[#6b7280] transition hover:bg-slate-50 dark:border-[#3a3a3d] dark:text-[#a0a0a0] dark:hover:bg-white/10"
+                  className="p-1.5 rounded-lg hover:bg-white transition-colors border border-border text-foreground"
                 >
                   <Download size={14} />
                 </button>
                 )}
               </div>
             </div>
-            <div className="max-h-[calc(100vh-140px)] overflow-y-auto overflow-x-scroll">
-              <table className="w-full table-auto text-xs">
+            <div className="relative flex-1 min-h-0 overflow-y-auto overflow-x-auto">
+              {loading && (
+                <div className="absolute inset-0 z-10 flex items-center justify-center bg-white/60 dark:bg-black/40">
+                  <Loader2 size={28} className="animate-spin text-indigo-500" />
+                </div>
+              )}
+              <table className="table-fixed text-xs" style={{ minWidth: TABLE_MIN_WIDTH }}>
                 <colgroup>
                   {visibleColumns.map((col) => (
                     <col key={col.key} style={{ width: columnWidths[col.key] }} />
                   ))}
                 </colgroup>
-                <thead className="sticky top-0 z-10 border-b border-slate-200 bg-white dark:border-slate-700 dark:bg-[#2a2a2d]">
-                  <tr className="text-center text-[10px] font-semibold uppercase text-slate-500 dark:text-slate-400">
+                <thead className="sticky top-0 z-[50] border-b border-slate-200 dark:border-slate-700 bg-white dark:bg-[#2a2a2d]">
+                  <tr>
                     {visibleColumns.map((col) => (
                       <th
                         key={col.key}
-                        style={{ minWidth: columnWidths[col.key] }}
+                        style={{ width: columnWidths[col.key] }}
                         className={headerCellClasses(sortColumn === col.key)}>
                         {loading ? (
                           <div className="mx-auto h-2.5 w-12 animate-pulse rounded-md bg-slate-200 dark:bg-slate-700" />
                         ) : col.key === 'brand' ? (
                           <div className="relative flex items-center justify-center gap-1">
-                            <span className="normal-case font-semibold text-slate-700 dark:text-slate-300">{col.label}</span>
+                            <span className="normal-case font-semibold text-foreground">{col.label}</span>
                             <button
                               type="button"
                               ref={brandButtonRef}
@@ -994,7 +1190,16 @@ export default function AgentBalance() {
                               }}
                               className={`flex items-center justify-center rounded-full p-1 transition ${anyBrandUnchecked ? 'bg-indigo-100 text-indigo-700 dark:bg-indigo-500/30 dark:text-indigo-200' : 'text-[#6b7280] hover:bg-slate-200 dark:text-[#a0a0a0] dark:hover:bg-white/10'}`}
                             >
-                              <Filter size={12} className={anyBrandUnchecked ? 'opacity-100' : 'opacity-70'} />
+                              {anyBrandUnchecked ? (
+                                <span className="flex h-3 min-w-[12px] items-center justify-center px-0.5 text-[10px] font-semibold leading-none">
+                                  {selectedBrandCount}
+                                </span>
+                              ) : (
+                                <ChevronUp
+                                  size={12}
+                                  className={`transition-transform duration-150 ease-in-out ${brandMenuOpen ? 'rotate-180' : ''} opacity-70`}
+                                />
+                              )}
                             </button>
                             {brandMenuOpen && typeof document !== 'undefined' && createPortal(
                               <div
@@ -1003,9 +1208,9 @@ export default function AgentBalance() {
                                 className="z-[9999] w-44 rounded-xl border border-[#e5e5e7] bg-white p-2 shadow-xl dark:border-[#3a3a3d] dark:bg-[#2a2a2d]"
                                 onClick={(event) => event.stopPropagation()}
                               >
-                                <div className="px-2 py-1.5 text-center text-[10px] font-semibold uppercase tracking-[0.24em] text-[#6b7280] dark:text-[#a0a0a0]">Filter</div>
+                                <div className="px-2 py-1.5 text-left text-[10px] font-semibold uppercase tracking-[0.24em] text-[#6b7280] dark:text-[#a0a0a0]">Brand</div>
                                 <div className="max-h-56 overflow-y-auto">
-                                  <label className="flex w-full items-center justify-center gap-2 rounded-xl px-3 py-1.5 text-center text-[10px] text-[#6b7280] hover:bg-[#f5f5f7] dark:text-[#a0a0a0] dark:hover:bg-slate-800">
+                                  <label className="flex w-full items-center justify-start gap-2 rounded-xl px-3 py-1.5 text-left text-[10px] text-[#6b7280] hover:bg-[#f5f5f7] dark:text-[#a0a0a0] dark:hover:bg-slate-800">
                                     <input
                                       type="checkbox"
                                       checked={allBrandsChecked}
@@ -1019,7 +1224,7 @@ export default function AgentBalance() {
                                     <span>All</span>
                                   </label>
                                   {brandOptions.map((brand) => (
-                                    <label key={brand} className="flex w-full items-center justify-center gap-2 rounded-xl px-3 py-1.5 text-center text-[10px] text-[#6b7280] hover:bg-[#f5f5f7] dark:text-[#a0a0a0] dark:hover:bg-slate-800">
+                                    <label key={brand} className="flex w-full items-center justify-start gap-2 rounded-xl px-3 py-1.5 text-left text-[10px] text-[#6b7280] hover:bg-[#f5f5f7] dark:text-[#a0a0a0] dark:hover:bg-slate-800">
                                       <input
                                         type="checkbox"
                                         checked={isBrandChecked(brand)}
@@ -1035,9 +1240,77 @@ export default function AgentBalance() {
                               document.body
                             )}
                           </div>
+                        ) : col.key === 'leader' ? (
+                          <div className="relative flex items-center justify-center gap-1">
+                            <span className="normal-case font-semibold text-foreground">{col.label}</span>
+                            <button
+                              type="button"
+                              ref={leaderButtonRef}
+                              onClick={(event) => {
+                                event.stopPropagation();
+                                const rect = leaderButtonRef.current?.getBoundingClientRect();
+                                if (rect) {
+                                  const dropdownWidth = 176;
+                                  const left = Math.min(rect.left, window.innerWidth - dropdownWidth - 8);
+                                  setLeaderMenuPos({ top: rect.bottom + 8, left: Math.max(8, left) });
+                                }
+                                setLeaderMenuOpen((current) => !current);
+                              }}
+                              className={`flex items-center justify-center rounded-full p-1 transition ${anyLeaderUnchecked ? 'bg-indigo-100 text-indigo-700 dark:bg-indigo-500/30 dark:text-indigo-200' : 'text-[#6b7280] hover:bg-slate-200 dark:text-[#a0a0a0] dark:hover:bg-white/10'}`}
+                            >
+                              {anyLeaderUnchecked ? (
+                                <span className="flex h-3 min-w-[12px] items-center justify-center px-0.5 text-[10px] font-semibold leading-none">
+                                  {selectedLeaderCount}
+                                </span>
+                              ) : (
+                                <ChevronUp
+                                  size={12}
+                                  className={`transition-transform duration-150 ease-in-out ${leaderMenuOpen ? 'rotate-180' : ''} opacity-70`}
+                                />
+                              )}
+                            </button>
+                            {leaderMenuOpen && typeof document !== 'undefined' && createPortal(
+                              <div
+                                ref={leaderDropdownRef}
+                                style={{ position: 'fixed', top: leaderMenuPos.top, left: leaderMenuPos.left }}
+                                className="z-[9999] w-44 rounded-xl border border-[#e5e5e7] bg-white p-2 shadow-xl dark:border-[#3a3a3d] dark:bg-[#2a2a2d]"
+                                onClick={(event) => event.stopPropagation()}
+                              >
+                                <div className="px-2 py-1.5 text-left text-[10px] font-semibold uppercase tracking-[0.24em] text-[#6b7280] dark:text-[#a0a0a0]">Leader</div>
+                                <div className="max-h-56 overflow-y-auto">
+                                  <label className="flex w-full items-center justify-start gap-2 rounded-xl px-3 py-1.5 text-left text-[10px] text-[#6b7280] hover:bg-[#f5f5f7] dark:text-[#a0a0a0] dark:hover:bg-slate-800">
+                                    <input
+                                      type="checkbox"
+                                      checked={allLeadersChecked}
+                                      onChange={() => {
+                                        const nextValue = !allLeadersChecked;
+                                        setLeaderFilter(
+                                          Object.fromEntries(leaderOptions.map((name) => [name, nextValue]))
+                                        );
+                                      }}
+                                    />
+                                    <span>All</span>
+                                  </label>
+                                  {leaderOptions.map((leader) => (
+                                    <label key={leader} className="flex w-full items-center justify-start gap-2 rounded-xl px-3 py-1.5 text-left text-[10px] text-[#6b7280] hover:bg-[#f5f5f7] dark:text-[#a0a0a0] dark:hover:bg-slate-800">
+                                      <input
+                                        type="checkbox"
+                                        checked={isLeaderChecked(leader)}
+                                        onChange={() => {
+                                          setLeaderFilter((current) => ({ ...current, [leader]: !isLeaderChecked(leader) }));
+                                        }}
+                                      />
+                                      <span>{leader}</span>
+                                    </label>
+                                  ))}
+                                </div>
+                              </div>,
+                              document.body
+                            )}
+                          </div>
                         ) : col.key === 'walletType' ? (
                           <div className="relative flex items-center justify-center gap-1">
-                            <span className="normal-case font-semibold text-slate-700 dark:text-slate-300">{col.label}</span>
+                            <span className="normal-case font-semibold text-foreground">{col.label}</span>
                             <button
                               type="button"
                               ref={walletTypeButtonRef}
@@ -1053,7 +1326,16 @@ export default function AgentBalance() {
                               }}
                               className={`flex items-center justify-center rounded-full p-1 transition ${anyWalletTypeUnchecked ? 'bg-indigo-100 text-indigo-700 dark:bg-indigo-500/30 dark:text-indigo-200' : 'text-[#6b7280] hover:bg-slate-200 dark:text-[#a0a0a0] dark:hover:bg-white/10'}`}
                             >
-                              <Filter size={12} className={anyWalletTypeUnchecked ? 'opacity-100' : 'opacity-70'} />
+                              {anyWalletTypeUnchecked ? (
+                                <span className="flex h-3 min-w-[12px] items-center justify-center px-0.5 text-[10px] font-semibold leading-none">
+                                  {selectedWalletTypeCount}
+                                </span>
+                              ) : (
+                                <ChevronUp
+                                  size={12}
+                                  className={`transition-transform duration-150 ease-in-out ${walletTypeMenuOpen ? 'rotate-180' : ''} opacity-70`}
+                                />
+                              )}
                             </button>
                             {walletTypeMenuOpen && typeof document !== 'undefined' && createPortal(
                               <div
@@ -1062,7 +1344,7 @@ export default function AgentBalance() {
                                 className="z-[9999] w-44 rounded-xl border border-[#e5e5e7] bg-white p-2 shadow-xl dark:border-[#3a3a3d] dark:bg-[#2a2a2d]"
                                 onClick={(event) => event.stopPropagation()}
                               >
-                                <div className="px-2 py-1.5 text-center text-[10px] font-semibold uppercase tracking-[0.24em] text-[#6b7280] dark:text-[#a0a0a0]">Filter</div>
+                                <div className="px-2 py-1.5 text-left text-[10px] font-semibold uppercase tracking-[0.24em] text-[#6b7280] dark:text-[#a0a0a0]">Wallet Type</div>
                                 <div className="max-h-56 overflow-y-auto">
                                   <label className="flex w-full items-center justify-start gap-2 whitespace-nowrap rounded-xl px-3 py-1.5 text-left text-[10px] text-[#6b7280] hover:bg-[#f5f5f7] dark:text-[#a0a0a0] dark:hover:bg-slate-800">
                                     <input
@@ -1070,9 +1352,7 @@ export default function AgentBalance() {
                                       checked={allWalletTypesChecked}
                                       onChange={() => {
                                         const nextValue = !allWalletTypesChecked;
-                                        setWalletTypeFilter(
-                                          Object.fromEntries(walletTypeOptions.map((name) => [name, nextValue]))
-                                        );
+                                        setWalletTypeFilter(Object.fromEntries(walletTypeOptions.map((name) => [name, nextValue])));
                                       }}
                                     />
                                     <span>All</span>
@@ -1094,82 +1374,9 @@ export default function AgentBalance() {
                               document.body
                             )}
                           </div>
-                        ) : col.key === 'leader' ? (
-                          <div className="relative flex items-center justify-center gap-1">
-                            <span className="normal-case font-semibold text-slate-700 dark:text-slate-300">{col.label}</span>
-                            <button
-                              type="button"
-                              ref={leaderButtonRef}
-                              onClick={(event) => {
-                                event.stopPropagation();
-                                const rect = leaderButtonRef.current?.getBoundingClientRect();
-                                if (rect) {
-                                  const dropdownWidth = 176;
-                                  const left = Math.min(rect.left, window.innerWidth - dropdownWidth - 8);
-                                  setLeaderMenuPos({ top: rect.bottom + 8, left: Math.max(8, left) });
-                                }
-                                setLeaderMenuOpen((current) => !current);
-                              }}
-                              className={`flex items-center justify-center rounded-full p-1 transition ${anyLeaderUnchecked ? 'bg-indigo-100 text-indigo-700 dark:bg-indigo-500/30 dark:text-indigo-200' : 'text-[#6b7280] hover:bg-slate-200 dark:text-[#a0a0a0] dark:hover:bg-white/10'}`}
-                            >
-                              <Filter size={12} className={anyLeaderUnchecked ? 'opacity-100' : 'opacity-70'} />
-                            </button>
-                            {leaderMenuOpen && typeof document !== 'undefined' && createPortal(
-                              <div
-                                ref={leaderDropdownRef}
-                                style={{ position: 'fixed', top: leaderMenuPos.top, left: leaderMenuPos.left }}
-                                className="z-[9999] w-44 rounded-xl border border-[#e5e5e7] bg-white p-2 shadow-xl dark:border-[#3a3a3d] dark:bg-[#2a2a2d]"
-                                onClick={(event) => event.stopPropagation()}
-                              >
-                                <div className="px-2 py-1.5 text-[10px] font-semibold uppercase tracking-[0.24em] text-[#6b7280] dark:text-[#a0a0a0]">Filter</div>
-                                <div className="max-h-56 overflow-y-auto">
-                                  <label className="flex w-full items-center gap-2 rounded-xl px-3 py-1.5 text-[10px] text-[#6b7280] hover:bg-[#f5f5f7] dark:text-[#a0a0a0] dark:hover:bg-slate-800">
-                                    <input
-                                      type="checkbox"
-                                      checked={allLeadersChecked}
-                                      onChange={() => {
-                                        const nextValue = !allLeadersChecked;
-                                        setLeaderFilter(
-                                          Object.fromEntries(leaderOptions.map((name) => [name, nextValue]))
-                                        );
-                                      }}
-                                    />
-                                    <span>All</span>
-                                  </label>
-                                  {leaderOptions.map((leader) => (
-                                    <label key={leader} className="flex w-full items-center gap-2 rounded-xl px-3 py-1.5 text-[10px] text-[#6b7280] hover:bg-[#f5f5f7] dark:text-[#a0a0a0] dark:hover:bg-slate-800">
-                                      <input
-                                        type="checkbox"
-                                        checked={isLeaderChecked(leader)}
-                                        onChange={() => {
-                                          setLeaderFilter((current) => ({ ...current, [leader]: !isLeaderChecked(leader) }));
-                                        }}
-                                      />
-                                      <span>{leader}</span>
-                                    </label>
-                                  ))}
-                                </div>
-                              </div>,
-                              document.body
-                            )}
-                          </div>
                         ) : col.key === 'walletStatus' ? (
                           <div className="relative flex items-center justify-center gap-1">
-                            <button
-                              type="button"
-                              onClick={() => {
-                                if (sortColumn === 'walletStatus') {
-                                  setSortDirection((current) => current === 'asc' ? 'desc' : 'asc');
-                                } else {
-                                  setSortColumn('walletStatus');
-                                  setSortDirection('asc');
-                                }
-                              }}
-                              className="flex items-center gap-1 text-center transition hover:opacity-80"
-                            >
-                              <span>{col.label}</span>
-                              <SortIcon active={sortColumn === 'walletStatus'} direction={sortDirection} />
-                            </button>
+                            <span className="normal-case font-semibold text-foreground">{col.label}</span>
                             <button
                               type="button"
                               ref={walletStatusButtonRef}
@@ -1185,7 +1392,16 @@ export default function AgentBalance() {
                               }}
                               className={`flex items-center justify-center rounded-full p-1 transition ${anyWalletStatusUnchecked ? 'bg-indigo-100 text-indigo-700 dark:bg-indigo-500/30 dark:text-indigo-200' : 'text-[#6b7280] hover:bg-slate-200 dark:text-[#a0a0a0] dark:hover:bg-white/10'}`}
                             >
-                              <Filter size={12} className={anyWalletStatusUnchecked ? 'opacity-100' : 'opacity-70'} />
+                              {anyWalletStatusUnchecked ? (
+                                <span className="flex h-3 min-w-[12px] items-center justify-center px-0.5 text-[10px] font-semibold leading-none">
+                                  {selectedWalletStatusCount}
+                                </span>
+                              ) : (
+                                <ChevronUp
+                                  size={12}
+                                  className={`transition-transform duration-150 ease-in-out ${walletStatusMenuOpen ? 'rotate-180' : ''} opacity-70`}
+                                />
+                              )}
                             </button>
                             {walletStatusMenuOpen && typeof document !== 'undefined' && createPortal(
                               <div
@@ -1194,26 +1410,24 @@ export default function AgentBalance() {
                                 className="z-[9999] w-44 rounded-xl border border-[#e5e5e7] bg-white p-2 shadow-xl dark:border-[#3a3a3d] dark:bg-[#2a2a2d]"
                                 onClick={(event) => event.stopPropagation()}
                               >
-                                <div className="px-2 py-1.5 text-[10px] font-semibold uppercase tracking-[0.24em] text-[#6b7280] dark:text-[#a0a0a0]">Filter</div>
+                                <div className="px-2 py-1.5 text-left text-[10px] font-semibold uppercase tracking-[0.24em] text-[#6b7280] dark:text-[#a0a0a0]">Wallet Status</div>
                                 <div className="max-h-56 overflow-y-auto">
-                                  <label className="flex w-full items-center gap-2 rounded-xl px-3 py-1.5 text-[10px] text-[#6b7280] hover:bg-[#f5f5f7] dark:text-[#a0a0a0] dark:hover:bg-slate-800">
+                                  <label className="flex w-full items-center justify-start gap-2 whitespace-nowrap rounded-xl px-3 py-1.5 text-left text-[10px] text-[#6b7280] hover:bg-[#f5f5f7] dark:text-[#a0a0a0] dark:hover:bg-slate-800">
                                     <input
                                       type="checkbox"
                                       checked={allWalletStatusesChecked}
                                       onChange={() => {
                                         const nextValue = !allWalletStatusesChecked;
-                                        setWalletStatusFilter(
-                                          Object.fromEntries(WALLET_STATUS_OPTIONS.map((status) => [status, nextValue]))
-                                        );
+                                        setWalletStatusFilter(Object.fromEntries(walletStatusOptions.map((status) => [status, nextValue])));
                                       }}
                                     />
                                     <span>All</span>
                                   </label>
-                                  {WALLET_STATUS_OPTIONS.map((status) => (
-                                    <label key={status} className="flex w-full items-center gap-2 rounded-xl px-3 py-1.5 text-[10px] text-[#6b7280] hover:bg-[#f5f5f7] dark:text-[#a0a0a0] dark:hover:bg-slate-800">
+                                  {walletStatusOptions.map((status) => (
+                                    <label key={status} className="flex w-full items-center justify-start gap-2 whitespace-nowrap rounded-xl px-3 py-1.5 text-left text-[10px] text-[#6b7280] hover:bg-[#f5f5f7] dark:text-[#a0a0a0] dark:hover:bg-slate-800">
                                       <input
                                         type="checkbox"
-                                        checked={walletStatusFilter[status]}
+                                        checked={!!walletStatusFilter[status]}
                                         onChange={() => {
                                           setWalletStatusFilter((current) => ({ ...current, [status]: !current[status] }));
                                         }}
@@ -1237,10 +1451,12 @@ export default function AgentBalance() {
                                 setSortDirection('asc');
                               }
                             }}
-                            className="flex w-full items-center justify-center gap-1.5 text-center transition hover:opacity-80"
+                            className="flex w-full items-center justify-center text-center transition hover:opacity-80"
                           >
-                            <span>{col.label}</span>
-                            <SortIcon active={sortColumn === col.key} direction={sortDirection} />
+                            <span className="inline-flex items-center gap-1">
+                              <span>{col.label}</span>
+                              <SortIcon active={sortColumn === col.key} direction={sortDirection} />
+                            </span>
                           </button>
                         ) : (
                           col.label
@@ -1250,24 +1466,16 @@ export default function AgentBalance() {
                   </tr>
                 </thead>
                 <tbody>
-                  {loading ? (
-                    Array.from({ length: 12 }).map((_, rowIndex) => (
-                      <tr key={rowIndex} className="bg-white dark:bg-[#2a2a2d]">
-                        <td colSpan={Math.max(visibleColumns.length, 1)} className="px-4 py-2">
-                          <div className="h-2.5 w-full animate-pulse rounded-md bg-slate-200 dark:bg-slate-700" />
-                        </td>
-                      </tr>
-                    ))
-                  ) : pagedRows.length > 0 ? pagedRows.map((row, i) => (
+                  {pagedRows.length > 0 ? pagedRows.map((row, i) => (
                     <tr
                       key={row.agentName || i}
-                      className="bg-white dark:bg-[#2a2a2d]"
+                      className={`border-b border-border last:border-0 hover:bg-muted/10 transition-colors ${i % 2 === 1 ? 'bg-muted/5' : ''}`}
                     >
                       {visibleColumns.map((col) => renderCell(row, col.key))}
                     </tr>
                   )) : (
                     <tr>
-                      <td colSpan={Math.max(visibleColumns.length, 1)} className="px-3 py-8 text-center text-[9px] text-[#6b7280] dark:text-[#a0a0a0]">
+                      <td colSpan={Math.max(visibleColumns.length, 1)} className="px-3 py-8 text-center text-[9px] text-muted-foreground">
                         No matching accounts found.
                       </td>
                     </tr>
