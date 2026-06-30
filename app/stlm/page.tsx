@@ -61,7 +61,7 @@ const columnWidths: Record<ColumnKey, string> = {
 
 function headerCellClasses(active: boolean) {
   const color = active ? 'text-indigo-600 dark:text-indigo-400' : 'text-foreground';
-  return `group text-center px-3 py-2 text-[11px] font-semibold whitespace-nowrap ${color}`;
+  return `group text-center px-3 py-2 text-[12px] font-semibold whitespace-nowrap ${color}`;
 }
 
 function SortIcon({ active, direction }: { active: boolean; direction: 'asc' | 'desc' }) {

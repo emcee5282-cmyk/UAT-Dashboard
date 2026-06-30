@@ -307,7 +307,7 @@ function SortIcon({ active, direction }: { active: boolean; direction: 'asc' | '
 
 function headerCellClasses(isSorted: boolean) {
   const color = isSorted ? 'text-indigo-600 dark:text-indigo-400' : 'text-foreground';
-  return `text-center px-3 py-2 text-[11px] font-semibold whitespace-nowrap ${color}`;
+  return `text-center px-3 py-2 text-[12px] font-semibold whitespace-nowrap ${color}`;
 }
 
 const WALLET_STATUS_TEXT_CLASSES: Record<string, string> = {

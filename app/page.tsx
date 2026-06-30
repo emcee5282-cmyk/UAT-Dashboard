@@ -623,7 +623,7 @@ export default function Dashboard() {
                 </section>
               </div>
 
-              <aside className="flex flex-col gap-4 lg:absolute lg:inset-y-0 lg:right-0 lg:w-[280px]">
+              <aside className="flex flex-col gap-4 lg:absolute lg:inset-y-0 lg:right-0 lg:w-[310px]">
                 <section className="overflow-hidden rounded-2xl border border-[#e5e5e7] bg-white shadow-sm dark:border-[#3a3a3d] dark:bg-[#2a2a2d]">
                   <div className="border-b border-[#e5e5e7] px-4 py-3 dark:border-[#3a3a3d]">
                     <div className="h-4 w-32 animate-pulse rounded-md bg-slate-200 dark:bg-slate-700" />
@@ -679,15 +679,15 @@ export default function Dashboard() {
         {!loading && !error && (
           <>
             <div className="relative flex flex-col gap-4 lg:flex-row">
-              <div className="flex flex-1 flex-col gap-4 lg:w-[calc(100%-296px)] lg:flex-none">
+              <div className="flex flex-1 flex-col gap-4 lg:w-[calc(100%-326px)] lg:flex-none">
                 <section className="grid grid-cols-2 gap-2 sm:grid-cols-4">
                   {summaryCards.map((card) => (
-                    <div key={card.label} className="group rounded-2xl border border-[#e5e5e7] bg-white p-2.5 shadow-sm hover:border-[#1a1a1a]/25 hover:shadow-[0_6px_16px_-4px_rgba(0,0,0,0.10)] dark:border-[#3a3a3d] dark:bg-[#2a2a2d] dark:hover:border-[#e5e5e7]/50 dark:hover:shadow-[0_6px_16px_-4px_rgba(0,0,0,0.35)]">
-                      <span className="text-[10px] font-medium text-[#6b7280] dark:text-[#a0a0a0]">{card.label}</span>
-                      <p className={`mt-1 origin-left text-[18px] font-bold group-hover:scale-[1.055] ${card.bigNegative ? 'text-rose-600 dark:text-rose-400' : 'text-[#1a1a1a] dark:text-white'}`}>
+                    <div key={card.label} className="group rounded-2xl border border-[#e5e5e7] bg-white p-4 shadow-sm hover:border-[#1a1a1a]/25 hover:shadow-[0_6px_16px_-4px_rgba(0,0,0,0.10)] dark:border-[#3a3a3d] dark:bg-[#2a2a2d] dark:hover:border-[#e5e5e7]/50 dark:hover:shadow-[0_6px_16px_-4px_rgba(0,0,0,0.35)]">
+                      <span className="text-[12px] font-medium text-[#6b7280] dark:text-[#a0a0a0]">{card.label}</span>
+                      <p className={`mt-1 origin-left text-[24px] font-bold group-hover:scale-[1.055] ${card.bigNegative ? 'text-rose-600 dark:text-rose-400' : 'text-[#1a1a1a] dark:text-white'}`}>
                         {card.bigNegative ? '-' : ''}{card.bigValue}
                       </p>
-                      <div className={`mt-0.5 flex items-center gap-1 text-[10px] font-medium ${card.subPositive ? 'text-emerald-600 dark:text-emerald-400' : 'text-rose-600 dark:text-rose-400'}`}>
+                      <div className={`mt-1 flex items-center gap-1 text-[11px] font-medium ${card.subPositive ? 'text-emerald-600 dark:text-emerald-400' : 'text-rose-600 dark:text-rose-400'}`}>
                         {card.showArrow && <span>{card.subPositive ? '▲' : '▼'}</span>}
                         <span>{card.subAmount}</span>
                         {card.subSuffix && <span className="font-normal text-[#6b7280] dark:text-[#a0a0a0]">{card.subSuffix}</span>}
@@ -761,7 +761,7 @@ export default function Dashboard() {
                       NG
                     </label>
                   </div>
-                  <div className="h-[320px] px-2 py-4 outline-none select-none" style={{ outline: 'none', userSelect: 'none' }}>
+                  <div className="h-[400px] px-2 py-4 outline-none select-none" style={{ outline: 'none', userSelect: 'none' }}>
                     <ResponsiveContainer width="100%" height="100%">
                       <BarChart data={cashGoPeriod === 'week' ? cashGoWeekData : cashGoMonthData} margin={{ top: 5, right: 10, left: 0, bottom: 0 }}>
                         <CartesianGrid vertical={false} stroke="#e5e5e7" strokeDasharray="3 3" />
@@ -830,7 +830,7 @@ export default function Dashboard() {
                 </section>
               </div>
 
-              <aside className="flex flex-col gap-4 lg:absolute lg:inset-y-0 lg:right-0 lg:w-[280px]">
+              <aside className="flex flex-col gap-4 lg:absolute lg:inset-y-0 lg:right-0 lg:w-[310px]">
                 <section className="overflow-hidden rounded-2xl border border-[#e5e5e7] bg-white shadow-sm dark:border-[#3a3a3d] dark:bg-[#2a2a2d]">
                   <div className="border-b border-[#e5e5e7] px-4 py-3 dark:border-[#3a3a3d]">
                     <h2 className="text-[13px] font-semibold text-slate-900 dark:text-white">Top Performer Wallet</h2>
@@ -842,18 +842,18 @@ export default function Dashboard() {
                         className={`flex items-center justify-between gap-2 px-4 py-2.5 ${index === 0 ? 'bg-rose-50 dark:bg-rose-500/10' : ''}`}
                       >
                         <div className="flex items-center gap-2">
-                          <span className="text-[10px] font-semibold text-slate-400 dark:text-slate-500">{RANK_LABELS[index]}</span>
+                          <span className="text-[11px] font-semibold text-slate-400 dark:text-slate-500">{RANK_LABELS[index]}</span>
                           <div>
-                            <p className={`text-[11px] font-medium ${index === 0 ? 'text-rose-700 dark:text-rose-300' : 'text-slate-700 dark:text-slate-300'}`}>
+                            <p className={`text-[12px] font-medium ${index === 0 ? 'text-rose-700 dark:text-rose-300' : 'text-slate-700 dark:text-slate-300'}`}>
                               {item.wallet}
                             </p>
-                            <p className="text-[9px] text-slate-500 dark:text-slate-400">
+                            <p className="text-[10px] text-slate-500 dark:text-slate-400">
                               Actual Bal: {fmtCell(item.actualBal, true)}
                             </p>
                           </div>
                         </div>
                         <span
-                          className={`text-[11px] font-bold ${
+                          className={`text-[12px] font-bold ${
                             item.gain < 0
                               ? 'text-rose-600 dark:text-rose-400'
                               : index === 0
@@ -878,16 +878,16 @@ export default function Dashboard() {
                       const up = diff >= 0;
                       return (
                         <div key={agent.agentName} className="flex items-start gap-3 px-4 py-2">
-                          <span className="w-5 shrink-0 text-[9px] font-semibold text-slate-400 dark:text-slate-500">{index + 1}</span>
+                          <span className="w-5 shrink-0 text-[10px] font-semibold text-slate-400 dark:text-slate-500">{index + 1}</span>
                           <div className="min-w-0 flex-1">
-                            <p className="truncate text-[11px] font-medium text-slate-900 dark:text-white">{agent.agentName}</p>
-                            <p className="text-[9px] text-slate-500 dark:text-slate-400">Bal. Inside: {fmtCell(agent.balanceInside)}</p>
+                            <p className="truncate text-[12px] font-medium text-slate-900 dark:text-white">{agent.agentName}</p>
+                            <p className="text-[10px] text-slate-500 dark:text-slate-400">Bal. Inside: {fmtCell(agent.balanceInside)}</p>
                           </div>
                           <div className="shrink-0 text-right">
-                            <p className={`text-[10px] font-semibold ${agent.runningBalance < 0 ? 'text-rose-600 dark:text-rose-400' : 'text-slate-700 dark:text-slate-300'}`}>
+                            <p className={`text-[11px] font-semibold ${agent.runningBalance < 0 ? 'text-rose-600 dark:text-rose-400' : 'text-slate-700 dark:text-slate-300'}`}>
                               {fmtCell(agent.runningBalance, true)}
                             </p>
-                            <p className={`text-[9px] font-medium ${up ? 'text-emerald-600 dark:text-emerald-400' : 'text-rose-600 dark:text-rose-400'}`}>
+                            <p className={`text-[10px] font-medium ${up ? 'text-emerald-600 dark:text-emerald-400' : 'text-rose-600 dark:text-rose-400'}`}>
                               {up ? '▲' : '▼'} {fmtCell(diff)}
                             </p>
                           </div>

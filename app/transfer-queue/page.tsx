@@ -335,7 +335,7 @@ type ColumnKey = 'brand' | 'shopName' | 'companyBalance' | 'balanceInside' | 'di
 const columnDefs: { key: ColumnKey; label: string }[] = [
   { key: 'brand', label: 'Brand' },
   { key: 'shopName', label: 'Agent' },
-  { key: 'companyBalance', label: 'Company Money' },
+  { key: 'companyBalance', label: 'Company Balance' },
   { key: 'balanceInside', label: 'Balance Inside' },
   { key: 'discrepancy', label: 'Discrepancy' },
   { key: 'sdpVsBalance', label: 'SDP VS Balance' },
@@ -345,17 +345,16 @@ const columnDefs: { key: ColumnKey; label: string }[] = [
 ];
 
 const columnWidths: Record<ColumnKey, string> = {
-  brand: '80px',
-  shopName: '190px',
-  companyBalance: '130px',
-  balanceInside: '130px',
-  discrepancy: '120px',
-  sdpVsBalance: '130px',
-  currentGroup: '160px',
-  correctGroup: '160px',
-  remarks: '130px',
+  brand: '7%',
+  shopName: '14%',
+  companyBalance: '11%',
+  balanceInside: '11%',
+  discrepancy: '10%',
+  sdpVsBalance: '11%',
+  currentGroup: '14%',
+  correctGroup: '14%',
+  remarks: '8%',
 };
-const TABLE_MIN_WIDTH = '1230px';
 
 const headerSkeletonWidths: Record<ColumnKey, string> = {
   brand: 'w-10',
@@ -383,7 +382,7 @@ const rowSkeletonWidths: Record<ColumnKey, string[]> = {
 
 function headerCellClasses(active: boolean) {
   const color = active ? 'text-indigo-600 dark:text-indigo-400' : 'text-foreground';
-  return `group text-center px-3 py-2 text-[11px] font-semibold whitespace-nowrap ${color}`;
+  return `group text-center px-3 py-2 text-[12px] font-semibold whitespace-nowrap ${color}`;
 }
 
 function SortIcon({ active, direction }: { active: boolean; direction: 'asc' | 'desc' }) {
@@ -403,7 +402,7 @@ function SortIcon({ active, direction }: { active: boolean; direction: 'asc' | '
 }
 
 function renderCell(row: QueueRow, key: ColumnKey) {
-  const base = 'whitespace-nowrap overflow-hidden text-ellipsis text-[9px] text-center px-3 py-1';
+  const base = 'whitespace-nowrap overflow-hidden text-ellipsis text-[10px] text-center px-3 py-1';
   switch (key) {
     case 'brand':
       return <td key={key} className={`${base} text-slate-700 dark:text-slate-300`}>{row.brand}</td>;
@@ -438,7 +437,7 @@ function renderCell(row: QueueRow, key: ColumnKey) {
     case 'correctGroup':
       return <td key={key} className={`${base} text-slate-700 dark:text-slate-300`}>{row.correctGroup}</td>;
     case 'remarks':
-      return <td key={key} className={`${base} text-slate-500`}>{row.remarks}</td>;
+      return <td key={key} className={`${base} text-slate-700 dark:text-slate-300`}>{row.remarks}</td>;
   }
 }
 
@@ -971,7 +970,7 @@ export default function TransferQueue() {
               </div>
             </div>
             <div className="max-h-[calc(100vh-140px)] overflow-y-auto overflow-x-scroll">
-              <table className="table-fixed text-xs" style={{ minWidth: TABLE_MIN_WIDTH }}>
+              <table className="w-full table-fixed text-xs">
                 <colgroup>
                   {visibleColumns.map((col) => (
                     <col key={col.key} style={{ width: columnWidths[col.key] }} />
@@ -982,7 +981,6 @@ export default function TransferQueue() {
                     {visibleColumns.map((col) => (
                       <th
                         key={col.key}
-                        style={{ width: columnWidths[col.key] }}
                         className={headerCellClasses(sortColumn === col.key)}>
                         {loading ? (
                           <div className={`mx-auto h-2.5 animate-pulse rounded-md bg-slate-200 dark:bg-slate-700 ${headerSkeletonWidths[col.key]}`} />

@@ -9,11 +9,7 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
   return (
     <>
       <Sidebar isExpanded={isExpanded} onExpandedChange={setIsExpanded} />
-      <main
-        className={`h-screen flex-1 overflow-y-auto transition-[margin-left] duration-300 ${
-          isExpanded ? 'md:ml-64' : 'md:ml-16'
-        }`}
-      >
+      <main className="h-screen flex-1 overflow-y-auto md:ml-16">
         {children}
       </main>
     </>
