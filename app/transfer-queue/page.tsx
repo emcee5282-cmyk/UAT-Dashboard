@@ -347,13 +347,13 @@ const columnDefs: { key: ColumnKey; label: string }[] = [
 const columnWidths: Record<ColumnKey, string> = {
   brand: '7%',
   shopName: '14%',
-  companyBalance: '11%',
+  companyBalance: '10%',
   balanceInside: '11%',
-  discrepancy: '10%',
-  sdpVsBalance: '11%',
+  discrepancy: '9%',
+  sdpVsBalance: '9%',
   currentGroup: '14%',
   correctGroup: '14%',
-  remarks: '8%',
+  remarks: '12%',
 };
 
 const headerSkeletonWidths: Record<ColumnKey, string> = {
