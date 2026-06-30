@@ -682,9 +682,9 @@ export default function Dashboard() {
               <div className="flex flex-1 flex-col gap-4 lg:w-[calc(100%-296px)] lg:flex-none">
                 <section className="grid grid-cols-2 gap-2 sm:grid-cols-4">
                   {summaryCards.map((card) => (
-                    <div key={card.label} className="rounded-2xl border border-[#e5e5e7] bg-white p-2.5 shadow-sm dark:border-[#3a3a3d] dark:bg-[#2a2a2d]">
+                    <div key={card.label} className="group rounded-2xl border border-[#e5e5e7] bg-white p-2.5 shadow-sm hover:border-[#1a1a1a]/25 hover:shadow-[0_6px_16px_-4px_rgba(0,0,0,0.10)] dark:border-[#3a3a3d] dark:bg-[#2a2a2d] dark:hover:border-[#e5e5e7]/50 dark:hover:shadow-[0_6px_16px_-4px_rgba(0,0,0,0.35)]">
                       <span className="text-[10px] font-medium text-[#6b7280] dark:text-[#a0a0a0]">{card.label}</span>
-                      <p className={`mt-1 text-[18px] font-bold ${card.bigNegative ? 'text-rose-600 dark:text-rose-400' : 'text-[#1a1a1a] dark:text-white'}`}>
+                      <p className={`mt-1 origin-left text-[18px] font-bold group-hover:scale-[1.055] ${card.bigNegative ? 'text-rose-600 dark:text-rose-400' : 'text-[#1a1a1a] dark:text-white'}`}>
                         {card.bigNegative ? '-' : ''}{card.bigValue}
                       </p>
                       <div className={`mt-0.5 flex items-center gap-1 text-[10px] font-medium ${card.subPositive ? 'text-emerald-600 dark:text-emerald-400' : 'text-rose-600 dark:text-rose-400'}`}>

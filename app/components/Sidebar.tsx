@@ -108,7 +108,7 @@ export default function Sidebar({ isExpanded, onExpandedChange }: SidebarProps) 
                     href={item.href!}
                     onClick={() => setMobileOpen(false)}
                     title={expanded ? undefined : item.label}
-                    className={`flex items-center gap-3 rounded-lg px-2.5 py-2 text-[13px] font-medium transition-colors ${expanded ? '' : 'justify-center px-0'} ${
+                    className={`flex items-center gap-3 rounded-lg px-2.5 py-2 text-[11px] font-medium transition-colors ${expanded ? '' : 'justify-center px-0'} ${
                       active
                         ? 'bg-slate-100 text-slate-900 dark:bg-white/10 dark:text-white'
                         : 'text-slate-500 hover:bg-slate-50 hover:text-slate-900 dark:text-[#a0a0a0] dark:hover:bg-white/5 dark:hover:text-white'
@@ -130,7 +130,7 @@ export default function Sidebar({ isExpanded, onExpandedChange }: SidebarProps) 
                   <button
                     onClick={() => setAgentOpen((prev) => !prev)}
                     title={expanded ? undefined : item.label}
-                    className={`flex w-full items-center rounded-lg px-2.5 py-2 text-[13px] font-medium transition-colors ${expanded ? 'justify-between' : 'justify-center px-0'} ${
+                    className={`flex w-full items-center rounded-lg px-2.5 py-2 text-[11px] font-medium transition-colors ${expanded ? 'justify-between' : 'justify-center px-0'} ${
                       childActive
                         ? 'text-slate-900 dark:text-white'
                         : 'text-slate-500 hover:bg-slate-50 hover:text-slate-900 dark:text-[#a0a0a0] dark:hover:bg-white/5 dark:hover:text-white'
@@ -140,7 +140,7 @@ export default function Sidebar({ isExpanded, onExpandedChange }: SidebarProps) 
                       <span className="relative shrink-0">
                         <ParentIcon size={15} className="shrink-0" />
                         {!expanded && !!displayCount && displayCount > 0 && (
-                          <span className="absolute -right-1.5 -top-1.5 flex h-3 min-w-[12px] items-center justify-center rounded-full bg-slate-200 px-0.5 text-[7px] font-semibold leading-none text-slate-700 dark:bg-slate-700 dark:text-slate-300">
+                          <span className="absolute -right-1.5 -top-1.5 flex h-3 min-w-[12px] items-center justify-center rounded-full bg-indigo-100 px-0.5 text-[7px] font-semibold leading-none text-indigo-600 dark:bg-indigo-500/20 dark:text-indigo-400">
                             {displayCount > 999 ? '999+' : displayCount}
                           </span>
                         )}
@@ -149,7 +149,7 @@ export default function Sidebar({ isExpanded, onExpandedChange }: SidebarProps) 
                         {item.label}
                       </span>
                       {expanded && !!displayCount && displayCount > 0 && (
-                        <span className="flex h-4 min-w-[16px] shrink-0 items-center justify-center rounded-full bg-slate-200 px-1 text-[10px] font-semibold leading-none text-slate-700 dark:bg-slate-700 dark:text-slate-300">
+                        <span className="flex h-4 min-w-[16px] shrink-0 items-center justify-center rounded-full bg-indigo-100 px-1 text-[10px] font-semibold leading-none text-indigo-600 dark:bg-indigo-500/20 dark:text-indigo-400">
                           {displayCount > 999 ? '999+' : displayCount}
                         </span>
                       )}
@@ -173,7 +173,7 @@ export default function Sidebar({ isExpanded, onExpandedChange }: SidebarProps) 
                             key={child.href}
                             href={child.href}
                             onClick={() => setMobileOpen(false)}
-                            className={`flex items-center justify-between gap-2.5 whitespace-nowrap rounded-lg px-2.5 py-2 text-[13px] font-medium transition-colors ${
+                            className={`flex items-center justify-between gap-2.5 whitespace-nowrap rounded-lg px-2.5 py-2 text-[10px] font-medium transition-colors ${
                               active
                                 ? 'bg-slate-100 text-slate-900 dark:bg-white/10 dark:text-white'
                                 : 'text-slate-500 hover:bg-slate-50 hover:text-slate-900 dark:text-[#a0a0a0] dark:hover:bg-white/5 dark:hover:text-white'
@@ -186,7 +186,7 @@ export default function Sidebar({ isExpanded, onExpandedChange }: SidebarProps) 
                             {isTransferQueue && !!displayCount && displayCount > 0 && (
                               <span
                                 title={`${displayCount} agent${displayCount === 1 ? '' : 's'} need transfer`}
-                                className="flex h-4 min-w-[16px] shrink-0 items-center justify-center rounded-full bg-slate-200 px-1 text-[10px] font-semibold leading-none text-slate-700 dark:bg-slate-700 dark:text-slate-300"
+                                className="flex h-4 min-w-[16px] shrink-0 items-center justify-center rounded-full bg-indigo-100 px-1 text-[10px] font-semibold leading-none text-indigo-600 dark:bg-indigo-500/20 dark:text-indigo-400"
                               >
                                 {displayCount > 999 ? '999+' : displayCount}
                               </span>

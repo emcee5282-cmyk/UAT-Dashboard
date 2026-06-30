@@ -1017,8 +1017,8 @@ export default function AgentBalance() {
         )}
 
         {!error && (
-          <div className={`shrink-0 overflow-hidden transition-all duration-300 ease-in-out ${cardsExpanded ? 'max-h-40 opacity-100 mb-1' : 'max-h-0 opacity-0 mb-0'}`}>
-            <div className="flex gap-2">
+          <div className={`shrink-0 overflow-hidden transition-all duration-300 ease-in-out ${cardsExpanded ? 'max-h-48 opacity-100 mb-1' : 'max-h-0 opacity-0 mb-0'}`}>
+            <div className="flex gap-2 pb-3">
               {loading ? (
                 Array.from({ length: 7 }).map((_, index) => (
                   <div key={index} className="bg-white dark:bg-[#2a2a2d] rounded-2xl border border-slate-200 dark:border-slate-700 shadow-[0_2px_12px_rgba(0,0,0,0.06)] p-2 flex-1 min-w-0">
@@ -1029,9 +1029,9 @@ export default function AgentBalance() {
                 ))
               ) : (
                 summaryCards.map((card) => (
-                  <div key={card.label} className="bg-white dark:bg-[#2a2a2d] rounded-2xl border border-slate-200 dark:border-slate-700 shadow-[0_2px_12px_rgba(0,0,0,0.06)] p-2 flex-1 min-w-0">
+                  <div key={card.label} className="group bg-white dark:bg-[#2a2a2d] rounded-2xl border border-slate-200 dark:border-slate-700 shadow-[0_2px_12px_rgba(0,0,0,0.06)] p-2 flex-1 min-w-0 hover:border-[#1a1a1a]/25 hover:shadow-[0_6px_16px_-4px_rgba(0,0,0,0.10)] dark:hover:border-[#e5e5e7]/50 dark:hover:shadow-[0_6px_16px_-4px_rgba(0,0,0,0.10)]">
                     <p className="text-[9px] text-slate-700 dark:text-slate-300 font-medium truncate">{card.label}</p>
-                    <p className="mt-1 text-sm font-bold text-slate-700 dark:text-slate-300">
+                    <p className="mt-1 origin-left text-sm font-bold text-slate-700 dark:text-slate-300 group-hover:scale-[1.055]">
                       {card.bigValue}
                     </p>
                     <div className={`mt-0.5 flex items-center gap-1 text-[9px] font-medium ${
