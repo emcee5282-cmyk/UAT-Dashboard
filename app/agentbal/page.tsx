@@ -1185,7 +1185,7 @@ export default function AgentBalance() {
                   <Loader2 size={28} className="animate-spin text-indigo-500" />
                 </div>
               )}
-              <table className="table-fixed text-xs" style={{ minWidth: TABLE_MIN_WIDTH }}>
+              <table className="w-full table-fixed text-xs" style={{ minWidth: TABLE_MIN_WIDTH }}>
                 <colgroup>
                   {visibleColumns.map((col) => (
                     <col key={col.key} style={{ width: columnWidths[col.key] }} />
