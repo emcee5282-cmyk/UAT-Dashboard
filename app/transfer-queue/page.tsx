@@ -345,16 +345,17 @@ const columnDefs: { key: ColumnKey; label: string }[] = [
 ];
 
 const columnWidths: Record<ColumnKey, string> = {
-  brand: '7%',
-  shopName: '14%',
-  companyBalance: '11%',
-  balanceInside: '11%',
-  discrepancy: '10%',
-  sdpVsBalance: '11%',
-  currentGroup: '13%',
-  correctGroup: '13%',
-  remarks: '10%',
+  brand: '80px',
+  shopName: '190px',
+  companyBalance: '130px',
+  balanceInside: '130px',
+  discrepancy: '120px',
+  sdpVsBalance: '130px',
+  currentGroup: '160px',
+  correctGroup: '160px',
+  remarks: '130px',
 };
+const TABLE_MIN_WIDTH = '1230px';
 
 const headerSkeletonWidths: Record<ColumnKey, string> = {
   brand: 'w-10',
@@ -970,7 +971,7 @@ export default function TransferQueue() {
               </div>
             </div>
             <div className="max-h-[calc(100vh-140px)] overflow-y-auto overflow-x-scroll">
-              <table className="w-full table-fixed text-xs">
+              <table className="table-fixed text-xs" style={{ minWidth: TABLE_MIN_WIDTH }}>
                 <colgroup>
                   {visibleColumns.map((col) => (
                     <col key={col.key} style={{ width: columnWidths[col.key] }} />

@@ -40,14 +40,15 @@ const columns: { key: ColumnKey; label: string }[] = [
 ];
 
 const columnWidths: Record<ColumnKey, string> = {
-  '': '0%',
-  brand: '12%',
-  agentName: '23%',
-  wallet: '15%',
-  amount: '16%',
-  type: '14%',
-  date: '20%',
+  '': '0px',
+  brand: '90px',
+  agentName: '180px',
+  wallet: '120px',
+  amount: '120px',
+  type: '120px',
+  date: '140px',
 };
+const TABLE_MIN_WIDTH = '770px';
 
 function headerCellClasses(active: boolean) {
   const color = active ? 'text-indigo-600 dark:text-indigo-400' : 'text-foreground';
@@ -464,7 +465,7 @@ export default function TopUpPage() {
               </div>
             </div>
             <div className="max-h-[calc(100vh-140px)] overflow-y-auto overflow-x-scroll">
-              <table className="w-full table-fixed text-sm">
+              <table className="table-fixed text-sm" style={{ minWidth: TABLE_MIN_WIDTH }}>
                 <colgroup>
                   {visibleColumns.map((col) => (
                     <col key={col.key} style={{ width: columnWidths[col.key] }} />

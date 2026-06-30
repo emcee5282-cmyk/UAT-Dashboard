@@ -50,14 +50,15 @@ const columns: { key: ColumnKey; label: string }[] = [
 ];
 
 const columnWidths: Record<ColumnKey, string> = {
-  '': '0%',
-  brand: '10%',
-  agentName: '22%',
-  wallet: '13%',
-  amount: '15%',
-  remarks: '22%',
-  date: '18%',
+  '': '0px',
+  brand: '90px',
+  agentName: '180px',
+  wallet: '120px',
+  amount: '120px',
+  remarks: '200px',
+  date: '140px',
 };
+const TABLE_MIN_WIDTH = '850px';
 
 function headerCellClasses(active: boolean) {
   const color = active ? 'text-indigo-600 dark:text-indigo-400' : 'text-foreground';
@@ -474,7 +475,7 @@ export default function StlmPage() {
               </div>
             </div>
             <div className="max-h-[calc(100vh-140px)] overflow-y-auto overflow-x-scroll">
-              <table className="w-full table-fixed text-sm">
+              <table className="table-fixed text-sm" style={{ minWidth: TABLE_MIN_WIDTH }}>
                 <colgroup>
                   {visibleColumns.map((col) => (
                     <col key={col.key} style={{ width: columnWidths[col.key] }} />
