@@ -2,7 +2,7 @@
 
 import { useEffect, useState, useCallback, useMemo, useRef } from 'react';
 import { createPortal } from 'react-dom';
-import { RefreshCw, AlertCircle, Search, Loader2, ChevronUp, ChevronDown, Filter, Download } from 'lucide-react';
+import { RefreshCw, AlertCircle, Search, ChevronUp, ChevronDown, Filter, Download } from 'lucide-react';
 import * as XLSX from 'xlsx';
 import ThemeToggle from '../components/ThemeToggle';
 import { rawVal, fmtNum } from '@/app/lib/format';
@@ -19,6 +19,7 @@ type TopUpRow = {
   amount: string;
   date: string;
   type: string;
+  leader: string;
 };
 
 function parseAmount(val: string): number {
@@ -28,10 +29,11 @@ function parseAmount(val: string): number {
 }
 
 type SortColumn = '' | 'agentName' | 'wallet' | 'amount' | 'type' | 'date';
-type ColumnKey = 'brand' | SortColumn;
+type ColumnKey = 'brand' | 'leader' | SortColumn;
 
 const columns: { key: ColumnKey; label: string }[] = [
   { key: 'brand', label: 'Brand' },
+  { key: 'leader', label: 'Leader' },
   { key: 'agentName', label: 'Agent Name' },
   { key: 'wallet', label: 'Wallet' },
   { key: 'amount', label: 'Amount' },
@@ -41,17 +43,17 @@ const columns: { key: ColumnKey; label: string }[] = [
 
 const columnWidths: Record<ColumnKey, string> = {
   '': '0%',
-  brand: '12%',
-  agentName: '23%',
-  wallet: '15%',
-  amount: '16%',
-  type: '14%',
+  brand: '10%',
+  leader: '12%',
+  agentName: '18%',
+  wallet: '13%',
+  amount: '14%',
+  type: '13%',
   date: '20%',
 };
 
-function headerCellClasses(active: boolean) {
-  const color = active ? 'text-indigo-600 dark:text-indigo-400' : 'text-foreground';
-  return `group text-center px-3 py-2 text-[12px] font-semibold whitespace-nowrap ${color}`;
+function headerCellClasses(_active: boolean) {
+  return `group text-center px-3 py-2 text-[12px] font-semibold whitespace-nowrap text-foreground`;
 }
 
 function SortIcon({ active, direction }: { active: boolean; direction: 'asc' | 'desc' }) {
@@ -75,6 +77,8 @@ function renderCell(row: TopUpRow, key: ColumnKey) {
   switch (key) {
     case 'brand':
       return <td key={key} className={`${base} text-slate-700 dark:text-slate-300`}>{getBrand(row.toAgent)}</td>;
+    case 'leader':
+      return <td key={key} className={`${base} text-slate-700 dark:text-slate-300`}>{row.leader || '−'}</td>;
     case 'agentName':
       return <td key={key} className={`${base} font-bold text-slate-900 dark:text-white`}>{row.agentName}</td>;
     case 'wallet':
@@ -120,11 +124,26 @@ export default function TopUpPage() {
       setLoading(true);
       setError('');
 
-      const res = await fetch(`/api/stlm?t=${Date.now()}`);
+      const [res, agentRes] = await Promise.all([
+        fetch(`/api/stlm?t=${Date.now()}`),
+        fetch(`/api/opening?t=${Date.now()}`),
+      ]);
       if (!res.ok) throw new Error('Failed to fetch');
       const text = await res.text();
-      const lines = text.trim().split('\n').slice(1);
+      const agentText = agentRes.ok ? await agentRes.text() : '';
 
+      // build agentName → leader lookup from opening sheet
+      const leaderMap: Record<string, string> = {};
+      if (agentText) {
+        agentText.trim().split('\n').slice(1).forEach(line => {
+          const cols = line.split(',');
+          const name = rawVal(cols[0]);
+          const leader = rawVal(cols[3]);
+          if (name && leader) leaderMap[name.toUpperCase()] = leader;
+        });
+      }
+
+      const lines = text.trim().split('\n').slice(1);
       const topUp: TopUpRow[] = [];
 
       lines
@@ -140,6 +159,7 @@ export default function TopUpPage() {
               amount: rawVal(cols[3]),
               date: rawVal(cols[4]),
               type: rawVal(cols[5]),
+              leader: leaderMap[agentLeft.toUpperCase()] || '−',
             });
           }
         });
@@ -302,7 +322,7 @@ export default function TopUpPage() {
   }, [sortedRows, visibleColumns]);
 
   return (
-    <div className="min-h-screen w-full bg-background font-[Inter,sans-serif] text-foreground transition-colors duration-300 dark:bg-[#1c1c1e]">
+    <div className="h-screen w-full flex flex-col overflow-hidden bg-background font-[Inter,sans-serif] text-foreground transition-colors duration-300 dark:bg-[#1c1c1e]">
       <header className="sticky top-0 z-30 border-b border-[#e5e5e7] bg-white px-4 py-2 dark:border-[#3a3a3d] dark:bg-[#2a2a2d] md:px-8">
         <div className="flex items-center justify-between">
           <h1 className="text-lg font-medium text-foreground">Top Up</h1>
@@ -324,15 +344,7 @@ export default function TopUpPage() {
         </div>
       </header>
 
-      <main className="px-6 pt-4 pb-6">
-        {loading && (
-          <div
-            className="fixed z-[9998] flex items-center justify-center bg-white/30 dark:bg-black/30"
-            style={{ top: 0, left: '256px', right: 0, bottom: 0 }}
-          >
-            <Loader2 size={28} className="animate-spin text-indigo-500" />
-          </div>
-        )}
+      <main className="flex-1 flex flex-col overflow-hidden px-6 pt-4 pb-6">
 
         {error && (
           <div className="flex items-center gap-3 rounded-2xl border border-rose-200 px-5 py-4 text-sm text-rose-600 dark:border-rose-900/60 dark:text-rose-300">
@@ -342,9 +354,9 @@ export default function TopUpPage() {
         )}
 
         {!error && (
-          <div className="mb-1">
+          <div className="mb-1 flex h-5 items-center">
             {loading ? (
-              <div className="h-2.5 w-24 rounded-md bg-slate-200 dark:bg-slate-700 animate-pulse" />
+              <div className="h-3.5 w-24 rounded-md bg-slate-200 dark:bg-slate-700 animate-pulse" />
             ) : (
               <span className="text-[11px] font-semibold text-foreground">Total Records: <span className="text-indigo-600">{sortedRows.length.toLocaleString('en-PH')}</span></span>
             )}
@@ -352,8 +364,8 @@ export default function TopUpPage() {
         )}
 
         {!error && (
-          <div className="bg-white rounded-xl border border-border overflow-hidden dark:bg-[#2a2a2d]">
-            <div className="px-3 py-1 border-b border-border bg-muted/20 flex items-center justify-between gap-3">
+          <div className="flex-1 flex flex-col min-h-0 bg-white rounded-xl border border-border overflow-hidden dark:bg-[#2a2a2d]">
+            <div className="shrink-0 px-3 py-1 min-h-[40px] border-b border-border bg-muted/20 flex items-center justify-between gap-3">
               <div className="flex items-center gap-2">
                 <div className="flex w-52 items-center gap-2 bg-white border border-border rounded-full px-4 py-1.5 dark:bg-[#2a2a2d]">
                   {loading ? (
@@ -463,21 +475,23 @@ export default function TopUpPage() {
                 )}
               </div>
             </div>
-            <div className="max-h-[calc(100vh-140px)] overflow-y-auto overflow-x-scroll">
+            <div className="flex-1 min-h-0 overflow-y-auto overflow-x-auto">
               <table className="w-full table-fixed text-sm">
                 <colgroup>
                   {visibleColumns.map((col) => (
                     <col key={col.key} style={{ width: columnWidths[col.key] }} />
                   ))}
                 </colgroup>
-                <thead className="sticky top-0 z-[50] border-b border-border bg-white dark:bg-[#2a2a2d]">
+                <thead className="sticky top-0 z-[50] bg-slate-50 dark:bg-[#252528] shadow-[0_2px_4px_rgba(0,0,0,0.15)] dark:shadow-[0_2px_4px_rgba(0,0,0,0.45)]">
                   <tr>
                     {visibleColumns.map((col) => (
                       <th
                         key={col.key}
                         style={{ width: columnWidths[col.key] }}
                         className={headerCellClasses(col.key !== 'brand' && sortColumn === col.key)}>
-                        {col.key === 'brand' ? (
+                        {loading ? (
+                          <div className="mx-auto h-5 w-16 animate-pulse rounded-md bg-slate-200 dark:bg-slate-700" />
+                        ) : col.key === 'brand' ? (
                           <div className="relative flex items-center justify-center gap-1">
                             <span>{col.label}</span>
                             <button
@@ -565,7 +579,15 @@ export default function TopUpPage() {
                   </tr>
                 </thead>
                 <tbody>
-                  {pagedRows.length > 0 ? pagedRows.map((row, i) => (
+                  {loading ? Array.from({ length: 18 }).map((_, i) => (
+                    <tr key={i} className="bg-white dark:bg-[#2a2a2d]">
+                      {visibleColumns.map((col) => (
+                        <td key={col.key} className="px-3 py-1">
+                          <div className="mx-auto h-2.5 w-3/4 animate-pulse rounded-md bg-slate-200 dark:bg-slate-700" />
+                        </td>
+                      ))}
+                    </tr>
+                  )) : pagedRows.length > 0 ? pagedRows.map((row, i) => (
                     <tr key={i} className="bg-white dark:bg-[#2a2a2d]">
                       {visibleColumns.map((col) => renderCell(row, col.key))}
                     </tr>

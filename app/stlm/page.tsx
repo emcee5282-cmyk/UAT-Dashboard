@@ -59,9 +59,8 @@ const columnWidths: Record<ColumnKey, string> = {
   date: '18%',
 };
 
-function headerCellClasses(active: boolean) {
-  const color = active ? 'text-indigo-600 dark:text-indigo-400' : 'text-foreground';
-  return `group text-center px-3 py-2 text-[12px] font-semibold whitespace-nowrap ${color}`;
+function headerCellClasses(_active: boolean) {
+  return `group text-center px-3 py-2 text-[12px] font-semibold whitespace-nowrap text-foreground`;
 }
 
 function SortIcon({ active, direction }: { active: boolean; direction: 'asc' | 'desc' }) {
@@ -312,7 +311,7 @@ export default function StlmPage() {
   }, [sortedRows, visibleColumns]);
 
   return (
-    <div className="min-h-screen w-full bg-background font-[Inter,sans-serif] text-foreground transition-colors duration-300 dark:bg-[#1c1c1e]">
+    <div className="h-screen w-full flex flex-col overflow-hidden bg-background font-[Inter,sans-serif] text-foreground transition-colors duration-300 dark:bg-[#1c1c1e]">
       <header className="sticky top-0 z-30 border-b border-[#e5e5e7] bg-white px-4 py-2 dark:border-[#3a3a3d] dark:bg-[#2a2a2d] md:px-8">
         <div className="flex items-center justify-between">
           <h1 className="text-lg font-medium text-foreground">Settlement</h1>
@@ -334,15 +333,7 @@ export default function StlmPage() {
         </div>
       </header>
 
-      <main className="px-6 pt-4 pb-6">
-        {loading && (
-          <div
-            className="fixed z-[9998] flex items-center justify-center bg-white/30 dark:bg-black/30"
-            style={{ top: 0, left: '256px', right: 0, bottom: 0 }}
-          >
-            <Loader2 size={28} className="animate-spin text-indigo-500" />
-          </div>
-        )}
+      <main className="flex-1 flex flex-col overflow-hidden px-6 pt-4 pb-6">
 
         {error && (
           <div className="flex items-center gap-3 rounded-2xl border border-rose-200 px-5 py-4 text-sm text-rose-600 dark:border-rose-900/60 dark:text-rose-300">
@@ -352,9 +343,9 @@ export default function StlmPage() {
         )}
 
         {!error && (
-          <div className="mb-1">
+          <div className="mb-1 flex h-5 items-center">
             {loading ? (
-              <div className="h-2.5 w-24 rounded-md bg-slate-200 dark:bg-slate-700 animate-pulse" />
+              <div className="h-3.5 w-24 rounded-md bg-slate-200 dark:bg-slate-700 animate-pulse" />
             ) : (
               <span className="text-[11px] font-semibold text-foreground">Total Records: <span className="text-indigo-600">{sortedRows.length.toLocaleString('en-PH')}</span></span>
             )}
@@ -362,8 +353,8 @@ export default function StlmPage() {
         )}
 
         {!error && (
-          <div className="bg-white rounded-xl border border-border overflow-hidden dark:bg-[#2a2a2d]">
-            <div className="px-3 py-1 border-b border-border bg-muted/20 flex items-center justify-between gap-3">
+          <div className="flex-1 flex flex-col min-h-0 bg-white rounded-xl border border-border overflow-hidden dark:bg-[#2a2a2d]">
+            <div className="shrink-0 px-3 py-1 min-h-[40px] border-b border-border bg-muted/20 flex items-center justify-between gap-3">
               <div className="flex items-center gap-2">
                 <div className="flex w-52 items-center gap-2 bg-white border border-border rounded-full px-4 py-1.5 dark:bg-[#2a2a2d]">
                   {loading ? (
@@ -473,21 +464,23 @@ export default function StlmPage() {
                 )}
               </div>
             </div>
-            <div className="max-h-[calc(100vh-140px)] overflow-y-auto overflow-x-scroll">
+            <div className="relative flex-1 min-h-0 overflow-y-auto overflow-x-auto">
               <table className="w-full table-fixed text-sm">
                 <colgroup>
                   {visibleColumns.map((col) => (
                     <col key={col.key} style={{ width: columnWidths[col.key] }} />
                   ))}
                 </colgroup>
-                <thead className="sticky top-0 z-[50] border-b border-border bg-white dark:bg-[#2a2a2d]">
+                <thead className="sticky top-0 z-[50] bg-slate-50 dark:bg-[#252528] shadow-[0_2px_4px_rgba(0,0,0,0.15)] dark:shadow-[0_2px_4px_rgba(0,0,0,0.45)]">
                   <tr>
                     {visibleColumns.map((col) => (
                       <th
                         key={col.key}
                         style={{ width: columnWidths[col.key] }}
                         className={headerCellClasses(col.key !== 'brand' && sortColumn === col.key)}>
-                        {col.key === 'brand' ? (
+                        {loading ? (
+                          <div className="mx-auto h-5 w-16 animate-pulse rounded-md bg-slate-200 dark:bg-slate-700" />
+                        ) : col.key === 'brand' ? (
                           <div className="relative flex items-center justify-center gap-1">
                             <span>{col.label}</span>
                             <button
@@ -575,7 +568,15 @@ export default function StlmPage() {
                   </tr>
                 </thead>
                 <tbody>
-                  {pagedRows.length > 0 ? pagedRows.map((row, i) => (
+                  {loading ? Array.from({ length: 18 }).map((_, i) => (
+                    <tr key={i} className="bg-white dark:bg-[#2a2a2d]">
+                      {visibleColumns.map((col) => (
+                        <td key={col.key} className="px-3 py-1">
+                          <div className="mx-auto h-2.5 w-3/4 animate-pulse rounded-md bg-slate-200 dark:bg-slate-700" />
+                        </td>
+                      ))}
+                    </tr>
+                  )) : pagedRows.length > 0 ? pagedRows.map((row, i) => (
                     <tr key={i} className="bg-white dark:bg-[#2a2a2d]">
                       {visibleColumns.map((col) => renderCell(row, col.key))}
                     </tr>

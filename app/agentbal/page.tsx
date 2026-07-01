@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { AlertCircle, ChevronDown, ChevronUp, Download, Filter, Loader2, RefreshCw, Search } from 'lucide-react';
+import { AlertCircle, ChevronDown, ChevronUp, Download, Filter, RefreshCw, Search } from 'lucide-react';
 import * as XLSX from 'xlsx';
 import ThemeToggle from '../components/ThemeToggle';
 import { rawVal } from '@/app/lib/format';
@@ -305,9 +305,8 @@ function SortIcon({ active, direction }: { active: boolean; direction: 'asc' | '
   );
 }
 
-function headerCellClasses(isSorted: boolean) {
-  const color = isSorted ? 'text-indigo-600 dark:text-indigo-400' : 'text-foreground';
-  return `text-center px-3 py-2 text-[12px] font-semibold whitespace-nowrap ${color}`;
+function headerCellClasses(_isSorted: boolean) {
+  return `text-center px-3 py-2 text-[12px] font-semibold whitespace-nowrap text-foreground`;
 }
 
 const WALLET_STATUS_TEXT_CLASSES: Record<string, string> = {
@@ -330,11 +329,11 @@ function renderCell(row: MergedRow, key: ColumnKey, stickyLeftPx?: number) {
 
   switch (key) {
     case 'brand':
-      return <td key={key} style={stickyStyle} className={`whitespace-nowrap overflow-hidden text-ellipsis px-3 py-1 text-center text-[9px] text-foreground${stickyBg}${stickyBorder}`}>{row.brand}</td>;
+      return <td key={key} style={stickyStyle} className={`whitespace-nowrap overflow-hidden text-ellipsis px-3 py-1 text-center text-[9px] font-semibold text-foreground${stickyBg}${stickyBorder}`}>{row.brand}</td>;
     case 'leader':
-      return <td key={key} style={stickyStyle} className={`whitespace-nowrap overflow-hidden text-ellipsis px-3 py-1 text-center text-[9px] text-foreground${stickyBg}${stickyBorder}`}>{row.leader}</td>;
+      return <td key={key} style={stickyStyle} className={`whitespace-nowrap overflow-hidden text-ellipsis px-3 py-1 text-center text-[9px] text-muted-foreground${stickyBg}${stickyBorder}`}>{row.leader}</td>;
     case 'walletName':
-      return <td key={key} style={stickyStyle} className={`whitespace-nowrap overflow-hidden text-ellipsis px-3 py-1 text-center text-[9px] font-medium text-foreground${stickyBg}${stickyBorder}`}>{row.agentName}</td>;
+      return <td key={key} style={stickyStyle} className={`whitespace-nowrap overflow-hidden text-ellipsis px-3 py-1 text-center text-[9px] font-semibold text-foreground${stickyBg}${stickyBorder}`}>{row.agentName}</td>;
     case 'walletType':
       return <td key={key} className="whitespace-nowrap overflow-hidden text-ellipsis px-3 py-1 text-center text-[9px] text-foreground">{row.walletType}</td>;
     case 'sdp':
@@ -391,7 +390,7 @@ function renderCell(row: MergedRow, key: ColumnKey, stickyLeftPx?: number) {
           ? 'text-rose-600'
           : 'text-foreground';
       return (
-        <td key={key} className={`whitespace-nowrap overflow-hidden text-ellipsis px-3 py-1 text-center text-[10px] font-medium ${companyBalanceColor}`}>
+        <td key={key} className={`whitespace-nowrap overflow-hidden text-ellipsis px-3 py-1 text-center text-[10px] font-semibold ${companyBalanceColor}`}>
           {companyBalanceDisplay}
         </td>
       );
@@ -1022,9 +1021,9 @@ export default function AgentBalance() {
               {loading ? (
                 Array.from({ length: 7 }).map((_, index) => (
                   <div key={index} className="bg-white dark:bg-[#2a2a2d] rounded-2xl border border-slate-200 dark:border-slate-700 shadow-[0_2px_12px_rgba(0,0,0,0.06)] p-2 flex-1 min-w-0">
-                    <div className="h-2.5 w-12 animate-pulse rounded-md bg-slate-200 dark:bg-slate-700" />
-                    <div className="mt-1 h-3.5 w-16 animate-pulse rounded-md bg-slate-200 dark:bg-slate-700" />
-                    <div className="mt-1 h-2.5 w-16 animate-pulse rounded-md bg-slate-200 dark:bg-slate-700" />
+                    <div className="h-3 w-12 animate-pulse rounded-md bg-slate-200 dark:bg-slate-700" />
+                    <div className="mt-1 h-5 w-16 animate-pulse rounded-md bg-slate-200 dark:bg-slate-700" />
+                    <div className="mt-1 h-3 w-16 animate-pulse rounded-md bg-slate-200 dark:bg-slate-700" />
                   </div>
                 ))
               ) : (
@@ -1052,9 +1051,9 @@ export default function AgentBalance() {
         )}
 
         {!error && (
-          <div className="shrink-0 mb-1">
+          <div className="shrink-0 mt-3 mb-1 flex h-5 items-center">
             {loading ? (
-              <div className="h-2.5 w-24 rounded-md bg-slate-200 dark:bg-slate-700 animate-pulse" />
+              <div className="mt-2 h-3.5 w-24 rounded-md bg-slate-200 dark:bg-slate-700 animate-pulse" />
             ) : (
               <span className="text-[11px] font-semibold text-foreground">Total Accounts: <span className="text-indigo-600">{sortedRows.length.toLocaleString('en-PH')}</span></span>
             )}
@@ -1063,7 +1062,7 @@ export default function AgentBalance() {
 
         {!error && (
           <div className="flex-1 flex flex-col min-h-0 bg-white rounded-xl border border-border overflow-hidden dark:bg-[#2a2a2d]">
-            <div className="shrink-0 px-3 py-1 border-b border-slate-200 dark:border-[#3a3a3d] bg-muted/20 flex items-center justify-between gap-3">
+            <div className="shrink-0 px-3 py-1 min-h-[40px] border-b border-slate-200 dark:border-[#3a3a3d] bg-muted/20 flex items-center justify-between gap-3">
               <div className="flex items-center gap-2">
                 <div className="flex w-52 items-center gap-2 bg-white border border-border rounded-full px-4 py-1.5 dark:bg-[#2a2a2d]">
                   {loading ? (
@@ -1179,19 +1178,14 @@ export default function AgentBalance() {
                 )}
               </div>
             </div>
-            <div className="relative flex-1 min-h-0 overflow-y-auto overflow-x-auto">
-              {loading && (
-                <div className="absolute inset-0 z-10 flex items-center justify-center bg-white/60 dark:bg-black/40">
-                  <Loader2 size={28} className="animate-spin text-indigo-500" />
-                </div>
-              )}
+            <div className="flex-1 min-h-0 overflow-y-auto overflow-x-auto">
               <table className="w-full table-fixed text-xs" style={{ minWidth: TABLE_MIN_WIDTH }}>
                 <colgroup>
                   {visibleColumns.map((col) => (
                     <col key={col.key} style={{ width: columnWidths[col.key] }} />
                   ))}
                 </colgroup>
-                <thead className="sticky top-0 z-[50] border-b border-slate-200 dark:border-slate-700 bg-white dark:bg-[#2a2a2d]">
+                <thead className="sticky top-0 z-[50] bg-slate-50 dark:bg-[#252528] shadow-[0_2px_4px_rgba(0,0,0,0.15)] dark:shadow-[0_2px_4px_rgba(0,0,0,0.45)]">
                   <tr>
                     {visibleColumns.map((col) => (
                       <th
@@ -1199,7 +1193,7 @@ export default function AgentBalance() {
                         style={stickyLeft[col.key] !== undefined ? { position: 'sticky' as const, left: `${stickyLeft[col.key]}px`, zIndex: 52 } : undefined}
                         className={headerCellClasses(sortColumn === col.key)}>
                         {loading ? (
-                          <div className="mx-auto h-2.5 w-12 animate-pulse rounded-md bg-slate-200 dark:bg-slate-700" />
+                          <div className="mx-auto h-[18px] w-14 animate-pulse rounded-md bg-slate-200 dark:bg-slate-700" />
                         ) : col.key === 'brand' ? (
                           <div className="relative flex items-center justify-center gap-1">
                             <span className="normal-case font-semibold text-foreground">{col.label}</span>
@@ -1494,7 +1488,15 @@ export default function AgentBalance() {
                   </tr>
                 </thead>
                 <tbody>
-                  {pagedRows.length > 0 ? pagedRows.map((row, i) => (
+                  {loading ? Array.from({ length: 18 }).map((_, i) => (
+                    <tr key={i}>
+                      {visibleColumns.map((col) => (
+                        <td key={col.key} className="px-3 py-1">
+                          <div className="mx-auto h-2.5 w-3/4 animate-pulse rounded-md bg-slate-200 dark:bg-slate-700" />
+                        </td>
+                      ))}
+                    </tr>
+                  )) : pagedRows.length > 0 ? pagedRows.map((row, i) => (
                     <tr
                       key={row.agentName || i}
                       className="hover:bg-muted/10 transition-colors"
