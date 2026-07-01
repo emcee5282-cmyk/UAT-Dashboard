@@ -286,7 +286,7 @@ const columnWidths: Record<ColumnKey, string> = {
 
 const TABLE_MIN_WIDTH = '1680px';
 
-const STICKY_COLS: ColumnKey[] = ['brand', 'leader', 'walletName'];
+const STICKY_COLS: ColumnKey[] = [];
 const DEFAULT_HIDDEN: ColumnKey[] = ['brand', 'sdp', 'settlement', 'topUp', 'sdpVsBalance'];
 
 function SortIcon({ active, direction }: { active: boolean; direction: 'asc' | 'desc' }) {
@@ -305,95 +305,49 @@ function SortIcon({ active, direction }: { active: boolean; direction: 'asc' | '
   );
 }
 
-function headerCellClasses(_isSorted: boolean) {
-  return `text-center px-3 py-2 text-[12px] font-semibold whitespace-nowrap text-foreground`;
+function headerCellClasses(_colKey: ColumnKey, _isSorted: boolean) {
+  return `text-center px-3 py-2 text-[10px] font-semibold uppercase tracking-[0.06em] whitespace-nowrap text-muted-foreground`;
 }
 
-const WALLET_STATUS_TEXT_CLASSES: Record<string, string> = {
-  'DP + WD': 'text-emerald-700',
-  'DP Only': 'text-sky-700',
-  'WD Only': 'text-amber-700',
-  'Top Up Acc.': 'text-indigo-700',
-  'Wallet With Issue': 'text-rose-700',
-  'Disconnected': 'text-slate-600',
-  'Account Problem': 'text-rose-700',
-  'No Record': 'text-slate-400',
-};
 
-function renderCell(row: MergedRow, key: ColumnKey, stickyLeftPx?: number) {
-  const stickyStyle: React.CSSProperties | undefined = stickyLeftPx !== undefined
-    ? { position: 'sticky', left: `${stickyLeftPx}px`, zIndex: 1 }
-    : undefined;
-  const stickyBg = stickyLeftPx !== undefined ? ' bg-white dark:bg-[#2a2a2d]' : '';
-  const stickyBorder = '';
+function renderCell(row: MergedRow, key: ColumnKey) {
+
+  const base = 'whitespace-nowrap overflow-hidden text-ellipsis px-3 py-1.5 text-[11px]';
 
   switch (key) {
     case 'brand':
-      return <td key={key} style={stickyStyle} className={`whitespace-nowrap overflow-hidden text-ellipsis px-3 py-1 text-center text-[9px] font-semibold text-foreground${stickyBg}${stickyBorder}`}>{row.brand}</td>;
+      return <td key={key} className={`${base} text-center font-semibold text-foreground`}>{row.brand}</td>;
     case 'leader':
-      return <td key={key} style={stickyStyle} className={`whitespace-nowrap overflow-hidden text-ellipsis px-3 py-1 text-center text-[9px] text-muted-foreground${stickyBg}${stickyBorder}`}>{row.leader}</td>;
+      return <td key={key} className={`${base} text-center text-muted-foreground`}>{row.leader}</td>;
     case 'walletName':
-      return <td key={key} style={stickyStyle} className={`whitespace-nowrap overflow-hidden text-ellipsis px-3 py-1 text-center text-[9px] font-semibold text-foreground${stickyBg}${stickyBorder}`}>{row.agentName}</td>;
+      return <td key={key} className={`${base} text-center font-semibold text-foreground`}>{row.agentName}</td>;
     case 'walletType':
-      return <td key={key} className="whitespace-nowrap overflow-hidden text-ellipsis px-3 py-1 text-center text-[9px] text-foreground">{row.walletType}</td>;
+      return <td key={key} className={`${base} text-center text-muted-foreground`}>{row.walletType}</td>;
     case 'sdp':
-      return <td key={key} className="whitespace-nowrap overflow-hidden text-ellipsis px-3 py-1 text-center text-[10px] text-foreground">{displayNum(row.sdp)}</td>;
+      return <td key={key} className={`${base} text-center tabular-nums text-foreground`}>{displayNum(row.sdp)}</td>;
     case 'opening':
-      return <td key={key} className="whitespace-nowrap overflow-hidden text-ellipsis px-3 py-1 text-center text-[10px] text-foreground">{displayNum(row.openingBal)}</td>;
+      return <td key={key} className={`${base} text-center tabular-nums text-foreground`}>{displayNum(row.openingBal)}</td>;
     case 'totalDP':
-      return <td key={key} className="whitespace-nowrap overflow-hidden text-ellipsis px-3 py-1 text-center text-[10px] text-foreground">{displayNum(row.agentTotalDP)}</td>;
+      return <td key={key} className={`${base} text-center tabular-nums font-medium text-emerald-600 dark:text-emerald-400`}>{displayNum(row.agentTotalDP)}</td>;
     case 'totalWD':
-      return <td key={key} className="whitespace-nowrap overflow-hidden text-ellipsis px-3 py-1 text-center text-[10px] text-foreground">{displayNum(row.agentTotalWD)}</td>;
+      return <td key={key} className={`${base} text-center tabular-nums font-medium text-rose-600 dark:text-rose-400`}>{displayNum(row.agentTotalWD)}</td>;
     case 'topUp':
-      return <td key={key} className="whitespace-nowrap overflow-hidden text-ellipsis px-3 py-1 text-center text-[10px] text-foreground">{displayNum(row.totalTopUp)}</td>;
-    case 'settlement': {
-      const settlementDisplay = displayNum(row.totalStlm);
-      return (
-        <td key={key} className="whitespace-nowrap overflow-hidden text-ellipsis px-3 py-1 text-center text-[10px] text-foreground">
-          {settlementDisplay}
-        </td>
-      );
-    }
+      return <td key={key} className={`${base} text-center tabular-nums text-teal-600 dark:text-teal-400`}>{displayNum(row.totalTopUp)}</td>;
+    case 'settlement':
+      return <td key={key} className={`${base} text-center tabular-nums text-orange-500 dark:text-orange-400`}>{displayNum(row.totalStlm)}</td>;
     case 'balanceInside':
-      return (
-        <td key={key} className="whitespace-nowrap overflow-hidden text-ellipsis px-3 py-1 text-center text-[10px] text-foreground">
-          {displayNum(String(row.balanceInside ?? 0))}
-        </td>
-      );
+      return <td key={key} className={`${base} text-center tabular-nums text-foreground`}>{displayNum(String(row.balanceInside ?? 0))}</td>;
     case 'agentWithdrawal':
-      return (
-        <td key={key} className="whitespace-nowrap overflow-hidden text-ellipsis px-3 py-1 text-center text-[10px] text-foreground">
-          {displayNum(String(row.agentWithdrawal))}
-        </td>
-      );
+      return <td key={key} className={`${base} text-center tabular-nums text-foreground`}>{displayNum(String(row.agentWithdrawal))}</td>;
     case 'sdpVsBalance':
-      return (
-        <td key={key} className="whitespace-nowrap overflow-hidden text-ellipsis px-3 py-1 text-center text-[10px] text-foreground">
-          {row.sdpVsBalance > 0 ? displayNum(String(Math.abs(row.sdpVsBalance))) : '−'}
-        </td>
-      );
-    case 'walletStatus': {
-      const textColor = WALLET_STATUS_TEXT_CLASSES[row.walletStatus] ?? 'text-slate-600';
-      return (
-        <td key={key} className={`whitespace-nowrap overflow-hidden text-ellipsis px-3 py-1 text-center text-[9px] font-medium ${textColor}`}>
-          {row.walletStatus}
-        </td>
-      );
-    }
+      return <td key={key} className={`${base} text-center tabular-nums text-foreground`}>{row.sdpVsBalance > 0 ? displayNum(String(Math.abs(row.sdpVsBalance))) : '−'}</td>;
+    case 'walletStatus':
+      return <td key={key} className={`${base} text-center text-foreground`}>{row.walletStatus}</td>;
     case 'companyBalance':
     default: {
-      const companyBalanceDisplay = displayNum(row.runningBalance);
-      const companyBalanceColor =
-        companyBalanceDisplay === '−'
-          ? 'text-foreground'
-          : row.runningBalance < 0
-          ? 'text-rose-600'
-          : 'text-foreground';
-      return (
-        <td key={key} className={`whitespace-nowrap overflow-hidden text-ellipsis px-3 py-1 text-center text-[10px] font-semibold ${companyBalanceColor}`}>
-          {companyBalanceDisplay}
-        </td>
-      );
+      const v = displayNum(row.runningBalance);
+      const color = v !== '−' && row.runningBalance < 0 ? 'text-rose-600 dark:text-rose-400' : 'text-foreground';
+      return <td key={key} className={`${base} text-center tabular-nums font-bold ${color}`}>{v}</td>;
     }
   }
 }
@@ -450,14 +404,14 @@ export default function AgentBalance() {
 
       const [openingRes, balRes, stlmRes] = await Promise.all([
         fetch(`/api/opening?t=${Date.now()}`),
-        fetch(`/api/agentbal?t=${Date.now()}`),
+        fetch(`/api/balance-limit?t=${Date.now()}`),
         fetch(`/api/stlm?t=${Date.now()}`),
       ]);
 
       if (!openingRes.ok || !balRes.ok || !stlmRes.ok) throw new Error('Failed to fetch');
 
       const openingText = await openingRes.text();
-      const balText = await balRes.text();
+      const balData: string[][] = await balRes.json();
       const stlmText = await stlmRes.text();
 
       const openingRows = parseCsvLines(openingText)
@@ -471,7 +425,7 @@ export default function AgentBalance() {
         }))
         .filter((row) => row.agentName && row.agentName !== 'OLD');
 
-      const balRows = parseCsvLines(balText)
+      const balRows = balData
         .slice(1)
         .filter((row) => row.some((cell) => cell.trim() !== ''))
         .map((row) => ({
@@ -964,40 +918,44 @@ export default function AgentBalance() {
 
   return (
     <div className="h-screen w-full flex flex-col overflow-hidden bg-background font-[Inter,sans-serif] text-foreground transition-colors duration-300 dark:bg-[#1c1c1e]">
-      <header className="shrink-0 border-b border-[#e5e5e7] bg-white px-4 py-2 dark:border-[#3a3a3d] dark:bg-[#2a2a2d] md:px-8">
-        <div className="flex items-center justify-between">
-          {loading ? (
-            <div className="h-4 w-28 animate-pulse rounded-md bg-slate-200 dark:bg-slate-700" />
-          ) : (
-            <h1 className="text-lg font-medium text-foreground">SSP Cashout</h1>
-          )}
+      <header className="sticky top-0 z-30 shrink-0 border-b border-border bg-white/95 py-0 pl-14 pr-4 backdrop-blur-sm dark:bg-[#0d1117]/95 md:px-8">
+        <div className="flex h-12 items-center justify-between">
           <div className="flex items-center gap-3">
+            <div className="h-4 w-[3px] rounded-full bg-indigo-500" />
+            {loading ? (
+              <div className="h-4 w-28 animate-pulse rounded-md bg-slate-200 dark:bg-slate-700" />
+            ) : (
+              <h1 className="text-[13px] font-semibold tracking-[-0.01em] text-foreground">SSP Cashout</h1>
+            )}
+          </div>
+          <div className="flex items-center gap-2">
             {loading ? (
               <>
-                <div className="h-3 w-20 animate-pulse rounded-md bg-slate-200 dark:bg-slate-700" />
+                <div className="hidden h-6 w-24 animate-pulse rounded-md bg-slate-200 dark:bg-slate-700 sm:block" />
                 <div className="h-7 w-16 animate-pulse rounded-lg bg-slate-200 dark:bg-slate-700" />
                 <div className="h-6 w-6 animate-pulse rounded-full bg-slate-200 dark:bg-slate-700" />
               </>
             ) : (
               <>
-                <span className="flex items-center gap-1.5 text-[10px] text-muted-foreground">
-                  <span className="h-1 w-1 rounded-full bg-emerald-500" />
-                  {lastUpdated || '—'}
-                </span>
+                <div className="hidden items-center gap-1.5 rounded-md bg-emerald-50 px-2 py-0.5 dark:bg-emerald-500/10 sm:flex">
+                  <span className="h-1.5 w-1.5 rounded-full bg-emerald-500" />
+                  <span className="tabular-nums text-[9px] font-medium text-emerald-700 dark:text-emerald-400">{lastUpdated || '—'}</span>
+                </div>
+                <span className="h-2 w-2 rounded-full bg-emerald-500 sm:hidden" />
                 <ThemeToggle />
                 <button
                   onClick={fetchData}
                   disabled={spinning || loading}
-                  className="flex items-center gap-1.5 px-3 py-2 text-[10px] font-medium text-indigo-600 border border-border rounded-lg hover:bg-muted transition-colors disabled:opacity-50"
+                  className="flex items-center gap-1.5 rounded-lg border border-border bg-muted/60 px-2.5 py-1.5 text-[11px] font-medium text-foreground transition-colors hover:bg-muted disabled:opacity-50"
                 >
-                  <RefreshCw size={12} className={spinning ? 'animate-spin' : ''} />
-                  Refresh
+                  <RefreshCw size={11} className={spinning ? 'animate-spin' : ''} />
+                  <span className="hidden sm:inline">Refresh</span>
                 </button>
                 <button
                   type="button"
                   onClick={() => setCardsExpanded((current) => !current)}
                   title={cardsExpanded ? 'Hide summary cards' : 'Show summary cards'}
-                  className="flex items-center justify-center rounded-full p-1 text-indigo-600 transition hover:bg-slate-200 dark:hover:bg-white/10"
+                  className="flex items-center justify-center rounded-lg border border-border bg-muted/60 p-1.5 text-muted-foreground transition-colors hover:bg-muted"
                 >
                   {cardsExpanded ? <ChevronUp size={12} /> : <ChevronDown size={12} />}
                 </button>
@@ -1016,32 +974,30 @@ export default function AgentBalance() {
         )}
 
         {!error && (
-          <div className={`shrink-0 overflow-hidden transition-all duration-300 ease-in-out ${cardsExpanded ? 'max-h-48 opacity-100 mb-1' : 'max-h-0 opacity-0 mb-0'}`}>
+          <div className={`shrink-0 overflow-hidden transition-all duration-300 ease-in-out ${cardsExpanded ? 'h-[84px] opacity-100 mb-1' : 'h-0 opacity-0 mb-0'}`}>
             <div className="flex gap-2 pb-3">
               {loading ? (
-                Array.from({ length: 7 }).map((_, index) => (
-                  <div key={index} className="bg-white dark:bg-[#2a2a2d] rounded-2xl border border-slate-200 dark:border-slate-700 shadow-[0_2px_12px_rgba(0,0,0,0.06)] p-2 flex-1 min-w-0">
-                    <div className="h-3 w-12 animate-pulse rounded-md bg-slate-200 dark:bg-slate-700" />
-                    <div className="mt-1 h-5 w-16 animate-pulse rounded-md bg-slate-200 dark:bg-slate-700" />
-                    <div className="mt-1 h-3 w-16 animate-pulse rounded-md bg-slate-200 dark:bg-slate-700" />
+                Array.from({ length: 7 }).map((_, i) => (
+                  <div key={i} className="rounded-xl border border-border bg-white dark:bg-[#2a2a2d] shadow-sm flex-1 min-w-0 p-2.5">
+                    <div className="h-2.5 w-12 animate-pulse rounded-md bg-slate-200 dark:bg-slate-700" />
+                    <div className="mt-1.5 h-4 w-16 animate-pulse rounded-md bg-slate-200 dark:bg-slate-700" />
+                    <div className="mt-1 h-2 w-16 animate-pulse rounded-md bg-slate-200 dark:bg-slate-700" />
                   </div>
                 ))
               ) : (
                 summaryCards.map((card) => (
-                  <div key={card.label} className="group bg-white dark:bg-[#2a2a2d] rounded-2xl border border-slate-200 dark:border-slate-700 shadow-[0_2px_12px_rgba(0,0,0,0.06)] p-2 flex-1 min-w-0 hover:border-[#1a1a1a]/25 hover:shadow-[0_6px_16px_-4px_rgba(0,0,0,0.10)] dark:hover:border-[#e5e5e7]/50 dark:hover:shadow-[0_6px_16px_-4px_rgba(0,0,0,0.10)]">
-                    <p className="text-[9px] text-slate-700 dark:text-slate-300 font-medium truncate">{card.label}</p>
-                    <p className="mt-1 origin-left text-sm font-bold text-slate-700 dark:text-slate-300 group-hover:scale-[1.055]">
-                      {card.bigValue}
-                    </p>
-                    <div className={`mt-0.5 flex items-center gap-1 text-[9px] font-medium ${
+                  <div key={card.label} className="rounded-xl border border-border bg-white dark:bg-[#2a2a2d] shadow-sm flex-1 min-w-0 p-2.5 transition-shadow hover:shadow-md">
+                    <p className="text-[10px] font-semibold text-muted-foreground truncate">{card.label}</p>
+                    <p className="mt-1 text-[15px] font-bold leading-tight text-foreground">{card.bigValue}</p>
+                    <div className={`mt-0.5 flex items-center gap-0.5 text-[9px] font-medium ${
                       card.label === 'Total DP' ? 'text-emerald-600 dark:text-emerald-400' :
                       card.label === 'Total WD' ? 'text-rose-600 dark:text-rose-400' :
                       card.label === 'Running Balance' ? (card.subPositive ? 'text-emerald-600 dark:text-emerald-400' : 'text-rose-600 dark:text-rose-400') :
-                      'text-slate-700 dark:text-slate-300'
+                      'text-muted-foreground'
                     }`}>
                       {card.showArrow && <span>{card.subPositive ? '▲' : '▼'}</span>}
-                      <span>{card.subAmount}</span>
-                      {card.subSuffix && <span className="font-normal text-slate-500 dark:text-slate-400">{card.subSuffix}</span>}
+                      <span className="tabular-nums">{card.subAmount}</span>
+                      {card.subSuffix && <span className="font-normal text-muted-foreground">{card.subSuffix}</span>}
                     </div>
                   </div>
                 ))
@@ -1051,25 +1007,23 @@ export default function AgentBalance() {
         )}
 
         {!error && (
-          <div className="shrink-0 mt-3 mb-1 flex h-5 items-center">
-            {loading ? (
-              <div className="mt-2 h-3.5 w-24 rounded-md bg-slate-200 dark:bg-slate-700 animate-pulse" />
-            ) : (
-              <span className="text-[11px] font-semibold text-foreground">Total Accounts: <span className="text-indigo-600">{sortedRows.length.toLocaleString('en-PH')}</span></span>
-            )}
-          </div>
-        )}
-
-        {!error && (
-          <div className="flex-1 flex flex-col min-h-0 bg-white rounded-xl border border-border overflow-hidden dark:bg-[#2a2a2d]">
-            <div className="shrink-0 px-3 py-1 min-h-[40px] border-b border-slate-200 dark:border-[#3a3a3d] bg-muted/20 flex items-center justify-between gap-3">
-              <div className="flex items-center gap-2">
-                <div className="flex w-52 items-center gap-2 bg-white border border-border rounded-full px-4 py-1.5 dark:bg-[#2a2a2d]">
+          <div className="flex-1 flex flex-col min-h-0 mt-3 bg-white rounded-xl border border-border overflow-hidden dark:bg-[#2a2a2d]">
+            <div className="shrink-0 px-3 py-2 border-b border-border bg-muted/20 flex items-center justify-between gap-3">
+              <div className="flex items-center gap-2.5">
+                {loading ? (
+                  <div className="h-5 w-28 animate-pulse rounded-md bg-slate-200 dark:bg-slate-700" />
+                ) : (
+                  <div className="flex items-center gap-1.5 rounded-md bg-indigo-50 px-2.5 py-1 dark:bg-indigo-500/15">
+                    <span className="text-[10px] font-medium text-indigo-600 dark:text-indigo-400">Accounts</span>
+                    <span className="text-[11px] font-bold tabular-nums text-indigo-700 dark:text-indigo-300">{sortedRows.length.toLocaleString('en-PH')}</span>
+                  </div>
+                )}
+                <div className="flex w-52 items-center gap-2 rounded-lg border border-border bg-white px-3 py-1.5 dark:bg-[#2a2a2d]">
                   {loading ? (
                     <div className="h-3 w-32 animate-pulse rounded-md bg-slate-200 dark:bg-slate-700" />
                   ) : (
                     <>
-                      <Search size={14} className="text-muted-foreground" />
+                      <Search size={13} className="shrink-0 text-muted-foreground" />
                       <input
                         value={searchTerm}
                         onChange={(event) => setSearchTerm(event.target.value)}
@@ -1141,40 +1095,42 @@ export default function AgentBalance() {
                 )}
               </div>
               </div>
-              <div className="flex items-center gap-3">
-              {loading ? (
-                <div className="h-2.5 w-32 rounded-md bg-slate-200 dark:bg-slate-700 animate-pulse" />
-              ) : (
               <div className="flex items-center gap-2">
-                <span className="text-[10px] text-muted-foreground">Page {currentPage} of {totalPages}</span>
-                <button
-                  type="button"
-                  onClick={() => setPage((current) => Math.max(1, current - 1))}
-                  disabled={currentPage === 1}
-                  className="px-2.5 py-1.5 text-[10px] font-medium text-foreground border border-border rounded-lg hover:bg-white transition-colors disabled:opacity-50"
-                >
-                  Previous
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setPage((current) => Math.min(totalPages, current + 1))}
-                  disabled={currentPage === totalPages}
-                  className="px-2.5 py-1.5 text-[10px] font-medium text-foreground border border-border rounded-lg hover:bg-white transition-colors disabled:opacity-50"
-                >
-                  Next
-                </button>
-              </div>
-              )}
-              {loading && <div className="h-7 w-20 animate-pulse rounded-xl bg-slate-200 dark:bg-slate-700" />}
+                {loading ? (
+                  <div className="h-6 w-32 animate-pulse rounded-md bg-slate-200 dark:bg-slate-700" />
+                ) : (
+                  <div className="flex items-center gap-1.5">
+                    <span className="text-[10px] text-muted-foreground tabular-nums">
+                      {currentPage} / {totalPages}
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => setPage((current) => Math.max(1, current - 1))}
+                      disabled={currentPage === 1}
+                      className="rounded-lg border border-border bg-white px-2.5 py-1.5 text-[10px] font-medium text-foreground transition-colors hover:bg-muted disabled:opacity-40 dark:bg-transparent"
+                    >
+                      Previous
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setPage((current) => Math.min(totalPages, current + 1))}
+                      disabled={currentPage === totalPages}
+                      className="rounded-lg border border-border bg-white px-2.5 py-1.5 text-[10px] font-medium text-foreground transition-colors hover:bg-muted disabled:opacity-40 dark:bg-transparent"
+                    >
+                      Next
+                    </button>
+                  </div>
+                )}
+                {loading && <div className="h-7 w-20 animate-pulse rounded-lg bg-slate-200 dark:bg-slate-700" />}
                 {!loading && (
-                <button
-                  type="button"
-                  onClick={handleExport}
-                  title="Export to Excel"
-                  className="p-1.5 rounded-lg hover:bg-white transition-colors border border-border text-foreground"
-                >
-                  <Download size={14} />
-                </button>
+                  <button
+                    type="button"
+                    onClick={handleExport}
+                    title="Export to Excel"
+                    className="rounded-lg border border-border bg-white p-1.5 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground dark:bg-transparent"
+                  >
+                    <Download size={13} />
+                  </button>
                 )}
               </div>
             </div>
@@ -1185,13 +1141,13 @@ export default function AgentBalance() {
                     <col key={col.key} style={{ width: columnWidths[col.key] }} />
                   ))}
                 </colgroup>
-                <thead className="sticky top-0 z-[50] bg-slate-50 dark:bg-[#252528] shadow-[0_2px_4px_rgba(0,0,0,0.15)] dark:shadow-[0_2px_4px_rgba(0,0,0,0.45)]">
+                <thead className="sticky top-0 z-[50] bg-white dark:bg-[#252528] border-b border-border shadow-[0_1px_3px_rgba(0,0,0,0.06)] dark:shadow-[0_2px_4px_rgba(0,0,0,0.35)]">
                   <tr>
                     {visibleColumns.map((col) => (
                       <th
                         key={col.key}
                         style={stickyLeft[col.key] !== undefined ? { position: 'sticky' as const, left: `${stickyLeft[col.key]}px`, zIndex: 52 } : undefined}
-                        className={headerCellClasses(sortColumn === col.key)}>
+                        className={headerCellClasses(col.key, sortColumn === col.key)}>
                         {loading ? (
                           <div className="mx-auto h-[18px] w-14 animate-pulse rounded-md bg-slate-200 dark:bg-slate-700" />
                         ) : col.key === 'brand' ? (
@@ -1473,12 +1429,10 @@ export default function AgentBalance() {
                                 setSortDirection('asc');
                               }
                             }}
-                            className="flex w-full items-center justify-center text-center transition hover:opacity-80"
+                            className="flex w-full items-center justify-center gap-1 transition hover:opacity-80"
                           >
-                            <span className="inline-flex items-center gap-1">
-                              <span>{col.label}</span>
-                              <SortIcon active={sortColumn === col.key} direction={sortDirection} />
-                            </span>
+                            <span>{col.label}</span>
+                            <SortIcon active={sortColumn === col.key} direction={sortDirection} />
                           </button>
                         ) : (
                           col.label
@@ -1491,7 +1445,7 @@ export default function AgentBalance() {
                   {loading ? Array.from({ length: 18 }).map((_, i) => (
                     <tr key={i}>
                       {visibleColumns.map((col) => (
-                        <td key={col.key} className="px-3 py-1">
+                        <td key={col.key} className="px-3 py-1.5">
                           <div className="mx-auto h-2.5 w-3/4 animate-pulse rounded-md bg-slate-200 dark:bg-slate-700" />
                         </td>
                       ))}
@@ -1501,7 +1455,7 @@ export default function AgentBalance() {
                       key={row.agentName || i}
                       className="hover:bg-muted/10 transition-colors"
                     >
-                      {visibleColumns.map((col) => renderCell(row, col.key, stickyLeft[col.key]))}
+                      {visibleColumns.map((col) => renderCell(row, col.key))}
                     </tr>
                   )) : (
                     <tr>

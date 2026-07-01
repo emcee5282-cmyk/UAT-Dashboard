@@ -79,3 +79,8 @@ body {
   background: linear-gradient(90deg, #2a2a2d 25%, #3a3a3d 50%, #2a2a2d 75%);
   background-size: 1000px 100%;
 }
+
+@keyframes navItemIn {
+  from { opacity: 0; transform: translateY(-5px); }
+  to   { opacity: 1; transform: translateY(0);    }
+}

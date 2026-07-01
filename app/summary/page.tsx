@@ -84,7 +84,7 @@ const columnWidths: Record<SortColumn, string> = {
 };
 
 function headerCellClasses(_active: boolean) {
-  return `group text-center px-3 py-2 text-[12px] font-semibold whitespace-nowrap text-foreground`;
+  return `group text-center px-3 py-2 text-[10px] font-semibold uppercase tracking-[0.06em] whitespace-nowrap text-muted-foreground`;
 }
 
 function SortIcon({ active, direction }: { active: boolean; direction: 'asc' | 'desc' }) {
@@ -104,18 +104,18 @@ function SortIcon({ active, direction }: { active: boolean; direction: 'asc' | '
 }
 
 function renderCell(row: Row, key: SortColumn) {
-  const base = 'whitespace-nowrap overflow-hidden text-ellipsis px-3 py-1 text-center text-[9px]';
+  const base = 'whitespace-nowrap overflow-hidden text-ellipsis px-3 py-1.5 text-center text-[11px]';
   switch (key) {
     case 'brand':
-      return <td key={key} className={`${base} text-slate-700 dark:text-slate-300`}>{row.brand}</td>;
+      return <td key={key} className={`${base} text-muted-foreground`}>{row.brand}</td>;
     case 'leader':
-      return <td key={key} className={`${base} text-slate-700 dark:text-slate-300`}>{row.leader}</td>;
+      return <td key={key} className={`${base} text-muted-foreground`}>{row.leader}</td>;
     case 'agentName':
-      return <td key={key} className={`${base} font-bold text-slate-900 dark:text-white`}>{row.agentName}</td>;
+      return <td key={key} className={`${base} font-semibold text-foreground`}>{row.agentName}</td>;
     case 'openingBal':
-      return <td key={key} className={`${base} text-slate-700 dark:text-slate-300`}>{fmt(row.openingBal)}</td>;
+      return <td key={key} className={`${base} tabular-nums text-foreground`}>{fmt(row.openingBal)}</td>;
     case 'sdp':
-      return <td key={key} className={`${base} text-slate-700 dark:text-slate-300`}>{fmt(row.sdp)}</td>;
+      return <td key={key} className={`${base} tabular-nums text-foreground`}>{fmt(row.sdp)}</td>;
     default:
       return null;
   }
@@ -135,7 +135,6 @@ export default function Summary() {
   const [sortColumn, setSortColumn] = useState<SortColumn>('leader');
   const [sortDirection, setSortDirection] = useState<'asc' | 'desc'>('asc');
   const [page, setPage] = useState(1);
-  const [cardsExpanded, setCardsExpanded] = useState(false);
   const [filterMenuOpen, setFilterMenuOpen] = useState(false);
   const [filterMenuPos, setFilterMenuPos] = useState({ top: 0, left: 0 });
   const [columnVisibility, setColumnVisibility] = useState<Record<SortColumn, boolean>>(
@@ -380,30 +379,26 @@ export default function Summary() {
 
   return (
     <div className="h-screen w-full flex flex-col overflow-hidden bg-background font-[Inter,sans-serif] text-foreground transition-colors duration-300 dark:bg-[#1c1c1e]">
-      <header className="sticky top-0 z-30 border-b border-[#e5e5e7] bg-white px-4 py-2 dark:border-[#3a3a3d] dark:bg-[#2a2a2d] md:px-8">
-        <div className="flex items-center justify-between">
-          <h1 className="text-lg font-medium text-foreground">Opening Balance</h1>
+      <header className="sticky top-0 z-30 border-b border-border bg-white/95 py-0 pl-14 pr-4 backdrop-blur-sm dark:bg-[#0d1117]/95 md:px-8">
+        <div className="flex h-12 items-center justify-between">
           <div className="flex items-center gap-3">
-            <span className="flex items-center gap-1.5 text-[10px] text-muted-foreground">
-              <span className="h-1 w-1 rounded-full bg-emerald-500" />
-              {loading ? '—' : (lastUpdated || '—')}
-            </span>
+            <div className="h-4 w-[3px] rounded-full bg-indigo-500" />
+            <h1 className="text-[13px] font-semibold tracking-[-0.01em] text-foreground">Opening Balance</h1>
+          </div>
+          <div className="flex items-center gap-2">
+            <div className="hidden items-center gap-1.5 rounded-md bg-emerald-50 px-2 py-0.5 dark:bg-emerald-500/10 sm:flex">
+              <span className="h-1.5 w-1.5 rounded-full bg-emerald-500" />
+              <span className="tabular-nums text-[9px] font-medium text-emerald-700 dark:text-emerald-400">{loading ? '—' : (lastUpdated || '—')}</span>
+            </div>
+            <span className="h-2 w-2 rounded-full bg-emerald-500 sm:hidden" />
             <ThemeToggle />
             <button
               onClick={fetchData}
               disabled={spinning || loading}
-              className="flex items-center gap-1.5 px-3 py-2 text-[10px] font-medium text-indigo-600 border border-border rounded-lg hover:bg-muted transition-colors disabled:opacity-50"
+              className="flex items-center gap-1.5 rounded-lg border border-border bg-muted/60 px-2.5 py-1.5 text-[11px] font-medium text-foreground transition-colors hover:bg-muted disabled:opacity-50"
             >
-              <RefreshCw size={12} className={spinning ? 'animate-spin' : ''} />
-              Refresh
-            </button>
-            <button
-              type="button"
-              onClick={() => setCardsExpanded((current) => !current)}
-              title={cardsExpanded ? 'Collapse' : 'Expand'}
-              className="flex items-center justify-center rounded-full p-1 text-indigo-600 transition hover:bg-slate-200 dark:hover:bg-white/10"
-            >
-              {cardsExpanded ? <ChevronUp size={12} /> : <ChevronDown size={12} />}
+              <RefreshCw size={11} className={spinning ? 'animate-spin' : ''} />
+              <span className="hidden sm:inline">Refresh</span>
             </button>
           </div>
         </div>
@@ -419,25 +414,23 @@ export default function Summary() {
         )}
 
         {!error && (
-          <div className="mb-1 flex h-5 items-center">
-            {loading ? (
-              <div className="h-3.5 w-24 rounded-md bg-slate-200 dark:bg-slate-700 animate-pulse" />
-            ) : (
-              <span className="text-[11px] font-semibold text-foreground">Total Accounts: <span className="text-indigo-600">{sortedRows.length.toLocaleString('en-PH')}</span></span>
-            )}
-          </div>
-        )}
-
-        {!error && (
-          <div className="flex-1 flex flex-col min-h-0 bg-white rounded-xl border border-border overflow-hidden dark:bg-[#2a2a2d]">
-            <div className="shrink-0 px-3 py-1 min-h-[40px] border-b border-border bg-muted/20 flex items-center justify-between gap-3">
-              <div className="flex items-center gap-2">
-                <div className="flex w-52 items-center gap-2 bg-white border border-border rounded-full px-4 py-1.5 dark:bg-[#2a2a2d]">
+          <div className="flex-1 flex flex-col min-h-0 mt-3 bg-white rounded-xl border border-border overflow-hidden dark:bg-[#2a2a2d]">
+            <div className="shrink-0 px-3 py-2 border-b border-border bg-muted/20 flex items-center justify-between gap-3">
+              <div className="flex items-center gap-2.5">
+                {loading ? (
+                  <div className="h-5 w-28 animate-pulse rounded-md bg-slate-200 dark:bg-slate-700" />
+                ) : (
+                  <div className="flex items-center gap-1.5 rounded-md bg-indigo-50 px-2.5 py-1 dark:bg-indigo-500/15">
+                    <span className="text-[10px] font-medium text-indigo-600 dark:text-indigo-400">Accounts</span>
+                    <span className="text-[11px] font-bold tabular-nums text-indigo-700 dark:text-indigo-300">{sortedRows.length.toLocaleString('en-PH')}</span>
+                  </div>
+                )}
+                <div className="flex w-52 items-center gap-2 rounded-lg border border-border bg-white px-3 py-1.5 dark:bg-[#2a2a2d]">
                   {loading ? (
                     <div className="h-3 w-32 animate-pulse rounded-md bg-slate-200 dark:bg-slate-700" />
                   ) : (
                     <>
-                      <Search size={14} className="text-muted-foreground" />
+                      <Search size={13} className="shrink-0 text-muted-foreground" />
                       <input
                         value={searchTerm}
                         onChange={(event) => setSearchTerm(event.target.value)}
@@ -504,17 +497,17 @@ export default function Summary() {
                   )}
                 </div>
               </div>
-              <div className="flex items-center gap-3">
+              <div className="flex items-center gap-2">
                 {loading ? (
-                  <div className="h-2.5 w-32 rounded-md bg-slate-200 dark:bg-slate-700 animate-pulse" />
+                  <div className="h-6 w-32 animate-pulse rounded-md bg-slate-200 dark:bg-slate-700" />
                 ) : (
-                  <div className="flex items-center gap-2">
-                    <span className="text-[10px] text-muted-foreground">Page {currentPage} of {totalPages}</span>
+                  <div className="flex items-center gap-1.5">
+                    <span className="text-[10px] tabular-nums text-muted-foreground">{currentPage} / {totalPages}</span>
                     <button
                       type="button"
                       onClick={() => setPage((current) => Math.max(1, current - 1))}
                       disabled={currentPage === 1}
-                      className="px-2.5 py-1.5 text-[10px] font-medium text-foreground border border-border rounded-lg hover:bg-white transition-colors disabled:opacity-50"
+                      className="rounded-lg border border-border bg-white px-2.5 py-1.5 text-[10px] font-medium text-foreground transition-colors hover:bg-muted disabled:opacity-40 dark:bg-transparent"
                     >
                       Previous
                     </button>
@@ -522,21 +515,21 @@ export default function Summary() {
                       type="button"
                       onClick={() => setPage((current) => Math.min(totalPages, current + 1))}
                       disabled={currentPage === totalPages}
-                      className="px-2.5 py-1.5 text-[10px] font-medium text-foreground border border-border rounded-lg hover:bg-white transition-colors disabled:opacity-50"
+                      className="rounded-lg border border-border bg-white px-2.5 py-1.5 text-[10px] font-medium text-foreground transition-colors hover:bg-muted disabled:opacity-40 dark:bg-transparent"
                     >
                       Next
                     </button>
                   </div>
                 )}
-                {loading && <div className="h-7 w-20 animate-pulse rounded-xl bg-slate-200 dark:bg-slate-700" />}
+                {loading && <div className="h-7 w-20 animate-pulse rounded-lg bg-slate-200 dark:bg-slate-700" />}
                 {!loading && (
                   <button
                     type="button"
                     onClick={handleExport}
                     title="Export to Excel"
-                    className="p-1.5 rounded-lg hover:bg-white transition-colors border border-border text-foreground"
+                    className="rounded-lg border border-border bg-white p-1.5 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground dark:bg-transparent"
                   >
-                    <Download size={14} />
+                    <Download size={13} />
                   </button>
                 )}
               </div>
@@ -548,7 +541,7 @@ export default function Summary() {
                     <col key={col.key} style={{ width: columnWidths[col.key] }} />
                   ))}
                 </colgroup>
-                <thead className="sticky top-0 z-[50] bg-slate-50 dark:bg-[#252528] shadow-[0_2px_4px_rgba(0,0,0,0.15)] dark:shadow-[0_2px_4px_rgba(0,0,0,0.45)]">
+                <thead className="sticky top-0 z-[50] bg-white dark:bg-[#252528] border-b border-border shadow-[0_1px_3px_rgba(0,0,0,0.06)] dark:shadow-[0_2px_4px_rgba(0,0,0,0.35)]">
                   <tr>
                     {visibleColumns.map((col) => (
                       <th
@@ -700,18 +693,18 @@ export default function Summary() {
                 </thead>
                 <tbody>
                   {loading ? Array.from({ length: 18 }).map((_, i) => (
-                    <tr key={i} className="bg-white dark:bg-[#2a2a2d]">
+                    <tr key={i}>
                       {visibleColumns.map((col) => (
-                        <td key={col.key} className="px-3 py-1">
+                        <td key={col.key} className="px-3 py-1.5">
                           <div className="mx-auto h-2.5 w-3/4 animate-pulse rounded-md bg-slate-200 dark:bg-slate-700" />
                         </td>
                       ))}
                     </tr>
                   )) : pagedRows.length > 0 ? pagedRows.map((row, i) => (
-                    <tr key={i} className="bg-white dark:bg-[#2a2a2d]">
+                    <tr key={i} className={`border-b border-border last:border-0 transition-colors hover:bg-muted/10 ${i % 2 === 1 ? 'bg-muted/5' : ''}`}>
                       {visibleColumns.map((col) => renderCell(row, col.key))}
                     </tr>
-                  )) : <tr><td colSpan={visibleColumns.length} className="px-3 py-8 text-center text-[9px] text-slate-500 dark:text-slate-400">No matching agents found.</td></tr>}
+                  )) : <tr><td colSpan={visibleColumns.length} className="px-3 py-8 text-center text-[11px] text-muted-foreground">No matching agents found.</td></tr>}
                 </tbody>
               </table>
             </div>

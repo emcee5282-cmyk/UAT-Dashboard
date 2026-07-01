@@ -12,9 +12,25 @@ import {
   ChevronDown,
   Menu,
   X,
-  Sparkles,
   Shuffle,
 } from 'lucide-react';
+
+const GeoLogo = () => (
+  <svg viewBox="0 0 24 24" fill="none" className="h-[15px] w-[15px]">
+    {/* Bar 1 — shortest, 55% */}
+    <rect x="1" y="14" width="6" height="6" rx="0.5" fill="white" fillOpacity="0.55" />
+    {/* Bar 2 — mid, 80% */}
+    <rect x="9" y="9" width="6" height="11" rx="0.5" fill="white" fillOpacity="0.80" />
+    {/* Bar 3 — tallest, 100% */}
+    <rect x="17" y="4" width="6" height="16" rx="0.5" fill="white" />
+    {/* Trend line */}
+    <polyline points="4,14 12,9 20,4" stroke="#10b981" strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round" />
+    {/* Dark ring so dot lifts off the white bar */}
+    <circle cx="20" cy="4" r="2" fill="#0c1020" />
+    {/* Emerald dot */}
+    <circle cx="20" cy="4" r="1.4" fill="#10b981" />
+  </svg>
+);
 import { useEffect, useState } from 'react';
 import { fetchTransferQueueCount } from '@/app/lib/transferQueueCount';
 
@@ -57,7 +73,7 @@ export default function Sidebar({ isExpanded, onExpandedChange }: SidebarProps) 
     };
 
     load();
-    const interval = setInterval(load, 3 * 60 * 1000); // refresh every 3 minutes
+    const interval = setInterval(load, 3 * 60 * 1000);
     return () => clearInterval(interval);
   }, []);
 
@@ -66,38 +82,33 @@ export default function Sidebar({ isExpanded, onExpandedChange }: SidebarProps) 
 
   const NavContent = ({ expanded }: { expanded: boolean }) => (
     <>
-      <div className={`flex items-center border-b border-[#e5e5e7] py-5 dark:border-[#3a3a3d] ${expanded ? 'justify-between px-2.5' : 'justify-center px-2.5'}`}>
-        <div className={`flex items-center gap-3 ${expanded ? '' : 'justify-center'}`}>
-          <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-indigo-50 ring-1 ring-indigo-100 dark:bg-indigo-500/15 dark:ring-indigo-400/20">
-            <Sparkles size={16} className="text-indigo-500 dark:text-indigo-300" />
-          </div>
-          <div className={`overflow-hidden whitespace-nowrap transition-all duration-300 ${expanded ? 'max-w-[160px] opacity-100' : 'max-w-0 opacity-0'}`}>
-            <p className="text-sm font-semibold text-slate-900 dark:text-white">Operations</p>
-            <p className="text-[10px] text-slate-400 dark:text-[#a0a0a0]">Dashboard</p>
-          </div>
+      {/* Brand */}
+      <div className={`flex h-14 shrink-0 items-center border-b border-border ${expanded ? 'gap-3 px-4' : 'justify-center'}`}>
+        <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-[#0c1020] ring-1 ring-white/10">
+          <GeoLogo />
         </div>
-        <button onClick={() => setMobileOpen(false)} className="text-slate-400 hover:text-slate-700 dark:text-[#a0a0a0] dark:hover:text-white md:hidden">
-          <X size={16} />
+        <div className={`overflow-hidden transition-all duration-300 ${expanded ? 'max-w-[160px] opacity-100' : 'max-w-0 opacity-0'}`}>
+          <p className="whitespace-nowrap text-[13px] font-semibold leading-tight text-foreground">Operations</p>
+          <p className="text-[8px] leading-snug text-muted-foreground/70">Real-time Operational Dashboard</p>
+        </div>
+        <button
+          onClick={() => setMobileOpen(false)}
+          className="ml-auto text-muted-foreground hover:text-foreground md:hidden"
+        >
+          <X size={15} />
         </button>
       </div>
 
-      <div className="flex-1 space-y-4 overflow-y-auto overflow-x-hidden px-2.5 py-5">
-        <p
-          className={`mb-2 overflow-hidden whitespace-nowrap text-[10px] font-semibold uppercase tracking-[0.18em] text-slate-400 transition-all duration-300 dark:text-[#a0a0a0] ${
-            expanded ? 'px-2.5 opacity-100' : 'px-0 opacity-0'
-          }`}
-        >
-          Main Navigation
-        </p>
-
+      {/* Nav */}
+      <div className="flex-1 space-y-0.5 overflow-y-auto overflow-x-hidden px-2 py-3">
         {!mounted ? (
-          <div className="space-y-2 px-2.5">
-            {Array.from({ length: 4 }).map((_, i) => (
-              <div key={i} className="skeleton h-4 w-3/4 rounded-md" />
+          <div className="space-y-1.5 px-2">
+            {Array.from({ length: 5 }).map((_, i) => (
+              <div key={i} className="skeleton h-8 rounded-lg" />
             ))}
           </div>
         ) : (
-          <div className="space-y-1">
+          <>
             {navItems.map((item) => {
               if (!item.children) {
                 const Icon = item.icon;
@@ -108,13 +119,15 @@ export default function Sidebar({ isExpanded, onExpandedChange }: SidebarProps) 
                     href={item.href!}
                     onClick={() => setMobileOpen(false)}
                     title={expanded ? undefined : item.label}
-                    className={`flex items-center gap-3 rounded-lg px-2.5 py-2 text-[11px] font-medium transition-colors ${expanded ? '' : 'justify-center px-0'} ${
+                    className={`flex w-full items-center gap-3 rounded-lg px-3 py-2 text-[12px] font-medium transition-all duration-150 ${
+                      expanded ? '' : 'justify-center px-0'
+                    } ${
                       active
-                        ? 'bg-slate-100 text-slate-900 dark:bg-white/10 dark:text-white'
-                        : 'text-slate-500 hover:bg-slate-50 hover:text-slate-900 dark:text-[#a0a0a0] dark:hover:bg-white/5 dark:hover:text-white'
+                        ? 'bg-indigo-50 text-indigo-700 dark:bg-indigo-500/15 dark:text-indigo-300'
+                        : 'text-muted-foreground hover:bg-muted hover:text-foreground'
                     }`}
                   >
-                    <Icon size={15} className="shrink-0" />
+                    <Icon size={15} strokeWidth={1.75} className="shrink-0" />
                     <span className={`overflow-hidden whitespace-nowrap transition-all duration-300 ${expanded ? 'max-w-[160px] opacity-100' : 'max-w-0 opacity-0'}`}>
                       {item.label}
                     </span>
@@ -130,18 +143,20 @@ export default function Sidebar({ isExpanded, onExpandedChange }: SidebarProps) 
                   <button
                     onClick={() => setAgentOpen((prev) => !prev)}
                     title={expanded ? undefined : item.label}
-                    className={`flex w-full items-center rounded-lg px-2.5 py-2 text-[11px] font-medium transition-colors ${expanded ? 'justify-between' : 'justify-center px-0'} ${
+                    className={`group flex w-full items-center gap-3 rounded-lg px-3 py-2 text-[12px] font-medium transition-all duration-150 ${
+                      expanded ? 'justify-between' : 'justify-center px-0'
+                    } ${
                       childActive
-                        ? 'text-slate-900 dark:text-white'
-                        : 'text-slate-500 hover:bg-slate-50 hover:text-slate-900 dark:text-[#a0a0a0] dark:hover:bg-white/5 dark:hover:text-white'
+                        ? 'text-foreground'
+                        : 'text-muted-foreground hover:bg-muted hover:text-foreground'
                     }`}
                   >
                     <span className={`flex items-center gap-3 ${expanded ? '' : 'justify-center'}`}>
                       <span className="relative shrink-0">
-                        <ParentIcon size={15} className="shrink-0" />
+                        <ParentIcon size={15} strokeWidth={1.75} />
                         {!expanded && !!displayCount && displayCount > 0 && (
-                          <span className="absolute -right-1.5 -top-1.5 flex h-3 min-w-[12px] items-center justify-center rounded-full bg-indigo-100 px-0.5 text-[7px] font-semibold leading-none text-indigo-600 dark:bg-indigo-500/20 dark:text-indigo-400">
-                            {displayCount > 999 ? '999+' : displayCount}
+                          <span className="absolute -right-1.5 -top-1.5 flex h-3 min-w-[12px] items-center justify-center rounded-full bg-indigo-600 px-0.5 text-[7px] font-bold leading-none text-white">
+                            {displayCount > 99 ? '99+' : displayCount}
                           </span>
                         )}
                       </span>
@@ -149,22 +164,28 @@ export default function Sidebar({ isExpanded, onExpandedChange }: SidebarProps) 
                         {item.label}
                       </span>
                       {expanded && !!displayCount && displayCount > 0 && (
-                        <span className="flex h-4 min-w-[16px] shrink-0 items-center justify-center rounded-full bg-indigo-100 px-1 text-[10px] font-semibold leading-none text-indigo-600 dark:bg-indigo-500/20 dark:text-indigo-400">
+                        <span className="flex h-4 min-w-[20px] shrink-0 items-center justify-center rounded-full bg-indigo-600 px-1.5 text-[9px] font-bold leading-none text-white">
                           {displayCount > 999 ? '999+' : displayCount}
                         </span>
                       )}
                     </span>
                     {expanded && (
                       <ChevronDown
-                        size={14}
-                        className={`shrink-0 transition-transform ${agentOpen ? 'rotate-180' : ''}`}
+                        size={13}
+                        strokeWidth={1.75}
+                        className={`shrink-0 transition-all duration-200 ease-in-out group-hover:text-foreground ${
+                          agentOpen ? 'rotate-180 text-foreground' : 'text-muted-foreground'
+                        }`}
                       />
                     )}
                   </button>
 
-                  {expanded && agentOpen && (
-                    <div className="ml-4 mt-1 space-y-1 border-l border-[#e5e5e7] pl-3 dark:border-[#3a3a3d]">
-                      {item.children.map((child) => {
+                  {/* Animated children — precise max-h + staggered item entrance */}
+                  <div className={`overflow-hidden transition-all duration-250 ease-in-out ${
+                    expanded && agentOpen ? 'max-h-[220px] opacity-100' : 'max-h-0 opacity-0'
+                  }`}>
+                    <div className="ml-4 mt-0.5 space-y-0.5 border-l border-border pb-0.5 pl-3">
+                      {item.children.map((child, idx) => {
                         const ChildIcon = child.icon;
                         const active = pathname === child.href;
                         const isTransferQueue = child.href === '/transfer-queue';
@@ -173,20 +194,25 @@ export default function Sidebar({ isExpanded, onExpandedChange }: SidebarProps) 
                             key={child.href}
                             href={child.href}
                             onClick={() => setMobileOpen(false)}
-                            className={`flex items-center justify-between gap-2.5 whitespace-nowrap rounded-lg px-2.5 py-2 text-[10px] font-medium transition-colors ${
+                            style={
+                              expanded && agentOpen
+                                ? { animation: `navItemIn 180ms ease-out ${idx * 35}ms both` }
+                                : undefined
+                            }
+                            className={`flex w-full items-center justify-between gap-2 whitespace-nowrap rounded-lg px-3 py-2 text-[11px] font-medium transition-all duration-150 ${
                               active
-                                ? 'bg-slate-100 text-slate-900 dark:bg-white/10 dark:text-white'
-                                : 'text-slate-500 hover:bg-slate-50 hover:text-slate-900 dark:text-[#a0a0a0] dark:hover:bg-white/5 dark:hover:text-white'
+                                ? 'bg-indigo-50 text-indigo-700 dark:bg-indigo-500/15 dark:text-indigo-300'
+                                : 'text-muted-foreground hover:bg-muted hover:text-foreground'
                             }`}
                           >
                             <span className="flex items-center gap-2.5">
-                              <ChildIcon size={14} className="shrink-0" />
+                              <ChildIcon size={13} strokeWidth={1.75} className="shrink-0" />
                               {child.label}
                             </span>
                             {isTransferQueue && !!displayCount && displayCount > 0 && (
                               <span
                                 title={`${displayCount} agent${displayCount === 1 ? '' : 's'} need transfer`}
-                                className="flex h-4 min-w-[16px] shrink-0 items-center justify-center rounded-full bg-indigo-100 px-1 text-[10px] font-semibold leading-none text-indigo-600 dark:bg-indigo-500/20 dark:text-indigo-400"
+                                className="flex h-4 min-w-[20px] shrink-0 items-center justify-center rounded-full bg-indigo-600 px-1.5 text-[9px] font-bold leading-none text-white"
                               >
                                 {displayCount > 999 ? '999+' : displayCount}
                               </span>
@@ -195,22 +221,23 @@ export default function Sidebar({ isExpanded, onExpandedChange }: SidebarProps) 
                         );
                       })}
                     </div>
-                  )}
+                  </div>
                 </div>
               );
             })}
-          </div>
+          </>
         )}
       </div>
 
-      <div className={`border-t border-[#e5e5e7] py-4 dark:border-[#3a3a3d] ${expanded ? 'px-2.5' : 'px-2.5'}`}>
-        <div className={`flex items-center gap-3 rounded-xl py-2 ${expanded ? 'px-2.5' : 'justify-center px-0'}`}>
-          <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-slate-100 text-[12px] font-semibold text-slate-600 dark:bg-white/10 dark:text-white">
+      {/* Footer */}
+      <div className={`shrink-0 border-t border-border py-3 ${expanded ? 'px-3' : 'px-2'}`}>
+        <div className={`flex items-center gap-3 rounded-lg py-1.5 ${expanded ? 'px-2' : 'justify-center'}`}>
+          <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-indigo-100 text-[10px] font-bold text-indigo-700 dark:bg-indigo-500/20 dark:text-indigo-300">
             OP
           </div>
           <div className={`min-w-0 overflow-hidden whitespace-nowrap transition-all duration-300 ${expanded ? 'max-w-[160px] opacity-100' : 'max-w-0 opacity-0'}`}>
-            <p className="truncate text-[13px] font-medium text-slate-900 dark:text-white">Operations Admin</p>
-            <p className="truncate text-[11px] text-slate-400 dark:text-[#a0a0a0]">admin@operations.com</p>
+            <p className="truncate text-[12px] font-semibold text-foreground">Operations Admin</p>
+            <p className="truncate text-[10px] text-muted-foreground">admin@operations.com</p>
           </div>
         </div>
       </div>
@@ -221,22 +248,24 @@ export default function Sidebar({ isExpanded, onExpandedChange }: SidebarProps) 
     <>
       <button
         onClick={() => setMobileOpen(true)}
-        className="fixed left-4 top-4 z-50 rounded-xl border border-[#e5e5e7] bg-white/90 p-2 text-[#6b7280] shadow md:hidden"
+        className="fixed left-4 top-4 z-50 rounded-lg border border-border bg-white/90 p-2 text-muted-foreground shadow-sm dark:bg-[#0d1117]/90 md:hidden"
       >
         <Menu size={16} />
       </button>
 
-      {mobileOpen && <div className="fixed inset-0 z-40 bg-[#1c1c1e]/40 md:hidden" onClick={() => setMobileOpen(false)} />}
+      {mobileOpen && (
+        <div className="fixed inset-0 z-40 bg-foreground/20 md:hidden" onClick={() => setMobileOpen(false)} />
+      )}
 
-      <aside className={`fixed left-0 top-0 z-50 flex h-full w-64 flex-col bg-white text-slate-900 transition-transform duration-300 dark:bg-[#1c1c1e] dark:text-white md:hidden ${mobileOpen ? 'translate-x-0' : '-translate-x-full'}`}>
+      <aside className={`fixed left-0 top-0 z-50 flex h-full w-60 flex-col border-r border-border bg-white text-foreground transition-transform duration-300 dark:bg-[#0d1117] md:hidden ${mobileOpen ? 'translate-x-0' : '-translate-x-full'}`}>
         <NavContent expanded />
       </aside>
 
       <aside
         onMouseEnter={() => onExpandedChange(true)}
         onMouseLeave={() => onExpandedChange(false)}
-        className={`fixed left-0 top-0 z-[60] hidden h-screen flex-col overflow-hidden border-r border-[#e5e5e7] bg-white text-slate-900 transition-[width] duration-300 dark:border-[#3a3a3d] dark:bg-[#1c1c1e] dark:text-white md:flex ${
-          isExpanded ? 'w-64 shadow-xl' : 'w-16'
+        className={`fixed left-0 top-0 z-[60] hidden h-screen flex-col overflow-hidden border-r border-border bg-white text-foreground transition-[width] duration-300 dark:bg-[#0d1117] md:flex ${
+          isExpanded ? 'w-60 shadow-lg' : 'w-[52px]'
         }`}
       >
         <NavContent expanded={isExpanded} />

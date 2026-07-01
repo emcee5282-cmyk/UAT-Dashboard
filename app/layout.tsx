@@ -18,6 +18,12 @@ const inter = Inter({
 export const metadata: Metadata = {
   title: "Operations Overview",
   description: "AFKenta Solution",
+  icons: {
+    icon: [
+      { url: "/favicon.ico", sizes: "any" },
+      { url: "/icon.svg", type: "image/svg+xml" },
+    ],
+  },
 };
 
 export default function RootLayout({

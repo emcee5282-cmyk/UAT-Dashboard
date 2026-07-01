@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useState, useCallback } from 'react';
-import { RefreshCw, AlertCircle } from 'lucide-react';
+import { RefreshCw, AlertCircle, TrendingUp, TrendingDown, Wallet, Activity, BarChart2 } from 'lucide-react';
 import { Bar, BarChart, ResponsiveContainer, XAxis, YAxis, Tooltip, CartesianGrid } from 'recharts';
 import ThemeToggle from './components/ThemeToggle';
 import { useTheme } from './components/ThemeProvider';
@@ -310,17 +310,26 @@ export default function Dashboard() {
 
       const agentTotals = new Map<string, { dp: number; wd: number }>();
       const balanceInsideTotals = new Map<string, number>();
+      // wallet-type level DP/WD from Balance Limit data — col[4]=walletType, col[11]=DP, col[13]=WD
+      const walletDPTotals = new Map<string, number>();
+      const walletWDTotals = new Map<string, number>();
       parseCsvLines(agentBalText)
         .slice(1)
         .filter((row) => row.some((cell) => cell.trim() !== ''))
         .forEach((row) => {
           const name = (row[1] ?? '').replace(/"/g, '').trim();
           if (!name || name === '-') return;
+          const dp = clean(row[11]);
+          const wd = clean(row[13]);
           const existing = agentTotals.get(name) ?? { dp: 0, wd: 0 };
-          agentTotals.set(name, {
-            dp: existing.dp + clean(row[11]),
-            wd: existing.wd + clean(row[13]),
-          });
+          agentTotals.set(name, { dp: existing.dp + dp, wd: existing.wd + wd });
+
+          // aggregate by wallet type for the Wallet Summary table
+          const wType = (row[4] ?? '').replace(/"/g, '').trim().toLowerCase();
+          if (wType && wType !== '-') {
+            walletDPTotals.set(wType, (walletDPTotals.get(wType) ?? 0) + dp);
+            walletWDTotals.set(wType, (walletWDTotals.get(wType) ?? 0) + wd);
+          }
 
           const login = (row[15] ?? '').replace(/"/g, '').trim().toLowerCase();
           if (login === 'yes') {
@@ -330,22 +339,51 @@ export default function Dashboard() {
 
       const topUpTotals = new Map<string, number>();
       const stlmTotals = new Map<string, number>();
+      const walletTopUpTotals = new Map<string, number>();
+      const walletStlmTotals = new Map<string, number>();
+
       parseCsvLines(stlmText)
         .slice(1)
         .filter((row) => row.some((cell) => cell.trim() !== ''))
         .forEach((row) => {
+          // Top Up section (cols A-F = 0-5): col[0]=agent, col[2]=wallet, col[3]=amount
+          const topUpAmountNum = clean((row[3] ?? '').replace(/"/g, '').trim());
           const topUpAgent = (row[0] ?? '').replace(/"/g, '').trim();
-          const topUpAmount = (row[3] ?? '').replace(/"/g, '').trim();
-          if (topUpAgent && topUpAgent !== '-' && topUpAmount && topUpAmount !== '-') {
-            topUpTotals.set(topUpAgent, (topUpTotals.get(topUpAgent) ?? 0) + clean(topUpAmount));
+          if (topUpAgent && topUpAgent !== '-' && topUpAmountNum) {
+            topUpTotals.set(topUpAgent, (topUpTotals.get(topUpAgent) ?? 0) + topUpAmountNum);
+          }
+          // wallet-level top up — col[2] = wallet brand
+          const tuWallet = (row[2] ?? '').replace(/"/g, '').trim().toLowerCase();
+          if (tuWallet && tuWallet !== '-' && topUpAmountNum) {
+            walletTopUpTotals.set(tuWallet, (walletTopUpTotals.get(tuWallet) ?? 0) + topUpAmountNum);
           }
 
-          const stlmAgent = (row[7] ?? '').replace(/"/g, '').trim();
-          const stlmAmount = (row[8] ?? '').replace(/"/g, '').trim();
-          if (stlmAgent && stlmAgent !== '-' && stlmAmount && stlmAmount !== '-') {
-            stlmTotals.set(stlmAgent, (stlmTotals.get(stlmAgent) ?? 0) + clean(stlmAmount));
+          // Settlement section (cols H-M = 7-12): col[7]=brand, col[8]=agent, col[9]=wallet, col[10]=amount
+          const stlmAgent = (row[8] ?? '').replace(/"/g, '').trim();
+          const stlmAmountNum = clean((row[10] ?? '').replace(/"/g, '').trim());
+          if (stlmAgent && stlmAgent !== '-' && stlmAmountNum) {
+            stlmTotals.set(stlmAgent, (stlmTotals.get(stlmAgent) ?? 0) + stlmAmountNum);
+          }
+          // wallet-level settlement — col[9] = wallet brand (Bkash/Nagad/etc.)
+          const stlmWallet = (row[9] ?? '').replace(/"/g, '').trim().toLowerCase();
+          if (stlmWallet && stlmWallet !== '-' && stlmAmountNum) {
+            walletStlmTotals.set(stlmWallet, (walletStlmTotals.get(stlmWallet) ?? 0) + stlmAmountNum);
           }
         });
+
+      // Patch wallet summary rows — all values from Balance Limit / stlm data
+      parsed.forEach((row) => {
+        const key = row.wallet.toLowerCase();
+        const computedDP  = walletDPTotals.get(key) ?? 0;
+        const computedWD  = walletWDTotals.get(key) ?? 0;
+        const computedTopUp = walletTopUpTotals.get(key) ?? 0;
+        const computedStlm  = walletStlmTotals.get(key) ?? 0;
+        if (computedDP)  row.totalDP = computedDP;
+        if (computedWD)  row.totalWD = -computedWD;   // WD is stored as positive, display as negative
+        if (computedTopUp) row.bdTransferIn = computedTopUp;
+        if (computedStlm)  row.stlm = computedStlm;
+        row.runningBal = row.opening + row.totalDP + row.totalWD + row.bdTransferIn + row.stlm;
+      });
 
       const mergedAgentRows: AgentRow[] = openingAgentRows.map((agent) => {
         const totals = agentTotals.get(agent.agentName) ?? { dp: 0, wd: 0 };
@@ -484,6 +522,9 @@ export default function Dashboard() {
     return haystack.includes(searchTerm.toLowerCase());
   });
 
+  // Sum from wallet summary rows (now sourced from Balance Limit data)
+  const totalDPSum  = dataRows.reduce((sum, row) => sum + row.totalDP, 0);
+  const totalWDSum  = dataRows.reduce((sum, row) => sum + Math.abs(row.totalWD), 0);
   const runningBalTotal = dataRows.reduce((sum, row) => sum + row.runningBal, 0);
   const runningVsOpening = runningBalTotal - openingTotal;
 
@@ -510,16 +551,16 @@ export default function Dashboard() {
     ? [
         {
           label: 'Total Deposit',
-          bigValue: fmtAbbrev(totalRow.totalDP),
+          bigValue: fmtAbbrev(totalDPSum),
           bigNegative: false,
-          subAmount: fmt(totalRow.totalDP),
+          subAmount: fmt(totalDPSum),
           subPositive: true,
         },
         {
           label: 'Total Withdrawal',
-          bigValue: fmtAbbrev(totalRow.totalWD),
+          bigValue: fmtAbbrev(totalWDSum),
           bigNegative: false,
-          subAmount: fmt(totalRow.totalWD),
+          subAmount: fmt(totalWDSum),
           subPositive: false,
         },
         {
@@ -543,22 +584,26 @@ export default function Dashboard() {
 
   return (
     <div className="min-h-screen bg-[#f5f5f7] text-[#1a1a1a] transition-colors duration-300 dark:bg-[#1c1c1e] dark:text-white">
-      <header className="sticky top-0 z-30 border-b border-[#e5e5e7] bg-white px-4 py-2 dark:border-[#3a3a3d] dark:bg-[#2a2a2d] md:px-8">
-        <div className="flex items-center justify-between">
-          <h1 className="text-lg font-medium text-foreground">SSP Cash Out Overview</h1>
+      <header className="sticky top-0 z-30 border-b border-border bg-white/95 py-0 pl-14 pr-4 backdrop-blur-sm dark:bg-[#0d1117]/95 md:px-8">
+        <div className="flex h-12 items-center justify-between">
           <div className="flex items-center gap-3">
-            <span className="flex items-center gap-1.5 text-[10px] text-muted-foreground">
-              <span className="h-1 w-1 rounded-full bg-emerald-500" />
-              {lastUpdated || '—'}
-            </span>
+            <div className="h-4 w-[3px] rounded-full bg-indigo-500" />
+            <h1 className="text-[13px] font-semibold tracking-[-0.01em] text-foreground">SSP Cash Out Overview</h1>
+          </div>
+          <div className="flex items-center gap-2">
+            <div className="hidden items-center gap-1.5 rounded-md bg-emerald-50 px-2 py-0.5 dark:bg-emerald-500/10 sm:flex">
+              <span className="h-1.5 w-1.5 rounded-full bg-emerald-500" />
+              <span className="tabular-nums text-[9px] font-medium text-emerald-700 dark:text-emerald-400">{lastUpdated || '—'}</span>
+            </div>
+            <span className="h-2 w-2 rounded-full bg-emerald-500 sm:hidden" />
             <ThemeToggle />
             <button
               onClick={fetchData}
               disabled={spinning}
-              className="flex items-center gap-1.5 px-3 py-2 text-[10px] font-medium text-indigo-600 border border-border rounded-lg hover:bg-muted transition-colors disabled:opacity-50"
+              className="flex items-center gap-1.5 rounded-lg border border-border bg-muted/60 px-2.5 py-1.5 text-[11px] font-medium text-foreground transition-colors hover:bg-muted disabled:opacity-50"
             >
-              <RefreshCw size={12} className={spinning ? 'animate-spin' : ''} />
-              Refresh
+              <RefreshCw size={11} className={spinning ? 'animate-spin' : ''} />
+              <span className="hidden sm:inline">Refresh</span>
             </button>
           </div>
         </div>
@@ -568,51 +613,71 @@ export default function Dashboard() {
         {loading && (
           <>
             <div className="relative flex flex-col gap-4 lg:flex-row">
-              <div className="flex flex-1 flex-col gap-4 lg:w-[calc(100%-296px)] lg:flex-none">
-                <section className="grid grid-cols-2 gap-2 sm:grid-cols-4">
-                  {Array.from({ length: 4 }).map((_, index) => (
-                    <div key={index} className="rounded-2xl border border-[#e5e5e7] bg-white p-2.5 shadow-sm dark:border-[#3a3a3d] dark:bg-[#2a2a2d]">
-                      <div className="h-3 w-16 animate-pulse rounded-md bg-slate-200 dark:bg-slate-700" />
-                      <div className="mt-1 h-6 w-20 animate-pulse rounded-md bg-slate-200 dark:bg-slate-700" />
-                      <div className="mt-0.5 h-3 w-24 animate-pulse rounded-md bg-slate-200 dark:bg-slate-700" />
+              <div className="flex flex-1 flex-col gap-4 lg:w-[calc(100%-326px)] lg:flex-none">
+
+                {/* KPI cards skeleton — mirrors: accent bar + icon badge + label + big value + sub */}
+                <section className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+                  {Array.from({ length: 4 }).map((_, i) => (
+                    <div key={i} className="rounded-2xl border border-border bg-white p-4 shadow-sm dark:bg-[#2a2a2d]">
+                      <div className="flex items-start justify-between gap-2">
+                        <div className="h-2.5 w-20 animate-pulse rounded-md bg-slate-200 dark:bg-slate-700" />
+                        <div className="h-7 w-7 shrink-0 animate-pulse rounded-lg bg-slate-200 dark:bg-slate-700" />
+                      </div>
+                      <div className="mt-3 h-7 w-24 animate-pulse rounded-md bg-slate-200 dark:bg-slate-700" />
+                      <div className="mt-2 h-2.5 w-28 animate-pulse rounded-md bg-slate-200 dark:bg-slate-700" />
                     </div>
                   ))}
                 </section>
 
-                <section className="overflow-hidden rounded-2xl border border-[#e5e5e7] bg-white shadow-sm dark:border-[#3a3a3d] dark:bg-[#2a2a2d]">
-                  <div className="flex items-center justify-between border-b border-[#e5e5e7] px-4 py-3 dark:border-[#3a3a3d]">
-                    <div className="h-4 w-32 animate-pulse rounded-md bg-slate-200 dark:bg-slate-700" />
-                    <div className="h-6 w-36 animate-pulse rounded-full bg-slate-200 dark:bg-slate-700" />
+                {/* CashGo Trend skeleton — mirrors: icon+title header / today strip+toggles / 360px chart */}
+                <section className="overflow-hidden rounded-2xl border border-border bg-white shadow-sm dark:bg-[#2a2a2d]">
+                  <div className="flex items-center justify-between border-b border-border px-4 py-3">
+                    <div className="flex items-center gap-2.5">
+                      <div className="h-7 w-7 animate-pulse rounded-lg bg-slate-200 dark:bg-slate-700" />
+                      <div className="h-4 w-28 animate-pulse rounded-md bg-slate-200 dark:bg-slate-700" />
+                    </div>
+                    <div className="h-7 w-28 animate-pulse rounded-lg bg-slate-200 dark:bg-slate-700" />
                   </div>
-                  <div className="border-b border-[#e5e5e7] px-4 py-3 dark:border-[#3a3a3d]">
-                    <div className="h-3 w-72 animate-pulse rounded-md bg-slate-200 dark:bg-slate-700" />
+                  <div className="flex items-center gap-4 border-b border-border px-4 py-2.5">
+                    <div className="h-3 w-10 animate-pulse rounded-md bg-slate-200 dark:bg-slate-700" />
+                    <div className="h-3 w-24 animate-pulse rounded-md bg-slate-200 dark:bg-slate-700" />
+                    <div className="h-3 w-24 animate-pulse rounded-md bg-slate-200 dark:bg-slate-700" />
+                    <div className="h-3 w-28 animate-pulse rounded-md bg-slate-200 dark:bg-slate-700" />
+                    <div className="ml-auto flex gap-1.5">
+                      <div className="h-6 w-12 animate-pulse rounded-md bg-slate-200 dark:bg-slate-700" />
+                      <div className="h-6 w-12 animate-pulse rounded-md bg-slate-200 dark:bg-slate-700" />
+                    </div>
                   </div>
-                  <div className="flex items-center justify-center pt-3">
-                    <div className="h-3 w-40 animate-pulse rounded-md bg-slate-200 dark:bg-slate-700" />
-                  </div>
-                  <div className="h-[320px] px-2 py-4">
-                    <div className="h-full w-full animate-pulse rounded-md bg-slate-200 dark:bg-slate-700" />
+                  <div className="h-[360px] px-3 py-4">
+                    <div className="h-full w-full animate-pulse rounded-xl bg-slate-100 dark:bg-slate-800" />
                   </div>
                 </section>
 
-                <section className="overflow-hidden rounded-2xl border border-[#e5e5e7] bg-white shadow-sm dark:border-[#3a3a3d] dark:bg-[#2a2a2d]">
+                {/* Wallet Summary skeleton — mirrors: header / right-aligned table / alternating rows */}
+                <section className="overflow-hidden rounded-2xl border border-border bg-white shadow-sm dark:bg-[#2a2a2d]">
+                  <div className="border-b border-border px-4 py-3">
+                    <div className="h-4 w-32 animate-pulse rounded-md bg-slate-200 dark:bg-slate-700" />
+                  </div>
                   <div className="overflow-x-auto">
-                    <table className="w-full min-w-[800px] text-sm">
+                    <table className="w-full min-w-[700px]">
                       <thead>
-                        <tr className="border-b border-slate-200 dark:border-slate-700">
-                          {walletColumns.map((col) => (
-                            <th key={col.key} className="px-3 py-2">
-                              <div className="mx-auto h-3 w-16 animate-pulse rounded-md bg-slate-200 dark:bg-slate-700" />
+                        <tr className="border-b border-border bg-muted/30">
+                          {walletColumns.map((col, ci) => (
+                            <th key={col.key} className="px-4 py-2.5">
+                              <div className={`h-2.5 w-14 animate-pulse rounded-md bg-slate-200 dark:bg-slate-700 ${ci === 0 ? '' : 'ml-auto'}`} />
                             </th>
                           ))}
                         </tr>
                       </thead>
                       <tbody>
-                        {Array.from({ length: 4 }).map((_, rowIndex) => (
-                          <tr key={rowIndex}>
-                            {walletColumns.map((col) => (
-                              <td key={col.key} className="px-3 py-2">
-                                <div className="mx-auto h-3 w-14 animate-pulse rounded-md bg-slate-200 dark:bg-slate-700" />
+                        {Array.from({ length: 4 }).map((_, ri) => (
+                          <tr key={ri} className={`border-b border-border last:border-0 ${ri % 2 === 1 ? 'bg-muted/10' : ''}`}>
+                            <td className="px-4 py-3">
+                              <div className="h-3 w-14 animate-pulse rounded-md bg-slate-200 dark:bg-slate-700" />
+                            </td>
+                            {walletColumns.slice(1).map((col) => (
+                              <td key={col.key} className="px-4 py-3">
+                                <div className="ml-auto h-3 w-20 animate-pulse rounded-md bg-slate-200 dark:bg-slate-700" />
                               </td>
                             ))}
                           </tr>
@@ -624,41 +689,44 @@ export default function Dashboard() {
               </div>
 
               <aside className="flex flex-col gap-4 lg:absolute lg:inset-y-0 lg:right-0 lg:w-[310px]">
-                <section className="overflow-hidden rounded-2xl border border-[#e5e5e7] bg-white shadow-sm dark:border-[#3a3a3d] dark:bg-[#2a2a2d]">
-                  <div className="border-b border-[#e5e5e7] px-4 py-3 dark:border-[#3a3a3d]">
-                    <div className="h-4 w-32 animate-pulse rounded-md bg-slate-200 dark:bg-slate-700" />
+
+                {/* Top Performer Wallet skeleton — mirrors: header+label / circle badge + name/sub + value */}
+                <section className="overflow-hidden rounded-2xl border border-border bg-white shadow-sm dark:bg-[#2a2a2d]">
+                  <div className="flex items-center justify-between border-b border-border px-4 py-3">
+                    <div className="h-4 w-36 animate-pulse rounded-md bg-slate-200 dark:bg-slate-700" />
+                    <div className="h-3 w-10 animate-pulse rounded-md bg-slate-200 dark:bg-slate-700" />
                   </div>
                   <div>
-                    {Array.from({ length: 4 }).map((_, index) => (
-                      <div key={index} className="flex items-center justify-between gap-2 px-4 py-2.5">
-                        <div className="flex items-center gap-2">
-                          <div className="h-2.5 w-6 animate-pulse rounded-md bg-slate-200 dark:bg-slate-700" />
-                          <div className="space-y-1">
-                            <div className="h-3 w-16 animate-pulse rounded-md bg-slate-200 dark:bg-slate-700" />
-                            <div className="h-2 w-20 animate-pulse rounded-md bg-slate-200 dark:bg-slate-700" />
-                          </div>
+                    {Array.from({ length: 4 }).map((_, i) => (
+                      <div key={i} className="flex items-center gap-3 border-b border-border px-4 py-2.5 last:border-0">
+                        <div className="h-6 w-6 shrink-0 animate-pulse rounded-full bg-slate-200 dark:bg-slate-700" />
+                        <div className="min-w-0 flex-1 space-y-1.5">
+                          <div className="h-3 w-20 animate-pulse rounded-md bg-slate-200 dark:bg-slate-700" />
+                          <div className="h-2 w-24 animate-pulse rounded-md bg-slate-200 dark:bg-slate-700" />
                         </div>
-                        <div className="h-3 w-12 animate-pulse rounded-md bg-slate-200 dark:bg-slate-700" />
+                        <div className="h-3 w-16 animate-pulse rounded-md bg-slate-200 dark:bg-slate-700" />
                       </div>
                     ))}
                   </div>
                 </section>
 
-                <section className="flex max-h-[420px] flex-col overflow-hidden rounded-2xl border border-[#e5e5e7] bg-white shadow-sm dark:border-[#3a3a3d] dark:bg-[#2a2a2d] lg:max-h-none lg:min-h-0 lg:flex-1">
-                  <div className="border-b border-[#e5e5e7] px-4 py-3 dark:border-[#3a3a3d]">
-                    <div className="h-4 w-40 animate-pulse rounded-md bg-slate-200 dark:bg-slate-700" />
+                {/* High Volume Agents skeleton — mirrors: header+badge / circle rank + name/inside + balance/diff */}
+                <section className="flex max-h-[420px] flex-col overflow-hidden rounded-2xl border border-border bg-white shadow-sm dark:bg-[#2a2a2d] lg:max-h-none lg:min-h-0 lg:flex-1">
+                  <div className="flex items-center justify-between border-b border-border px-4 py-3">
+                    <div className="h-4 w-36 animate-pulse rounded-md bg-slate-200 dark:bg-slate-700" />
+                    <div className="h-5 w-12 animate-pulse rounded-md bg-slate-200 dark:bg-slate-700" />
                   </div>
                   <div className="min-h-0 flex-1 overflow-y-auto">
-                    {Array.from({ length: 8 }).map((_, index) => (
-                      <div key={index} className="flex items-center gap-3 px-4 py-2">
-                        <div className="h-3 w-5 shrink-0 animate-pulse rounded-md bg-slate-200 dark:bg-slate-700" />
-                        <div className="min-w-0 flex-1 space-y-1">
+                    {Array.from({ length: 10 }).map((_, i) => (
+                      <div key={i} className={`flex items-center gap-3 border-b border-border px-4 py-2.5 last:border-0 ${i < 3 ? 'bg-muted/20' : ''}`}>
+                        <div className="h-6 w-6 shrink-0 animate-pulse rounded-full bg-slate-200 dark:bg-slate-700" />
+                        <div className="min-w-0 flex-1 space-y-1.5">
                           <div className="h-3 w-20 animate-pulse rounded-md bg-slate-200 dark:bg-slate-700" />
                           <div className="h-2 w-16 animate-pulse rounded-md bg-slate-200 dark:bg-slate-700" />
                         </div>
-                        <div className="shrink-0 space-y-1 text-right">
-                          <div className="h-3 w-12 animate-pulse rounded-md bg-slate-200 dark:bg-slate-700" />
-                          <div className="h-2 w-10 animate-pulse rounded-md bg-slate-200 dark:bg-slate-700" />
+                        <div className="shrink-0 space-y-1.5 text-right">
+                          <div className="ml-auto h-3 w-20 animate-pulse rounded-md bg-slate-200 dark:bg-slate-700" />
+                          <div className="ml-auto h-2 w-14 animate-pulse rounded-md bg-slate-200 dark:bg-slate-700" />
                         </div>
                       </div>
                     ))}
@@ -680,221 +748,287 @@ export default function Dashboard() {
           <>
             <div className="relative flex flex-col gap-4 lg:flex-row">
               <div className="flex flex-1 flex-col gap-4 lg:w-[calc(100%-326px)] lg:flex-none">
-                <section className="grid grid-cols-2 gap-2 sm:grid-cols-4">
-                  {summaryCards.map((card) => (
-                    <div key={card.label} className="group rounded-2xl border border-[#e5e5e7] bg-white p-4 shadow-sm hover:border-[#1a1a1a]/25 hover:shadow-[0_6px_16px_-4px_rgba(0,0,0,0.10)] dark:border-[#3a3a3d] dark:bg-[#2a2a2d] dark:hover:border-[#e5e5e7]/50 dark:hover:shadow-[0_6px_16px_-4px_rgba(0,0,0,0.35)]">
-                      <span className="text-[12px] font-medium text-[#6b7280] dark:text-[#a0a0a0]">{card.label}</span>
-                      <p className={`mt-1 origin-left text-[24px] font-bold group-hover:scale-[1.055] ${card.bigNegative ? 'text-rose-600 dark:text-rose-400' : 'text-[#1a1a1a] dark:text-white'}`}>
-                        {card.bigNegative ? '-' : ''}{card.bigValue}
-                      </p>
-                      <div className={`mt-1 flex items-center gap-1 text-[11px] font-medium ${card.subPositive ? 'text-emerald-600 dark:text-emerald-400' : 'text-rose-600 dark:text-rose-400'}`}>
-                        {card.showArrow && <span>{card.subPositive ? '▲' : '▼'}</span>}
-                        <span>{card.subAmount}</span>
-                        {card.subSuffix && <span className="font-normal text-[#6b7280] dark:text-[#a0a0a0]">{card.subSuffix}</span>}
+                <section className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+                  {summaryCards.map((card, i) => {
+                    const themes = [
+                      { Icon: TrendingUp,   iconBg: 'bg-emerald-50 dark:bg-emerald-500/10', iconColor: 'text-emerald-600 dark:text-emerald-400' },
+                      { Icon: TrendingDown, iconBg: 'bg-rose-50 dark:bg-rose-500/10',       iconColor: 'text-rose-500 dark:text-rose-400'       },
+                      { Icon: Wallet,       iconBg: 'bg-indigo-50 dark:bg-indigo-500/10',   iconColor: 'text-indigo-600 dark:text-indigo-400'   },
+                      { Icon: Activity,     iconBg: 'bg-amber-50 dark:bg-amber-500/10',     iconColor: 'text-amber-600 dark:text-amber-400'     },
+                    ];
+                    const { Icon, iconBg, iconColor } = themes[i] ?? themes[0];
+                    return (
+                      <div key={card.label} className="rounded-2xl border border-[#e5e5e7] bg-white p-4 shadow-sm transition-shadow hover:shadow-md dark:border-[#3a3a3d] dark:bg-[#2a2a2d]">
+                        <div className="flex items-start justify-between gap-2">
+                          <span className="text-[10px] font-semibold uppercase tracking-[0.07em] text-muted-foreground">{card.label}</span>
+                          <div className={`flex h-7 w-7 shrink-0 items-center justify-center rounded-lg ${iconBg}`}>
+                            <Icon size={13} className={iconColor} />
+                          </div>
+                        </div>
+                        <p className={`mt-2.5 text-[26px] font-bold leading-none tracking-tight ${card.bigNegative ? 'text-rose-600 dark:text-rose-400' : 'text-foreground'}`}>
+                          {card.bigNegative ? '-' : ''}{card.bigValue}
+                        </p>
+                        <div className={`mt-2 flex items-center gap-1 text-[10px] font-medium ${card.subPositive ? 'text-emerald-600 dark:text-emerald-400' : 'text-rose-500 dark:text-rose-400'}`}>
+                          {card.showArrow && <span>{card.subPositive ? '▲' : '▼'}</span>}
+                          <span className="tabular-nums">{card.subAmount}</span>
+                          {card.subSuffix && <span className="font-normal opacity-80">{card.subSuffix}</span>}
+                        </div>
                       </div>
-                    </div>
-                  ))}
+                    );
+                  })}
                 </section>
 
-                <section className="overflow-hidden rounded-2xl border border-[#e5e5e7] bg-white shadow-sm dark:border-[#3a3a3d] dark:bg-[#2a2a2d]">
-                  <div className="flex items-center justify-between border-b border-[#e5e5e7] px-4 py-3 dark:border-[#3a3a3d]">
-                    <h2 className="text-[13px] font-semibold text-slate-900 dark:text-white">
-                      📈 CashGo Trend
-                    </h2>
-                    <div className="flex items-center gap-1 rounded-lg bg-slate-100 p-0.5 dark:bg-slate-800">
+                <section className="overflow-hidden rounded-2xl border border-border bg-white shadow-sm dark:bg-[#2a2a2d]">
+                  {/* Header */}
+                  <div className="flex items-center justify-between border-b border-border px-4 py-3">
+                    <div className="flex items-center gap-2.5">
+                      <div className="flex h-7 w-7 items-center justify-center rounded-lg bg-indigo-50 dark:bg-indigo-500/15">
+                        <BarChart2 size={14} className="text-indigo-600 dark:text-indigo-400" />
+                      </div>
+                      <h2 className="text-[13px] font-semibold text-foreground">CashGo Trend</h2>
+                    </div>
+                    <div className="flex items-center gap-0.5 rounded-lg border border-border p-0.5">
                       <button
                         onClick={() => setCashGoPeriod('week')}
-                        className={`rounded-lg px-3 py-1 text-[10px] font-medium transition-colors ${
+                        className={`rounded-md px-3 py-1 text-[10px] font-medium transition-colors ${
                           cashGoPeriod === 'week'
-                            ? 'bg-slate-900 text-white dark:bg-white dark:text-slate-900'
-                            : 'text-slate-500 dark:text-slate-400'
+                            ? 'bg-indigo-600 text-white'
+                            : 'text-muted-foreground hover:text-foreground'
                         }`}
                       >
-                        Last 7 Days
+                        7 Days
                       </button>
                       <button
                         onClick={() => setCashGoPeriod('month')}
-                        className={`rounded-lg px-3 py-1 text-[10px] font-medium transition-colors ${
+                        className={`rounded-md px-3 py-1 text-[10px] font-medium transition-colors ${
                           cashGoPeriod === 'month'
-                            ? 'bg-slate-900 text-white dark:bg-white dark:text-slate-900'
-                            : 'text-slate-500 dark:text-slate-400'
+                            ? 'bg-indigo-600 text-white'
+                            : 'text-muted-foreground hover:text-foreground'
                         }`}
                       >
-                        Last 30 Days
+                        30 Days
                       </button>
                     </div>
                   </div>
-                  <div className="flex flex-wrap items-center gap-x-3 gap-y-1 border-b border-[#e5e5e7] px-4 py-3 text-[10px] text-[#6b7280] dark:border-[#3a3a3d] dark:text-[#a0a0a0]">
-                    <span className="inline-flex h-1.5 w-1.5 shrink-0 animate-pulse rounded-full bg-emerald-500" />
-                    <span className="font-medium text-slate-700 dark:text-slate-300">Today&apos;s Usage</span>
-                    <span className="text-slate-300 dark:text-slate-600">—</span>
+
+                  {/* Today's usage + BK/NG toggles */}
+                  <div className="flex flex-wrap items-center gap-x-4 gap-y-2 border-b border-border px-4 py-2.5">
+                    <div className="flex items-center gap-1.5">
+                      <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-emerald-500" />
+                      <span className="text-[11px] font-semibold text-foreground">Today</span>
+                    </div>
                     {todayCashGo ? (
-                      <span className="flex flex-wrap items-center gap-x-3">
-                        <span>Bkash: {fmtCell(todayCashGo.bkAmount)}</span>
-                        <span className="text-slate-300 dark:text-slate-600">|</span>
-                        <span>Nagad: {fmtCell(todayCashGo.ngAmount)}</span>
-                        <span className="text-slate-300 dark:text-slate-600">|</span>
-                        <span className="font-bold text-slate-900 dark:text-white">Total Used: {fmtCell(todayCashGo.totalAmount)}</span>
-                      </span>
+                      <>
+                        <div className="flex items-center gap-1.5">
+                          <span className="text-[10px] text-muted-foreground">Bkash</span>
+                          <span className="tabular-nums text-[11px] font-semibold text-foreground">{fmtCell(todayCashGo.bkAmount)}</span>
+                        </div>
+                        <div className="h-3 w-px bg-border" />
+                        <div className="flex items-center gap-1.5">
+                          <span className="text-[10px] text-muted-foreground">Nagad</span>
+                          <span className="tabular-nums text-[11px] font-semibold text-foreground">{fmtCell(todayCashGo.ngAmount)}</span>
+                        </div>
+                        <div className="h-3 w-px bg-border" />
+                        <div className="flex items-center gap-1.5">
+                          <span className="text-[10px] text-muted-foreground">Total</span>
+                          <span className="tabular-nums text-[11px] font-bold text-indigo-600 dark:text-indigo-400">{fmtCell(todayCashGo.totalAmount)}</span>
+                        </div>
+                      </>
                     ) : (
-                      <span>No data yet for today</span>
+                      <span className="text-[10px] text-muted-foreground">No data yet for today</span>
                     )}
+                    <div className="ml-auto flex items-center gap-1.5">
+                      <button
+                        onClick={() => setShowBk(!showBk)}
+                        className={`flex items-center gap-1.5 rounded-md border px-2.5 py-1 text-[10px] font-medium transition-colors ${
+                          showBk
+                            ? 'border-indigo-200 bg-indigo-50 text-indigo-700 dark:border-indigo-500/30 dark:bg-indigo-500/15 dark:text-indigo-300'
+                            : 'border-border text-muted-foreground hover:bg-muted'
+                        }`}
+                      >
+                        <span className="h-1.5 w-1.5 rounded-full" style={{ background: isDark ? '#818cf8' : '#6366f1' }} />
+                        BK
+                      </button>
+                      <button
+                        onClick={() => setShowNg(!showNg)}
+                        className={`flex items-center gap-1.5 rounded-md border px-2.5 py-1 text-[10px] font-medium transition-colors ${
+                          showNg
+                            ? 'border-violet-200 bg-violet-50 text-violet-700 dark:border-violet-500/30 dark:bg-violet-500/15 dark:text-violet-300'
+                            : 'border-border text-muted-foreground hover:bg-muted'
+                        }`}
+                      >
+                        <span className="h-1.5 w-1.5 rounded-full" style={{ background: isDark ? '#a78bfa' : '#7c3aed' }} />
+                        NG
+                      </button>
+                    </div>
                   </div>
-                  <div className="flex items-center justify-center gap-4 pt-3 text-[10px] text-[#6b7280] dark:text-[#a0a0a0]">
-                    <span className="font-semibold text-slate-500 dark:text-slate-400">Wallet Type:</span>
-                    <label className="flex items-center gap-1.5 cursor-pointer">
-                      <input
-                        type="checkbox"
-                        checked={showBk}
-                        onChange={(event) => setShowBk(event.target.checked)}
-                        className="h-3 w-3 cursor-pointer accent-slate-500"
-                      />
-                      BK
-                    </label>
-                    <label className="flex items-center gap-1.5 cursor-pointer">
-                      <input
-                        type="checkbox"
-                        checked={showNg}
-                        onChange={(event) => setShowNg(event.target.checked)}
-                        className="h-3 w-3 cursor-pointer accent-slate-500"
-                      />
-                      NG
-                    </label>
-                  </div>
-                  <div className="h-[400px] px-2 py-4 outline-none select-none" style={{ outline: 'none', userSelect: 'none' }}>
+
+                  {/* Chart */}
+                  <div className="h-[360px] select-none px-3 py-4">
                     <ResponsiveContainer width="100%" height="100%">
                       <BarChart data={cashGoPeriod === 'week' ? cashGoWeekData : cashGoMonthData} margin={{ top: 5, right: 10, left: 0, bottom: 0 }}>
-                        <CartesianGrid vertical={false} stroke="#e5e5e7" strokeDasharray="3 3" />
+                        <CartesianGrid vertical={false} stroke={isDark ? '#27272a' : '#e2e8f0'} strokeDasharray="4 4" />
                         <XAxis
                           dataKey="day"
-                          tick={{ fontSize: 10, fontWeight: 600, fill: isDark ? '#cbd5e1' : '#334155' }}
-                          axisLine={{ stroke: isDark ? '#475569' : '#94a3b8' }}
-                          tickLine={{ stroke: isDark ? '#475569' : '#94a3b8' }}
+                          tick={{ fontSize: 10, fontWeight: 600, fill: isDark ? '#94a3b8' : '#64748b' }}
+                          axisLine={{ stroke: isDark ? '#334155' : '#cbd5e1' }}
+                          tickLine={false}
                           interval={(cashGoPeriod === 'week' ? cashGoWeekData : cashGoMonthData).length > 10 ? 1 : 0}
                         />
                         <YAxis
                           domain={[0, 100]}
                           ticks={[0, 20, 40, 60, 80, 100]}
-                          tick={{ fontSize: 10, fontWeight: 600, fill: isDark ? '#cbd5e1' : '#334155' }}
-                          axisLine={{ stroke: isDark ? '#475569' : '#94a3b8' }}
-                          tickLine={{ stroke: isDark ? '#475569' : '#94a3b8' }}
+                          tick={{ fontSize: 10, fontWeight: 600, fill: isDark ? '#94a3b8' : '#64748b' }}
+                          axisLine={false}
+                          tickLine={false}
                           tickFormatter={(value: number) => `${value}%`}
-                          width={42}
-                          tickMargin={8}
+                          width={38}
+                          tickMargin={6}
                         />
                         <Tooltip content={<CashGoTooltip />} />
-                        <Bar dataKey="totalPct" name="Total Combined %" fill={isDark ? '#f1f5f9' : '#1f2937'} radius={[3, 3, 0, 0]} activeBar={{ fill: isDark ? '#f1f5f9' : '#64748b', fillOpacity: 0.35 }} />
-                        {showBk && <Bar dataKey="bkPct" name="BK Usage %" fill={isDark ? '#64748b' : '#cbd5e1'} radius={[3, 3, 0, 0]} activeBar={{ fill: isDark ? '#f1f5f9' : '#64748b', fillOpacity: 0.35 }} />}
-                        {showNg && <Bar dataKey="ngPct" name="NG Usage %" fill={isDark ? '#71717a' : '#d4d4d8'} radius={[3, 3, 0, 0]} activeBar={{ fill: isDark ? '#f1f5f9' : '#64748b', fillOpacity: 0.35 }} />}
+                        <Bar dataKey="totalPct" name="Total Combined %" fill={isDark ? '#6366f1' : '#4f46e5'} radius={[4, 4, 0, 0]} maxBarSize={48} />
+                        {showBk && <Bar dataKey="bkPct" name="BK Usage %" fill={isDark ? '#818cf8' : '#818cf8'} radius={[4, 4, 0, 0]} maxBarSize={48} />}
+                        {showNg && <Bar dataKey="ngPct" name="NG Usage %" fill={isDark ? '#a78bfa' : '#7c3aed'} radius={[4, 4, 0, 0]} maxBarSize={48} />}
                       </BarChart>
                     </ResponsiveContainer>
                   </div>
                 </section>
 
-                <section className="overflow-hidden rounded-2xl border border-[#e5e5e7] bg-white shadow-sm dark:border-[#3a3a3d] dark:bg-[#2a2a2d]">
-              <div className="overflow-x-auto">
-                <table className="w-full min-w-[800px] text-sm">
-                  <thead>
-                    <tr className="border-b border-slate-200 dark:border-slate-700">
-                      {walletColumns.map((col) => (
-                        <th key={col.key} className="whitespace-nowrap px-3 py-2 text-center text-[11px] font-semibold text-slate-500 dark:text-slate-400">
-                          {col.label}
-                        </th>
-                      ))}
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {filteredRows.length > 0 ? filteredRows.map((row) => (
-                      <tr key={row.wallet} className="transition-colors hover:bg-slate-50 dark:hover:bg-slate-800/40">
-                        <td className="whitespace-nowrap overflow-hidden text-ellipsis px-3 py-2 text-center text-[10px] font-bold text-slate-900 dark:text-white">{row.wallet}</td>
-                        <td className="whitespace-nowrap overflow-hidden text-ellipsis px-3 py-2 text-center text-[10px] text-emerald-600 dark:text-emerald-400">{fmtCell(row.totalDP)}</td>
-                        <td className="whitespace-nowrap overflow-hidden text-ellipsis px-3 py-2 text-center text-[10px] text-rose-600 dark:text-rose-400">{fmtCell(row.totalWD, true)}</td>
-                        <td className="whitespace-nowrap overflow-hidden text-ellipsis px-3 py-2 text-center text-[10px] text-slate-700 dark:text-slate-300">{fmtCell(row.bdTransferIn)}</td>
-                        <td className="whitespace-nowrap overflow-hidden text-ellipsis px-3 py-2 text-center text-[10px] text-slate-700 dark:text-slate-300">{fmtCell(row.stlm, true)}</td>
-                        <td className="whitespace-nowrap overflow-hidden text-ellipsis px-3 py-2 text-center text-[10px] text-slate-700 dark:text-slate-300">{fmtCell(row.actualBal)}</td>
-                        <td className="whitespace-nowrap overflow-hidden text-ellipsis px-3 py-2 text-center">
-                          <div className={`text-[10px] font-semibold ${row.runningBal < 0 ? 'text-rose-600 dark:text-rose-400' : 'text-slate-700 dark:text-slate-300'}`}>{fmtCell(row.runningBal, true)}</div>
-                          <div className={`mt-0.5 text-[9px] font-medium ${row.runningBal >= row.opening ? 'text-emerald-600 dark:text-emerald-400' : 'text-rose-600 dark:text-rose-400'}`}>
-                            {row.runningBal >= row.opening ? '▲' : '▼'} {fmtCell(row.runningBal - row.opening)}
-                          </div>
-                        </td>
-                      </tr>
-                    )) : (
-                      <tr>
-                        <td colSpan={7} className="px-3 py-8 text-center text-sm text-slate-500 dark:text-slate-400">No matching wallets found.</td>
-                      </tr>
-                    )}
-                  </tbody>
-                </table>
-              </div>
+                <section className="overflow-hidden rounded-2xl border border-border bg-white shadow-sm dark:bg-[#2a2a2d]">
+                  <div className="border-b border-border px-4 py-3">
+                    <h2 className="text-[13px] font-semibold text-foreground">Wallet Summary</h2>
+                  </div>
+                  <div className="overflow-x-auto">
+                    <table className="w-full min-w-[700px]">
+                      <thead>
+                        <tr className="border-b border-border bg-muted/30">
+                          {walletColumns.map((col) => (
+                            <th key={col.key} className="whitespace-nowrap px-4 py-2.5 text-right text-[10px] font-semibold uppercase tracking-[0.06em] text-muted-foreground first:text-left">
+                              {col.label}
+                            </th>
+                          ))}
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {filteredRows.length > 0 ? filteredRows.map((row, i) => (
+                          <tr key={row.wallet} className={`border-b border-border last:border-0 transition-colors hover:bg-muted/30 ${i % 2 === 1 ? 'bg-muted/10' : ''}`}>
+                            <td className="whitespace-nowrap px-4 py-3 text-left">
+                              <span className="text-[12px] font-bold text-foreground">{row.wallet}</span>
+                            </td>
+                            <td className="whitespace-nowrap px-4 py-3 text-right tabular-nums text-[11px] font-medium text-emerald-600 dark:text-emerald-400">
+                              {fmtCell(row.totalDP)}
+                            </td>
+                            <td className="whitespace-nowrap px-4 py-3 text-right tabular-nums text-[11px] font-medium text-rose-600 dark:text-rose-400">
+                              {fmtCell(row.totalWD, true)}
+                            </td>
+                            <td className="whitespace-nowrap px-4 py-3 text-right tabular-nums text-[11px] text-foreground">
+                              {fmtCell(row.bdTransferIn)}
+                            </td>
+                            <td className="whitespace-nowrap px-4 py-3 text-right tabular-nums text-[11px] text-foreground">
+                              {fmtCell(row.stlm, true)}
+                            </td>
+                            <td className="whitespace-nowrap px-4 py-3 text-right tabular-nums text-[11px] font-medium text-foreground">
+                              {fmtCell(row.actualBal)}
+                            </td>
+                            <td className="whitespace-nowrap px-4 py-3 text-right">
+                              <div className={`tabular-nums text-[11px] font-bold ${row.runningBal < 0 ? 'text-rose-600 dark:text-rose-400' : 'text-foreground'}`}>
+                                {fmtCell(row.runningBal, true)}
+                              </div>
+                              <div className={`mt-0.5 tabular-nums text-[10px] font-medium ${row.runningBal >= row.opening ? 'text-emerald-600 dark:text-emerald-400' : 'text-rose-500 dark:text-rose-400'}`}>
+                                {row.runningBal >= row.opening ? '▲' : '▼'} {fmtCell(row.runningBal - row.opening)}
+                              </div>
+                            </td>
+                          </tr>
+                        )) : (
+                          <tr>
+                            <td colSpan={7} className="px-4 py-8 text-center text-[11px] text-muted-foreground">No matching wallets found.</td>
+                          </tr>
+                        )}
+                      </tbody>
+                    </table>
+                  </div>
                 </section>
               </div>
 
               <aside className="flex flex-col gap-4 lg:absolute lg:inset-y-0 lg:right-0 lg:w-[310px]">
                 <section className="overflow-hidden rounded-2xl border border-[#e5e5e7] bg-white shadow-sm dark:border-[#3a3a3d] dark:bg-[#2a2a2d]">
-                  <div className="border-b border-[#e5e5e7] px-4 py-3 dark:border-[#3a3a3d]">
+                  <div className="flex items-center justify-between border-b border-[#e5e5e7] px-4 py-3 dark:border-[#3a3a3d]">
                     <h2 className="text-[13px] font-semibold text-slate-900 dark:text-white">Top Performer Wallet</h2>
+                    <span className="text-[10px] font-medium text-slate-400 dark:text-slate-500">Net P&amp;L</span>
                   </div>
                   <div>
-                    {walletGainRanking.map((item, index) => (
-                      <div
-                        key={item.wallet}
-                        className={`flex items-center justify-between gap-2 px-4 py-2.5 ${index === 0 ? 'bg-rose-50 dark:bg-rose-500/10' : ''}`}
-                      >
-                        <div className="flex items-center gap-2">
-                          <span className="text-[11px] font-semibold text-slate-400 dark:text-slate-500">{RANK_LABELS[index]}</span>
-                          <div>
-                            <p className={`text-[12px] font-medium ${index === 0 ? 'text-rose-700 dark:text-rose-300' : 'text-slate-700 dark:text-slate-300'}`}>
-                              {item.wallet}
-                            </p>
-                            <p className="text-[10px] text-slate-500 dark:text-slate-400">
-                              Actual Bal: {fmtCell(item.actualBal, true)}
-                            </p>
-                          </div>
-                        </div>
-                        <span
-                          className={`text-[12px] font-bold ${
-                            item.gain < 0
-                              ? 'text-rose-600 dark:text-rose-400'
-                              : index === 0
-                              ? 'text-rose-700 dark:text-rose-300'
-                              : 'text-slate-900 dark:text-white'
+                    {walletGainRanking.map((item, index) => {
+                      const badgeStyle = ([
+                        'bg-amber-100 text-amber-700 dark:bg-amber-400/20 dark:text-amber-400',
+                        'bg-slate-100 text-slate-500 dark:bg-slate-700/60 dark:text-slate-400',
+                        'bg-orange-100 text-orange-600 dark:bg-orange-400/20 dark:text-orange-400',
+                        'bg-slate-50 text-slate-400 dark:bg-slate-800 dark:text-slate-500',
+                      ] as const)[index] ?? 'bg-slate-50 text-slate-400';
+                      return (
+                        <div
+                          key={item.wallet}
+                          className={`flex items-center gap-3 border-b border-[#e5e5e7] px-4 py-2.5 last:border-0 dark:border-[#3a3a3d] ${
+                            index === 0 ? 'bg-rose-50/70 dark:bg-rose-500/5' : ''
                           }`}
                         >
-                          {fmtCell(item.gain, true)}
-                        </span>
-                      </div>
-                    ))}
+                          <div className={`flex h-6 w-6 shrink-0 items-center justify-center rounded-full text-[9px] font-bold ${badgeStyle}`}>
+                            {index + 1}
+                          </div>
+                          <div className="min-w-0 flex-1">
+                            <p className="truncate text-[12px] font-semibold text-slate-900 dark:text-white">{item.wallet}</p>
+                            <p className="text-[10px] text-slate-400 dark:text-slate-500">Bal: {fmtCell(item.actualBal, true)}</p>
+                          </div>
+                          <span className={`shrink-0 text-[12px] font-bold tabular-nums ${
+                            item.gain < 0 ? 'text-rose-600 dark:text-rose-400' : 'text-emerald-600 dark:text-emerald-400'
+                          }`}>
+                            {fmtCell(item.gain, true)}
+                          </span>
+                        </div>
+                      );
+                    })}
                   </div>
                 </section>
 
-                <section className="flex max-h-[420px] flex-col overflow-hidden rounded-2xl border border-[#e5e5e7] bg-white shadow-sm dark:border-[#3a3a3d] dark:bg-[#2a2a2d] lg:max-h-none lg:min-h-0 lg:flex-1">
-                  <div className="border-b border-[#e5e5e7] px-4 py-3 dark:border-[#3a3a3d]">
-                    <h2 className="text-[13px] font-semibold text-slate-900 dark:text-white">Top {top50Agents.length} High Volume Agents</h2>
+                <section className="flex max-h-[420px] flex-col overflow-hidden rounded-2xl border border-border bg-white shadow-sm dark:bg-[#2a2a2d] lg:max-h-none lg:min-h-0 lg:flex-1">
+                  <div className="flex items-center justify-between border-b border-border px-4 py-3">
+                    <h2 className="text-[13px] font-semibold text-foreground">High Volume Agents</h2>
+                    <span className="rounded-md bg-indigo-50 px-2 py-0.5 text-[10px] font-semibold text-indigo-600 dark:bg-indigo-500/15 dark:text-indigo-400">
+                      Top {top50Agents.length}
+                    </span>
                   </div>
                   <div className="min-h-0 flex-1 overflow-y-auto">
                     {top50Agents.length > 0 ? top50Agents.map((agent, index) => {
                       const diff = agent.runningBalance - agent.opening;
                       const up = diff >= 0;
+                      const rankBadge = ([
+                        'bg-amber-100 text-amber-700 dark:bg-amber-400/20 dark:text-amber-400',
+                        'bg-slate-100 text-slate-500 dark:bg-slate-700/60 dark:text-slate-400',
+                        'bg-orange-100 text-orange-600 dark:bg-orange-400/20 dark:text-orange-400',
+                      ] as const)[index];
                       return (
-                        <div key={agent.agentName} className="flex items-start gap-3 px-4 py-2">
-                          <span className="w-5 shrink-0 text-[10px] font-semibold text-slate-400 dark:text-slate-500">{index + 1}</span>
+                        <div
+                          key={agent.agentName}
+                          className={`flex items-center gap-3 border-b border-border px-4 py-2.5 last:border-0 transition-colors hover:bg-muted/40 ${index < 3 ? 'bg-muted/20' : ''}`}
+                        >
+                          <div className={`flex h-6 w-6 shrink-0 items-center justify-center rounded-full text-[9px] font-bold ${rankBadge ?? 'text-[10px] font-semibold text-muted-foreground'}`}>
+                            {index + 1}
+                          </div>
                           <div className="min-w-0 flex-1">
-                            <p className="truncate text-[12px] font-medium text-slate-900 dark:text-white">{agent.agentName}</p>
-                            <p className="text-[10px] text-slate-500 dark:text-slate-400">Bal. Inside: {fmtCell(agent.balanceInside)}</p>
+                            <p className="truncate text-[12px] font-semibold text-foreground">{agent.agentName}</p>
+                            <p className="tabular-nums text-[10px] text-muted-foreground">Inside: {fmtCell(agent.balanceInside)}</p>
                           </div>
                           <div className="shrink-0 text-right">
-                            <p className={`text-[11px] font-semibold ${agent.runningBalance < 0 ? 'text-rose-600 dark:text-rose-400' : 'text-slate-700 dark:text-slate-300'}`}>
+                            <p className={`tabular-nums text-[11px] font-bold ${agent.runningBalance < 0 ? 'text-rose-600 dark:text-rose-400' : 'text-foreground'}`}>
                               {fmtCell(agent.runningBalance, true)}
                             </p>
-                            <p className={`text-[10px] font-medium ${up ? 'text-emerald-600 dark:text-emerald-400' : 'text-rose-600 dark:text-rose-400'}`}>
+                            <p className={`tabular-nums text-[10px] font-medium ${up ? 'text-emerald-600 dark:text-emerald-400' : 'text-rose-500 dark:text-rose-400'}`}>
                               {up ? '▲' : '▼'} {fmtCell(diff)}
                             </p>
                           </div>
                         </div>
                       );
                     }) : (
-                      <p className="px-4 py-8 text-center text-[11px] text-slate-500 dark:text-slate-400">No agent data found.</p>
+                      <p className="px-4 py-8 text-center text-[11px] text-muted-foreground">No agent data found.</p>
                     )}
                   </div>
                 </section>

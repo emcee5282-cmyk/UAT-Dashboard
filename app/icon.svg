@@ -1,0 +1,19 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32">
+  <!-- Dark navy background -->
+  <rect width="32" height="32" rx="7" fill="#0f172a"/>
+
+  <!-- Bar 1 (left, 55% opacity) -->
+  <rect x="4" y="21" width="6" height="7" rx="0.5" fill="white" fill-opacity="0.55"/>
+  <!-- Bar 2 (middle, 80% opacity) -->
+  <rect x="13" y="15" width="6" height="13" rx="0.5" fill="white" fill-opacity="0.80"/>
+  <!-- Bar 3 (right, 100% opacity) -->
+  <rect x="22" y="9" width="6" height="19" rx="0.5" fill="white"/>
+
+  <!-- Trend line connecting bar tops -->
+  <polyline points="7,21 16,15 25,9" stroke="#10b981" stroke-width="1.3" fill="none" stroke-linecap="round" stroke-linejoin="round"/>
+
+  <!-- Dark ring to lift dot off white bar -->
+  <circle cx="25" cy="9" r="2.5" fill="#0f172a"/>
+  <!-- Emerald dot -->
+  <circle cx="25" cy="9" r="1.8" fill="#10b981"/>
+</svg>
