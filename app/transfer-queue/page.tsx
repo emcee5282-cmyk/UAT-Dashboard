@@ -400,6 +400,19 @@ function SortIcon({ active, direction }: { active: boolean; direction: 'asc' | '
   );
 }
 
+function mobileNumericField(row: QueueRow, key: ColumnKey): { value: string; className: string } {
+  switch (key) {
+    case 'balanceInside':
+      return { value: displayNum(row.balanceInside), className: row.balanceInside < 0 ? 'text-rose-600 dark:text-rose-400' : 'text-foreground' };
+    case 'discrepancy':
+      return { value: displayNum(row.discrepancy), className: 'text-foreground' };
+    case 'sdpVsBalance':
+      return { value: row.sdpVsBalance > 0 ? displayNum(Math.abs(row.sdpVsBalance)) : '−', className: 'text-foreground' };
+    default:
+      return { value: '−', className: 'text-foreground' };
+  }
+}
+
 function renderCell(row: QueueRow, key: ColumnKey) {
   const base = 'whitespace-nowrap overflow-hidden text-ellipsis text-[11px] text-center px-3 py-1.5';
   switch (key) {
@@ -851,8 +864,8 @@ export default function TransferQueue() {
 
         {!error && (
           <div className="flex-1 flex flex-col min-h-0 mt-3 bg-white rounded-xl border border-border overflow-hidden dark:bg-[#2a2a2d]">
-            <div className="shrink-0 px-3 py-2 border-b border-border bg-muted/20 flex items-center justify-between gap-3">
-              <div className="flex items-center gap-2.5">
+            <div className="shrink-0 px-3 py-2 border-b border-border bg-muted/20 flex flex-wrap items-center justify-between gap-2">
+              <div className="flex flex-wrap items-center gap-2">
                 {loading ? (
                   <div className="h-5 w-28 animate-pulse rounded-md bg-slate-200 dark:bg-slate-700" />
                 ) : (
@@ -861,7 +874,7 @@ export default function TransferQueue() {
                     <span className="text-[11px] font-bold tabular-nums text-indigo-700 dark:text-indigo-300">{filteredRows.length.toLocaleString('en-PH')}</span>
                   </div>
                 )}
-                <div className="flex w-52 items-center gap-2 rounded-lg border border-border bg-white px-3 py-1.5 dark:bg-[#2a2a2d]">
+                <div className="flex w-full min-w-[140px] flex-1 items-center gap-2 rounded-lg border border-border bg-white px-3 py-1.5 dark:bg-[#2a2a2d] sm:w-52 sm:flex-none">
                   {loading ? (
                     <div className="h-3 w-32 animate-pulse rounded-md bg-slate-200 dark:bg-slate-700" />
                   ) : (
@@ -885,7 +898,9 @@ export default function TransferQueue() {
                         event.stopPropagation();
                         const rect = columnButtonRef.current?.getBoundingClientRect();
                         if (rect) {
-                          setColumnMenuPos({ top: rect.bottom + 8, left: rect.left });
+                          const dropdownWidth = 224;
+                          const left = Math.min(rect.left, window.innerWidth - dropdownWidth - 8);
+                          setColumnMenuPos({ top: rect.bottom + 8, left: Math.max(8, left) });
                         }
                         setColumnMenuOpen((current) => !current);
                       }}
@@ -970,7 +985,7 @@ export default function TransferQueue() {
                 )}
               </div>
             </div>
-            <div className="flex-1 min-h-0 overflow-y-auto overflow-x-scroll">
+            <div className="hidden flex-1 min-h-0 overflow-y-auto overflow-x-scroll sm:block">
               <table className="w-full table-fixed text-xs">
                 <colgroup>
                   {visibleColumns.map((col) => (
@@ -1166,6 +1181,90 @@ export default function TransferQueue() {
                   )}
                 </tbody>
               </table>
+            </div>
+
+            <div className="flex-1 min-h-0 overflow-y-auto sm:hidden">
+              <div className="flex flex-col gap-2 p-3">
+                {loading ? (
+                  Array.from({ length: 8 }).map((_, i) => (
+                    <div key={i} className="rounded-xl border border-border bg-white p-3.5 dark:bg-[#2a2a2d]">
+                      <div className="h-4 w-2/3 animate-pulse rounded-md bg-slate-200 dark:bg-slate-700" />
+                      <div className="mt-2 h-3 w-1/3 animate-pulse rounded-md bg-slate-200 dark:bg-slate-700" />
+                      <div className="mt-3 h-6 w-1/2 animate-pulse rounded-md bg-slate-200 dark:bg-slate-700" />
+                    </div>
+                  ))
+                ) : pagedRows.length > 0 ? (
+                  pagedRows.map((row) => {
+                    const showAgent = columnVisibility.shopName;
+                    const showBrand = columnVisibility.brand;
+                    const showBalance = columnVisibility.companyBalance;
+                    const numericFields = visibleColumns.filter((col) =>
+                      (['balanceInside', 'discrepancy', 'sdpVsBalance'] as ColumnKey[]).includes(col.key)
+                    );
+                    const showCurrentGroup = columnVisibility.currentGroup;
+                    const showCorrectGroup = columnVisibility.correctGroup;
+                    const showRemarks = columnVisibility.remarks;
+                    return (
+                      <div key={row.key} className="rounded-xl border border-border bg-white p-3.5 dark:bg-[#2a2a2d]">
+                        {(showAgent || showBrand) && (
+                          <div className="flex items-start justify-between gap-2">
+                            {showAgent && <p className="min-w-0 truncate text-sm font-bold text-foreground">{row.account}</p>}
+                            {showBrand && <span className="shrink-0 text-[11px] font-medium text-muted-foreground">{row.brand}</span>}
+                          </div>
+                        )}
+
+                        {showBalance && (
+                          <div className={`flex items-baseline justify-between ${(showAgent || showBrand) ? 'mt-2.5' : ''}`}>
+                            <span className="text-[10px] font-medium text-muted-foreground">Company Balance</span>
+                            <span className={`text-lg font-bold tabular-nums ${row.companyBalance < 0 ? 'text-rose-600 dark:text-rose-400' : 'text-foreground'}`}>
+                              {displayNum(row.companyBalance)}
+                            </span>
+                          </div>
+                        )}
+
+                        {numericFields.length > 0 && (
+                          <div className={`grid grid-cols-3 gap-2 ${(showAgent || showBrand || showBalance) ? 'mt-2.5 border-t border-border pt-2.5' : ''}`}>
+                            {numericFields.map((col) => {
+                              const { value, className } = mobileNumericField(row, col.key);
+                              return (
+                                <div key={col.key}>
+                                  <p className="text-[9px] font-medium text-muted-foreground">{col.label}</p>
+                                  <p className={`text-[11px] font-semibold tabular-nums ${className}`}>{value}</p>
+                                </div>
+                              );
+                            })}
+                          </div>
+                        )}
+
+                        {(showCurrentGroup || showCorrectGroup) && (
+                          <div className={`space-y-1.5 ${(showAgent || showBrand || showBalance || numericFields.length > 0) ? 'mt-2.5 border-t border-border pt-2.5' : ''}`}>
+                            {showCurrentGroup && (
+                              <div>
+                                <p className="text-[9px] font-medium text-muted-foreground">Current Group</p>
+                                <p className="text-[11px] text-muted-foreground">{row.currentGroup}</p>
+                              </div>
+                            )}
+                            {showCorrectGroup && (
+                              <div>
+                                <p className="text-[9px] font-medium text-muted-foreground">Correct Group</p>
+                                <p className="text-[11px] font-medium text-foreground">{row.correctGroup}</p>
+                              </div>
+                            )}
+                          </div>
+                        )}
+
+                        {showRemarks && row.remarks && (
+                          <p className="mt-2 text-[10px] text-muted-foreground">{row.remarks}</p>
+                        )}
+                      </div>
+                    );
+                  })
+                ) : (
+                  <div className="px-3 py-8 text-center text-[11px] text-muted-foreground">
+                    No accounts need transfer.
+                  </div>
+                )}
+              </div>
             </div>
           </div>
         )}
