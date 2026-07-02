@@ -248,7 +248,7 @@ export default function Sidebar({ isExpanded, onExpandedChange }: SidebarProps) 
     <>
       <button
         onClick={() => setMobileOpen(true)}
-        className="fixed left-4 top-4 z-50 rounded-lg border border-border bg-white/90 p-2 text-muted-foreground shadow-sm dark:bg-[#0d1117]/90 md:hidden"
+        className="fixed left-4 top-2 z-50 rounded-lg border border-border bg-white/90 p-2 text-muted-foreground shadow-sm dark:bg-[#0d1117]/90 md:hidden"
       >
         <Menu size={16} />
       </button>
