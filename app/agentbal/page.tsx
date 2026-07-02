@@ -319,6 +319,13 @@ const TABLE_MIN_WIDTH = '1680px';
 const STICKY_COLS: ColumnKey[] = [];
 const DEFAULT_HIDDEN: ColumnKey[] = ['brand', 'sdp', 'settlement', 'topUp', 'sdpVsBalance'];
 
+// Fixed display order for the mobile card's balances grid.
+const BALANCE_GRID_ORDER: ColumnKey[] = [
+  'balanceInside', 'agentWithdrawal', 'opening',
+  'totalWD', 'topUp', 'totalDP',
+  'settlement', 'sdp', 'sdpVsBalance',
+];
+
 function SortIcon({ active, direction }: { active: boolean; direction: 'asc' | 'desc' }) {
   if (!active) {
     return (
@@ -338,7 +345,6 @@ function SortIcon({ active, direction }: { active: boolean; direction: 'asc' | '
 function headerCellClasses(_colKey: ColumnKey, _isSorted: boolean) {
   return `text-center px-3 py-2 text-[10px] font-semibold uppercase tracking-[0.06em] whitespace-nowrap text-muted-foreground`;
 }
-
 
 function walletStatusBadgeClasses(status: string): string {
   switch (status) {
@@ -1576,48 +1582,56 @@ export default function AgentBalance() {
                 ) : pagedRows.length > 0 ? (
                   pagedRows.map((row, i) => {
                     const showName = columnVisibility.walletName;
+                    const showBrand = columnVisibility.brand;
                     const showStatus = columnVisibility.walletStatus;
                     const showBalance = columnVisibility.companyBalance;
                     const subtitle = [
                       columnVisibility.leader ? row.leader : null,
                       columnVisibility.walletType && row.walletType !== '−' ? row.walletType : null,
                     ].filter(Boolean).join(' · ');
-                    const gridFields = visibleColumns.filter(
-                      (col) => !['walletName', 'walletStatus', 'companyBalance', 'leader', 'walletType'].includes(col.key)
-                    );
+                    const hasHeader = showName || showBrand || showStatus || !!subtitle;
+
+                    const gridFields = BALANCE_GRID_ORDER.filter((key) => columnVisibility[key]);
+
                     return (
-                      <div key={row.agentName || i} className="rounded-xl border border-border bg-white p-3.5 dark:bg-[#2a2a2d]">
-                        {(showName || showStatus) && (
-                          <div className="flex items-start justify-between gap-2">
+                      <div key={row.agentName || i} className="rounded-xl border-[0.5px] border-border bg-white p-4 dark:bg-[#2a2a2d]">
+                        {hasHeader && (
+                          <div className="flex items-start justify-between gap-2 border-b border-border pb-3">
                             <div className="min-w-0">
-                              {showName && <p className="truncate text-sm font-bold text-foreground">{row.agentName}</p>}
-                              {subtitle && <p className="truncate text-[11px] text-muted-foreground">{subtitle}</p>}
+                              {showName && <p className="truncate text-base font-bold text-foreground">{row.agentName}</p>}
+                              {subtitle && <p className="truncate text-[12px] text-muted-foreground">{subtitle}</p>}
                             </div>
-                            {showStatus && (
-                              <span className={`inline-flex shrink-0 items-center whitespace-nowrap rounded-md border px-2 py-1 text-[10px] font-medium ${walletStatusBadgeClasses(row.walletStatus)}`}>
-                                {row.walletStatus}
-                              </span>
-                            )}
+                            <div className="flex shrink-0 items-center gap-1.5">
+                              {showBrand && (
+                                <span className="rounded-full border-[0.5px] border-border px-2.5 py-0.5 text-[11px] text-muted-foreground">
+                                  {row.brand}
+                                </span>
+                              )}
+                              {showStatus && (
+                                <span className={`rounded-full border px-2.5 py-0.5 text-[11px] font-medium ${walletStatusBadgeClasses(row.walletStatus)}`}>
+                                  {row.walletStatus}
+                                </span>
+                              )}
+                            </div>
                           </div>
                         )}
 
                         {showBalance && (
-                          <div className={`flex items-baseline justify-between ${(showName || showStatus) ? 'mt-2.5' : ''}`}>
-                            <span className="text-[10px] font-medium text-muted-foreground">Company Balance</span>
-                            <span className={`text-lg font-bold tabular-nums ${displayNum(row.runningBalance) !== '−' && row.runningBalance < 0 ? 'text-rose-600 dark:text-rose-400' : 'text-foreground'}`}>
-                              {displayNum(row.runningBalance)}
-                            </span>
+                          <div className={`flex items-center justify-between ${hasHeader ? 'pt-3' : ''}`}>
+                            <span className="text-[12px] text-muted-foreground">Company Balance</span>
+                            <span className="text-xl font-bold tabular-nums text-foreground">{displayNum(row.runningBalance)}</span>
                           </div>
                         )}
 
                         {gridFields.length > 0 && (
-                          <div className={`grid grid-cols-3 gap-2 ${(showName || showStatus || showBalance) ? 'mt-2.5 border-t border-border pt-2.5' : ''}`}>
-                            {gridFields.map((col) => {
-                              const { value, className } = mobileCardFieldValue(row, col.key);
+                          <div className={`grid grid-cols-3 gap-x-3 gap-y-3 ${(hasHeader || showBalance) ? 'mt-3' : ''}`}>
+                            {gridFields.map((key) => {
+                              const col = columnDefs.find((c) => c.key === key)!;
+                              const { value, className } = mobileCardFieldValue(row, key);
                               return (
-                                <div key={col.key}>
-                                  <p className="text-[9px] font-medium text-muted-foreground">{col.label}</p>
-                                  <p className={`text-[11px] font-semibold tabular-nums ${className}`}>{value}</p>
+                                <div key={key}>
+                                  <p className="text-[11px] text-muted-foreground">{col.label}</p>
+                                  <p className={`mt-0.5 text-[13px] font-semibold tabular-nums ${className}`}>{value}</p>
                                 </div>
                               );
                             })}
