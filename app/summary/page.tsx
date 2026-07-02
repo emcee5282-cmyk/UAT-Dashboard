@@ -415,8 +415,8 @@ export default function Summary() {
 
         {!error && (
           <div className="flex-1 flex flex-col min-h-0 mt-3 bg-white rounded-xl border border-border overflow-hidden dark:bg-[#2a2a2d]">
-            <div className="shrink-0 px-3 py-2 border-b border-border bg-muted/20 flex items-center justify-between gap-3">
-              <div className="flex items-center gap-2.5">
+            <div className="shrink-0 px-3 py-2 border-b border-border bg-muted/20 flex flex-wrap items-center justify-between gap-2">
+              <div className="flex flex-wrap items-center gap-2">
                 {loading ? (
                   <div className="h-5 w-28 animate-pulse rounded-md bg-slate-200 dark:bg-slate-700" />
                 ) : (
@@ -425,7 +425,7 @@ export default function Summary() {
                     <span className="text-[11px] font-bold tabular-nums text-indigo-700 dark:text-indigo-300">{sortedRows.length.toLocaleString('en-PH')}</span>
                   </div>
                 )}
-                <div className="flex w-52 items-center gap-2 rounded-lg border border-border bg-white px-3 py-1.5 dark:bg-[#2a2a2d]">
+                <div className="flex w-full min-w-[140px] flex-1 items-center gap-2 rounded-lg border border-border bg-white px-3 py-1.5 dark:bg-[#2a2a2d] sm:w-52 sm:flex-none">
                   {loading ? (
                     <div className="h-3 w-32 animate-pulse rounded-md bg-slate-200 dark:bg-slate-700" />
                   ) : (
@@ -449,7 +449,9 @@ export default function Summary() {
                         event.stopPropagation();
                         const rect = filterButtonRef.current?.getBoundingClientRect();
                         if (rect) {
-                          setFilterMenuPos({ top: rect.bottom + 8, left: rect.left });
+                          const dropdownWidth = 224;
+                          const left = Math.min(rect.left, window.innerWidth - dropdownWidth - 8);
+                          setFilterMenuPos({ top: rect.bottom + 8, left: Math.max(8, left) });
                         }
                         setFilterMenuOpen((current) => !current);
                       }}
@@ -534,7 +536,7 @@ export default function Summary() {
                 )}
               </div>
             </div>
-            <div className="relative flex-1 min-h-0 overflow-y-auto overflow-x-auto">
+            <div className="hidden relative flex-1 min-h-0 overflow-y-auto overflow-x-auto sm:block">
               <table className="w-full table-fixed text-sm">
                 <colgroup>
                   {visibleColumns.map((col) => (
@@ -707,6 +709,46 @@ export default function Summary() {
                   )) : <tr><td colSpan={visibleColumns.length} className="px-3 py-8 text-center text-[11px] text-muted-foreground">No matching agents found.</td></tr>}
                 </tbody>
               </table>
+            </div>
+
+            <div className="flex-1 min-h-0 overflow-y-auto sm:hidden">
+              <div className="flex flex-col gap-2 p-3">
+                {loading ? (
+                  Array.from({ length: 8 }).map((_, i) => (
+                    <div key={i} className="rounded-xl border border-border bg-white p-3.5 dark:bg-[#2a2a2d]">
+                      <div className="h-4 w-2/3 animate-pulse rounded-md bg-slate-200 dark:bg-slate-700" />
+                      <div className="mt-2 h-3 w-1/3 animate-pulse rounded-md bg-slate-200 dark:bg-slate-700" />
+                      <div className="mt-3 h-6 w-1/2 animate-pulse rounded-md bg-slate-200 dark:bg-slate-700" />
+                    </div>
+                  ))
+                ) : pagedRows.length > 0 ? (
+                  pagedRows.map((row, i) => (
+                    <div key={row.agentName || i} className="rounded-xl border border-border bg-white p-3.5 dark:bg-[#2a2a2d]">
+                      <div className="flex items-start justify-between gap-2">
+                        <div className="min-w-0">
+                          <p className="truncate text-sm font-bold text-foreground">{row.agentName}</p>
+                          <p className="truncate text-[11px] text-muted-foreground">{row.leader}{row.brand !== '−' ? ` · ${row.brand}` : ''}</p>
+                        </div>
+                      </div>
+
+                      <div className="mt-2.5 grid grid-cols-2 gap-2 border-t border-border pt-2.5">
+                        <div>
+                          <p className="text-[9px] font-medium text-muted-foreground">Opening Balance</p>
+                          <p className="text-sm font-bold tabular-nums text-foreground">{fmt(row.openingBal)}</p>
+                        </div>
+                        <div>
+                          <p className="text-[9px] font-medium text-muted-foreground">Security Deposit</p>
+                          <p className="text-sm font-bold tabular-nums text-foreground">{fmt(row.sdp)}</p>
+                        </div>
+                      </div>
+                    </div>
+                  ))
+                ) : (
+                  <div className="px-3 py-8 text-center text-[11px] text-muted-foreground">
+                    No matching agents found.
+                  </div>
+                )}
+              </div>
             </div>
           </div>
         )}

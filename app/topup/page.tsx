@@ -369,9 +369,9 @@ export default function TopUpPage() {
 
         {!error && (
           <div className="flex-1 flex flex-col min-h-0 bg-white rounded-xl border border-border overflow-hidden dark:bg-[#2a2a2d]">
-            <div className="shrink-0 px-3 py-1 min-h-[40px] border-b border-border bg-muted/20 flex items-center justify-between gap-3">
-              <div className="flex items-center gap-2">
-                <div className="flex w-52 items-center gap-2 rounded-lg border border-border bg-white px-3 py-1.5 dark:bg-[#2a2a2d]">
+            <div className="shrink-0 px-3 py-1 min-h-[40px] border-b border-border bg-muted/20 flex flex-wrap items-center justify-between gap-2">
+              <div className="flex flex-wrap items-center gap-2">
+                <div className="flex w-full min-w-[140px] flex-1 items-center gap-2 rounded-lg border border-border bg-white px-3 py-1.5 dark:bg-[#2a2a2d] sm:w-52 sm:flex-none">
                   {loading ? (
                     <div className="h-3 w-32 animate-pulse rounded-md bg-slate-200 dark:bg-slate-700" />
                   ) : (
@@ -395,7 +395,9 @@ export default function TopUpPage() {
                         event.stopPropagation();
                         const rect = filterButtonRef.current?.getBoundingClientRect();
                         if (rect) {
-                          setFilterMenuPos({ top: rect.bottom + 8, left: rect.left });
+                          const dropdownWidth = 224;
+                          const left = Math.min(rect.left, window.innerWidth - dropdownWidth - 8);
+                          setFilterMenuPos({ top: rect.bottom + 8, left: Math.max(8, left) });
                         }
                         setFilterMenuOpen((current) => !current);
                       }}
@@ -479,7 +481,7 @@ export default function TopUpPage() {
                 )}
               </div>
             </div>
-            <div className="flex-1 min-h-0 overflow-y-auto overflow-x-auto">
+            <div className="hidden flex-1 min-h-0 overflow-y-auto overflow-x-auto sm:block">
               <table className="w-full table-fixed text-sm">
                 <colgroup>
                   {visibleColumns.map((col) => (
@@ -598,6 +600,41 @@ export default function TopUpPage() {
                   )) : <tr><td colSpan={visibleColumns.length} className="px-3 py-8 text-center text-[11px] text-muted-foreground">No matching records found.</td></tr>}
                 </tbody>
               </table>
+            </div>
+
+            <div className="flex-1 min-h-0 overflow-y-auto sm:hidden">
+              <div className="flex flex-col gap-2 p-3">
+                {loading ? (
+                  Array.from({ length: 8 }).map((_, i) => (
+                    <div key={i} className="rounded-xl border border-border bg-white p-3.5 dark:bg-[#2a2a2d]">
+                      <div className="h-4 w-2/3 animate-pulse rounded-md bg-slate-200 dark:bg-slate-700" />
+                      <div className="mt-2 h-3 w-1/3 animate-pulse rounded-md bg-slate-200 dark:bg-slate-700" />
+                      <div className="mt-3 h-6 w-1/2 animate-pulse rounded-md bg-slate-200 dark:bg-slate-700" />
+                    </div>
+                  ))
+                ) : pagedRows.length > 0 ? (
+                  pagedRows.map((row, i) => (
+                    <div key={i} className="rounded-xl border border-border bg-white p-3.5 dark:bg-[#2a2a2d]">
+                      <div className="flex items-start justify-between gap-2">
+                        <div className="min-w-0">
+                          <p className="truncate text-sm font-bold text-foreground">{row.agentName}</p>
+                          <p className="truncate text-[11px] text-muted-foreground">{row.leader !== '−' ? `${row.leader} · ` : ''}{getBrand(row.toAgent)} · {row.wallet}</p>
+                        </div>
+                        <span className="shrink-0 text-[11px] text-muted-foreground">{row.date}</span>
+                      </div>
+
+                      <div className="mt-2.5 flex items-baseline justify-between border-t border-border pt-2.5">
+                        <span className="text-[10px] font-medium text-muted-foreground">{row.type}</span>
+                        <span className="text-lg font-bold tabular-nums text-teal-600 dark:text-teal-400">{fmtNum(row.amount)}</span>
+                      </div>
+                    </div>
+                  ))
+                ) : (
+                  <div className="px-3 py-8 text-center text-[11px] text-muted-foreground">
+                    No matching records found.
+                  </div>
+                )}
+              </div>
             </div>
           </div>
         )}
