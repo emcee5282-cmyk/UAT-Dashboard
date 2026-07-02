@@ -81,6 +81,35 @@ function clean(val: string): number {
   return parseFloat((val ?? '0').replace(/"/g, '').replace(/,/g, '').trim()) || 0;
 }
 
+// Opening sheet col G holds a "REPORT LAST UPDATE" card, e.g. "July 2 - 8:54 AM".
+// Top Up totals should only include rows dated on/after this reset point, so
+// entries already folded into the last Opening Balance reset aren't double-counted.
+function parseReportCutoffDate(openingRawRows: string[][]): Date | null {
+  for (const row of openingRawRows) {
+    const cell = (row[6] ?? '').trim();
+    const match = cell.match(/^([A-Za-z]+)\s+(\d{1,2})\s*-\s*\d{1,2}:\d{2}\s*[AP]M$/i);
+    if (match) {
+      const [, monthName, day] = match;
+      const year = new Date().getFullYear();
+      const parsed = new Date(`${monthName} ${day}, ${year}`);
+      if (!isNaN(parsed.getTime())) {
+        parsed.setHours(0, 0, 0, 0);
+        return parsed;
+      }
+    }
+  }
+  return null;
+}
+
+// Stlm Top Up sheet dates are formatted "M/D/YYYY".
+function parseStlmRowDate(dateStr: string): Date | null {
+  const parts = (dateStr ?? '').trim().split('/');
+  if (parts.length !== 3) return null;
+  const [m, d, y] = parts.map(Number);
+  if (!m || !d || !y) return null;
+  return new Date(y, m - 1, d);
+}
+
 function parseCsvLines(text: string): string[][] {
   const rows: string[][] = [];
   let currentRow: string[] = [];
@@ -299,7 +328,10 @@ export default function Dashboard() {
 
       console.log('Total Opening Balance sum:', openingSum);
 
-      const openingAgentRows = parseCsvLines(openingText)
+      const openingRawRows = parseCsvLines(openingText);
+      const reportCutoffDate = parseReportCutoffDate(openingRawRows);
+
+      const openingAgentRows = openingRawRows
         .slice(1)
         .filter((row) => row.some((cell) => cell.trim() !== ''))
         .map((row) => ({
@@ -346,15 +378,17 @@ export default function Dashboard() {
         .slice(1)
         .filter((row) => row.some((cell) => cell.trim() !== ''))
         .forEach((row) => {
-          // Top Up section (cols A-F = 0-5): col[0]=agent, col[2]=wallet, col[3]=amount
+          // Top Up section (cols A-F = 0-5): col[0]=agent, col[2]=wallet, col[3]=amount, col[4]=date
           const topUpAmountNum = clean((row[3] ?? '').replace(/"/g, '').trim());
           const topUpAgent = (row[0] ?? '').replace(/"/g, '').trim();
-          if (topUpAgent && topUpAgent !== '-' && topUpAmountNum) {
+          const topUpDate = reportCutoffDate ? parseStlmRowDate((row[4] ?? '').replace(/"/g, '').trim()) : null;
+          const topUpInRange = !reportCutoffDate || (topUpDate !== null && topUpDate >= reportCutoffDate);
+          if (topUpAgent && topUpAgent !== '-' && topUpAmountNum && topUpInRange) {
             topUpTotals.set(topUpAgent, (topUpTotals.get(topUpAgent) ?? 0) + topUpAmountNum);
           }
           // wallet-level top up — col[2] = wallet brand
           const tuWallet = (row[2] ?? '').replace(/"/g, '').trim().toLowerCase();
-          if (tuWallet && tuWallet !== '-' && topUpAmountNum) {
+          if (tuWallet && tuWallet !== '-' && topUpAmountNum && topUpInRange) {
             walletTopUpTotals.set(tuWallet, (walletTopUpTotals.get(tuWallet) ?? 0) + topUpAmountNum);
           }
 
