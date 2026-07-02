@@ -9,6 +9,11 @@
 #   VPS_HOST=your.server.ip VPS_USER=root VPS_PATH=/var/www/mcwpay062026 bash scripts/deploy.sh
 set -euo pipefail
 
+# Git Bash on Windows (MSYS) tries to rewrite POSIX-looking paths (e.g. /root/...)
+# in command arguments into Windows paths, which mangles remote scp/ssh targets.
+export MSYS_NO_PATHCONV=1
+export MSYS2_ARG_CONV_EXCL="*"
+
 cd "$(dirname "$0")/.."
 
 echo "==> Building production bundle..."
@@ -37,6 +42,7 @@ if [[ -n "${VPS_HOST:-}" && -n "${VPS_USER:-}" && -n "${VPS_PATH:-}" ]]; then
   scp "$TARBALL" "$VPS_USER@$VPS_HOST:$VPS_PATH/"
   echo "==> Extracting on VPS (existing .env is preserved)..."
   ssh "$VPS_USER@$VPS_HOST" "mkdir -p $VPS_PATH/release && tar -xzf $VPS_PATH/$TARBALL -C $VPS_PATH/release && rm $VPS_PATH/$TARBALL"
+  rm -f "$TARBALL"
   echo ""
   echo "Deployed to $VPS_PATH/release on $VPS_HOST."
   echo "Make sure $VPS_PATH/release/.env has GOOGLE_SERVICE_ACCOUNT_EMAIL, GOOGLE_PRIVATE_KEY, GOOGLE_SHEET_ID."
