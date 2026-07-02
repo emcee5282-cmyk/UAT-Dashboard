@@ -948,7 +948,7 @@ export default function Dashboard() {
                   <div className="border-b border-border px-4 py-3">
                     <h2 className="text-[13px] font-semibold text-foreground">Wallet Summary</h2>
                   </div>
-                  <div className="overflow-x-auto">
+                  <div className="hidden overflow-x-auto sm:block">
                     <table className="w-full min-w-[700px]">
                       <thead>
                         <tr className="border-b border-border bg-muted/30">
@@ -996,6 +996,49 @@ export default function Dashboard() {
                         )}
                       </tbody>
                     </table>
+                  </div>
+
+                  <div className="flex flex-col gap-3 p-4 sm:hidden">
+                    {filteredRows.length > 0 ? filteredRows.map((row) => (
+                      <div key={row.wallet} className="rounded-xl border border-border bg-white p-4 dark:bg-[#2a2a2d]">
+                        <div className="flex items-start justify-between gap-2">
+                          <span className="text-[15px] font-bold text-foreground">{row.wallet}</span>
+                          <div className="text-right">
+                            <div className={`text-lg font-bold tabular-nums ${row.runningBal < 0 ? 'text-rose-600 dark:text-rose-400' : 'text-foreground'}`}>
+                              {fmtCell(row.runningBal, true)}
+                            </div>
+                            <div className={`mt-0.5 text-[11px] font-medium tabular-nums ${row.runningBal >= row.opening ? 'text-emerald-600 dark:text-emerald-400' : 'text-rose-500 dark:text-rose-400'}`}>
+                              {row.runningBal >= row.opening ? '↗' : '↘'} {fmtCell(row.runningBal - row.opening)}
+                            </div>
+                          </div>
+                        </div>
+
+                        <div className="mt-3 grid grid-cols-3 gap-x-2 gap-y-3 border-t border-border pt-3">
+                          <div className="min-w-0">
+                            <p className="text-[11px] text-muted-foreground">Total DP</p>
+                            <p className="mt-0.5 text-[10.5px] font-semibold tabular-nums text-emerald-600 dark:text-emerald-400">{fmtCell(row.totalDP)}</p>
+                          </div>
+                          <div className="min-w-0">
+                            <p className="text-[11px] text-muted-foreground">Total WD</p>
+                            <p className="mt-0.5 text-[10.5px] font-semibold tabular-nums text-rose-600 dark:text-rose-400">{fmtCell(row.totalWD, true)}</p>
+                          </div>
+                          <div className="min-w-0">
+                            <p className="text-[11px] text-muted-foreground">Actual Balance</p>
+                            <p className="mt-0.5 text-[10.5px] font-semibold tabular-nums text-foreground">{fmtCell(row.actualBal)}</p>
+                          </div>
+                          <div className="min-w-0">
+                            <p className="text-[11px] text-muted-foreground">Bundle Transfer</p>
+                            <p className="mt-0.5 text-[10.5px] font-semibold tabular-nums text-foreground">{fmtCell(row.bdTransferIn)}</p>
+                          </div>
+                          <div className="min-w-0">
+                            <p className="text-[11px] text-muted-foreground">Settlement</p>
+                            <p className="mt-0.5 text-[10.5px] font-semibold tabular-nums text-foreground">{fmtCell(row.stlm, true)}</p>
+                          </div>
+                        </div>
+                      </div>
+                    )) : (
+                      <div className="px-4 py-8 text-center text-[11px] text-muted-foreground">No matching wallets found.</div>
+                    )}
                   </div>
                 </section>
               </div>
