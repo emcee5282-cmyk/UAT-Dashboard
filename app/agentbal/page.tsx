@@ -1080,15 +1080,17 @@ export default function AgentBalance() {
                   <div key={card.label} className="rounded-xl border border-border bg-white dark:bg-[#2a2a2d] shadow-sm flex-1 min-w-[100px] p-2.5 transition-shadow hover:shadow-md">
                     <p className="text-[10px] font-semibold text-muted-foreground truncate">{card.label}</p>
                     <p className="mt-1 text-[15px] font-bold leading-tight text-foreground">{card.bigValue}</p>
-                    <div className={`mt-0.5 flex items-center gap-0.5 text-[9px] font-medium ${
+                    <div className={`mt-0.5 text-[9px] font-medium ${
                       card.label === 'Total DP' ? 'text-emerald-600 dark:text-emerald-400' :
                       card.label === 'Total WD' ? 'text-rose-600 dark:text-rose-400' :
                       card.label === 'Running Balance' ? (card.subPositive ? 'text-emerald-600 dark:text-emerald-400' : 'text-rose-600 dark:text-rose-400') :
                       'text-muted-foreground'
                     }`}>
-                      {card.showArrow && <span>{card.subPositive ? '▲' : '▼'}</span>}
-                      <span className="tabular-nums">{card.subAmount}</span>
-                      {card.subSuffix && <span className="font-normal text-muted-foreground">{card.subSuffix}</span>}
+                      <div className="flex items-center gap-0.5">
+                        {card.showArrow && <span>{card.subPositive ? '▲' : '▼'}</span>}
+                        <span className="tabular-nums">{card.subAmount}</span>
+                      </div>
+                      {card.subSuffix && <span className="block font-normal text-muted-foreground">{card.subSuffix}</span>}
                     </div>
                   </div>
                 ))
