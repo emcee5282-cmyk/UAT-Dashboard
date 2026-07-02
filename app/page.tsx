@@ -635,12 +635,12 @@ export default function Dashboard() {
   return (
     <div className="min-h-screen bg-[#f5f5f7] text-[#1a1a1a] transition-colors duration-300 dark:bg-[#1c1c1e] dark:text-white">
       <header className="sticky top-0 z-30 border-b border-border bg-white/95 py-0 pl-14 pr-4 backdrop-blur-sm dark:bg-[#0d1117]/95 md:px-8">
-        <div className="flex h-12 items-center justify-between">
-          <div className="flex items-center gap-3">
-            <div className="h-4 w-[3px] rounded-full bg-indigo-500" />
-            <h1 className="text-[13px] font-semibold tracking-[-0.01em] text-foreground">SSP Cash Out Overview</h1>
+        <div className="flex h-12 items-center justify-between gap-2">
+          <div className="flex min-w-0 items-center gap-3">
+            <div className="h-4 w-[3px] shrink-0 rounded-full bg-indigo-500" />
+            <h1 className="truncate text-[13px] font-semibold tracking-[-0.01em] text-foreground">SSP Cash Out Overview</h1>
           </div>
-          <div className="flex items-center gap-2">
+          <div className="flex shrink-0 items-center gap-2">
             <div className="hidden items-center gap-1.5 rounded-md bg-emerald-50 px-2 py-0.5 dark:bg-emerald-500/10 sm:flex">
               <span className="h-1.5 w-1.5 rounded-full bg-emerald-500" />
               <span className="tabular-nums text-[9px] font-medium text-emerald-700 dark:text-emerald-400">{lastUpdated || '—'}</span>
@@ -818,10 +818,10 @@ export default function Dashboard() {
                         <p className={`mt-2.5 text-[26px] font-bold leading-none tracking-tight ${card.bigNegative ? 'text-rose-600 dark:text-rose-400' : 'text-foreground'}`}>
                           {card.bigNegative ? '-' : ''}{card.bigValue}
                         </p>
-                        <div className={`mt-2 flex items-center gap-1 text-[10px] font-medium ${card.subPositive ? 'text-emerald-600 dark:text-emerald-400' : 'text-rose-500 dark:text-rose-400'}`}>
-                          {card.showArrow && <span>{card.subPositive ? '▲' : '▼'}</span>}
-                          <span className="tabular-nums">{card.subAmount}</span>
-                          {card.subSuffix && <span className="font-normal opacity-80">{card.subSuffix}</span>}
+                        <div className={`mt-2 flex flex-wrap items-center gap-x-1 gap-y-0.5 text-[10px] font-medium ${card.subPositive ? 'text-emerald-600 dark:text-emerald-400' : 'text-rose-500 dark:text-rose-400'}`}>
+                          {card.showArrow && <span className="whitespace-nowrap">{card.subPositive ? '▲' : '▼'}</span>}
+                          <span className="whitespace-nowrap tabular-nums">{card.subAmount}</span>
+                          {card.subSuffix && <span className="whitespace-nowrap font-normal opacity-80">{card.subSuffix}</span>}
                         </div>
                       </div>
                     );
@@ -830,17 +830,17 @@ export default function Dashboard() {
 
                 <section className="overflow-hidden rounded-2xl border border-border bg-white shadow-sm dark:bg-[#2a2a2d]">
                   {/* Header */}
-                  <div className="flex items-center justify-between border-b border-border px-4 py-3">
+                  <div className="flex flex-wrap items-center justify-between gap-2 border-b border-border px-4 py-3">
                     <div className="flex items-center gap-2.5">
-                      <div className="flex h-7 w-7 items-center justify-center rounded-lg bg-indigo-50 dark:bg-indigo-500/15">
+                      <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-indigo-50 dark:bg-indigo-500/15">
                         <BarChart2 size={14} className="text-indigo-600 dark:text-indigo-400" />
                       </div>
-                      <h2 className="text-[13px] font-semibold text-foreground">CashGo Trend</h2>
+                      <h2 className="whitespace-nowrap text-[13px] font-semibold text-foreground">CashGo Trend</h2>
                     </div>
                     <div className="flex items-center gap-0.5 rounded-lg border border-border p-0.5">
                       <button
                         onClick={() => setCashGoPeriod('week')}
-                        className={`rounded-md px-3 py-1 text-[10px] font-medium transition-colors ${
+                        className={`whitespace-nowrap rounded-md px-3 py-1 text-[10px] font-medium transition-colors ${
                           cashGoPeriod === 'week'
                             ? 'bg-indigo-600 text-white'
                             : 'text-muted-foreground hover:text-foreground'
@@ -850,7 +850,7 @@ export default function Dashboard() {
                       </button>
                       <button
                         onClick={() => setCashGoPeriod('month')}
-                        className={`rounded-md px-3 py-1 text-[10px] font-medium transition-colors ${
+                        className={`whitespace-nowrap rounded-md px-3 py-1 text-[10px] font-medium transition-colors ${
                           cashGoPeriod === 'month'
                             ? 'bg-indigo-600 text-white'
                             : 'text-muted-foreground hover:text-foreground'
