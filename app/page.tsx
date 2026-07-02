@@ -271,6 +271,15 @@ export default function Dashboard() {
   const [todayCashGo, setTodayCashGo] = useState<TodayCashGo | null>(null);
   const [showBk, setShowBk] = useState(false);
   const [showNg, setShowNg] = useState(false);
+  const [isMobile, setIsMobile] = useState(false);
+
+  useEffect(() => {
+    const mql = window.matchMedia('(max-width: 639px)');
+    setIsMobile(mql.matches);
+    const handleChange = (event: MediaQueryListEvent) => setIsMobile(event.matches);
+    mql.addEventListener('change', handleChange);
+    return () => mql.removeEventListener('change', handleChange);
+  }, []);
 
   const fetchData = useCallback(async () => {
     try {
@@ -909,7 +918,11 @@ export default function Dashboard() {
                           tick={{ fontSize: 10, fontWeight: 600, fill: isDark ? '#94a3b8' : '#64748b' }}
                           axisLine={{ stroke: isDark ? '#334155' : '#cbd5e1' }}
                           tickLine={false}
-                          interval={(cashGoPeriod === 'week' ? cashGoWeekData : cashGoMonthData).length > 10 ? 1 : 0}
+                          interval={
+                            cashGoPeriod === 'month' && isMobile
+                              ? Math.max(1, Math.ceil((cashGoPeriod === 'week' ? cashGoWeekData : cashGoMonthData).length / 6) - 1)
+                              : (cashGoPeriod === 'week' ? cashGoWeekData : cashGoMonthData).length > 10 ? 1 : 0
+                          }
                         />
                         <YAxis
                           domain={[0, 100]}
