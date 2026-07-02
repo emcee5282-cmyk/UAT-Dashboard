@@ -127,6 +127,36 @@ function parseNumber(val: string): number {
   return isNaN(num) ? 0 : num;
 }
 
+// Opening sheet col G holds a "REPORT LAST UPDATE" card, e.g. "July 2 - 8:54 AM".
+// This is the cutoff: Top Up / Settlement totals should only include rows dated
+// on or after this reset point, so entries already folded into the last Opening
+// Balance reset aren't double-counted.
+function parseReportCutoffDate(openingRawRows: string[][]): Date | null {
+  for (const row of openingRawRows) {
+    const cell = (row[6] ?? '').trim();
+    const match = cell.match(/^([A-Za-z]+)\s+(\d{1,2})\s*-\s*\d{1,2}:\d{2}\s*[AP]M$/i);
+    if (match) {
+      const [, monthName, day] = match;
+      const year = new Date().getFullYear();
+      const parsed = new Date(`${monthName} ${day}, ${year}`);
+      if (!isNaN(parsed.getTime())) {
+        parsed.setHours(0, 0, 0, 0);
+        return parsed;
+      }
+    }
+  }
+  return null;
+}
+
+// Stlm Top Up sheet dates are formatted "M/D/YYYY".
+function parseSheetDate(dateStr: string): Date | null {
+  const parts = (dateStr ?? '').trim().split('/');
+  if (parts.length !== 3) return null;
+  const [m, d, y] = parts.map(Number);
+  if (!m || !d || !y) return null;
+  return new Date(y, m - 1, d);
+}
+
 function normalizeWalletStatus(raw: string): string | null {
   const trimmed = raw.trim();
   if (trimmed === '') return null;
@@ -414,7 +444,10 @@ export default function AgentBalance() {
       const balData: string[][] = await balRes.json();
       const stlmText = await stlmRes.text();
 
-      const openingRows = parseCsvLines(openingText)
+      const openingRawRows = parseCsvLines(openingText);
+      const reportCutoffDate = parseReportCutoffDate(openingRawRows);
+
+      const openingRows = openingRawRows
         .slice(1)
         .filter((row) => row.some((cell) => cell.trim() !== ''))
         .map((row) => ({
@@ -488,14 +521,22 @@ export default function AgentBalance() {
         .forEach((row) => {
           const topUpAgent = rawVal(row[0]);
           const topUpAmount = rawVal(row[3]);
-          if (topUpAgent && topUpAgent !== '-' && topUpAmount && topUpAmount !== '-') {
+          const topUpDate = reportCutoffDate ? parseSheetDate(rawVal(row[4])) : null;
+          if (
+            topUpAgent && topUpAgent !== '-' && topUpAmount && topUpAmount !== '-' &&
+            (!reportCutoffDate || (topUpDate && topUpDate >= reportCutoffDate))
+          ) {
             const amount = parseFloat(topUpAmount.replace(/,/g, '')) || 0;
             topUpTotals.set(topUpAgent, (topUpTotals.get(topUpAgent) ?? 0) + amount);
           }
 
           const stlmAgent = rawVal(row[7]);
           const stlmAmount = rawVal(row[8]);
-          if (stlmAgent && stlmAgent !== '-' && stlmAmount && stlmAmount !== '-') {
+          const stlmDate = reportCutoffDate ? parseSheetDate(rawVal(row[10])) : null;
+          if (
+            stlmAgent && stlmAgent !== '-' && stlmAmount && stlmAmount !== '-' &&
+            (!reportCutoffDate || (stlmDate && stlmDate >= reportCutoffDate))
+          ) {
             const amount = parseFloat(stlmAmount.replace(/,/g, '')) || 0;
             stlmTotals.set(stlmAgent, (stlmTotals.get(stlmAgent) ?? 0) + amount);
           }
