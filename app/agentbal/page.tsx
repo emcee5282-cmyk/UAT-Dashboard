@@ -340,6 +340,23 @@ function headerCellClasses(_colKey: ColumnKey, _isSorted: boolean) {
 }
 
 
+function walletStatusBadgeClasses(status: string): string {
+  switch (status) {
+    case 'DP + WD':
+    case 'DP Only':
+      return 'bg-emerald-50 text-emerald-700 border-emerald-200 dark:bg-emerald-500/10 dark:text-emerald-400 dark:border-emerald-900/50';
+    case 'WD Only':
+      return 'bg-amber-50 text-amber-700 border-amber-200 dark:bg-amber-500/10 dark:text-amber-400 dark:border-amber-900/50';
+    case 'Top Up Acc.':
+      return 'bg-indigo-50 text-indigo-700 border-indigo-200 dark:bg-indigo-500/10 dark:text-indigo-400 dark:border-indigo-900/50';
+    case 'Wallet With Issue':
+    case 'Account Problem':
+      return 'bg-rose-50 text-rose-700 border-rose-200 dark:bg-rose-500/10 dark:text-rose-400 dark:border-rose-900/50';
+    default:
+      return 'bg-slate-100 text-slate-600 border-slate-200 dark:bg-slate-500/10 dark:text-slate-400 dark:border-slate-700';
+  }
+}
+
 function renderCell(row: MergedRow, key: ColumnKey) {
 
   const base = 'whitespace-nowrap overflow-hidden text-ellipsis px-3 py-1.5 text-[11px]';
@@ -1049,8 +1066,8 @@ export default function AgentBalance() {
 
         {!error && (
           <div className="flex-1 flex flex-col min-h-0 mt-3 bg-white rounded-xl border border-border overflow-hidden dark:bg-[#2a2a2d]">
-            <div className="shrink-0 px-3 py-2 border-b border-border bg-muted/20 flex items-center justify-between gap-3">
-              <div className="flex items-center gap-2.5">
+            <div className="shrink-0 px-3 py-2 border-b border-border bg-muted/20 flex flex-wrap items-center justify-between gap-2">
+              <div className="flex flex-wrap items-center gap-2">
                 {loading ? (
                   <div className="h-5 w-28 animate-pulse rounded-md bg-slate-200 dark:bg-slate-700" />
                 ) : (
@@ -1059,7 +1076,7 @@ export default function AgentBalance() {
                     <span className="text-[11px] font-bold tabular-nums text-indigo-700 dark:text-indigo-300">{sortedRows.length.toLocaleString('en-PH')}</span>
                   </div>
                 )}
-                <div className="flex w-52 items-center gap-2 rounded-lg border border-border bg-white px-3 py-1.5 dark:bg-[#2a2a2d]">
+                <div className="flex w-full min-w-[140px] flex-1 items-center gap-2 rounded-lg border border-border bg-white px-3 py-1.5 dark:bg-[#2a2a2d] sm:w-52 sm:flex-none">
                   {loading ? (
                     <div className="h-3 w-32 animate-pulse rounded-md bg-slate-200 dark:bg-slate-700" />
                   ) : (
@@ -1083,7 +1100,9 @@ export default function AgentBalance() {
                         event.stopPropagation();
                         const rect = filterButtonRef.current?.getBoundingClientRect();
                         if (rect) {
-                          setFilterMenuPos({ top: rect.bottom + 8, left: rect.left });
+                          const dropdownWidth = 224;
+                          const left = Math.min(rect.left, window.innerWidth - dropdownWidth - 8);
+                          setFilterMenuPos({ top: rect.bottom + 8, left: Math.max(8, left) });
                         }
                         setFilterMenuOpen((current) => !current);
                       }}
@@ -1175,7 +1194,7 @@ export default function AgentBalance() {
                 )}
               </div>
             </div>
-            <div className="flex-1 min-h-0 overflow-y-auto overflow-x-auto">
+            <div className="hidden flex-1 min-h-0 overflow-y-auto overflow-x-auto sm:block">
               <table className="w-full table-fixed text-xs" style={{ minWidth: TABLE_MIN_WIDTH }}>
                 <colgroup>
                   {visibleColumns.map((col) => (
@@ -1507,6 +1526,74 @@ export default function AgentBalance() {
                   )}
                 </tbody>
               </table>
+            </div>
+
+            <div className="flex-1 min-h-0 overflow-y-auto sm:hidden">
+              <div className="flex flex-col gap-2 p-3">
+                {loading ? (
+                  Array.from({ length: 8 }).map((_, i) => (
+                    <div key={i} className="rounded-xl border border-border bg-white p-3.5 dark:bg-[#2a2a2d]">
+                      <div className="h-4 w-2/3 animate-pulse rounded-md bg-slate-200 dark:bg-slate-700" />
+                      <div className="mt-2 h-3 w-1/3 animate-pulse rounded-md bg-slate-200 dark:bg-slate-700" />
+                      <div className="mt-3 h-6 w-1/2 animate-pulse rounded-md bg-slate-200 dark:bg-slate-700" />
+                    </div>
+                  ))
+                ) : pagedRows.length > 0 ? (
+                  pagedRows.map((row, i) => (
+                    <div key={row.agentName || i} className="rounded-xl border border-border bg-white p-3.5 dark:bg-[#2a2a2d]">
+                      <div className="flex items-start justify-between gap-2">
+                        <div className="min-w-0">
+                          <p className="truncate text-sm font-bold text-foreground">{row.agentName}</p>
+                          <p className="truncate text-[11px] text-muted-foreground">
+                            {row.leader}{row.walletType && row.walletType !== '−' ? ` · ${row.walletType}` : ''}
+                          </p>
+                        </div>
+                        <span className={`inline-flex shrink-0 items-center whitespace-nowrap rounded-md border px-2 py-1 text-[10px] font-medium ${walletStatusBadgeClasses(row.walletStatus)}`}>
+                          {row.walletStatus}
+                        </span>
+                      </div>
+
+                      <div className="mt-2.5 flex items-baseline justify-between">
+                        <span className="text-[10px] font-medium text-muted-foreground">Company Balance</span>
+                        <span className={`text-lg font-bold tabular-nums ${displayNum(row.runningBalance) !== '−' && row.runningBalance < 0 ? 'text-rose-600 dark:text-rose-400' : 'text-foreground'}`}>
+                          {displayNum(row.runningBalance)}
+                        </span>
+                      </div>
+
+                      <div className="mt-2.5 grid grid-cols-3 gap-2 border-t border-border pt-2.5">
+                        <div>
+                          <p className="text-[9px] font-medium text-muted-foreground">Opening</p>
+                          <p className="text-[11px] font-semibold tabular-nums text-foreground">{displayNum(row.openingBal)}</p>
+                        </div>
+                        <div>
+                          <p className="text-[9px] font-medium text-muted-foreground">Total DP</p>
+                          <p className="text-[11px] font-semibold tabular-nums text-emerald-600 dark:text-emerald-400">{displayNum(row.agentTotalDP)}</p>
+                        </div>
+                        <div>
+                          <p className="text-[9px] font-medium text-muted-foreground">Total WD</p>
+                          <p className="text-[11px] font-semibold tabular-nums text-rose-600 dark:text-rose-400">{displayNum(row.agentTotalWD)}</p>
+                        </div>
+                        <div>
+                          <p className="text-[9px] font-medium text-muted-foreground">Top Up</p>
+                          <p className="text-[11px] font-semibold tabular-nums text-teal-600 dark:text-teal-400">{displayNum(row.totalTopUp)}</p>
+                        </div>
+                        <div>
+                          <p className="text-[9px] font-medium text-muted-foreground">Settlement</p>
+                          <p className="text-[11px] font-semibold tabular-nums text-orange-500 dark:text-orange-400">{displayNum(row.totalStlm)}</p>
+                        </div>
+                        <div>
+                          <p className="text-[9px] font-medium text-muted-foreground">Balance Inside</p>
+                          <p className="text-[11px] font-semibold tabular-nums text-foreground">{displayNum(String(row.balanceInside ?? 0))}</p>
+                        </div>
+                      </div>
+                    </div>
+                  ))
+                ) : (
+                  <div className="px-3 py-8 text-center text-[11px] text-muted-foreground">
+                    No matching accounts found.
+                  </div>
+                )}
+              </div>
             </div>
           </div>
         )}
