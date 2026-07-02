@@ -357,6 +357,39 @@ function walletStatusBadgeClasses(status: string): string {
   }
 }
 
+// Mobile card grid fields — mirrors renderCell's data + colors, minus the
+// columns (walletName, walletStatus, companyBalance) shown in the card header/hero.
+function mobileCardFieldValue(row: MergedRow, key: ColumnKey): { value: string; className: string } {
+  switch (key) {
+    case 'brand':
+      return { value: row.brand, className: 'text-foreground' };
+    case 'leader':
+      return { value: row.leader, className: 'text-muted-foreground' };
+    case 'walletType':
+      return { value: row.walletType, className: 'text-muted-foreground' };
+    case 'sdp':
+      return { value: displayNum(row.sdp), className: 'text-foreground' };
+    case 'opening':
+      return { value: displayNum(row.openingBal), className: 'text-foreground' };
+    case 'totalDP':
+      return { value: displayNum(row.agentTotalDP), className: 'text-emerald-600 dark:text-emerald-400' };
+    case 'totalWD':
+      return { value: displayNum(row.agentTotalWD), className: 'text-rose-600 dark:text-rose-400' };
+    case 'topUp':
+      return { value: displayNum(row.totalTopUp), className: 'text-teal-600 dark:text-teal-400' };
+    case 'settlement':
+      return { value: displayNum(row.totalStlm), className: 'text-orange-500 dark:text-orange-400' };
+    case 'balanceInside':
+      return { value: displayNum(String(row.balanceInside ?? 0)), className: 'text-foreground' };
+    case 'agentWithdrawal':
+      return { value: displayNum(String(row.agentWithdrawal)), className: 'text-foreground' };
+    case 'sdpVsBalance':
+      return { value: row.sdpVsBalance > 0 ? displayNum(String(Math.abs(row.sdpVsBalance))) : '−', className: 'text-foreground' };
+    default:
+      return { value: '−', className: 'text-foreground' };
+  }
+}
+
 function renderCell(row: MergedRow, key: ColumnKey) {
 
   const base = 'whitespace-nowrap overflow-hidden text-ellipsis px-3 py-1.5 text-[11px]';
@@ -1033,10 +1066,10 @@ export default function AgentBalance() {
 
         {!error && (
           <div className={`shrink-0 overflow-hidden transition-all duration-300 ease-in-out ${cardsExpanded ? 'h-[84px] opacity-100 mb-1' : 'h-0 opacity-0 mb-0'}`}>
-            <div className="flex gap-2 pb-3">
+            <div className="flex gap-2 overflow-x-auto pb-3">
               {loading ? (
                 Array.from({ length: 7 }).map((_, i) => (
-                  <div key={i} className="rounded-xl border border-border bg-white dark:bg-[#2a2a2d] shadow-sm flex-1 min-w-0 p-2.5">
+                  <div key={i} className="rounded-xl border border-border bg-white dark:bg-[#2a2a2d] shadow-sm flex-1 min-w-[100px] p-2.5">
                     <div className="h-2.5 w-12 animate-pulse rounded-md bg-slate-200 dark:bg-slate-700" />
                     <div className="mt-1.5 h-4 w-16 animate-pulse rounded-md bg-slate-200 dark:bg-slate-700" />
                     <div className="mt-1 h-2 w-16 animate-pulse rounded-md bg-slate-200 dark:bg-slate-700" />
@@ -1044,7 +1077,7 @@ export default function AgentBalance() {
                 ))
               ) : (
                 summaryCards.map((card) => (
-                  <div key={card.label} className="rounded-xl border border-border bg-white dark:bg-[#2a2a2d] shadow-sm flex-1 min-w-0 p-2.5 transition-shadow hover:shadow-md">
+                  <div key={card.label} className="rounded-xl border border-border bg-white dark:bg-[#2a2a2d] shadow-sm flex-1 min-w-[100px] p-2.5 transition-shadow hover:shadow-md">
                     <p className="text-[10px] font-semibold text-muted-foreground truncate">{card.label}</p>
                     <p className="mt-1 text-[15px] font-bold leading-tight text-foreground">{card.bigValue}</p>
                     <div className={`mt-0.5 flex items-center gap-0.5 text-[9px] font-medium ${
@@ -1539,55 +1572,58 @@ export default function AgentBalance() {
                     </div>
                   ))
                 ) : pagedRows.length > 0 ? (
-                  pagedRows.map((row, i) => (
-                    <div key={row.agentName || i} className="rounded-xl border border-border bg-white p-3.5 dark:bg-[#2a2a2d]">
-                      <div className="flex items-start justify-between gap-2">
-                        <div className="min-w-0">
-                          <p className="truncate text-sm font-bold text-foreground">{row.agentName}</p>
-                          <p className="truncate text-[11px] text-muted-foreground">
-                            {row.leader}{row.walletType && row.walletType !== '−' ? ` · ${row.walletType}` : ''}
-                          </p>
-                        </div>
-                        <span className={`inline-flex shrink-0 items-center whitespace-nowrap rounded-md border px-2 py-1 text-[10px] font-medium ${walletStatusBadgeClasses(row.walletStatus)}`}>
-                          {row.walletStatus}
-                        </span>
-                      </div>
+                  pagedRows.map((row, i) => {
+                    const showName = columnVisibility.walletName;
+                    const showStatus = columnVisibility.walletStatus;
+                    const showBalance = columnVisibility.companyBalance;
+                    const subtitle = [
+                      columnVisibility.leader ? row.leader : null,
+                      columnVisibility.walletType && row.walletType !== '−' ? row.walletType : null,
+                    ].filter(Boolean).join(' · ');
+                    const gridFields = visibleColumns.filter(
+                      (col) => !['walletName', 'walletStatus', 'companyBalance', 'leader', 'walletType'].includes(col.key)
+                    );
+                    return (
+                      <div key={row.agentName || i} className="rounded-xl border border-border bg-white p-3.5 dark:bg-[#2a2a2d]">
+                        {(showName || showStatus) && (
+                          <div className="flex items-start justify-between gap-2">
+                            <div className="min-w-0">
+                              {showName && <p className="truncate text-sm font-bold text-foreground">{row.agentName}</p>}
+                              {subtitle && <p className="truncate text-[11px] text-muted-foreground">{subtitle}</p>}
+                            </div>
+                            {showStatus && (
+                              <span className={`inline-flex shrink-0 items-center whitespace-nowrap rounded-md border px-2 py-1 text-[10px] font-medium ${walletStatusBadgeClasses(row.walletStatus)}`}>
+                                {row.walletStatus}
+                              </span>
+                            )}
+                          </div>
+                        )}
 
-                      <div className="mt-2.5 flex items-baseline justify-between">
-                        <span className="text-[10px] font-medium text-muted-foreground">Company Balance</span>
-                        <span className={`text-lg font-bold tabular-nums ${displayNum(row.runningBalance) !== '−' && row.runningBalance < 0 ? 'text-rose-600 dark:text-rose-400' : 'text-foreground'}`}>
-                          {displayNum(row.runningBalance)}
-                        </span>
-                      </div>
+                        {showBalance && (
+                          <div className={`flex items-baseline justify-between ${(showName || showStatus) ? 'mt-2.5' : ''}`}>
+                            <span className="text-[10px] font-medium text-muted-foreground">Company Balance</span>
+                            <span className={`text-lg font-bold tabular-nums ${displayNum(row.runningBalance) !== '−' && row.runningBalance < 0 ? 'text-rose-600 dark:text-rose-400' : 'text-foreground'}`}>
+                              {displayNum(row.runningBalance)}
+                            </span>
+                          </div>
+                        )}
 
-                      <div className="mt-2.5 grid grid-cols-3 gap-2 border-t border-border pt-2.5">
-                        <div>
-                          <p className="text-[9px] font-medium text-muted-foreground">Opening</p>
-                          <p className="text-[11px] font-semibold tabular-nums text-foreground">{displayNum(row.openingBal)}</p>
-                        </div>
-                        <div>
-                          <p className="text-[9px] font-medium text-muted-foreground">Total DP</p>
-                          <p className="text-[11px] font-semibold tabular-nums text-emerald-600 dark:text-emerald-400">{displayNum(row.agentTotalDP)}</p>
-                        </div>
-                        <div>
-                          <p className="text-[9px] font-medium text-muted-foreground">Total WD</p>
-                          <p className="text-[11px] font-semibold tabular-nums text-rose-600 dark:text-rose-400">{displayNum(row.agentTotalWD)}</p>
-                        </div>
-                        <div>
-                          <p className="text-[9px] font-medium text-muted-foreground">Top Up</p>
-                          <p className="text-[11px] font-semibold tabular-nums text-teal-600 dark:text-teal-400">{displayNum(row.totalTopUp)}</p>
-                        </div>
-                        <div>
-                          <p className="text-[9px] font-medium text-muted-foreground">Settlement</p>
-                          <p className="text-[11px] font-semibold tabular-nums text-orange-500 dark:text-orange-400">{displayNum(row.totalStlm)}</p>
-                        </div>
-                        <div>
-                          <p className="text-[9px] font-medium text-muted-foreground">Balance Inside</p>
-                          <p className="text-[11px] font-semibold tabular-nums text-foreground">{displayNum(String(row.balanceInside ?? 0))}</p>
-                        </div>
+                        {gridFields.length > 0 && (
+                          <div className={`grid grid-cols-3 gap-2 ${(showName || showStatus || showBalance) ? 'mt-2.5 border-t border-border pt-2.5' : ''}`}>
+                            {gridFields.map((col) => {
+                              const { value, className } = mobileCardFieldValue(row, col.key);
+                              return (
+                                <div key={col.key}>
+                                  <p className="text-[9px] font-medium text-muted-foreground">{col.label}</p>
+                                  <p className={`text-[11px] font-semibold tabular-nums ${className}`}>{value}</p>
+                                </div>
+                              );
+                            })}
+                          </div>
+                        )}
                       </div>
-                    </div>
-                  ))
+                    );
+                  })
                 ) : (
                   <div className="px-3 py-8 text-center text-[11px] text-muted-foreground">
                     No matching accounts found.
