@@ -560,6 +560,11 @@ export default function Dashboard() {
     fetchData();
   }, [fetchData]);
 
+  const chartData = cashGoPeriod === 'week' ? cashGoWeekData : cashGoMonthData;
+  const xAxisInterval = cashGoPeriod === 'month' && isMobile
+    ? Math.max(1, Math.ceil(chartData.length / 6) - 1)
+    : chartData.length > 10 ? 1 : 0;
+
   const dataRows = rows.filter((r) => r.wallet && r.wallet.toLowerCase() !== 'total');
   const totalRow = rows.find((r) => r.wallet.toLowerCase() === 'total');
   const filteredRows = dataRows.filter((row) => {
@@ -911,18 +916,14 @@ export default function Dashboard() {
                   {/* Chart */}
                   <div className="h-[360px] select-none px-3 py-4">
                     <ResponsiveContainer width="100%" height="100%">
-                      <BarChart data={cashGoPeriod === 'week' ? cashGoWeekData : cashGoMonthData} margin={{ top: 5, right: 10, left: 0, bottom: 0 }}>
+                      <BarChart data={chartData} margin={{ top: 5, right: 10, left: 0, bottom: 0 }}>
                         <CartesianGrid vertical={false} stroke={isDark ? '#27272a' : '#e2e8f0'} strokeDasharray="4 4" />
                         <XAxis
                           dataKey="day"
                           tick={{ fontSize: 10, fontWeight: 600, fill: isDark ? '#94a3b8' : '#64748b' }}
                           axisLine={{ stroke: isDark ? '#334155' : '#cbd5e1' }}
                           tickLine={false}
-                          interval={
-                            cashGoPeriod === 'month' && isMobile
-                              ? Math.max(1, Math.ceil((cashGoPeriod === 'week' ? cashGoWeekData : cashGoMonthData).length / 6) - 1)
-                              : (cashGoPeriod === 'week' ? cashGoWeekData : cashGoMonthData).length > 10 ? 1 : 0
-                          }
+                          interval={xAxisInterval}
                         />
                         <YAxis
                           domain={[0, 100]}
