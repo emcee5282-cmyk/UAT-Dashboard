@@ -392,15 +392,17 @@ export default function Dashboard() {
             walletTopUpTotals.set(tuWallet, (walletTopUpTotals.get(tuWallet) ?? 0) + topUpAmountNum);
           }
 
-          // Settlement section (cols H-M = 7-12): col[7]=brand, col[8]=agent, col[9]=wallet, col[10]=amount
-          const stlmAgent = (row[8] ?? '').replace(/"/g, '').trim();
-          const stlmAmountNum = clean((row[10] ?? '').replace(/"/g, '').trim());
-          if (stlmAgent && stlmAgent !== '-' && stlmAmountNum) {
+          // Settlement section (cols H-M = 7-12): col[7]=agent, col[8]=amount, col[10]=date, col[11]=wallet
+          const stlmAgent = (row[7] ?? '').replace(/"/g, '').trim();
+          const stlmAmountNum = clean((row[8] ?? '').replace(/"/g, '').trim());
+          const stlmDate = reportCutoffDate ? parseStlmRowDate((row[10] ?? '').replace(/"/g, '').trim()) : null;
+          const stlmInRange = !reportCutoffDate || (stlmDate !== null && stlmDate >= reportCutoffDate);
+          if (stlmAgent && stlmAgent !== '-' && stlmAmountNum && stlmInRange) {
             stlmTotals.set(stlmAgent, (stlmTotals.get(stlmAgent) ?? 0) + stlmAmountNum);
           }
-          // wallet-level settlement — col[9] = wallet brand (Bkash/Nagad/etc.)
-          const stlmWallet = (row[9] ?? '').replace(/"/g, '').trim().toLowerCase();
-          if (stlmWallet && stlmWallet !== '-' && stlmAmountNum) {
+          // wallet-level settlement — col[11] = wallet brand (Bkash/Nagad/etc.)
+          const stlmWallet = (row[11] ?? '').replace(/"/g, '').trim().toLowerCase();
+          if (stlmWallet && stlmWallet !== '-' && stlmAmountNum && stlmInRange) {
             walletStlmTotals.set(stlmWallet, (walletStlmTotals.get(stlmWallet) ?? 0) + stlmAmountNum);
           }
         });
@@ -415,7 +417,7 @@ export default function Dashboard() {
         if (computedDP)  row.totalDP = computedDP;
         if (computedWD)  row.totalWD = -computedWD;   // WD is stored as positive, display as negative
         if (computedTopUp) row.bdTransferIn = computedTopUp;
-        if (computedStlm)  row.stlm = computedStlm;
+        if (computedStlm)  row.stlm = -computedStlm;  // Settlement is stored as positive, display as negative
         row.runningBal = row.opening + row.totalDP + row.totalWD + row.bdTransferIn + row.stlm;
       });
 
