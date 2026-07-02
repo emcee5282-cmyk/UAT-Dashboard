@@ -6,7 +6,8 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "lint": "eslint"
+    "lint": "eslint",
+    "deploy:package": "bash scripts/deploy.sh"
   },
   "dependencies": {
     "googleapis": "^173.0.0",
