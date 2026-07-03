@@ -2,9 +2,11 @@
 
 import { useEffect, useState, useCallback, useMemo, useRef } from 'react';
 import { createPortal } from 'react-dom';
-import { RefreshCw, AlertCircle, Search, Filter, ChevronUp, ChevronDown, Download } from 'lucide-react';
+import { RefreshCw, Search, Filter, ChevronUp, ChevronDown, Download } from 'lucide-react';
 import * as XLSX from 'xlsx';
 import ThemeToggle from '../components/ThemeToggle';
+import ConnectionErrorState from '../components/ConnectionErrorState';
+import { classifyFetchError, type ClassifiedError, assertAllOk } from '../lib/errors';
 
 type Row = {
   agentName: string;
@@ -124,7 +126,7 @@ function renderCell(row: Row, key: SortColumn) {
 export default function Summary() {
   const [rows, setRows] = useState<Row[]>([]);
   const [loading, setLoading] = useState(true);
-  const [error, setError] = useState('');
+  const [error, setError] = useState<ClassifiedError | null>(null);
   const [lastUpdated, setLastUpdated] = useState('');
   const [spinning, setSpinning] = useState(false);
   const [searchTerm, setSearchTerm] = useState('');
@@ -152,13 +154,13 @@ export default function Summary() {
     try {
       setSpinning(true);
       setLoading(true);
-      setError('');
+      setError(null);
       setRows([]);
       const [res, balRes] = await Promise.all([
         fetch(`/api/opening?t=${Date.now()}`),
         fetch(`/api/agentbal?t=${Date.now()}`),
       ]);
-      if (!res.ok || !balRes.ok) throw new Error('Failed to fetch');
+      await assertAllOk([res, balRes]);
       const text = await res.text();
       const balText = await balRes.text();
 
@@ -195,8 +197,8 @@ export default function Summary() {
         .filter((row) => row.agentName && row.agentName !== 'OLD');
       setRows(parsed);
       setLastUpdated(new Date().toLocaleTimeString('en-PH'));
-    } catch {
-      setError('Unable to load data. Check your Google Sheet or network connection.');
+    } catch (err) {
+      setError(classifyFetchError(err instanceof Error ? err.message : String(err)));
     } finally {
       setLoading(false);
       setSpinning(false);
@@ -407,12 +409,7 @@ export default function Summary() {
 
       <main className="flex-1 flex flex-col overflow-hidden px-6 pt-4 pb-6">
 
-        {error && (
-          <div className="flex items-center gap-3 rounded-2xl border border-rose-200 px-5 py-4 text-sm text-rose-600 dark:border-rose-900/60 dark:text-rose-300">
-            <AlertCircle size={15} />
-            {error}
-          </div>
-        )}
+        {error && <ConnectionErrorState error={error} onRetry={fetchData} />}
 
         {!error && (
           <div className="flex-1 flex flex-col min-h-0 mt-3 bg-white rounded-xl border border-border overflow-hidden dark:bg-[#2a2a2d]">

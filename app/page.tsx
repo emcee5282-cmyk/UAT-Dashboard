@@ -1,10 +1,12 @@
 'use client';
 
 import { useEffect, useState, useCallback } from 'react';
-import { RefreshCw, AlertCircle, TrendingUp, TrendingDown, Wallet, Activity, BarChart2 } from 'lucide-react';
+import { RefreshCw, TrendingUp, TrendingDown, Wallet, Activity, BarChart2 } from 'lucide-react';
 import { Bar, BarChart, ResponsiveContainer, XAxis, YAxis, Tooltip, CartesianGrid } from 'recharts';
 import ThemeToggle from './components/ThemeToggle';
 import { useTheme } from './components/ThemeProvider';
+import ConnectionErrorState from './components/ConnectionErrorState';
+import { classifyFetchError, type ClassifiedError, assertAllOk } from './lib/errors';
 
 type CashGoPoint = {
   day: string;
@@ -259,7 +261,7 @@ export default function Dashboard() {
   const isDark = theme === 'dark';
   const [rows, setRows] = useState<Row[]>([]);
   const [loading, setLoading] = useState(true);
-  const [error, setError] = useState('');
+  const [error, setError] = useState<ClassifiedError | null>(null);
   const [lastUpdated, setLastUpdated] = useState('');
   const [spinning, setSpinning] = useState(false);
   const searchTerm = '';
@@ -285,7 +287,7 @@ export default function Dashboard() {
     try {
       setSpinning(true);
       setLoading(true);
-      setError('');
+      setError(null);
       setRows([]);
       const [res, openingRes, agentBalRes, stlmRes, cashGoRes] = await Promise.all([
         fetch(`/api/sheet?t=${Date.now()}`),
@@ -294,7 +296,7 @@ export default function Dashboard() {
         fetch(`/api/stlm?t=${Date.now()}`),
         fetch(`/api/cashgo?t=${Date.now()}`),
       ]);
-      if (!res.ok || !openingRes.ok || !agentBalRes.ok || !stlmRes.ok || !cashGoRes.ok) throw new Error('Failed to fetch');
+      await assertAllOk([res, openingRes, agentBalRes, stlmRes, cashGoRes]);
       const text = await res.text();
       const openingText = await openingRes.text();
       const agentBalText = await agentBalRes.text();
@@ -548,8 +550,8 @@ export default function Dashboard() {
       setCashGoMonthData(cashGoMonthPoints);
       setTodayCashGo(todaySummary);
       setLastUpdated(new Date().toLocaleTimeString('en-PH'));
-    } catch {
-      setError('Unable to load data. Check your Google Sheet or network connection.');
+    } catch (err) {
+      setError(classifyFetchError(err instanceof Error ? err.message : String(err)));
     } finally {
       setLoading(false);
       setSpinning(false);
@@ -787,12 +789,7 @@ export default function Dashboard() {
           </>
         )}
 
-        {!loading && error && (
-          <div className="flex items-center gap-3 rounded-2xl border border-rose-200 bg-rose-50 px-5 py-4 text-sm text-rose-600 dark:border-rose-900/60 dark:bg-rose-500/10 dark:text-rose-300">
-            <AlertCircle size={15} />
-            {error}
-          </div>
-        )}
+        {!loading && error && <ConnectionErrorState error={error} onRetry={fetchData} />}
 
         {!loading && !error && (
           <>

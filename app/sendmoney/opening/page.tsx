@@ -2,9 +2,11 @@
 
 import { useEffect, useState, useCallback, useMemo, useRef } from 'react';
 import { createPortal } from 'react-dom';
-import { RefreshCw, AlertCircle, Search, Filter, ChevronUp, ChevronDown, Download } from 'lucide-react';
+import { RefreshCw, Search, Filter, ChevronUp, ChevronDown, Download } from 'lucide-react';
 import * as XLSX from 'xlsx';
 import ThemeToggle from '@/app/components/ThemeToggle';
+import ConnectionErrorState from '@/app/components/ConnectionErrorState';
+import { classifyFetchError, type ClassifiedError } from '@/app/lib/errors';
 import { parseSendMoneyOpeningCsv, type SendMoneyOpeningRow } from '@/app/lib/sendMoneyOpening';
 
 // Zero and "not set" (blank/null source cell) both render as the same dash —
@@ -87,7 +89,7 @@ function compareNullableNumber(a: number | null, b: number | null, direction: 'a
 export default function SendMoneyOpeningPage() {
   const [rows, setRows] = useState<SendMoneyOpeningRow[]>([]);
   const [loading, setLoading] = useState(true);
-  const [error, setError] = useState('');
+  const [error, setError] = useState<ClassifiedError | null>(null);
   const [spinning, setSpinning] = useState(false);
   const [searchTerm, setSearchTerm] = useState('');
   const [brandFilter, setBrandFilter] = useState<Record<string, boolean>>({});
@@ -120,14 +122,14 @@ export default function SendMoneyOpeningPage() {
     try {
       setSpinning(true);
       setLoading(true);
-      setError('');
+      setError(null);
       setRows([]);
       const res = await fetch(`/api/sendmoney/opening?t=${Date.now()}`);
-      if (!res.ok) throw new Error('Failed to fetch');
+      if (!res.ok) throw new Error((await res.text().catch(() => '')) || `Request failed with status ${res.status}`);
       const text = await res.text();
       setRows(parseSendMoneyOpeningCsv(text));
-    } catch {
-      setError('Unable to load data. Check your Google Sheet or network connection.');
+    } catch (err) {
+      setError(classifyFetchError(err instanceof Error ? err.message : String(err)));
     } finally {
       const remaining = MIN_SPIN_MS - (Date.now() - startedAt);
       if (remaining > 0) await new Promise((resolve) => setTimeout(resolve, remaining));
@@ -323,12 +325,7 @@ export default function SendMoneyOpeningPage() {
 
       <main className="flex-1 flex flex-col overflow-hidden px-6 pt-4 pb-6">
 
-        {error && (
-          <div className="flex items-center gap-3 rounded-2xl border border-rose-200 px-5 py-4 text-sm text-rose-600 dark:border-rose-900/60 dark:text-rose-300">
-            <AlertCircle size={15} />
-            {error}
-          </div>
-        )}
+        {error && <ConnectionErrorState error={error} onRetry={fetchData} />}
 
         {!error && (
           <div className="flex-1 flex flex-col min-h-0 mt-3 bg-white rounded-xl border border-border overflow-hidden dark:bg-[#2a2a2d]">

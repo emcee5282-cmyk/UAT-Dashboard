@@ -2,9 +2,11 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { AlertCircle, ChevronDown, ChevronUp, Download, Filter, RefreshCw, Search } from 'lucide-react';
+import { ChevronDown, ChevronUp, Download, Filter, RefreshCw, Search } from 'lucide-react';
 import * as XLSX from 'xlsx';
 import ThemeToggle from '../components/ThemeToggle';
+import ConnectionErrorState from '../components/ConnectionErrorState';
+import { classifyFetchError, type ClassifiedError, assertAllOk } from '../lib/errors';
 import { rawVal } from '@/app/lib/format';
 
 type OpeningRow = {
@@ -441,7 +443,7 @@ function renderCell(row: MergedRow, key: ColumnKey) {
 export default function AgentBalance() {
   const [rows, setRows] = useState<MergedRow[]>([]);
   const [loading, setLoading] = useState(true);
-  const [error, setError] = useState('');
+  const [error, setError] = useState<ClassifiedError | null>(null);
   const [lastUpdated, setLastUpdated] = useState('');
   const [spinning, setSpinning] = useState(false);
   const [cardsExpanded, setCardsExpanded] = useState(false);
@@ -486,7 +488,7 @@ export default function AgentBalance() {
     try {
       setSpinning(true);
       setLoading(true);
-      setError('');
+      setError(null);
 
       const [openingRes, balRes, stlmRes] = await Promise.all([
         fetch(`/api/opening?t=${Date.now()}`),
@@ -494,7 +496,7 @@ export default function AgentBalance() {
         fetch(`/api/stlm?t=${Date.now()}`),
       ]);
 
-      if (!openingRes.ok || !balRes.ok || !stlmRes.ok) throw new Error('Failed to fetch');
+      await assertAllOk([openingRes, balRes, stlmRes]);
 
       const openingText = await openingRes.text();
       const balData: string[][] = await balRes.json();
@@ -633,8 +635,8 @@ export default function AgentBalance() {
           });
         });
       }, 50);
-    } catch {
-      setError('Unable to load data. Check your Google Sheet or network connection.');
+    } catch (err) {
+      setError(classifyFetchError(err instanceof Error ? err.message : String(err)));
     } finally {
       setLoading(false);
       setSpinning(false);
@@ -1063,12 +1065,7 @@ export default function AgentBalance() {
       </header>
 
       <main className="flex-1 flex flex-col overflow-hidden px-6 pt-4 pb-6">
-        {error && (
-          <div className="flex items-center gap-3 rounded-2xl border border-rose-200 px-5 py-4 text-sm text-rose-600 dark:border-rose-900/60 dark:text-rose-300">
-            <AlertCircle size={15} />
-            {error}
-          </div>
-        )}
+        {error && <ConnectionErrorState error={error} onRetry={fetchData} />}
 
         {!error && (
           <div className={`shrink-0 overflow-hidden transition-all duration-300 ease-in-out ${cardsExpanded ? 'h-[84px] opacity-100 mb-1' : 'h-0 opacity-0 mb-0'}`}>

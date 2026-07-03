@@ -2,9 +2,11 @@
 
 import { useEffect, useState, useCallback, useMemo, useRef } from 'react';
 import { createPortal } from 'react-dom';
-import { RefreshCw, AlertCircle, Search, ChevronUp, ChevronDown, Filter, Download } from 'lucide-react';
+import { RefreshCw, Search, ChevronUp, ChevronDown, Filter, Download } from 'lucide-react';
 import * as XLSX from 'xlsx';
 import ThemeToggle from '../components/ThemeToggle';
+import ConnectionErrorState from '../components/ConnectionErrorState';
+import { classifyFetchError, type ClassifiedError } from '../lib/errors';
 import { rawVal, fmtNum } from '@/app/lib/format';
 
 function getBrand(toAgent: string): string {
@@ -97,7 +99,7 @@ function renderCell(row: TopUpRow, key: ColumnKey) {
 export default function TopUpPage() {
   const [topUpRows, setTopUpRows] = useState<TopUpRow[]>([]);
   const [loading, setLoading] = useState(true);
-  const [error, setError] = useState('');
+  const [error, setError] = useState<ClassifiedError | null>(null);
   const [lastUpdated, setLastUpdated] = useState('');
   const [spinning, setSpinning] = useState(false);
   const [searchTerm, setSearchTerm] = useState('');
@@ -122,13 +124,13 @@ export default function TopUpPage() {
     try {
       setSpinning(true);
       setLoading(true);
-      setError('');
+      setError(null);
 
       const [res, agentRes] = await Promise.all([
         fetch(`/api/stlm?t=${Date.now()}`),
         fetch(`/api/opening?t=${Date.now()}`),
       ]);
-      if (!res.ok) throw new Error('Failed to fetch');
+      if (!res.ok) throw new Error((await res.text().catch(() => '')) || `Request failed with status ${res.status}`);
       const text = await res.text();
       const agentText = agentRes.ok ? await agentRes.text() : '';
 
@@ -166,8 +168,8 @@ export default function TopUpPage() {
 
       setTopUpRows(topUp);
       setLastUpdated(new Date().toLocaleTimeString('en-PH'));
-    } catch {
-      setError('Unable to load data. Check your Google Sheet or network connection.');
+    } catch (err) {
+      setError(classifyFetchError(err instanceof Error ? err.message : String(err)));
     } finally {
       setLoading(false);
       setSpinning(false);
@@ -350,12 +352,7 @@ export default function TopUpPage() {
 
       <main className="flex-1 flex flex-col overflow-hidden px-6 pt-4 pb-6">
 
-        {error && (
-          <div className="flex items-center gap-3 rounded-2xl border border-rose-200 px-5 py-4 text-sm text-rose-600 dark:border-rose-900/60 dark:text-rose-300">
-            <AlertCircle size={15} />
-            {error}
-          </div>
-        )}
+        {error && <ConnectionErrorState error={error} onRetry={fetchData} />}
 
         {!error && (
           <div className="mb-1 flex h-5 items-center">
