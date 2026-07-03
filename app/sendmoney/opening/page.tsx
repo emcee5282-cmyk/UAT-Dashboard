@@ -165,10 +165,14 @@ export default function SendMoneyOpeningPage() {
     // Refresh should always be visibly a "loading" moment, even when the
     // fetch itself is too fast to notice or the data comes back unchanged —
     // otherwise a quick response reads as "nothing happened." Never caps a
-    // slow fetch, only pads a fast one up to this floor.
+    // slow fetch, only pads a fast one up to this floor. Unlike most pages
+    // in this app, this one re-shows the skeleton on every refresh (not
+    // just first load) per explicit request — page-scoped override, not
+    // yet the app-wide convention.
     const MIN_SPIN_MS = 600;
     const startedAt = Date.now();
     try {
+      setLoading(true);
       setSpinning(true);
       setError('');
       const res = await fetch(`/api/sendmoney/opening?t=${Date.now()}`);
@@ -181,8 +185,6 @@ export default function SendMoneyOpeningPage() {
     } finally {
       const remaining = MIN_SPIN_MS - (Date.now() - startedAt);
       if (remaining > 0) await new Promise((resolve) => setTimeout(resolve, remaining));
-      // Only ever flips loading off — the KPI skeleton is a first-load-only
-      // thing; refreshes keep showing the previous numbers until new ones land.
       setLoading(false);
       setSpinning(false);
     }
