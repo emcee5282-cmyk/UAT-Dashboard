@@ -1,7 +1,8 @@
 'use client';
 
 import Link from 'next/link';
-import { usePathname } from 'next/navigation';
+import { usePathname, useRouter } from 'next/navigation';
+import { getActiveProduct, getCounterpartPath } from '@/app/lib/productRoutes';
 import {
   LayoutDashboard,
   Users,
@@ -57,12 +58,20 @@ type SidebarProps = {
 
 export default function Sidebar({ isExpanded, onExpandedChange }: SidebarProps) {
   const pathname = usePathname();
+  const router = useRouter();
   const [mobileOpen, setMobileOpen] = useState(false);
   const [mounted, setMounted] = useState(false);
   const [agentOpen, setAgentOpen] = useState(true);
-  // Cosmetic-only in Phase 1 — not wired to routing yet (Phase 3 will switch route groups on toggle).
-  const [activeProduct, setActiveProduct] = useState<'cashout' | 'sendmoney'>('cashout');
+  // URL is the single source of truth for the active product — never client state.
+  const activeProduct = getActiveProduct(pathname);
   const [transferQueueCount, setTransferQueueCount] = useState<number | null>(null);
+
+  const goToProduct = (target: 'cashout' | 'sendmoney') => {
+    router.push(getCounterpartPath(pathname, target));
+  };
+
+  const resolveHref = (canonicalCashoutHref: string) =>
+    activeProduct === 'cashout' ? canonicalCashoutHref : getCounterpartPath(canonicalCashoutHref, 'sendmoney');
 
   useEffect(() => {
     setMounted(true);
@@ -125,7 +134,8 @@ export default function Sidebar({ isExpanded, onExpandedChange }: SidebarProps) 
                   <div className="mb-2 flex rounded-lg bg-muted/60 p-0.5">
                     <button
                       type="button"
-                      onClick={() => setActiveProduct('cashout')}
+                      aria-pressed={activeProduct === 'cashout'}
+                      onClick={() => goToProduct('cashout')}
                       className={`flex-1 rounded-md px-2 py-1 text-[10.5px] font-semibold transition-colors ${
                         activeProduct === 'cashout'
                           ? 'bg-indigo-600 text-white shadow-sm'
@@ -136,7 +146,8 @@ export default function Sidebar({ isExpanded, onExpandedChange }: SidebarProps) 
                     </button>
                     <button
                       type="button"
-                      onClick={() => setActiveProduct('sendmoney')}
+                      aria-pressed={activeProduct === 'sendmoney'}
+                      onClick={() => goToProduct('sendmoney')}
                       className={`flex-1 rounded-md px-2 py-1 text-[10.5px] font-semibold transition-colors ${
                         activeProduct === 'sendmoney'
                           ? 'bg-teal-600 text-white shadow-sm'
@@ -149,14 +160,20 @@ export default function Sidebar({ isExpanded, onExpandedChange }: SidebarProps) 
                 </>
               )}
 
-              {/* Collapsed rail: minimum viable product indicator (dot). TODO Phase 3: full collapsed-state
-                  switcher (tap-to-expand or flyout) — cosmetic dot only for now. */}
+              {/* Collapsed rail: minimum viable switcher — the dot itself is clickable.
+                  TODO: a proper flyout/expand-on-tap picker would be nicer once there
+                  are more than two products; deferring that, not the interaction. */}
               {!expanded && (
                 <div className="mb-1.5 flex justify-center">
-                  <span
-                    title={activeProduct === 'cashout' ? 'Cashout' : 'Send Money'}
-                    className="h-1.5 w-1.5 rounded-full bg-[color:var(--product-accent)]"
-                  />
+                  <button
+                    type="button"
+                    onClick={() => goToProduct(activeProduct === 'cashout' ? 'sendmoney' : 'cashout')}
+                    title={activeProduct === 'cashout' ? 'Switch to Send Money' : 'Switch to Cashout'}
+                    aria-label={activeProduct === 'cashout' ? 'Switch to Send Money' : 'Switch to Cashout'}
+                    className="flex h-4 w-4 items-center justify-center rounded-full transition-colors hover:bg-[color:var(--product-accent-active-bg)]"
+                  >
+                    <span className="h-1.5 w-1.5 rounded-full bg-[color:var(--product-accent)]" />
+                  </button>
                 </div>
               )}
 
@@ -164,11 +181,12 @@ export default function Sidebar({ isExpanded, onExpandedChange }: SidebarProps) 
                 {navItems.map((item) => {
                   if (!item.children) {
                     const Icon = item.icon;
-                    const active = pathname === item.href;
+                    const targetHref = resolveHref(item.href);
+                    const active = pathname === targetHref;
                     return (
                       <Link
                         key={item.href}
-                        href={item.href!}
+                        href={targetHref}
                         onClick={() => setMobileOpen(false)}
                         title={expanded ? undefined : item.label}
                         className={`flex w-full items-center gap-3 rounded-lg px-3 py-2 text-[12px] font-medium transition-all duration-150 ${
@@ -188,7 +206,7 @@ export default function Sidebar({ isExpanded, onExpandedChange }: SidebarProps) 
                   }
 
                   const ParentIcon = item.icon;
-                  const childActive = item.children.some((child) => pathname === child.href);
+                  const childActive = item.children.some((child) => pathname === resolveHref(child.href));
 
                   return (
                     <div key={item.label}>
@@ -206,7 +224,7 @@ export default function Sidebar({ isExpanded, onExpandedChange }: SidebarProps) 
                         <span className={`flex items-center gap-3 ${expanded ? '' : 'justify-center'}`}>
                           <span className="relative shrink-0">
                             <ParentIcon size={15} strokeWidth={1.75} />
-                            {!expanded && !!displayCount && displayCount > 0 && (
+                            {activeProduct === 'cashout' && !expanded && !!displayCount && displayCount > 0 && (
                               <span className="absolute -right-1.5 -top-1.5 flex h-3 min-w-[12px] items-center justify-center rounded-full bg-[color:var(--product-accent)] px-0.5 text-[7px] font-bold leading-none text-white">
                                 {displayCount > 99 ? '99+' : displayCount}
                               </span>
@@ -215,7 +233,7 @@ export default function Sidebar({ isExpanded, onExpandedChange }: SidebarProps) 
                           <span className={`overflow-hidden whitespace-nowrap transition-all duration-300 ${expanded ? 'max-w-[160px] opacity-100' : 'max-w-0 opacity-0'}`}>
                             {item.label}
                           </span>
-                          {expanded && !!displayCount && displayCount > 0 && (
+                          {activeProduct === 'cashout' && expanded && !!displayCount && displayCount > 0 && (
                             <span className="flex h-4 min-w-[20px] shrink-0 items-center justify-center rounded-full bg-[color:var(--product-accent)] px-1.5 text-[9px] font-bold leading-none text-white">
                               {displayCount > 999 ? '999+' : displayCount}
                             </span>
@@ -239,12 +257,13 @@ export default function Sidebar({ isExpanded, onExpandedChange }: SidebarProps) 
                         <div className="ml-4 mt-0.5 space-y-0.5 border-l border-border pb-0.5 pl-3">
                           {item.children.map((child, idx) => {
                             const ChildIcon = child.icon;
-                            const active = pathname === child.href;
+                            const targetHref = resolveHref(child.href);
+                            const active = pathname === targetHref;
                             const isTransferQueue = child.href === '/transfer-queue';
                             return (
                               <Link
                                 key={child.href}
-                                href={child.href}
+                                href={targetHref}
                                 onClick={() => setMobileOpen(false)}
                                 style={
                                   expanded && agentOpen
@@ -261,7 +280,7 @@ export default function Sidebar({ isExpanded, onExpandedChange }: SidebarProps) 
                                   <ChildIcon size={13} strokeWidth={1.75} className="shrink-0" />
                                   {child.label}
                                 </span>
-                                {isTransferQueue && !!displayCount && displayCount > 0 && (
+                                {activeProduct === 'cashout' && isTransferQueue && !!displayCount && displayCount > 0 && (
                                   <span
                                     title={`${displayCount} agent${displayCount === 1 ? '' : 's'} need transfer`}
                                     className="flex h-4 min-w-[20px] shrink-0 items-center justify-center rounded-full bg-[color:var(--product-accent)] px-1.5 text-[9px] font-bold leading-none text-white"

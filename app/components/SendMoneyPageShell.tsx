@@ -12,7 +12,7 @@ export default function SendMoneyPageShell({ title, itemLabel }: SendMoneyPageSh
       <header className="sticky top-0 z-30 shrink-0 border-b border-border bg-white/95 py-0 pl-14 pr-4 backdrop-blur-sm dark:bg-[#0d1117]/95 md:px-8">
         <div className="flex h-12 items-center justify-between">
           <div className="flex items-center gap-3">
-            <div className="h-4 w-[3px] rounded-full bg-teal-500" />
+            <div className="h-4 w-[3px] rounded-full bg-[color:var(--product-accent)]" />
             <h1 className="text-[13px] font-semibold tracking-[-0.01em] text-foreground">{title}</h1>
           </div>
           <div className="flex items-center gap-1.5 rounded-md bg-muted px-2 py-0.5">
