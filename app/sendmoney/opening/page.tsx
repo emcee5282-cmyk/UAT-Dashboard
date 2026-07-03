@@ -126,7 +126,14 @@ function FilterChip({ label, onRemove }: { label: string; onRemove: () => void }
   return (
     <span className="inline-flex items-center gap-1 rounded-full border border-border bg-white px-2 py-0.5 text-[10px] text-foreground dark:bg-[#2a2a2d]">
       {label}
-      <button type="button" onClick={onRemove} className="text-muted-foreground hover:text-foreground">
+      {/* -m-1 p-1 expands the actual hit target to ~18x18px without shifting
+          layout — the bare 10px icon was too small to reliably click. */}
+      <button
+        type="button"
+        onClick={onRemove}
+        aria-label={`Remove ${label} filter`}
+        className="-m-1 rounded-full p-1 text-muted-foreground hover:text-foreground"
+      >
         <X size={10} />
       </button>
     </span>
