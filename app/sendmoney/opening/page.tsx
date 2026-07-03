@@ -53,7 +53,6 @@ const kpiSkeleton = <div className="h-8 w-24 animate-pulse rounded-md bg-slate-2
 const BTN_BASE =
   'inline-flex h-9 shrink-0 items-center justify-center gap-1.5 rounded-lg border-[0.5px] px-3 text-[13px] font-medium transition-colors disabled:opacity-40 disabled:cursor-not-allowed';
 const BTN_OUTLINE = `${BTN_BASE} border-border text-foreground hover:bg-muted`;
-const BTN_PRIMARY = `${BTN_BASE} border-transparent bg-[color:var(--product-accent)] text-white hover:opacity-90`;
 
 const ROWS_PER_PAGE = 50;
 
@@ -152,9 +151,6 @@ export default function SendMoneyOpeningPage() {
   const [appliedLeaderFilter, setAppliedLeaderFilter] = useState<Record<string, boolean>>({});
   const [openingFilter, setOpeningFilter] = useState<OpeningFilter>('all');
 
-  const [draftBrandFilter, setDraftBrandFilter] = useState<Record<string, boolean>>({});
-  const [draftLeaderFilter, setDraftLeaderFilter] = useState<Record<string, boolean>>({});
-  const [draftOpeningFilter, setDraftOpeningFilter] = useState<OpeningFilter>('all');
   const [filterMenuOpen, setFilterMenuOpen] = useState(false);
   const [filterMenuPos, setFilterMenuPos] = useState({ top: 0, left: 0 });
   const filterButtonRef = useRef<HTMLButtonElement>(null);
@@ -288,9 +284,6 @@ export default function SendMoneyOpeningPage() {
   };
 
   const openFilterMenu = () => {
-    setDraftBrandFilter(appliedBrandFilter);
-    setDraftLeaderFilter(appliedLeaderFilter);
-    setDraftOpeningFilter(openingFilter);
     const rect = filterButtonRef.current?.getBoundingClientRect();
     if (rect) {
       const dropdownWidth = 288;
@@ -300,9 +293,8 @@ export default function SendMoneyOpeningPage() {
     setFilterMenuOpen(true);
   };
 
-  // Escape / outside click closes the panel, discarding the draft (the draft
-  // only ever gets committed via Apply, so simply not committing it *is* the
-  // discard — nothing else to clean up).
+  // Instant-apply: every checkbox/radio writes straight to applied state, so
+  // Escape / outside click just closes the panel — there's no draft to discard.
   useEffect(() => {
     if (!filterMenuOpen) return;
     const handleClick = (e: MouseEvent) => {
@@ -336,17 +328,10 @@ export default function SendMoneyOpeningPage() {
     }
   }, [filterMenuOpen]);
 
-  const handleApplyFilters = () => {
-    setAppliedBrandFilter(draftBrandFilter);
-    setAppliedLeaderFilter(draftLeaderFilter);
-    setOpeningFilter(draftOpeningFilter);
-    setFilterMenuOpen(false);
-  };
-
-  const handleClearAllDraft = () => {
-    setDraftBrandFilter({});
-    setDraftLeaderFilter({});
-    setDraftOpeningFilter('all');
+  const handleClearAllApplied = () => {
+    setAppliedBrandFilter({});
+    setAppliedLeaderFilter({});
+    setOpeningFilter('all');
   };
 
   const clearAllFilters = () => {
@@ -530,8 +515,8 @@ export default function SendMoneyOpeningPage() {
                         <label key={b} className="flex items-center gap-2 rounded-lg px-2 py-1 text-[12px] text-foreground hover:bg-muted/60">
                           <input
                             type="checkbox"
-                            checked={draftBrandFilter[b] !== false}
-                            onChange={() => setDraftBrandFilter((c) => ({ ...c, [b]: c[b] === false }))}
+                            checked={appliedBrandFilter[b] !== false}
+                            onChange={() => setAppliedBrandFilter((c) => ({ ...c, [b]: c[b] === false }))}
                           />
                           {b}
                         </label>
@@ -546,8 +531,8 @@ export default function SendMoneyOpeningPage() {
                         <label key={l} className="flex items-center gap-2 rounded-lg px-2 py-1 text-[12px] text-foreground hover:bg-muted/60">
                           <input
                             type="checkbox"
-                            checked={draftLeaderFilter[l] !== false}
-                            onChange={() => setDraftLeaderFilter((c) => ({ ...c, [l]: c[l] === false }))}
+                            checked={appliedLeaderFilter[l] !== false}
+                            onChange={() => setAppliedLeaderFilter((c) => ({ ...c, [l]: c[l] === false }))}
                           />
                           {l}
                         </label>
@@ -563,8 +548,8 @@ export default function SendMoneyOpeningPage() {
                           <input
                             type="radio"
                             name="openingFilter"
-                            checked={draftOpeningFilter === val}
-                            onChange={() => setDraftOpeningFilter(val)}
+                            checked={openingFilter === val}
+                            onChange={() => setOpeningFilter(val)}
                           />
                           {val === 'all' ? 'All' : val === 'has' ? 'Has opening' : 'No opening'}
                         </label>
@@ -573,12 +558,9 @@ export default function SendMoneyOpeningPage() {
                   </div>
                 </div>
 
-                <div className="flex shrink-0 items-center justify-between gap-2 border-t border-border p-3">
-                  <button type="button" onClick={handleClearAllDraft} className={BTN_OUTLINE}>
+                <div className="flex shrink-0 items-center justify-end border-t border-border p-3">
+                  <button type="button" onClick={handleClearAllApplied} className={BTN_OUTLINE}>
                     Clear all
-                  </button>
-                  <button type="button" onClick={handleApplyFilters} className={BTN_PRIMARY}>
-                    Apply
                   </button>
                 </div>
               </div>,
