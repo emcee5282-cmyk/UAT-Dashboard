@@ -610,7 +610,7 @@ export default function SendMoneyOpeningPage() {
 
             <div className="flex-1 overflow-auto">
               <table className="w-full border-collapse">
-                <thead className="sticky top-0 z-10 border-b border-border bg-muted/10">
+                <thead className="sticky top-0 z-[50] border-b border-border bg-white shadow-[0_1px_3px_rgba(0,0,0,0.06)] dark:bg-[#2a2a2d] dark:shadow-[0_2px_4px_rgba(0,0,0,0.35)]">
                   <tr>
                     <th className="px-4 py-3 text-left text-xs font-semibold text-muted-foreground whitespace-nowrap">Brand</th>
                     <th className="px-4 py-3 text-left text-xs font-semibold text-muted-foreground whitespace-nowrap">Leader</th>
