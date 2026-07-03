@@ -162,6 +162,12 @@ export default function SendMoneyOpeningPage() {
   const [expandedGroups, setExpandedGroups] = useState<Record<string, boolean>>({});
 
   const fetchData = useCallback(async () => {
+    // Refresh should always be visibly a "loading" moment, even when the
+    // fetch itself is too fast to notice or the data comes back unchanged —
+    // otherwise a quick response reads as "nothing happened." Never caps a
+    // slow fetch, only pads a fast one up to this floor.
+    const MIN_SPIN_MS = 600;
+    const startedAt = Date.now();
     try {
       setSpinning(true);
       setError('');
@@ -173,6 +179,8 @@ export default function SendMoneyOpeningPage() {
     } catch {
       setError('Unable to load data. Check your Google Sheet or network connection.');
     } finally {
+      const remaining = MIN_SPIN_MS - (Date.now() - startedAt);
+      if (remaining > 0) await new Promise((resolve) => setTimeout(resolve, remaining));
       // Only ever flips loading off — the KPI skeleton is a first-load-only
       // thing; refreshes keep showing the previous numbers until new ones land.
       setLoading(false);
