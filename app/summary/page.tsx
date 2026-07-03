@@ -191,7 +191,8 @@ export default function Summary() {
             leader: cols[3]?.replace(/"/g, '').trim(),
             brand: resolveBrand(brandGroups.get(agentName) ?? [], agentName),
           };
-        });
+        })
+        .filter((row) => row.agentName && row.agentName !== 'OLD');
       setRows(parsed);
       setLastUpdated(new Date().toLocaleTimeString('en-PH'));
     } catch {
