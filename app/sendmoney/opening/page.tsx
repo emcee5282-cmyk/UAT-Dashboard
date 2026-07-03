@@ -1,7 +1,9 @@
 'use client';
 
-import { Fragment, useCallback, useEffect, useMemo, useState } from 'react';
-import { ChevronDown, ChevronUp, RefreshCw } from 'lucide-react';
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
+import { ChevronDown, ChevronUp, Download, Filter, RefreshCw, Search, X } from 'lucide-react';
+import * as XLSX from 'xlsx';
 import { parseSendMoneyOpeningCsv, type SendMoneyOpeningRow } from '@/app/lib/sendMoneyOpening';
 
 function fmtAbbrev(num: number): string {
@@ -47,10 +49,17 @@ function BrandBadge({ brand }: { brand: string | null }) {
 const kpiValueClass = 'text-[28px] font-medium text-foreground mb-1 tabular-nums';
 const kpiSkeleton = <div className="h-8 w-24 animate-pulse rounded-md bg-slate-200 dark:bg-slate-700 mb-1" />;
 
+// Uniform button system: 36px height, 8px radius, 0.5px border, 13px label, 14px icons.
+const BTN_BASE =
+  'inline-flex h-9 shrink-0 items-center justify-center gap-1.5 rounded-lg border-[0.5px] px-3 text-[13px] font-medium transition-colors disabled:opacity-40 disabled:cursor-not-allowed';
+const BTN_OUTLINE = `${BTN_BASE} border-border text-foreground hover:bg-muted`;
+const BTN_PRIMARY = `${BTN_BASE} border-transparent bg-[color:var(--product-accent)] text-white hover:opacity-90`;
+
 const ROWS_PER_PAGE = 50;
 
 type SortColumn = 'agentName' | 'openingBalance' | 'securityDeposit';
 type SortState = { column: SortColumn; direction: 'asc' | 'desc' } | null;
+type OpeningFilter = 'all' | 'has' | 'none';
 
 function compareNullableNumber(a: number | null, b: number | null, direction: 'asc' | 'desc'): number {
   // Nulls always sort last, regardless of direction.
@@ -113,13 +122,38 @@ function SortHeader({
   );
 }
 
+function FilterChip({ label, onRemove }: { label: string; onRemove: () => void }) {
+  return (
+    <span className="inline-flex items-center gap-1 rounded-full border border-border bg-white px-2 py-0.5 text-[10px] text-foreground dark:bg-[#2a2a2d]">
+      {label}
+      <button type="button" onClick={onRemove} className="text-muted-foreground hover:text-foreground">
+        <X size={10} />
+      </button>
+    </span>
+  );
+}
+
 export default function SendMoneyOpeningPage() {
   const [rows, setRows] = useState<SendMoneyOpeningRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [spinning, setSpinning] = useState(false);
   const [error, setError] = useState('');
   const [lastUpdated, setLastUpdated] = useState('');
-  const [noOpeningFilterActive, setNoOpeningFilterActive] = useState(false);
+
+  const [searchTerm, setSearchTerm] = useState('');
+  const [appliedBrandFilter, setAppliedBrandFilter] = useState<Record<string, boolean>>({});
+  const [appliedLeaderFilter, setAppliedLeaderFilter] = useState<Record<string, boolean>>({});
+  const [openingFilter, setOpeningFilter] = useState<OpeningFilter>('all');
+
+  const [draftBrandFilter, setDraftBrandFilter] = useState<Record<string, boolean>>({});
+  const [draftLeaderFilter, setDraftLeaderFilter] = useState<Record<string, boolean>>({});
+  const [draftOpeningFilter, setDraftOpeningFilter] = useState<OpeningFilter>('all');
+  const [filterMenuOpen, setFilterMenuOpen] = useState(false);
+  const [filterMenuPos, setFilterMenuPos] = useState({ top: 0, left: 0 });
+  const filterButtonRef = useRef<HTMLButtonElement>(null);
+  const filterDropdownRef = useRef<HTMLDivElement>(null);
+  const wasFilterMenuOpenRef = useRef(false);
+
   const [page, setPage] = useState(1);
   const [sort, setSort] = useState<SortState>(null);
   const [expandedGroups, setExpandedGroups] = useState<Record<string, boolean>>({});
@@ -147,17 +181,47 @@ export default function SendMoneyOpeningPage() {
     fetchData();
   }, [fetchData]);
 
+  // KPI cards always reflect the full dataset, never the filtered view.
   const accounts = rows.length;
   const totalOpening = useMemo(() => rows.reduce((sum, r) => sum + (r.openingBalance ?? 0), 0), [rows]);
   const totalSdp = useMemo(() => rows.reduce((sum, r) => sum + (r.securityDeposit ?? 0), 0), [rows]);
   const noOpeningCount = useMemo(() => rows.filter((r) => r.openingBalance === null).length, [rows]);
 
-  // Filter first, then paginate the filtered set — page count itself shrinks
-  // when the "No Opening Yet" toggle is active.
-  const filteredRows = useMemo(
-    () => (noOpeningFilterActive ? rows.filter((r) => r.openingBalance === null) : rows),
-    [rows, noOpeningFilterActive]
+  const brandOptions = useMemo(
+    () => Array.from(new Set(rows.map((r) => r.brand).filter((b): b is string => b !== null))).sort(),
+    [rows]
   );
+  const leaderOptions = useMemo(() => Array.from(new Set(rows.map((r) => r.leader))).sort(), [rows]);
+
+  const brandFilterActive = brandOptions.some((b) => appliedBrandFilter[b] === false);
+  const leaderFilterActive = leaderOptions.some((l) => appliedLeaderFilter[l] === false);
+  const openingFilterActive = openingFilter !== 'all';
+  const activeFilterCount = [brandFilterActive, leaderFilterActive, openingFilterActive].filter(Boolean).length;
+
+  // Search + Filter panel (Brand/Leader/Opening) + the "No Opening Yet" KPI
+  // toggle all AND together. The KPI toggle and the Opening radio are the
+  // exact same `openingFilter` state — one source of truth, not two.
+  const filteredRows = useMemo(() => {
+    let list = rows;
+    const q = searchTerm.trim().toLowerCase();
+    if (q) {
+      list = list.filter(
+        (r) =>
+          r.agentName.toLowerCase().includes(q) ||
+          r.leader.toLowerCase().includes(q) ||
+          (r.brand ?? '').toLowerCase().includes(q)
+      );
+    }
+    if (brandFilterActive) {
+      list = list.filter((r) => r.brand !== null && appliedBrandFilter[r.brand] !== false);
+    }
+    if (leaderFilterActive) {
+      list = list.filter((r) => appliedLeaderFilter[r.leader] !== false);
+    }
+    if (openingFilter === 'has') list = list.filter((r) => r.openingBalance !== null);
+    if (openingFilter === 'none') list = list.filter((r) => r.openingBalance === null);
+    return list;
+  }, [rows, searchTerm, appliedBrandFilter, appliedLeaderFilter, openingFilter, brandFilterActive, leaderFilterActive]);
 
   // Stable base order for pagination: Leader A→Z, then Agent Name A→Z.
   // This is what makes group headers always land in A→Z order, and why a
@@ -176,17 +240,22 @@ export default function SendMoneyOpeningPage() {
     if (page !== currentPage) setPage(currentPage);
   }, [page, currentPage]);
 
+  // Search/filters changing always sends the user back to page 1.
+  useEffect(() => {
+    setPage(1);
+  }, [searchTerm, appliedBrandFilter, appliedLeaderFilter, openingFilter]);
+
   const pagedRows = useMemo(() => {
     const start = (currentPage - 1) * ROWS_PER_PAGE;
     return baseSortedRows.slice(start, start + ROWS_PER_PAGE);
   }, [baseSortedRows, currentPage]);
 
-  // Sort is a per-page-view control, not a global sort applied before
-  // pagination — reset it whenever the page (or the underlying data) changes.
+  // Sort and group-collapse are per-page-view controls, not global — reset
+  // whenever the page changes or the filtered/base row set changes.
   useEffect(() => {
     setSort(null);
     setExpandedGroups({});
-  }, [currentPage, rows]);
+  }, [currentPage, baseSortedRows]);
 
   const groups = useMemo(() => {
     const map = new Map<string, SendMoneyOpeningRow[]>();
@@ -211,6 +280,99 @@ export default function SendMoneyOpeningPage() {
     });
   };
 
+  const openFilterMenu = () => {
+    setDraftBrandFilter(appliedBrandFilter);
+    setDraftLeaderFilter(appliedLeaderFilter);
+    setDraftOpeningFilter(openingFilter);
+    const rect = filterButtonRef.current?.getBoundingClientRect();
+    if (rect) {
+      const dropdownWidth = 288;
+      const left = Math.min(rect.left, window.innerWidth - dropdownWidth - 8);
+      setFilterMenuPos({ top: rect.bottom + 8, left: Math.max(8, left) });
+    }
+    setFilterMenuOpen(true);
+  };
+
+  // Escape / outside click closes the panel, discarding the draft (the draft
+  // only ever gets committed via Apply, so simply not committing it *is* the
+  // discard — nothing else to clean up).
+  useEffect(() => {
+    if (!filterMenuOpen) return;
+    const handleClick = (e: MouseEvent) => {
+      const target = e.target as Node;
+      if (
+        filterDropdownRef.current && !filterDropdownRef.current.contains(target) &&
+        filterButtonRef.current && !filterButtonRef.current.contains(target)
+      ) {
+        setFilterMenuOpen(false);
+      }
+    };
+    const handleKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setFilterMenuOpen(false);
+    };
+    document.addEventListener('mousedown', handleClick);
+    document.addEventListener('keydown', handleKey);
+    return () => {
+      document.removeEventListener('mousedown', handleClick);
+      document.removeEventListener('keydown', handleKey);
+    };
+  }, [filterMenuOpen]);
+
+  // Focus moves into the panel on open, and back to the Filter button on close.
+  useEffect(() => {
+    if (filterMenuOpen) {
+      wasFilterMenuOpenRef.current = true;
+      requestAnimationFrame(() => filterDropdownRef.current?.focus());
+    } else if (wasFilterMenuOpenRef.current) {
+      wasFilterMenuOpenRef.current = false;
+      filterButtonRef.current?.focus();
+    }
+  }, [filterMenuOpen]);
+
+  const handleApplyFilters = () => {
+    setAppliedBrandFilter(draftBrandFilter);
+    setAppliedLeaderFilter(draftLeaderFilter);
+    setOpeningFilter(draftOpeningFilter);
+    setFilterMenuOpen(false);
+  };
+
+  const handleClearAllDraft = () => {
+    setDraftBrandFilter({});
+    setDraftLeaderFilter({});
+    setDraftOpeningFilter('all');
+  };
+
+  const clearAllFilters = () => {
+    setSearchTerm('');
+    setAppliedBrandFilter({});
+    setAppliedLeaderFilter({});
+    setOpeningFilter('all');
+  };
+
+  const selectedBrands = brandOptions.filter((b) => appliedBrandFilter[b] !== false);
+  const selectedLeaders = leaderOptions.filter((l) => appliedLeaderFilter[l] !== false);
+
+  const handleExport = useCallback(() => {
+    const headers = ['Brand', 'Leader', 'Agent Name', 'Opening Balance', 'Security Deposit'];
+    const data = baseSortedRows.map((r) => [
+      r.brand ?? '—',
+      r.leader,
+      r.agentName,
+      r.openingBalance ?? '',
+      r.securityDeposit ?? '',
+    ]);
+    const worksheet = XLSX.utils.aoa_to_sheet([headers, ...data]);
+    worksheet['!cols'] = headers.map(() => ({ wch: 18 }));
+    const workbook = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(workbook, worksheet, 'Opening Balance');
+    const now = new Date();
+    const datePart = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
+    const timePart = `${String(now.getHours()).padStart(2, '0')}${String(now.getMinutes()).padStart(2, '0')}`;
+    XLSX.writeFile(workbook, `SENDMONEY_OPENING_BALANCE_${datePart}_${timePart}.xlsx`);
+  }, [baseSortedRows]);
+
+  const hasActiveSearchOrFilter = searchTerm.trim() !== '' || activeFilterCount > 0;
+
   return (
     <div className="h-screen w-full flex flex-col overflow-hidden bg-background font-[Inter,sans-serif] text-foreground transition-colors duration-300 dark:bg-[#1c1c1e]">
       <header className="sticky top-0 z-30 shrink-0 border-b border-border bg-white/95 py-0 pl-14 pr-4 backdrop-blur-sm dark:bg-[#0d1117]/95 md:px-8">
@@ -227,13 +389,8 @@ export default function SendMoneyOpeningPage() {
               <span className="h-1.5 w-1.5 rounded-full bg-emerald-500" />
               <span className="tabular-nums text-[9px] font-medium text-emerald-700 dark:text-emerald-400">{lastUpdated || '—'}</span>
             </div>
-            <button
-              type="button"
-              onClick={fetchData}
-              disabled={spinning}
-              className="flex items-center gap-1.5 rounded-lg border border-border bg-muted/60 px-2.5 py-1.5 text-[11px] font-medium text-foreground transition-colors hover:bg-muted disabled:opacity-50"
-            >
-              <RefreshCw size={11} className={spinning ? 'animate-spin' : ''} />
+            <button type="button" onClick={fetchData} disabled={spinning} className={BTN_OUTLINE}>
+              <RefreshCw size={14} className={spinning ? 'animate-spin' : ''} />
               <span className="hidden sm:inline">Refresh</span>
             </button>
           </div>
@@ -272,10 +429,10 @@ export default function SendMoneyOpeningPage() {
 
             <button
               type="button"
-              aria-pressed={noOpeningFilterActive}
-              onClick={() => setNoOpeningFilterActive((current) => !current)}
+              aria-pressed={openingFilter === 'none'}
+              onClick={() => setOpeningFilter((current) => (current === 'none' ? 'all' : 'none'))}
               className={`text-left rounded-xl border p-5 flex-1 min-w-0 transition-colors ${
-                noOpeningFilterActive
+                openingFilter === 'none'
                   ? 'border-[color:var(--product-accent)] bg-[color:var(--product-accent-active-bg)]'
                   : 'border-[color:var(--product-accent)]/30 bg-[color:var(--product-accent-soft)] hover:bg-[color:var(--product-accent-active-bg)]'
               }`}
@@ -288,6 +445,162 @@ export default function SendMoneyOpeningPage() {
 
         {!error && (
           <div className="flex-1 flex flex-col min-h-0 bg-white rounded-xl border border-border overflow-hidden dark:bg-[#2a2a2d]">
+            <div className="shrink-0 flex flex-wrap items-center justify-between gap-2 border-b border-border px-4 py-2.5">
+              <div className="flex items-center gap-2">
+                <div className="flex h-9 w-full max-w-[320px] items-center gap-2 rounded-lg border-[0.5px] border-border bg-white px-3 dark:bg-[#2a2a2d]">
+                  <Search size={14} className="shrink-0 text-muted-foreground" />
+                  <input
+                    value={searchTerm}
+                    onChange={(e) => setSearchTerm(e.target.value)}
+                    placeholder="Search agent, leader, brand..."
+                    className="w-full flex-1 bg-transparent text-[13px] text-foreground placeholder:text-muted-foreground outline-none border-none"
+                  />
+                  {searchTerm && (
+                    <button type="button" onClick={() => setSearchTerm('')} className="shrink-0 text-muted-foreground hover:text-foreground">
+                      <X size={13} />
+                    </button>
+                  )}
+                </div>
+
+                <button
+                  type="button"
+                  ref={filterButtonRef}
+                  aria-haspopup="dialog"
+                  aria-expanded={filterMenuOpen}
+                  onClick={() => (filterMenuOpen ? setFilterMenuOpen(false) : openFilterMenu())}
+                  className={`${BTN_OUTLINE} ${activeFilterCount > 0 ? 'border-[color:var(--product-accent)] text-[color:var(--product-accent)]' : ''}`}
+                >
+                  <Filter size={14} />
+                  Filter
+                  {activeFilterCount > 0 && (
+                    <span className="flex h-4 min-w-[16px] items-center justify-center rounded-full bg-[color:var(--product-accent)] px-1 text-[9px] font-semibold leading-none text-white">
+                      {activeFilterCount}
+                    </span>
+                  )}
+                </button>
+              </div>
+
+              <div className="flex items-center gap-2">
+                <span className="text-[11px] tabular-nums text-muted-foreground">
+                  {currentPage} / {totalPages}
+                </span>
+                <button
+                  type="button"
+                  onClick={() => setPage((current) => Math.max(1, current - 1))}
+                  disabled={currentPage === 1}
+                  className={BTN_OUTLINE}
+                >
+                  Previous
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setPage((current) => Math.min(totalPages, current + 1))}
+                  disabled={currentPage === totalPages}
+                  className={BTN_OUTLINE}
+                >
+                  Next
+                </button>
+                <button type="button" onClick={handleExport} title="Export" className={BTN_OUTLINE}>
+                  <Download size={14} />
+                </button>
+              </div>
+            </div>
+
+            {filterMenuOpen && typeof document !== 'undefined' && createPortal(
+              <div
+                ref={filterDropdownRef}
+                tabIndex={-1}
+                role="dialog"
+                aria-label="Filter options"
+                style={{ position: 'fixed', top: filterMenuPos.top, left: filterMenuPos.left }}
+                className="z-[9999] flex max-h-[70vh] w-72 flex-col rounded-xl border border-border bg-white shadow-xl outline-none dark:bg-[#2a2a2d]"
+              >
+                <div className="flex-1 overflow-y-auto p-3">
+                  <div className="mb-3">
+                    <p className="mb-1.5 px-1 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">Brand</p>
+                    <div className="max-h-32 space-y-0.5 overflow-y-auto">
+                      {brandOptions.map((b) => (
+                        <label key={b} className="flex items-center gap-2 rounded-lg px-2 py-1 text-[12px] text-foreground hover:bg-muted/60">
+                          <input
+                            type="checkbox"
+                            checked={draftBrandFilter[b] !== false}
+                            onChange={() => setDraftBrandFilter((c) => ({ ...c, [b]: c[b] === false }))}
+                          />
+                          {b}
+                        </label>
+                      ))}
+                    </div>
+                  </div>
+
+                  <div className="mb-3">
+                    <p className="mb-1.5 px-1 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">Leader</p>
+                    <div className="max-h-40 space-y-0.5 overflow-y-auto">
+                      {leaderOptions.map((l) => (
+                        <label key={l} className="flex items-center gap-2 rounded-lg px-2 py-1 text-[12px] text-foreground hover:bg-muted/60">
+                          <input
+                            type="checkbox"
+                            checked={draftLeaderFilter[l] !== false}
+                            onChange={() => setDraftLeaderFilter((c) => ({ ...c, [l]: c[l] === false }))}
+                          />
+                          {l}
+                        </label>
+                      ))}
+                    </div>
+                  </div>
+
+                  <div>
+                    <p className="mb-1.5 px-1 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">Opening</p>
+                    <div className="space-y-0.5">
+                      {(['all', 'has', 'none'] as const).map((val) => (
+                        <label key={val} className="flex items-center gap-2 rounded-lg px-2 py-1 text-[12px] text-foreground hover:bg-muted/60">
+                          <input
+                            type="radio"
+                            name="openingFilter"
+                            checked={draftOpeningFilter === val}
+                            onChange={() => setDraftOpeningFilter(val)}
+                          />
+                          {val === 'all' ? 'All' : val === 'has' ? 'Has opening' : 'No opening'}
+                        </label>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+
+                <div className="flex shrink-0 items-center justify-between gap-2 border-t border-border p-3">
+                  <button type="button" onClick={handleClearAllDraft} className={BTN_OUTLINE}>
+                    Clear all
+                  </button>
+                  <button type="button" onClick={handleApplyFilters} className={BTN_PRIMARY}>
+                    Apply
+                  </button>
+                </div>
+              </div>,
+              document.body
+            )}
+
+            {activeFilterCount > 0 && (
+              <div className="flex flex-wrap items-center gap-1.5 border-b border-border bg-muted/10 px-4 py-2">
+                {brandFilterActive && (
+                  <FilterChip
+                    label={`Brand: ${selectedBrands.slice(0, 2).join(', ')}${selectedBrands.length > 2 ? ` +${selectedBrands.length - 2}` : ''}`}
+                    onRemove={() => setAppliedBrandFilter({})}
+                  />
+                )}
+                {leaderFilterActive && (
+                  <FilterChip
+                    label={`Leader: ${selectedLeaders.slice(0, 2).join(', ')}${selectedLeaders.length > 2 ? ` +${selectedLeaders.length - 2}` : ''}`}
+                    onRemove={() => setAppliedLeaderFilter({})}
+                  />
+                )}
+                {openingFilterActive && (
+                  <FilterChip
+                    label={openingFilter === 'has' ? 'Has Opening' : 'No Opening'}
+                    onRemove={() => setOpeningFilter('all')}
+                  />
+                )}
+              </div>
+            )}
+
             <div className="flex-1 overflow-auto">
               <table className="w-full border-collapse">
                 <thead className="sticky top-0 z-10 border-b border-border bg-muted/10">
@@ -310,8 +623,17 @@ export default function SendMoneyOpeningPage() {
                     ))
                   ) : groups.length === 0 ? (
                     <tr>
-                      <td colSpan={5} className="px-4 py-8 text-center text-xs text-muted-foreground">
-                        No matching accounts found.
+                      {/* Filter-specific empty state — never EmptyProductState, which means
+                          "no data source connected" and isn't true here. */}
+                      <td colSpan={5} className="px-4 py-10 text-center">
+                        <p className="mb-3 text-xs text-muted-foreground">
+                          {hasActiveSearchOrFilter ? 'No agents match your filters.' : 'No accounts found.'}
+                        </p>
+                        {hasActiveSearchOrFilter && (
+                          <button type="button" onClick={clearAllFilters} className={`${BTN_OUTLINE} mx-auto`}>
+                            Clear filters
+                          </button>
+                        )}
                       </td>
                     </tr>
                   ) : (
@@ -365,33 +687,6 @@ export default function SendMoneyOpeningPage() {
                   )}
                 </tbody>
               </table>
-            </div>
-
-            <div className="shrink-0 flex items-center justify-between border-t border-border bg-muted/20 px-4 py-2">
-              <span className="text-[10px] text-muted-foreground">
-                {baseSortedRows.length.toLocaleString('en-PH')} accounts
-              </span>
-              <div className="flex items-center gap-2">
-                <span className="text-[10px] tabular-nums text-muted-foreground">
-                  {currentPage} / {totalPages}
-                </span>
-                <button
-                  type="button"
-                  onClick={() => setPage((current) => Math.max(1, current - 1))}
-                  disabled={currentPage === 1}
-                  className="rounded-lg border border-border px-2.5 py-1 text-[10px] font-medium text-foreground transition-colors hover:bg-muted disabled:opacity-40"
-                >
-                  Previous
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setPage((current) => Math.min(totalPages, current + 1))}
-                  disabled={currentPage === totalPages}
-                  className="rounded-lg border border-border px-2.5 py-1 text-[10px] font-medium text-foreground transition-colors hover:bg-muted disabled:opacity-40"
-                >
-                  Next
-                </button>
-              </div>
             </div>
           </div>
         )}
