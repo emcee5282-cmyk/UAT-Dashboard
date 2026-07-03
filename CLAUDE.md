@@ -22,6 +22,15 @@
 - /api/opening → Opening Balance
 - /api/agentbal → Agent Balance
 - /api/stlm → Settlement + Top Up (shared)
+- /api/sendmoney/opening → Send Money Opening Balance (reads the same "Opening AG" tab, but columns L:O — a separate ~9,983-row roster from Cashout's own agent list, not related row-by-row)
+
+## Send Money (multi-product)
+- Product switcher lives in the sidebar (indigo = Cashout, teal = Send Money), routes under /sendmoney/*, mapped to/from Cashout's legacy routes via app/lib/productRoutes.ts
+- **/sendmoney/opening (app/sendmoney/opening/page.tsx) is the design reference** for every future Send Money page and for a possible future Cashout port — when building the next page, match its patterns (button system, filter panel, KPI cards, sticky header, chip hit-targets) rather than reinventing them. Fidelity to it matters more than speed.
+- Dependencies: `googleapis` + the `google-auth-library` version override in package.json are committed and stable (resolved in commit c0c1bca) — not an open issue, no need to re-investigate.
+
+## Data source gotchas
+- The "Opening AG" tab is mirrored via IMPORTRANGE from another spreadsheet. Blank cells or `#REF!` values appearing in it are a known failure mode of that link (source range shifted, permission lapsed, etc.) — investigate as a possible sheet-side issue before assuming a parsing bug.
 
 ## Design System v2 (current standard — applies going forward; migrate legacy pages opportunistically)
 - Font: Inter — never font-mono
@@ -114,6 +123,8 @@ Leader | Agent Name | Opening Bal. | SDP
 - One concern at a time — do not combine unrelated changes
 - Never expose phone numbers or sensitive agent data in UI
 - Skeleton loader: match exact td padding (px-3 py-1) and row height of actual table
+- Phased work (plan → go → implement → verify → one commit): each new phase's plan must open by stating current `git status` (working-tree clean or not) and any unanswered questions carried over from the previous phase — don't let them go unaddressed silently
+- Verification reports must state HOW each item was tested (exact steps/method: what was clicked, what was checked, what tool), not just a checkmark — a checkmark alone doesn't prove the interaction was exercised end-to-end. (Learned the hard way: "chips remove individually" and the Refresh button were both marked verified from checks that only confirmed the control entered a transient state — chip rendered, spinner appeared — not that the state-changing action actually completed and took effect.)
 
 ## Subagents (.claude/agents/)
 - ONLY use subagents for major tasks (security audit, deep bug investigation)
