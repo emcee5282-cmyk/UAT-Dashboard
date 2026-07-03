@@ -200,7 +200,7 @@ const BASES: Base[] = [
   { base: 'T1 SOLO 24/7', rules: SOLO_247('T1') },
 ];
 
-const BRAND_CODES = ['M1', 'M2', 'B1', 'B2', 'B3', 'B4', 'B5', 'K1', 'J1', 'T1'];
+export const BRAND_CODES = ['M1', 'M2', 'B1', 'B2', 'B3', 'B4', 'B5', 'K1', 'J1', 'T1'];
 
 function normalizeGroup(s: string): string {
   return s.toUpperCase().replace(/[\s-]+/g, '');
