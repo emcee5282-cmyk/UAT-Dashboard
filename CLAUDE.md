@@ -26,7 +26,7 @@
 
 ## Send Money (multi-product)
 - Product switcher lives in the sidebar (indigo = Cashout, teal = Send Money), routes under /sendmoney/*, mapped to/from Cashout's legacy routes via app/lib/productRoutes.ts
-- **/sendmoney/opening (app/sendmoney/opening/page.tsx) is the design reference** for every future Send Money page and for a possible future Cashout port — when building the next page, match its patterns (button system, filter panel, KPI cards, sticky header, chip hit-targets) rather than reinventing them. Fidelity to it matters more than speed.
+- **/sendmoney/opening (app/sendmoney/opening/page.tsx) is the design reference** for every future Send Money page and for a possible future Cashout port — when building the next page, match its patterns rather than reinventing them. Fidelity to it matters more than speed. Current pattern (supersedes the earlier leader-grouped version): flat, ungrouped, globally-sortable table (no per-group subtotals/collapse); 5 icon-tile KPI cards (icon left, label+value right) with the last one doubling as a clickable filter toggle; instant-apply Filter panel (funnel button, Brand/Leader checkboxes + Opening radio, no staged draft/Apply step); range-style pagination ("start – end of total"); button system (36px/8px radius/0.5px border/13px label/14px icons); sticky opaque table header; skeleton re-shown on every refresh, not just first load (page-scoped override of the app-wide "first load only" rule below).
 - Dependencies: `googleapis` + the `google-auth-library` version override in package.json are committed and stable (resolved in commit c0c1bca) — not an open issue, no need to re-investigate.
 
 ## Data source gotchas

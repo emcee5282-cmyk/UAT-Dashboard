@@ -1,23 +1,34 @@
 'use client';
 
-import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { ChevronDown, ChevronUp, Download, Filter, RefreshCw, Search, X } from 'lucide-react';
+import {
+  AlertCircle,
+  Banknote,
+  ChevronDown,
+  ChevronUp,
+  Crown,
+  Download,
+  Filter,
+  RefreshCw,
+  Search,
+  ShieldCheck,
+  Users,
+  X,
+  type LucideIcon,
+} from 'lucide-react';
 import * as XLSX from 'xlsx';
+import ThemeToggle from '@/app/components/ThemeToggle';
 import { parseSendMoneyOpeningCsv, type SendMoneyOpeningRow } from '@/app/lib/sendMoneyOpening';
-
-function fmtAbbrev(num: number): string {
-  const sign = num < 0 ? '-' : '';
-  const abs = Math.abs(num);
-  if (abs >= 1e9) return `${sign}${(abs / 1e9).toFixed(2)}B`;
-  if (abs >= 1e6) return `${sign}${(abs / 1e6).toFixed(2)}M`;
-  if (abs >= 1e3) return `${sign}${(abs / 1e3).toFixed(2)}K`;
-  return `${sign}${abs.toFixed(2)}`;
-}
 
 function fmtFull(num: number): string {
   return num.toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 }
+
+// Uniform button system: 36px height, 8px radius, 0.5px border, 13px label, 14px icons.
+const BTN_BASE =
+  'inline-flex h-9 shrink-0 items-center justify-center gap-1.5 rounded-lg border-[0.5px] px-3 text-[13px] font-medium transition-colors disabled:opacity-40 disabled:cursor-not-allowed';
+const BTN_OUTLINE = `${BTN_BASE} border-border text-foreground hover:bg-muted`;
 
 // App-wide money convention: negatives render red, in both Opening Balance
 // and Security Deposit — not an Opening-only rule.
@@ -46,21 +57,66 @@ function BrandBadge({ brand }: { brand: string | null }) {
   );
 }
 
-const kpiValueClass = 'text-[28px] font-medium text-foreground mb-1 tabular-nums';
-const kpiSkeleton = <div className="h-8 w-24 animate-pulse rounded-md bg-slate-200 dark:bg-slate-700 mb-1" />;
+function KpiCard({
+  icon: Icon,
+  label,
+  value,
+  loading,
+  onClick,
+  active,
+  title,
+}: {
+  icon: LucideIcon;
+  label: string;
+  value: string;
+  loading: boolean;
+  onClick?: () => void;
+  active?: boolean;
+  title?: string;
+}) {
+  const content = (
+    <>
+      <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-[color:var(--product-accent-soft)] text-[color:var(--product-accent)]">
+        <Icon size={18} />
+      </div>
+      <div className="min-w-0">
+        <p className="truncate text-xs font-medium text-muted-foreground">{label}</p>
+        {loading ? (
+          <div className="mt-1 h-5 w-24 animate-pulse rounded-md bg-slate-200 dark:bg-slate-700" />
+        ) : (
+          <p className="truncate text-[17px] font-semibold tabular-nums text-foreground">{value}</p>
+        )}
+      </div>
+    </>
+  );
 
-// Uniform button system: 36px height, 8px radius, 0.5px border, 13px label, 14px icons.
-const BTN_BASE =
-  'inline-flex h-9 shrink-0 items-center justify-center gap-1.5 rounded-lg border-[0.5px] px-3 text-[13px] font-medium transition-colors disabled:opacity-40 disabled:cursor-not-allowed';
-const BTN_OUTLINE = `${BTN_BASE} border-border text-foreground hover:bg-muted`;
+  const className = `flex flex-1 min-w-0 items-center gap-3 rounded-xl border p-4 transition-colors ${
+    active
+      ? 'border-[color:var(--product-accent)] bg-[color:var(--product-accent-active-bg)]'
+      : 'border-border bg-white dark:bg-[#2a2a2d]'
+  } ${onClick ? 'text-left' : ''}`;
 
-const ROWS_PER_PAGE = 50;
+  if (onClick) {
+    return (
+      <button type="button" onClick={onClick} aria-pressed={active} title={title} className={className}>
+        {content}
+      </button>
+    );
+  }
+  return (
+    <div className={className} title={title}>
+      {content}
+    </div>
+  );
+}
 
-type SortColumn = 'agentName' | 'openingBalance' | 'securityDeposit';
-type SortState = { column: SortColumn; direction: 'asc' | 'desc' } | null;
+const ROWS_PER_PAGE = 70;
+
+type SortColumn = 'brand' | 'leader' | 'agentName' | 'openingBalance' | 'securityDeposit';
+type SortDirection = 'asc' | 'desc';
 type OpeningFilter = 'all' | 'has' | 'none';
 
-function compareNullableNumber(a: number | null, b: number | null, direction: 'asc' | 'desc'): number {
+function compareNullableNumber(a: number | null, b: number | null, direction: SortDirection): number {
   // Nulls always sort last, regardless of direction.
   if (a === null && b === null) return 0;
   if (a === null) return 1;
@@ -68,43 +124,22 @@ function compareNullableNumber(a: number | null, b: number | null, direction: 'a
   return direction === 'asc' ? a - b : b - a;
 }
 
-function sortWithinGroup(rows: SendMoneyOpeningRow[], sort: SortState): SendMoneyOpeningRow[] {
-  const sorted = [...rows];
-  if (!sort) {
-    sorted.sort((a, b) => a.agentName.localeCompare(b.agentName));
-    return sorted;
-  }
-  sorted.sort((a, b) => {
-    if (sort.column === 'agentName') {
-      const cmp = a.agentName.localeCompare(b.agentName);
-      return sort.direction === 'asc' ? cmp : -cmp;
-    }
-    return compareNullableNumber(a[sort.column], b[sort.column], sort.direction);
-  });
-  return sorted;
-}
-
-function sumNullable(rows: SendMoneyOpeningRow[], key: 'openingBalance' | 'securityDeposit'): number | null {
-  const values = rows.map((r) => r[key]).filter((v): v is number => v !== null);
-  if (values.length === 0) return null;
-  return values.reduce((sum, v) => sum + v, 0);
-}
-
 function SortHeader({
   label,
   column,
-  sort,
+  sortColumn,
+  sortDirection,
   onSort,
   align = 'right',
 }: {
   label: string;
   column: SortColumn;
-  sort: SortState;
+  sortColumn: SortColumn;
+  sortDirection: SortDirection;
   onSort: (column: SortColumn) => void;
   align?: 'left' | 'right';
 }) {
-  const activeAsc = sort?.column === column && sort.direction === 'asc';
-  const activeDesc = sort?.column === column && sort.direction === 'desc';
+  const active = sortColumn === column;
   return (
     <th
       onClick={() => onSort(column)}
@@ -113,8 +148,8 @@ function SortHeader({
       <span className={`inline-flex items-center gap-1 ${align === 'right' ? 'flex-row-reverse' : ''}`}>
         {label}
         <span className="flex flex-col -space-y-1">
-          <ChevronUp size={9} className={activeAsc ? 'text-foreground' : 'text-muted-foreground/40'} />
-          <ChevronDown size={9} className={activeDesc ? 'text-foreground' : 'text-muted-foreground/40'} />
+          <ChevronUp size={9} className={active && sortDirection === 'asc' ? 'text-foreground' : 'text-muted-foreground/40'} />
+          <ChevronDown size={9} className={active && sortDirection === 'desc' ? 'text-foreground' : 'text-muted-foreground/40'} />
         </span>
       </span>
     </th>
@@ -158,8 +193,8 @@ export default function SendMoneyOpeningPage() {
   const wasFilterMenuOpenRef = useRef(false);
 
   const [page, setPage] = useState(1);
-  const [sort, setSort] = useState<SortState>(null);
-  const [expandedGroups, setExpandedGroups] = useState<Record<string, boolean>>({});
+  const [sortColumn, setSortColumn] = useState<SortColumn>('leader');
+  const [sortDirection, setSortDirection] = useState<SortDirection>('asc');
 
   const fetchData = useCallback(async () => {
     // Refresh should always be visibly a "loading" moment, even when the
@@ -195,6 +230,10 @@ export default function SendMoneyOpeningPage() {
   }, [fetchData]);
 
   // KPI cards always reflect the full dataset, never the filtered view.
+  // "Accounts" and "Agents" are the same number today because each row is
+  // one wallet (agentName carries a -RK/-UP/-NG suffix per wallet), not one
+  // person — a future distinct-Agents KPI would need to dedup on the base
+  // name (strip the trailing suffix) rather than count rows directly.
   const accounts = rows.length;
   const totalOpening = useMemo(() => rows.reduce((sum, r) => sum + (r.openingBalance ?? 0), 0), [rows]);
   const totalSdp = useMemo(() => rows.reduce((sum, r) => sum + (r.securityDeposit ?? 0), 0), [rows]);
@@ -236,17 +275,32 @@ export default function SendMoneyOpeningPage() {
     return list;
   }, [rows, searchTerm, appliedBrandFilter, appliedLeaderFilter, openingFilter, brandFilterActive, leaderFilterActive]);
 
-  // Stable base order for pagination: Leader A→Z, then Agent Name A→Z.
-  // This is what makes group headers always land in A→Z order, and why a
-  // leader's agents can span a page boundary (their count doesn't always
-  // divide evenly into a page) — an accepted limitation, not a bug.
-  const baseSortedRows = useMemo(() => {
+  // Flat, global sort — applies to the whole filtered set before pagination,
+  // and persists across page changes (matches Cashout's own table behavior).
+  const sortedRows = useMemo(() => {
     const sorted = [...filteredRows];
-    sorted.sort((a, b) => a.leader.localeCompare(b.leader) || a.agentName.localeCompare(b.agentName));
+    sorted.sort((a, b) => {
+      if (sortColumn === 'brand') {
+        if (a.brand === null && b.brand === null) return 0;
+        if (a.brand === null) return 1;
+        if (b.brand === null) return -1;
+        const cmp = a.brand.localeCompare(b.brand);
+        return sortDirection === 'asc' ? cmp : -cmp;
+      }
+      if (sortColumn === 'leader') {
+        const cmp = a.leader.localeCompare(b.leader);
+        return sortDirection === 'asc' ? cmp : -cmp;
+      }
+      if (sortColumn === 'agentName') {
+        const cmp = a.agentName.localeCompare(b.agentName);
+        return sortDirection === 'asc' ? cmp : -cmp;
+      }
+      return compareNullableNumber(a[sortColumn], b[sortColumn], sortDirection);
+    });
     return sorted;
-  }, [filteredRows]);
+  }, [filteredRows, sortColumn, sortDirection]);
 
-  const totalPages = Math.max(1, Math.ceil(baseSortedRows.length / ROWS_PER_PAGE));
+  const totalPages = Math.max(1, Math.ceil(sortedRows.length / ROWS_PER_PAGE));
   const currentPage = Math.min(page, totalPages);
 
   useEffect(() => {
@@ -260,37 +314,19 @@ export default function SendMoneyOpeningPage() {
 
   const pagedRows = useMemo(() => {
     const start = (currentPage - 1) * ROWS_PER_PAGE;
-    return baseSortedRows.slice(start, start + ROWS_PER_PAGE);
-  }, [baseSortedRows, currentPage]);
+    return sortedRows.slice(start, start + ROWS_PER_PAGE);
+  }, [sortedRows, currentPage]);
 
-  // Sort and group-collapse are per-page-view controls, not global — reset
-  // whenever the page changes or the filtered/base row set changes.
-  useEffect(() => {
-    setSort(null);
-    setExpandedGroups({});
-  }, [currentPage, baseSortedRows]);
-
-  const groups = useMemo(() => {
-    const map = new Map<string, SendMoneyOpeningRow[]>();
-    pagedRows.forEach((row) => {
-      const list = map.get(row.leader) ?? [];
-      list.push(row);
-      map.set(row.leader, list);
-    });
-    return Array.from(map.entries()).map(([leader, groupRows]) => ({
-      leader,
-      rows: sortWithinGroup(groupRows, sort),
-      openingSubtotal: sumNullable(groupRows, 'openingBalance'),
-      depositSubtotal: sumNullable(groupRows, 'securityDeposit'),
-    }));
-  }, [pagedRows, sort]);
+  const rangeStart = sortedRows.length === 0 ? 0 : (currentPage - 1) * ROWS_PER_PAGE + 1;
+  const rangeEnd = Math.min(currentPage * ROWS_PER_PAGE, sortedRows.length);
 
   const handleSort = (column: SortColumn) => {
-    setSort((current) => {
-      if (!current || current.column !== column) return { column, direction: 'asc' };
-      if (current.direction === 'asc') return { column, direction: 'desc' };
-      return null;
-    });
+    if (sortColumn === column) {
+      setSortDirection((current) => (current === 'asc' ? 'desc' : 'asc'));
+    } else {
+      setSortColumn(column);
+      setSortDirection('asc');
+    }
   };
 
   const openFilterMenu = () => {
@@ -356,7 +392,7 @@ export default function SendMoneyOpeningPage() {
 
   const handleExport = useCallback(() => {
     const headers = ['Brand', 'Leader', 'Agent Name', 'Opening Balance', 'Security Deposit'];
-    const data = baseSortedRows.map((r) => [
+    const data = sortedRows.map((r) => [
       r.brand ?? '—',
       r.leader,
       r.agentName,
@@ -371,7 +407,7 @@ export default function SendMoneyOpeningPage() {
     const datePart = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
     const timePart = `${String(now.getHours()).padStart(2, '0')}${String(now.getMinutes()).padStart(2, '0')}`;
     XLSX.writeFile(workbook, `SENDMONEY_OPENING_BALANCE_${datePart}_${timePart}.xlsx`);
-  }, [baseSortedRows]);
+  }, [sortedRows]);
 
   const hasActiveSearchOrFilter = searchTerm.trim() !== '' || activeFilterCount > 0;
 
@@ -391,6 +427,8 @@ export default function SendMoneyOpeningPage() {
               <span className="h-1.5 w-1.5 rounded-full bg-emerald-500" />
               <span className="tabular-nums text-[9px] font-medium text-emerald-700 dark:text-emerald-400">{lastUpdated || '—'}</span>
             </div>
+            <span className="h-2 w-2 rounded-full bg-emerald-500 sm:hidden" />
+            <ThemeToggle />
             <button type="button" onClick={fetchData} disabled={spinning} className={BTN_OUTLINE}>
               <RefreshCw size={14} className={spinning ? 'animate-spin' : ''} />
               <span className="hidden sm:inline">Refresh</span>
@@ -408,40 +446,19 @@ export default function SendMoneyOpeningPage() {
 
         {!error && (
           <div className="flex gap-4 mb-6 shrink-0">
-            <div className="bg-white rounded-xl border border-border p-5 flex-1 min-w-0 dark:bg-[#2a2a2d]">
-              <p className="text-xs text-muted-foreground font-medium mb-1">Accounts</p>
-              {loading ? kpiSkeleton : <p className={kpiValueClass}>{accounts.toLocaleString('en-PH')}</p>}
-            </div>
-
-            <div
-              className="bg-white rounded-xl border border-border p-5 flex-1 min-w-0 dark:bg-[#2a2a2d]"
-              title={loading ? undefined : fmtFull(totalOpening)}
-            >
-              <p className="text-xs text-muted-foreground font-medium mb-1">Total Opening Balance</p>
-              {loading ? kpiSkeleton : <p className={kpiValueClass}>{fmtAbbrev(totalOpening)}</p>}
-            </div>
-
-            <div
-              className="bg-white rounded-xl border border-border p-5 flex-1 min-w-0 dark:bg-[#2a2a2d]"
-              title={loading ? undefined : fmtFull(totalSdp)}
-            >
-              <p className="text-xs text-muted-foreground font-medium mb-1">Total Security Deposit</p>
-              {loading ? kpiSkeleton : <p className={kpiValueClass}>{fmtAbbrev(totalSdp)}</p>}
-            </div>
-
-            <button
-              type="button"
-              aria-pressed={openingFilter === 'none'}
+            <KpiCard icon={Users} label="Accounts" value={accounts.toLocaleString('en-PH')} loading={loading} />
+            <KpiCard icon={Crown} label="Leaders" value={leaderOptions.length.toLocaleString('en-PH')} loading={loading} />
+            <KpiCard icon={Banknote} label="Total Opening Balance" value={fmtFull(totalOpening)} loading={loading} />
+            <KpiCard icon={ShieldCheck} label="Total Security Deposit" value={fmtFull(totalSdp)} loading={loading} />
+            <KpiCard
+              icon={AlertCircle}
+              label="No Opening Yet"
+              value={noOpeningCount.toLocaleString('en-PH')}
+              loading={loading}
+              active={openingFilter === 'none'}
               onClick={() => setOpeningFilter((current) => (current === 'none' ? 'all' : 'none'))}
-              className={`text-left rounded-xl border p-5 flex-1 min-w-0 transition-colors ${
-                openingFilter === 'none'
-                  ? 'border-[color:var(--product-accent)] bg-[color:var(--product-accent-active-bg)]'
-                  : 'border-[color:var(--product-accent)]/30 bg-[color:var(--product-accent-soft)] hover:bg-[color:var(--product-accent-active-bg)]'
-              }`}
-            >
-              <p className="text-xs font-medium mb-1 text-[color:var(--product-accent)]">No Opening Yet</p>
-              {loading ? kpiSkeleton : <p className={`${kpiValueClass} text-[color:var(--product-accent)]`}>{noOpeningCount.toLocaleString('en-PH')}</p>}
-            </button>
+              title="Toggle: show only agents with no opening balance set"
+            />
           </div>
         )}
 
@@ -484,7 +501,7 @@ export default function SendMoneyOpeningPage() {
 
               <div className="flex items-center gap-2">
                 <span className="text-[11px] tabular-nums text-muted-foreground">
-                  {currentPage} / {totalPages}
+                  {rangeStart} – {rangeEnd} of {sortedRows.length.toLocaleString('en-PH')}
                 </span>
                 <button
                   type="button"
@@ -604,23 +621,23 @@ export default function SendMoneyOpeningPage() {
               <table className="w-full border-collapse">
                 <thead className="sticky top-0 z-[50] border-b border-border bg-white shadow-[0_1px_3px_rgba(0,0,0,0.06)] dark:bg-[#2a2a2d] dark:shadow-[0_2px_4px_rgba(0,0,0,0.35)]">
                   <tr>
-                    <th className="px-4 py-3 text-left text-xs font-semibold text-muted-foreground whitespace-nowrap">Brand</th>
-                    <th className="px-4 py-3 text-left text-xs font-semibold text-muted-foreground whitespace-nowrap">Leader</th>
-                    <SortHeader label="Agent Name" column="agentName" sort={sort} onSort={handleSort} align="left" />
-                    <SortHeader label="Opening Balance" column="openingBalance" sort={sort} onSort={handleSort} />
-                    <SortHeader label="Security Deposit" column="securityDeposit" sort={sort} onSort={handleSort} />
+                    <SortHeader label="Brand" column="brand" sortColumn={sortColumn} sortDirection={sortDirection} onSort={handleSort} align="left" />
+                    <SortHeader label="Leader" column="leader" sortColumn={sortColumn} sortDirection={sortDirection} onSort={handleSort} align="left" />
+                    <SortHeader label="Agent Name" column="agentName" sortColumn={sortColumn} sortDirection={sortDirection} onSort={handleSort} align="left" />
+                    <SortHeader label="Opening Balance" column="openingBalance" sortColumn={sortColumn} sortDirection={sortDirection} onSort={handleSort} />
+                    <SortHeader label="Security Deposit" column="securityDeposit" sortColumn={sortColumn} sortDirection={sortDirection} onSort={handleSort} />
                   </tr>
                 </thead>
                 <tbody>
                   {loading ? (
-                    Array.from({ length: 10 }).map((_, i) => (
+                    Array.from({ length: 12 }).map((_, i) => (
                       <tr key={i} className="border-b border-border last:border-0">
                         <td className="px-4 py-3" colSpan={5}>
                           <div className="h-3 w-full animate-pulse rounded-md bg-slate-200 dark:bg-slate-700" />
                         </td>
                       </tr>
                     ))
-                  ) : groups.length === 0 ? (
+                  ) : pagedRows.length === 0 ? (
                     <tr>
                       {/* Filter-specific empty state — never EmptyProductState, which means
                           "no data source connected" and isn't true here. */}
@@ -636,53 +653,21 @@ export default function SendMoneyOpeningPage() {
                       </td>
                     </tr>
                   ) : (
-                    groups.map((group) => {
-                      const isExpanded = expandedGroups[group.leader] !== false;
-                      return (
-                        <Fragment key={group.leader}>
-                          <tr
-                            onClick={() => setExpandedGroups((current) => ({ ...current, [group.leader]: !isExpanded }))}
-                            className="cursor-pointer bg-[color:var(--product-accent-soft)]"
-                          >
-                            <td colSpan={5} className="px-4 py-2">
-                              <div className="flex items-center justify-between gap-2">
-                                <span className="flex items-center gap-2 text-xs font-semibold text-foreground">
-                                  <ChevronDown
-                                    size={13}
-                                    className={`shrink-0 text-[color:var(--product-accent)] transition-transform duration-150 ${isExpanded ? '' : '-rotate-90'}`}
-                                  />
-                                  {group.leader}
-                                  <span className="font-normal text-muted-foreground">({group.rows.length})</span>
-                                </span>
-                                <span
-                                  className="text-[11px] font-medium text-muted-foreground"
-                                  title="Totals for rows on this page only."
-                                >
-                                  Page subtotal <MoneyText value={group.openingSubtotal} /> · Deposit{' '}
-                                  <MoneyText value={group.depositSubtotal} />
-                                </span>
-                              </div>
-                            </td>
-                          </tr>
-                          {isExpanded &&
-                            group.rows.map((row) => (
-                              <tr key={row.agentName} className="border-b border-border last:border-0 hover:bg-muted/10 transition-colors">
-                                <td className="px-4 py-3 whitespace-nowrap">
-                                  <BrandBadge brand={row.brand} />
-                                </td>
-                                <td className="px-4 py-3 text-xs text-foreground whitespace-nowrap">{row.leader}</td>
-                                <td className="px-4 py-3 text-xs font-medium text-foreground whitespace-nowrap">{row.agentName}</td>
-                                <td className="px-4 py-3 text-xs text-right whitespace-nowrap">
-                                  <MoneyText value={row.openingBalance} />
-                                </td>
-                                <td className="px-4 py-3 text-xs text-right whitespace-nowrap">
-                                  <MoneyText value={row.securityDeposit} />
-                                </td>
-                              </tr>
-                            ))}
-                        </Fragment>
-                      );
-                    })
+                    pagedRows.map((row) => (
+                      <tr key={row.agentName} className="border-b border-border last:border-0 hover:bg-muted/10 transition-colors">
+                        <td className="px-4 py-3 whitespace-nowrap">
+                          <BrandBadge brand={row.brand} />
+                        </td>
+                        <td className="px-4 py-3 text-xs text-foreground whitespace-nowrap">{row.leader}</td>
+                        <td className="px-4 py-3 text-xs font-medium text-foreground whitespace-nowrap">{row.agentName}</td>
+                        <td className="px-4 py-3 text-xs text-right whitespace-nowrap">
+                          <MoneyText value={row.openingBalance} />
+                        </td>
+                        <td className="px-4 py-3 text-xs text-right whitespace-nowrap">
+                          <MoneyText value={row.securityDeposit} />
+                        </td>
+                      </tr>
+                    ))
                   )}
                 </tbody>
               </table>
