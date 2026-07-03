@@ -21,6 +21,28 @@
   color-scheme: dark;
 }
 
+[data-product="cashout"] {
+  --product-accent: #4f46e5;
+  --product-accent-soft: rgba(79, 70, 229, 0.08);
+  --product-accent-active-bg: rgba(79, 70, 229, 0.1);
+}
+
+[data-product="sendmoney"] {
+  --product-accent: #0d9488;
+  --product-accent-soft: rgba(13, 148, 136, 0.08);
+  --product-accent-active-bg: rgba(13, 148, 136, 0.1);
+}
+
+.dark [data-product="cashout"] {
+  --product-accent-soft: rgba(129, 140, 248, 0.12);
+  --product-accent-active-bg: rgba(129, 140, 248, 0.15);
+}
+
+.dark [data-product="sendmoney"] {
+  --product-accent-soft: rgba(45, 212, 191, 0.12);
+  --product-accent-active-bg: rgba(45, 212, 191, 0.15);
+}
+
 * {
   box-sizing: border-box;
 }

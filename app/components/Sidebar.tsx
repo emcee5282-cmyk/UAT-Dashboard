@@ -13,6 +13,7 @@ import {
   Menu,
   X,
   Shuffle,
+  Settings,
 } from 'lucide-react';
 
 const GeoLogo = () => (
@@ -59,6 +60,8 @@ export default function Sidebar({ isExpanded, onExpandedChange }: SidebarProps) 
   const [mobileOpen, setMobileOpen] = useState(false);
   const [mounted, setMounted] = useState(false);
   const [agentOpen, setAgentOpen] = useState(true);
+  // Cosmetic-only in Phase 1 — not wired to routing yet (Phase 3 will switch route groups on toggle).
+  const [activeProduct, setActiveProduct] = useState<'cashout' | 'sendmoney'>('cashout');
   const [transferQueueCount, setTransferQueueCount] = useState<number | null>(null);
 
   useEffect(() => {
@@ -100,7 +103,7 @@ export default function Sidebar({ isExpanded, onExpandedChange }: SidebarProps) 
       </div>
 
       {/* Nav */}
-      <div className="flex-1 space-y-0.5 overflow-y-auto overflow-x-hidden px-2 py-3">
+      <div className="flex-1 space-y-3 overflow-y-auto overflow-x-hidden px-2 py-3">
         {!mounted ? (
           <div className="space-y-1.5 px-2">
             {Array.from({ length: 5 }).map((_, i) => (
@@ -109,122 +112,194 @@ export default function Sidebar({ isExpanded, onExpandedChange }: SidebarProps) 
           </div>
         ) : (
           <>
-            {navItems.map((item) => {
-              if (!item.children) {
-                const Icon = item.icon;
-                const active = pathname === item.href;
-                return (
-                  <Link
-                    key={item.href}
-                    href={item.href!}
-                    onClick={() => setMobileOpen(false)}
-                    title={expanded ? undefined : item.label}
-                    className={`flex w-full items-center gap-3 rounded-lg px-3 py-2 text-[12px] font-medium transition-all duration-150 ${
-                      expanded ? '' : 'justify-center px-0'
-                    } ${
-                      active
-                        ? 'bg-indigo-50 text-indigo-700 dark:bg-indigo-500/15 dark:text-indigo-300'
-                        : 'text-muted-foreground hover:bg-muted hover:text-foreground'
-                    }`}
-                  >
-                    <Icon size={15} strokeWidth={1.75} className="shrink-0" />
-                    <span className={`overflow-hidden whitespace-nowrap transition-all duration-300 ${expanded ? 'max-w-[160px] opacity-100' : 'max-w-0 opacity-0'}`}>
-                      {item.label}
-                    </span>
-                  </Link>
-                );
-              }
+            {/* Smart Solution — product-scoped nav */}
+            <div
+              data-product={activeProduct}
+              className={`rounded-xl border border-[color:var(--product-accent)]/40 bg-[color:var(--product-accent-soft)] transition-colors duration-200 ${expanded ? 'p-2' : 'p-1'}`}
+            >
+              {expanded && (
+                <>
+                  <p className="px-1 pb-1.5 pt-0.5 text-[9px] font-semibold uppercase tracking-wide text-muted-foreground/70">
+                    Smart Solution
+                  </p>
+                  <div className="mb-2 flex rounded-lg bg-muted/60 p-0.5">
+                    <button
+                      type="button"
+                      onClick={() => setActiveProduct('cashout')}
+                      className={`flex-1 rounded-md px-2 py-1 text-[10.5px] font-semibold transition-colors ${
+                        activeProduct === 'cashout'
+                          ? 'bg-indigo-600 text-white shadow-sm'
+                          : 'text-muted-foreground hover:text-foreground'
+                      }`}
+                    >
+                      Cashout
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setActiveProduct('sendmoney')}
+                      className={`flex-1 rounded-md px-2 py-1 text-[10.5px] font-semibold transition-colors ${
+                        activeProduct === 'sendmoney'
+                          ? 'bg-teal-600 text-white shadow-sm'
+                          : 'text-muted-foreground hover:text-foreground'
+                      }`}
+                    >
+                      Send Money
+                    </button>
+                  </div>
+                </>
+              )}
 
-              const ParentIcon = item.icon;
-              const childActive = item.children.some((child) => pathname === child.href);
+              {/* Collapsed rail: minimum viable product indicator (dot). TODO Phase 3: full collapsed-state
+                  switcher (tap-to-expand or flyout) — cosmetic dot only for now. */}
+              {!expanded && (
+                <div className="mb-1.5 flex justify-center">
+                  <span
+                    title={activeProduct === 'cashout' ? 'Cashout' : 'Send Money'}
+                    className="h-1.5 w-1.5 rounded-full bg-[color:var(--product-accent)]"
+                  />
+                </div>
+              )}
 
-              return (
-                <div key={item.label}>
-                  <button
-                    onClick={() => setAgentOpen((prev) => !prev)}
-                    title={expanded ? undefined : item.label}
-                    className={`group flex w-full items-center gap-3 rounded-lg px-3 py-2 text-[12px] font-medium transition-all duration-150 ${
-                      expanded ? 'justify-between' : 'justify-center px-0'
-                    } ${
-                      childActive
-                        ? 'text-foreground'
-                        : 'text-muted-foreground hover:bg-muted hover:text-foreground'
-                    }`}
-                  >
-                    <span className={`flex items-center gap-3 ${expanded ? '' : 'justify-center'}`}>
-                      <span className="relative shrink-0">
-                        <ParentIcon size={15} strokeWidth={1.75} />
-                        {!expanded && !!displayCount && displayCount > 0 && (
-                          <span className="absolute -right-1.5 -top-1.5 flex h-3 min-w-[12px] items-center justify-center rounded-full bg-indigo-600 px-0.5 text-[7px] font-bold leading-none text-white">
-                            {displayCount > 99 ? '99+' : displayCount}
-                          </span>
-                        )}
-                      </span>
-                      <span className={`overflow-hidden whitespace-nowrap transition-all duration-300 ${expanded ? 'max-w-[160px] opacity-100' : 'max-w-0 opacity-0'}`}>
-                        {item.label}
-                      </span>
-                      {expanded && !!displayCount && displayCount > 0 && (
-                        <span className="flex h-4 min-w-[20px] shrink-0 items-center justify-center rounded-full bg-indigo-600 px-1.5 text-[9px] font-bold leading-none text-white">
-                          {displayCount > 999 ? '999+' : displayCount}
-                        </span>
-                      )}
-                    </span>
-                    {expanded && (
-                      <ChevronDown
-                        size={13}
-                        strokeWidth={1.75}
-                        className={`shrink-0 transition-all duration-200 ease-in-out group-hover:text-foreground ${
-                          agentOpen ? 'rotate-180 text-foreground' : 'text-muted-foreground'
+              <div className="space-y-0.5">
+                {navItems.map((item) => {
+                  if (!item.children) {
+                    const Icon = item.icon;
+                    const active = pathname === item.href;
+                    return (
+                      <Link
+                        key={item.href}
+                        href={item.href!}
+                        onClick={() => setMobileOpen(false)}
+                        title={expanded ? undefined : item.label}
+                        className={`flex w-full items-center gap-3 rounded-lg px-3 py-2 text-[12px] font-medium transition-all duration-150 ${
+                          expanded ? '' : 'justify-center px-0'
+                        } ${
+                          active
+                            ? 'bg-[color:var(--product-accent-active-bg)] text-[color:var(--product-accent)]'
+                            : 'text-muted-foreground hover:bg-muted hover:text-foreground'
                         }`}
-                      />
-                    )}
-                  </button>
+                      >
+                        <Icon size={15} strokeWidth={1.75} className="shrink-0" />
+                        <span className={`overflow-hidden whitespace-nowrap transition-all duration-300 ${expanded ? 'max-w-[160px] opacity-100' : 'max-w-0 opacity-0'}`}>
+                          {item.label}
+                        </span>
+                      </Link>
+                    );
+                  }
 
-                  {/* Animated children — precise max-h + staggered item entrance */}
-                  <div className={`overflow-hidden transition-all duration-250 ease-in-out ${
-                    expanded && agentOpen ? 'max-h-[220px] opacity-100' : 'max-h-0 opacity-0'
-                  }`}>
-                    <div className="ml-4 mt-0.5 space-y-0.5 border-l border-border pb-0.5 pl-3">
-                      {item.children.map((child, idx) => {
-                        const ChildIcon = child.icon;
-                        const active = pathname === child.href;
-                        const isTransferQueue = child.href === '/transfer-queue';
-                        return (
-                          <Link
-                            key={child.href}
-                            href={child.href}
-                            onClick={() => setMobileOpen(false)}
-                            style={
-                              expanded && agentOpen
-                                ? { animation: `navItemIn 180ms ease-out ${idx * 35}ms both` }
-                                : undefined
-                            }
-                            className={`flex w-full items-center justify-between gap-2 whitespace-nowrap rounded-lg px-3 py-2 text-[11px] font-medium transition-all duration-150 ${
-                              active
-                                ? 'bg-indigo-50 text-indigo-700 dark:bg-indigo-500/15 dark:text-indigo-300'
-                                : 'text-muted-foreground hover:bg-muted hover:text-foreground'
-                            }`}
-                          >
-                            <span className="flex items-center gap-2.5">
-                              <ChildIcon size={13} strokeWidth={1.75} className="shrink-0" />
-                              {child.label}
-                            </span>
-                            {isTransferQueue && !!displayCount && displayCount > 0 && (
-                              <span
-                                title={`${displayCount} agent${displayCount === 1 ? '' : 's'} need transfer`}
-                                className="flex h-4 min-w-[20px] shrink-0 items-center justify-center rounded-full bg-indigo-600 px-1.5 text-[9px] font-bold leading-none text-white"
-                              >
-                                {displayCount > 999 ? '999+' : displayCount}
+                  const ParentIcon = item.icon;
+                  const childActive = item.children.some((child) => pathname === child.href);
+
+                  return (
+                    <div key={item.label}>
+                      <button
+                        onClick={() => setAgentOpen((prev) => !prev)}
+                        title={expanded ? undefined : item.label}
+                        className={`group flex w-full items-center gap-3 rounded-lg px-3 py-2 text-[12px] font-medium transition-all duration-150 ${
+                          expanded ? 'justify-between' : 'justify-center px-0'
+                        } ${
+                          childActive
+                            ? 'text-foreground'
+                            : 'text-muted-foreground hover:bg-muted hover:text-foreground'
+                        }`}
+                      >
+                        <span className={`flex items-center gap-3 ${expanded ? '' : 'justify-center'}`}>
+                          <span className="relative shrink-0">
+                            <ParentIcon size={15} strokeWidth={1.75} />
+                            {!expanded && !!displayCount && displayCount > 0 && (
+                              <span className="absolute -right-1.5 -top-1.5 flex h-3 min-w-[12px] items-center justify-center rounded-full bg-[color:var(--product-accent)] px-0.5 text-[7px] font-bold leading-none text-white">
+                                {displayCount > 99 ? '99+' : displayCount}
                               </span>
                             )}
-                          </Link>
-                        );
-                      })}
+                          </span>
+                          <span className={`overflow-hidden whitespace-nowrap transition-all duration-300 ${expanded ? 'max-w-[160px] opacity-100' : 'max-w-0 opacity-0'}`}>
+                            {item.label}
+                          </span>
+                          {expanded && !!displayCount && displayCount > 0 && (
+                            <span className="flex h-4 min-w-[20px] shrink-0 items-center justify-center rounded-full bg-[color:var(--product-accent)] px-1.5 text-[9px] font-bold leading-none text-white">
+                              {displayCount > 999 ? '999+' : displayCount}
+                            </span>
+                          )}
+                        </span>
+                        {expanded && (
+                          <ChevronDown
+                            size={13}
+                            strokeWidth={1.75}
+                            className={`shrink-0 transition-all duration-200 ease-in-out group-hover:text-foreground ${
+                              agentOpen ? 'rotate-180 text-foreground' : 'text-muted-foreground'
+                            }`}
+                          />
+                        )}
+                      </button>
+
+                      {/* Animated children — precise max-h + staggered item entrance */}
+                      <div className={`overflow-hidden transition-all duration-250 ease-in-out ${
+                        expanded && agentOpen ? 'max-h-[220px] opacity-100' : 'max-h-0 opacity-0'
+                      }`}>
+                        <div className="ml-4 mt-0.5 space-y-0.5 border-l border-border pb-0.5 pl-3">
+                          {item.children.map((child, idx) => {
+                            const ChildIcon = child.icon;
+                            const active = pathname === child.href;
+                            const isTransferQueue = child.href === '/transfer-queue';
+                            return (
+                              <Link
+                                key={child.href}
+                                href={child.href}
+                                onClick={() => setMobileOpen(false)}
+                                style={
+                                  expanded && agentOpen
+                                    ? { animation: `navItemIn 180ms ease-out ${idx * 35}ms both` }
+                                    : undefined
+                                }
+                                className={`flex w-full items-center justify-between gap-2 whitespace-nowrap rounded-lg px-3 py-2 text-[11px] font-medium transition-all duration-150 ${
+                                  active
+                                    ? 'bg-[color:var(--product-accent-active-bg)] text-[color:var(--product-accent)]'
+                                    : 'text-muted-foreground hover:bg-muted hover:text-foreground'
+                                }`}
+                              >
+                                <span className="flex items-center gap-2.5">
+                                  <ChildIcon size={13} strokeWidth={1.75} className="shrink-0" />
+                                  {child.label}
+                                </span>
+                                {isTransferQueue && !!displayCount && displayCount > 0 && (
+                                  <span
+                                    title={`${displayCount} agent${displayCount === 1 ? '' : 's'} need transfer`}
+                                    className="flex h-4 min-w-[20px] shrink-0 items-center justify-center rounded-full bg-[color:var(--product-accent)] px-1.5 text-[9px] font-bold leading-none text-white"
+                                  >
+                                    {displayCount > 999 ? '999+' : displayCount}
+                                  </span>
+                                )}
+                              </Link>
+                            );
+                          })}
+                        </div>
+                      </div>
                     </div>
-                  </div>
+                  );
+                })}
+              </div>
+            </div>
+
+            {/* General — placeholder for future non-product pages */}
+            {expanded && (
+              <div>
+                <p className="px-3 pb-1 pt-1 text-[9px] font-semibold uppercase tracking-wide text-muted-foreground/50">
+                  General
+                </p>
+                <div
+                  title="Coming soon"
+                  className="flex w-full cursor-not-allowed items-center justify-between gap-3 rounded-lg px-3 py-2 text-[12px] font-medium text-muted-foreground/50"
+                >
+                  <span className="flex items-center gap-3">
+                    <Settings size={15} strokeWidth={1.75} className="shrink-0" />
+                    Settings
+                  </span>
+                  <span className="rounded-full bg-muted px-1.5 py-0.5 text-[8px] font-semibold text-muted-foreground/70">
+                    Soon
+                  </span>
                 </div>
-              );
-            })}
+              </div>
+            )}
           </>
         )}
       </div>
