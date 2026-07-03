@@ -16,6 +16,7 @@
 - /topup → Top Up — app/topup/page.tsx
 - Sidebar: app/components/Sidebar.tsx
 - Shared utils: app/lib/format.ts (rawVal, fmtNum, displayNum)
+- Fetch error handling: app/lib/errors.ts (classifyFetchError, assertAllOk) + app/components/ConnectionErrorState.tsx — every page that fetches real data (all Cashout pages + /sendmoney/opening) uses these instead of a hand-rolled error message/box. Reuse them for any new fetching page rather than duplicating the old generic "Unable to load data" text.
 
 ## API Routes (Google Sheets CSV proxy)
 - /api/sheet → Dashboard data
