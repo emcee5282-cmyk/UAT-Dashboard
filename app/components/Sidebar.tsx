@@ -124,7 +124,7 @@ export default function Sidebar({ isExpanded, onExpandedChange }: SidebarProps) 
             {/* Smart Solution — product-scoped nav */}
             <div
               data-product={activeProduct}
-              className={`rounded-xl border border-[color:var(--product-accent)]/40 bg-[color:var(--product-accent-soft)] transition-colors duration-200 ${expanded ? 'p-2' : 'p-1'}`}
+              className={`rounded-xl border border-[color:var(--product-accent)]/40 transition-colors duration-200 ${expanded ? 'p-2' : 'p-1'}`}
             >
               {expanded && (
                 <>
@@ -189,8 +189,8 @@ export default function Sidebar({ isExpanded, onExpandedChange }: SidebarProps) 
                         href={targetHref}
                         onClick={() => setMobileOpen(false)}
                         title={expanded ? undefined : item.label}
-                        className={`flex w-full items-center gap-3 rounded-lg px-3 py-2 text-[12px] font-medium transition-all duration-150 ${
-                          expanded ? '' : 'justify-center px-0'
+                        className={`flex w-full items-center rounded-lg px-3 py-2 text-[12px] font-medium transition-all duration-150 ${
+                          expanded ? 'gap-3' : 'justify-center gap-0 px-0'
                         } ${
                           active
                             ? 'bg-[color:var(--product-accent-active-bg)] text-[color:var(--product-accent)]'
@@ -213,15 +213,15 @@ export default function Sidebar({ isExpanded, onExpandedChange }: SidebarProps) 
                       <button
                         onClick={() => setAgentOpen((prev) => !prev)}
                         title={expanded ? undefined : item.label}
-                        className={`group flex w-full items-center gap-3 rounded-lg px-3 py-2 text-[12px] font-medium transition-all duration-150 ${
-                          expanded ? 'justify-between' : 'justify-center px-0'
+                        className={`group flex w-full items-center rounded-lg px-3 py-2 text-[12px] font-medium transition-all duration-150 ${
+                          expanded ? 'justify-between gap-3' : 'justify-center gap-0 px-0'
                         } ${
                           childActive
                             ? 'text-foreground'
                             : 'text-muted-foreground hover:bg-muted hover:text-foreground'
                         }`}
                       >
-                        <span className={`flex items-center gap-3 ${expanded ? '' : 'justify-center'}`}>
+                        <span className={`flex items-center ${expanded ? 'gap-3' : 'justify-center gap-0'}`}>
                           <span className="relative shrink-0">
                             <ParentIcon size={15} strokeWidth={1.75} />
                             {activeProduct === 'cashout' && !expanded && !!displayCount && displayCount > 0 && (
