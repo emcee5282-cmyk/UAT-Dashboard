@@ -168,24 +168,17 @@ function computeWalletStatus(statuses: string[]): string {
 
 const WALLET_STATUS_OPTIONS = ['DP + WD', 'DP Only', 'WD Only', 'Top Up Acc.', 'Wallet With Issue', 'Disconnected', 'Account Problem', 'No Record'];
 
-// Send Money's own Balance Limit sheet ("SSP PS BalanceLimit") labels its Bank
-// column with a trailing "C" (NAGADC/ROCKETC/UPAYC) unlike Cashout's sheet
-// (NAGAD/ROCKET/UPAY) — confirmed by sampling actual sheet values, not a guess.
-const WALLET_TYPE_ORDER = [
-  { match: 'BKASHC', abbreviation: 'BK' },
-  { match: 'NAGADC', abbreviation: 'NG' },
-  { match: 'ROCKETC', abbreviation: 'RK' },
-  { match: 'UPAYC', abbreviation: 'UP' },
-];
+// Type comes straight from the wallet name's own suffix, not the Balance
+// Limit sheet's Bank field — every Send Money shop is solo (one wallet per
+// network, at most 2 wallets total per shop), so each row's own name already
+// carries its type, e.g. "N-T1PS2-NAVY040-NG" -> "NG". Confirmed by sampling
+// every suffix in the roster: only NG/RK/UP/BK ever appear.
+const WALLET_TYPE_SUFFIXES = ['NG', 'RK', 'UP', 'BK'];
 
-function computeWalletType(types: string[]): string {
-  const normalized = new Set(types.map((raw) => raw.trim().toUpperCase()).filter((t) => t && t !== '-'));
-
-  const abbreviations = WALLET_TYPE_ORDER
-    .filter(({ match }) => normalized.has(match))
-    .map(({ abbreviation }) => abbreviation);
-
-  return abbreviations.length > 0 ? abbreviations.join(' | ') : '−';
+function computeWalletType(agentName: string): string {
+  const segments = agentName.trim().toUpperCase().split('-');
+  const suffix = segments[segments.length - 1];
+  return WALLET_TYPE_SUFFIXES.includes(suffix) ? suffix : '−';
 }
 
 const WALLET_TYPE_FILTER_OPTIONS = [
@@ -508,7 +501,6 @@ export default function SendMoneyAgentBalance() {
         .filter((row) => row.some((cell) => cell.trim() !== ''))
         .map((row) => ({
           walletName: rawVal(row[0]),
-          walletType: rawVal(row[4]),
           totalDP: rawVal(row[11]),
           totalWD: rawVal(row[13]),
           balance: rawVal(row[8]),
@@ -523,7 +515,6 @@ export default function SendMoneyAgentBalance() {
       const balanceInsideTotals = new Map<string, number>();
       const walletStatusValues = new Map<string, string[]>();
       const brandGroups = new Map<string, string[]>();
-      const walletTypeValues = new Map<string, string[]>();
       balRows.forEach((bal) => {
         const name = bal.walletName;
         const dp = parseFloat(bal.totalDP.replace(/,/g, '')) || 0;
@@ -544,12 +535,6 @@ export default function SendMoneyAgentBalance() {
           const statuses = walletStatusValues.get(name) ?? [];
           statuses.push(bal.accountStatus);
           walletStatusValues.set(name, statuses);
-        }
-
-        if (bal.walletType && bal.walletType !== '-' && bal.login.trim().toLowerCase() === 'yes') {
-          const types = walletTypeValues.get(name) ?? [];
-          types.push(bal.walletType);
-          walletTypeValues.set(name, types);
         }
 
         if (bal.login.trim().toLowerCase() === 'yes') {
@@ -591,7 +576,7 @@ export default function SendMoneyAgentBalance() {
           sdpVsBalance: computeSdpVsBalance(opening.leader, opening.sdp, sdpNum, runningBalance),
           walletStatus,
           brand: resolveBrand(brandGroups.get(opening.agentName) ?? [], opening.agentName),
-          walletType: computeWalletType(walletTypeValues.get(opening.agentName) ?? []),
+          walletType: computeWalletType(opening.agentName),
         };
       });
 
@@ -784,10 +769,8 @@ export default function SendMoneyAgentBalance() {
     if (walletTypeOptions.some((name) => walletTypeFilter[name] === false)) {
       list = list.filter((row) => {
         if (row.walletType === '−') return isWalletTypeChecked('—');
-        const rowAbbreviations = row.walletType.split(' | ');
-        return WALLET_TYPE_FILTER_OPTIONS.some(
-          (opt) => rowAbbreviations.includes(opt.abbreviation) && isWalletTypeChecked(opt.label)
-        );
+        const opt = WALLET_TYPE_FILTER_OPTIONS.find((o) => o.abbreviation === row.walletType);
+        return opt ? isWalletTypeChecked(opt.label) : isWalletTypeChecked('—');
       });
     }
     return list;
