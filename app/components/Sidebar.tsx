@@ -61,7 +61,7 @@ export default function Sidebar({ isExpanded, onExpandedChange }: SidebarProps) 
   const router = useRouter();
   const [mobileOpen, setMobileOpen] = useState(false);
   const [mounted, setMounted] = useState(false);
-  const [agentOpen, setAgentOpen] = useState(true);
+  const [agentOpen, setAgentOpen] = useState(false);
   // URL is the single source of truth for the active product — never client state.
   const activeProduct = getActiveProduct(pathname);
   const [transferQueueCount, setTransferQueueCount] = useState<number | null>(null);
@@ -101,7 +101,7 @@ export default function Sidebar({ isExpanded, onExpandedChange }: SidebarProps) 
         </div>
         <div className={`overflow-hidden transition-all duration-300 ${expanded ? 'max-w-[160px] opacity-100' : 'max-w-0 opacity-0'}`}>
           <p className="whitespace-nowrap text-[13px] font-semibold leading-tight text-foreground">Operations</p>
-          <p className="text-[8px] leading-snug text-muted-foreground/70">Real-time Operational Dashboard</p>
+          <p className="whitespace-nowrap text-[8px] leading-snug text-muted-foreground/70">Real-time Operational Dashboard</p>
         </div>
         <button
           onClick={() => setMobileOpen(false)}
@@ -128,7 +128,7 @@ export default function Sidebar({ isExpanded, onExpandedChange }: SidebarProps) 
             >
               {expanded && (
                 <>
-                  <p className="px-1 pb-1.5 pt-0.5 text-[9px] font-semibold uppercase tracking-wide text-muted-foreground/70">
+                  <p className="whitespace-nowrap px-1 pb-1.5 pt-0.5 text-[9px] font-semibold uppercase tracking-wide text-muted-foreground/70">
                     Smart Solution
                   </p>
                   <div className="mb-2 flex rounded-lg bg-muted/60 p-0.5">
@@ -136,7 +136,7 @@ export default function Sidebar({ isExpanded, onExpandedChange }: SidebarProps) 
                       type="button"
                       aria-pressed={activeProduct === 'cashout'}
                       onClick={() => goToProduct('cashout')}
-                      className={`flex-1 rounded-md px-2 py-1 text-[10.5px] font-semibold transition-colors ${
+                      className={`flex-1 whitespace-nowrap rounded-md px-2 py-1 text-[10.5px] font-semibold transition-colors ${
                         activeProduct === 'cashout'
                           ? 'bg-indigo-600 text-white shadow-sm'
                           : 'text-muted-foreground hover:text-foreground'
@@ -148,7 +148,7 @@ export default function Sidebar({ isExpanded, onExpandedChange }: SidebarProps) 
                       type="button"
                       aria-pressed={activeProduct === 'sendmoney'}
                       onClick={() => goToProduct('sendmoney')}
-                      className={`flex-1 rounded-md px-2 py-1 text-[10.5px] font-semibold transition-colors ${
+                      className={`flex-1 whitespace-nowrap rounded-md px-2 py-1 text-[10.5px] font-semibold transition-colors ${
                         activeProduct === 'sendmoney'
                           ? 'bg-teal-600 text-white shadow-sm'
                           : 'text-muted-foreground hover:text-foreground'
@@ -302,18 +302,18 @@ export default function Sidebar({ isExpanded, onExpandedChange }: SidebarProps) 
             {/* General — placeholder for future non-product pages */}
             {expanded && (
               <div>
-                <p className="px-3 pb-1 pt-1 text-[9px] font-semibold uppercase tracking-wide text-muted-foreground/50">
+                <p className="whitespace-nowrap px-3 pb-1 pt-1 text-[9px] font-semibold uppercase tracking-wide text-muted-foreground/50">
                   General
                 </p>
                 <div
                   title="Coming soon"
-                  className="flex w-full cursor-not-allowed items-center justify-between gap-3 rounded-lg px-3 py-2 text-[12px] font-medium text-muted-foreground/50"
+                  className="flex w-full cursor-not-allowed items-center justify-between gap-3 whitespace-nowrap rounded-lg px-3 py-2 text-[12px] font-medium text-muted-foreground/50"
                 >
-                  <span className="flex items-center gap-3">
+                  <span className="flex items-center gap-3 whitespace-nowrap">
                     <Settings size={15} strokeWidth={1.75} className="shrink-0" />
                     Settings
                   </span>
-                  <span className="rounded-full bg-muted px-1.5 py-0.5 text-[8px] font-semibold text-muted-foreground/70">
+                  <span className="whitespace-nowrap rounded-full bg-muted px-1.5 py-0.5 text-[8px] font-semibold text-muted-foreground/70">
                     Soon
                   </span>
                 </div>
