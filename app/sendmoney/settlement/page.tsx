@@ -135,33 +135,34 @@ export default function SendMoneySettlementPage() {
       setLoading(true);
       setError(null);
 
-      const res = await fetch(`/api/stlm?t=${Date.now()}`);
+      const res = await fetch(`/api/sendmoney/stlmtopup?t=${Date.now()}`);
       if (!res.ok) throw new Error((await res.text().catch(() => '')) || `Request failed with status ${res.status}`);
       const text = await res.text();
       const lines = text.trim().split('\n').slice(1);
 
       const stlm: StlmRow[] = [];
 
-      // Reuses Cashout's own /api/stlm ("Stlm Top Up" sheet) as-is, but reads
-      // only cols A-G (indices 0-6) — Agent name/To Agent/Wallet/Amount/
-      // Date/Type/From Agent — which all belong together as one cohesive
-      // block. Cols H onward (Agent Name/Amount/Remarks/Date/Wallet/Brand)
-      // are a separate, unrelated dataset and must not be mixed in. Col G
-      // ("From Agent") is the actual Send Money wallet name for these rows
-      // (e.g. "D-B2BD-DELTA073-NG"); its Amount is col D, Date is col E,
-      // and Type (col F, e.g. "BUNDLE TRANSFER") stands in for Remarks.
+      // "PS BD STLM + TOPUP" is Send Money's own dedicated sheet (replaces
+      // the old shared "Stlm Top Up" cols A-G source). Settlement lives in
+      // cols H-L (indices 7-11): To Agent/Amount/Date/Wallet/TYPE. To Agent
+      // (col H) is the actual Send Money wallet name (e.g.
+      // "D-B2BD-DELTA073-NG"); Amount (col I) is stored negative (money
+      // leaving), so it's abs()'d for display; TYPE (col L, e.g. "BUNDLE
+      // TRANSFER") stands in for Remarks, same as before. Cols B-F on this
+      // same sheet are a separate TopUp block (see /sendmoney/topup) and
+      // cols Q-AA are a last-month archive — neither belongs here.
       lines
         .filter(line => line.trim() !== '')
         .forEach(line => {
           const cols = line.split(',');
-          const walletName = rawVal(cols[6]);
+          const walletName = rawVal(cols[7]);
           if (walletName && walletName !== '-' && walletName !== '0') {
             stlm.push({
               agentName: walletName,
-              amount: rawVal(cols[3]),
-              remarks: rawVal(cols[5]),
-              date: rawVal(cols[4]),
-              wallet: rawVal(cols[2]),
+              amount: String(Math.abs(parseAmount(rawVal(cols[8])))),
+              remarks: rawVal(cols[11]),
+              date: rawVal(cols[9]),
+              wallet: rawVal(cols[10]),
               brand: resolveBrandFromWalletName(walletName),
             });
           }

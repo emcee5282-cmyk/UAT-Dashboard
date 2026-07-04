@@ -386,14 +386,15 @@ export default function SendMoneyTransferQueue() {
       setLoading(true);
       setError(null);
 
-      // Reuses Cashout's own /api/opening and /api/stlm as-is (Send Money's
-      // roster and Settlement rows live in extra columns of those same
-      // sheets), plus the Send Money-specific /api/sendmoney/balances route
-      // for "SSP PS BalanceLimit" — same three sources as /sendmoney/balances.
+      // Reuses Cashout's own /api/opening as-is for the roster, plus two
+      // Send Money-specific routes: /api/sendmoney/balances ("SSP PS
+      // BalanceLimit") and /api/sendmoney/stlmtopup ("PS BD STLM + TOPUP",
+      // Send Money's own dedicated Settlement + Top Up sheet) — same three
+      // sources as /sendmoney/balances.
       const [openingRes, balRes, stlmRes] = await Promise.all([
         fetch(`/api/opening?t=${Date.now()}`),
         fetch(`/api/sendmoney/balances?t=${Date.now()}`),
-        fetch(`/api/stlm?t=${Date.now()}`),
+        fetch(`/api/sendmoney/stlmtopup?t=${Date.now()}`),
       ]);
 
       await assertAllOk([openingRes, balRes, stlmRes]);
@@ -463,26 +464,38 @@ export default function SendMoneyTransferQueue() {
         }
       });
 
-      // Settlement uses only cols A-G of "Stlm Top Up" (col G/index 6 is the
-      // actual Send Money wallet name, Amount is col D/index 3, Date is col
-      // E/index 4) — same cutoff-date filtering as /sendmoney/balances so
-      // rows already folded into the last Opening Balance reset aren't
-      // double-counted. No verified Send Money Top Up source exists yet, so
-      // Total Top Up stays at 0, same known gap as /sendmoney/balances.
+      // "PS BD STLM + TOPUP" is Send Money's own dedicated sheet (replaces
+      // the old shared "Stlm Top Up" cols A-G source). Top Up lives in cols
+      // B-F (indices 1-5), amounts stored positive; Settlement lives in cols
+      // H-L (indices 7-11), amounts stored negative (money leaving) so
+      // they're abs()'d — same cutoff-date filtering as /sendmoney/balances
+      // so rows already folded into the last Opening Balance reset aren't
+      // double-counted.
       const topUpTotals = new Map<string, number>();
       const stlmTotals = new Map<string, number>();
       parseCsvLines(stlmText)
         .slice(1)
         .filter((row) => row.some((cell) => cell.trim() !== ''))
         .forEach((row) => {
-          const stlmAgent = rawVal(row[6]);
-          const stlmAmount = rawVal(row[3]);
-          const stlmDate = reportCutoffDate ? parseSheetDate(rawVal(row[4])) : null;
+          const topUpAgent = rawVal(row[1]);
+          const topUpAmount = rawVal(row[2]);
+          const topUpDate = reportCutoffDate ? parseSheetDate(rawVal(row[3])) : null;
+          if (
+            topUpAgent && topUpAgent !== '-' && topUpAmount && topUpAmount !== '-' &&
+            (!reportCutoffDate || (topUpDate && topUpDate >= reportCutoffDate))
+          ) {
+            const amount = Math.abs(parseFloat(topUpAmount.replace(/,/g, '')) || 0);
+            topUpTotals.set(topUpAgent, (topUpTotals.get(topUpAgent) ?? 0) + amount);
+          }
+
+          const stlmAgent = rawVal(row[7]);
+          const stlmAmount = rawVal(row[8]);
+          const stlmDate = reportCutoffDate ? parseSheetDate(rawVal(row[9])) : null;
           if (
             stlmAgent && stlmAgent !== '-' && stlmAmount && stlmAmount !== '-' &&
             (!reportCutoffDate || (stlmDate && stlmDate >= reportCutoffDate))
           ) {
-            const amount = parseFloat(stlmAmount.replace(/,/g, '')) || 0;
+            const amount = Math.abs(parseFloat(stlmAmount.replace(/,/g, '')) || 0);
             stlmTotals.set(stlmAgent, (stlmTotals.get(stlmAgent) ?? 0) + amount);
           }
         });

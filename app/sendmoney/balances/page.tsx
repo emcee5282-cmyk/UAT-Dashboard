@@ -506,16 +506,15 @@ export default function SendMoneyAgentBalance() {
       setError(null);
 
       // Reuses Cashout's own /api/opening (fetches the whole "Opening AG"
-      // sheet) and /api/stlm (fetches the whole "Stlm Top Up" sheet) as-is —
-      // Send Money's roster and its Settlement entries both live in extra
-      // columns of these same sheets, so no new route was needed for either.
-      // Only the Balance Limit sheet is genuinely Send Money-specific ("SSP
-      // PS BalanceLimit"). There's no verified Send Money Top Up source yet
-      // (see note below), so Total Top Up stays at 0.
+      // sheet) as-is for the roster, plus two Send Money-specific routes:
+      // /api/sendmoney/balances ("SSP PS BalanceLimit") and
+      // /api/sendmoney/stlmtopup ("PS BD STLM + TOPUP", Send Money's own
+      // dedicated Settlement + Top Up sheet — replaces the old shared
+      // "Stlm Top Up" source).
       const [openingRes, balRes, stlmRes] = await Promise.all([
         fetch(`/api/opening?t=${Date.now()}`),
         fetch(`/api/sendmoney/balances?t=${Date.now()}`),
-        fetch(`/api/stlm?t=${Date.now()}`),
+        fetch(`/api/sendmoney/stlmtopup?t=${Date.now()}`),
       ]);
 
       await assertAllOk([openingRes, balRes, stlmRes]);
@@ -592,32 +591,38 @@ export default function SendMoneyAgentBalance() {
         }
       });
 
-      // NOTE: cols 16-28 of "Stlm Top Up" LOOK like a second, mirrored Top Up
-      // + Settlement block, but sampling confirmed the agent codes in it
-      // (e.g. "CALAMARI008", "YUJI022") belong to Cashout's own Opening
-      // roster, not Send Money's wallet list — that block is Cashout data.
-      // No verified Send Money Top Up source exists yet, so Total Top Up
-      // stays at 0 rather than risk pulling in the wrong figures.
-      //
-      // Settlement uses only cols A-G (indices 0-6) — Agent name/To Agent/
-      // Wallet/Amount/Date/Type/From Agent — a cohesive block that must not
-      // be mixed with cols H onward (a separate, unrelated dataset). Col G
-      // ("From Agent") is the actual Send Money wallet name for these rows
-      // (e.g. "D-B2BD-DELTA073-NG"); its Amount is col D and Date is col E.
+      // "PS BD STLM + TOPUP" is Send Money's own dedicated sheet (replaces
+      // the old shared "Stlm Top Up" cols A-G source, and finally provides a
+      // verified Top Up source). Top Up lives in cols B-F (indices 1-5):
+      // To Agent/Amount/Date/Wallet/TYPE, amounts stored positive. Settlement
+      // lives in cols H-L (indices 7-11), same field order, amounts stored
+      // negative (money leaving) so they're abs()'d before accumulating.
+      // Cols Q-AA on this same sheet are a last-month archive and are not read.
       const topUpTotals = new Map<string, number>();
       const stlmTotals = new Map<string, number>();
       parseCsvLines(stlmText)
         .slice(1)
         .filter((row) => row.some((cell) => cell.trim() !== ''))
         .forEach((row) => {
-          const stlmAgent = rawVal(row[6]);
-          const stlmAmount = rawVal(row[3]);
-          const stlmDate = reportCutoffDate ? parseSheetDate(rawVal(row[4])) : null;
+          const topUpAgent = rawVal(row[1]);
+          const topUpAmount = rawVal(row[2]);
+          const topUpDate = reportCutoffDate ? parseSheetDate(rawVal(row[3])) : null;
+          if (
+            topUpAgent && topUpAgent !== '-' && topUpAmount && topUpAmount !== '-' &&
+            (!reportCutoffDate || (topUpDate && topUpDate >= reportCutoffDate))
+          ) {
+            const amount = Math.abs(parseFloat(topUpAmount.replace(/,/g, '')) || 0);
+            topUpTotals.set(topUpAgent, (topUpTotals.get(topUpAgent) ?? 0) + amount);
+          }
+
+          const stlmAgent = rawVal(row[7]);
+          const stlmAmount = rawVal(row[8]);
+          const stlmDate = reportCutoffDate ? parseSheetDate(rawVal(row[9])) : null;
           if (
             stlmAgent && stlmAgent !== '-' && stlmAmount && stlmAmount !== '-' &&
             (!reportCutoffDate || (stlmDate && stlmDate >= reportCutoffDate))
           ) {
-            const amount = parseFloat(stlmAmount.replace(/,/g, '')) || 0;
+            const amount = Math.abs(parseFloat(stlmAmount.replace(/,/g, '')) || 0);
             stlmTotals.set(stlmAgent, (stlmTotals.get(stlmAgent) ?? 0) + amount);
           }
         });
