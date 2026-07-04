@@ -517,6 +517,9 @@ export default function SendMoneyTransferQueue() {
 
         const currentGroup = bal.group.trim();
         if (currentGroup.toLowerCase().includes('top up')) return;
+        // Shops whose wallet name carries a "BD" segment (e.g. "D-M2BD-DELTA063-NG")
+        // are excluded from the Transfer Queue entirely, per user instruction.
+        if (bal.walletName.toUpperCase().includes('BD')) return;
         const resolved = resolveCorrectGroup(info.brand, info.companyBalance, info.sdpVsBalance, info.discrepancy);
         if (!resolved) return;
         if (normalizeGroup(currentGroup) === normalizeGroup(resolved.groupName)) return;
