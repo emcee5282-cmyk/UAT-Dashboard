@@ -130,6 +130,37 @@ function parseNumber(val: string): number {
   return isNaN(num) ? 0 : num;
 }
 
+// Opening sheet col I holds Send Money's own "UPDATED TIME" card, e.g.
+// "July 4 - 7:03 AM" (same format as Cashout's col G card). This is the
+// cutoff: Settlement totals should only include rows dated on or after this
+// reset point, so entries already folded into the last Opening Balance reset
+// aren't double-counted.
+function parseReportCutoffDate(openingRawRows: string[][]): Date | null {
+  for (const row of openingRawRows) {
+    const cell = (row[8] ?? '').trim();
+    const match = cell.match(/^([A-Za-z]+)\s+(\d{1,2})\s*-\s*\d{1,2}:\d{2}\s*[AP]M$/i);
+    if (match) {
+      const [, monthName, day] = match;
+      const year = new Date().getFullYear();
+      const parsed = new Date(`${monthName} ${day}, ${year}`);
+      if (!isNaN(parsed.getTime())) {
+        parsed.setHours(0, 0, 0, 0);
+        return parsed;
+      }
+    }
+  }
+  return null;
+}
+
+// Stlm Top Up sheet dates are formatted "M/D/YYYY".
+function parseSheetDate(dateStr: string): Date | null {
+  const parts = (dateStr ?? '').trim().split('/');
+  if (parts.length !== 3) return null;
+  const [m, d, y] = parts.map(Number);
+  if (!m || !d || !y) return null;
+  return new Date(y, m - 1, d);
+}
+
 function normalizeWalletStatus(raw: string): string | null {
   const trimmed = raw.trim();
   if (trimmed === '') return null;
@@ -475,22 +506,26 @@ export default function SendMoneyAgentBalance() {
       setError(null);
 
       // Reuses Cashout's own /api/opening (fetches the whole "Opening AG"
-      // sheet) as-is — Send Money's roster lives in a second block of columns
-      // in that same sheet, so no new route was needed for it. Only the
-      // Balance Limit sheet is genuinely Send Money-specific ("SSP PS
-      // BalanceLimit"). There's no verified Send Money Top Up/Settlement
-      // source yet (see note below), so /api/stlm isn't fetched here.
-      const [openingRes, balRes] = await Promise.all([
+      // sheet) and /api/stlm (fetches the whole "Stlm Top Up" sheet) as-is —
+      // Send Money's roster and its Settlement entries both live in extra
+      // columns of these same sheets, so no new route was needed for either.
+      // Only the Balance Limit sheet is genuinely Send Money-specific ("SSP
+      // PS BalanceLimit"). There's no verified Send Money Top Up source yet
+      // (see note below), so Total Top Up stays at 0.
+      const [openingRes, balRes, stlmRes] = await Promise.all([
         fetch(`/api/opening?t=${Date.now()}`),
         fetch(`/api/sendmoney/balances?t=${Date.now()}`),
+        fetch(`/api/stlm?t=${Date.now()}`),
       ]);
 
-      await assertAllOk([openingRes, balRes]);
+      await assertAllOk([openingRes, balRes, stlmRes]);
 
       const openingText = await openingRes.text();
       const balData: string[][] = await balRes.json();
+      const stlmText = await stlmRes.text();
 
       const openingRawRows = parseCsvLines(openingText);
+      const reportCutoffDate = parseReportCutoffDate(openingRawRows);
 
       // Send Money's own roster lives in cols L-O (indices 11-14) of the same
       // "Opening AG" sheet Cashout uses for cols A-D — a separate ~9,983-row
@@ -557,16 +592,36 @@ export default function SendMoneyAgentBalance() {
         }
       });
 
-      // NOTE: cols 16-28 of "Stlm Top Up" LOOK like a second, mirrored
-      // Top Up + Settlement block, but sampling confirmed the agent codes in
-      // it (e.g. "CALAMARI008", "YUJI022") belong to Cashout's own Opening
-      // roster, not Send Money's wallet list — this block is Cashout data,
-      // not a Send Money section. No verified Send Money Top Up/Settlement
-      // source exists yet, so both totals are intentionally left at 0 rather
-      // than risk pulling in the wrong (Cashout) figures. Revisit once a real
-      // source is identified.
+      // NOTE: cols 16-28 of "Stlm Top Up" LOOK like a second, mirrored Top Up
+      // + Settlement block, but sampling confirmed the agent codes in it
+      // (e.g. "CALAMARI008", "YUJI022") belong to Cashout's own Opening
+      // roster, not Send Money's wallet list — that block is Cashout data.
+      // No verified Send Money Top Up source exists yet, so Total Top Up
+      // stays at 0 rather than risk pulling in the wrong figures.
+      //
+      // Settlement is different: Cashout's own Settlement block (cols G-M)
+      // keys each row by col H ("Agent Name"), but col G ("From Agent") is
+      // the actual Send Money wallet name for these rows (e.g.
+      // "D-B2BD-DELTA073-NG") — confirmed by sampling, every value in col G
+      // that matches this shape is found in Send Money's own roster. So
+      // Settlement uses this same block, keyed by col G instead of col H.
       const topUpTotals = new Map<string, number>();
       const stlmTotals = new Map<string, number>();
+      parseCsvLines(stlmText)
+        .slice(1)
+        .filter((row) => row.some((cell) => cell.trim() !== ''))
+        .forEach((row) => {
+          const stlmAgent = rawVal(row[6]);
+          const stlmAmount = rawVal(row[8]);
+          const stlmDate = reportCutoffDate ? parseSheetDate(rawVal(row[10])) : null;
+          if (
+            stlmAgent && stlmAgent !== '-' && stlmAmount && stlmAmount !== '-' &&
+            (!reportCutoffDate || (stlmDate && stlmDate >= reportCutoffDate))
+          ) {
+            const amount = parseFloat(stlmAmount.replace(/,/g, '')) || 0;
+            stlmTotals.set(stlmAgent, (stlmTotals.get(stlmAgent) ?? 0) + amount);
+          }
+        });
 
       const merged: MergedRow[] = openingRows.map((opening) => {
         const totals = balanceTotals.get(opening.agentName) ?? { dp: 0, wd: 0 };
