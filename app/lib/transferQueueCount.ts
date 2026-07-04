@@ -284,7 +284,7 @@ export async function fetchTransferQueueCount(): Promise<number> {
       sdp: rawVal(row[2]),
       leader: rawVal(row[3]),
     }))
-    .filter((row) => row.agentName && row.agentName !== 'OLD');
+    .filter((row) => row.agentName && row.agentName !== '-' && row.agentName !== 'OLD');
 
   const balRows = parseCsvLines(balText)
     .slice(1)

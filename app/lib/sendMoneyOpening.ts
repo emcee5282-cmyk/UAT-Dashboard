@@ -44,5 +44,5 @@ export function parseSendMoneyOpeningCsv(csv: string): SendMoneyOpeningRow[] {
         securityDeposit: parseNullableNumber(cols[2]),
       };
     })
-    .filter((row) => row.agentName && row.agentName !== 'OLD');
+    .filter((row) => row.agentName && row.agentName !== '-' && row.agentName !== 'OLD');
 }

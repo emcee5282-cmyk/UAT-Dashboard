@@ -538,7 +538,7 @@ export default function SendMoneyAgentBalance() {
           sdp: rawVal(row[13]),
           leader: rawVal(row[14]),
         }))
-        .filter((row) => row.agentName && row.agentName !== 'OLD');
+        .filter((row) => row.agentName && row.agentName !== '-' && row.agentName !== 'OLD');
 
       // "SSP PS BalanceLimit" lines up column-for-column with Cashout's own
       // "SSP AG BalanceLimit" from index 4 onward; it just lacks Cashout's

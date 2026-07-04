@@ -525,7 +525,7 @@ export default function AgentBalance() {
           sdp: rawVal(row[2]),
           leader: rawVal(row[3]),
         }))
-        .filter((row) => row.agentName && row.agentName !== 'OLD');
+        .filter((row) => row.agentName && row.agentName !== '-' && row.agentName !== 'OLD');
 
       const balRows = balData
         .slice(1)

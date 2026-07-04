@@ -194,7 +194,7 @@ export default function Summary() {
             brand: resolveBrand(brandGroups.get(agentName) ?? [], agentName),
           };
         })
-        .filter((row) => row.agentName && row.agentName !== 'OLD');
+        .filter((row) => row.agentName && row.agentName !== '-' && row.agentName !== 'OLD');
       setRows(parsed);
       setLastUpdated(new Date().toLocaleTimeString('en-PH'));
     } catch (err) {

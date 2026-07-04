@@ -416,7 +416,7 @@ export default function SendMoneyTransferQueue() {
           sdp: rawVal(row[13]),
           leader: rawVal(row[14]),
         }))
-        .filter((row) => row.agentName && row.agentName !== 'OLD');
+        .filter((row) => row.agentName && row.agentName !== '-' && row.agentName !== 'OLD');
 
       // "SSP PS BalanceLimit" lines up with Cashout's own Balance Limit sheet
       // from index 4 onward, just without Cashout's leading "Reference" column.

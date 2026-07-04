@@ -46,6 +46,7 @@
 
 ## Data source gotchas
 - The "Opening AG" tab is mirrored via IMPORTRANGE from another spreadsheet. Blank cells or `#REF!` values appearing in it are a known failure mode of that link (source range shifted, permission lapsed, etc.) — investigate as a possible sheet-side issue before assuming a parsing bug.
+- **`rawVal()` never returns an empty string — blank cells become `'-'`.** Any roster filter written as `row.agentName && row.agentName !== 'OLD'` is a latent bug: `'-'` is truthy, so it silently passes and blank rows are counted. This stayed dormant for a long time because "Opening AG" hadn't grown past Cashout's own roster length; once Send Money's own roster (cols L-O) grew longer than Cashout's (cols A-D), the sheet's total row count exceeded 3,452 and every trailing blank-Cashout/filled-Send-Money row leaked through, inflating Cashout's own "Accounts" count to the Send Money roster's own count (9,972) even though Cashout's real roster is ~3,452. Fixed everywhere this filter pattern appeared (`app/agentbal/page.tsx`, `app/page.tsx`, `app/summary/page.tsx`, `app/transfer-queue/page.tsx`, `app/lib/transferQueueCount.ts`, `app/lib/sendMoneyOpening.ts`, `app/sendmoney/balances/page.tsx`, `app/sendmoney/transfer-queue/page.tsx`) by adding `&& row.agentName !== '-'`. If a *new* page ever copies this filter again, copy the 3-part version, not the 2-part one.
 
 ## Design System v2 (current standard — applies going forward; migrate legacy pages opportunistically)
 - Font: Inter — never font-mono

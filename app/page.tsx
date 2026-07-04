@@ -349,7 +349,7 @@ export default function Dashboard() {
           agentName: (row[0] ?? '').replace(/"/g, '').trim(),
           openingBal: (row[1] ?? '').replace(/"/g, '').trim(),
         }))
-        .filter((row) => row.agentName && row.agentName !== 'OLD');
+        .filter((row) => row.agentName && row.agentName !== '-' && row.agentName !== 'OLD');
 
       const agentTotals = new Map<string, { dp: number; wd: number }>();
       const balanceInsideTotals = new Map<string, number>();
