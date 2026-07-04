@@ -240,9 +240,23 @@ function computeBrand(groups: string[]): string {
 
 const BRAND_CODES = [...CASHOUT_BRAND_CODES, 'SH'];
 
+// Human-readable overrides for brand codes whose 2-letter form isn't a
+// meaningful label on its own — shown wherever the brand is displayed, but
+// the underlying code (e.g. 'SH') stays the value used for filtering/sorting.
+const BRAND_DISPLAY_LABELS: Record<string, string> = { SH: 'Sharing' };
+
+function displayBrand(code: string): string {
+  return BRAND_DISPLAY_LABELS[code] ?? code;
+}
+
 function resolveBrand(groups: string[], agentName: string): string {
   const brand = computeBrand(groups);
-  if (brand !== '−') return brand;
+  // Some Group values (e.g. "BUNDLE WALLET FOR WD") don't start with a real
+  // brand code at all, so a naive first-2-letters slice produces garbage
+  // (e.g. "BU"). Only trust computeBrand's result if it's an actual known
+  // brand code — otherwise fall back to matching a code inside the wallet
+  // name itself (e.g. "M1" in "D-M1BD-DELTA001D-NG"), same as the no-group case.
+  if (brand !== '−' && BRAND_CODES.includes(brand)) return brand;
   return BRAND_CODES.find((code) => agentName.toUpperCase().includes(code)) ?? '−';
 }
 
@@ -340,7 +354,7 @@ function walletStatusBadgeClasses(status: string): string {
 function mobileCardFieldValue(row: MergedRow, key: ColumnKey): { value: string; className: string } {
   switch (key) {
     case 'brand':
-      return { value: row.brand, className: 'text-foreground' };
+      return { value: displayBrand(row.brand), className: 'text-foreground' };
     case 'leader':
       return { value: row.leader, className: 'text-muted-foreground' };
     case 'walletType':
@@ -374,7 +388,7 @@ function renderCell(row: MergedRow, key: ColumnKey) {
 
   switch (key) {
     case 'brand':
-      return <td key={key} className={`${base} text-center font-semibold text-foreground`}>{row.brand}</td>;
+      return <td key={key} className={`${base} text-center font-semibold text-foreground`}>{displayBrand(row.brand)}</td>;
     case 'leader':
       return <td key={key} className={`${base} text-center text-muted-foreground`}>{row.leader}</td>;
     case 'walletName':
@@ -914,7 +928,7 @@ export default function SendMoneyAgentBalance() {
     const getExportValue = (row: MergedRow, key: ColumnKey) => {
       switch (key) {
         case 'brand':
-          return row.brand;
+          return displayBrand(row.brand);
         case 'leader':
           return row.leader;
         case 'walletName':
@@ -1265,7 +1279,7 @@ export default function SendMoneyAgentBalance() {
                                           setBrandFilter((current) => ({ ...current, [brand]: !isBrandChecked(brand) }));
                                         }}
                                       />
-                                      <span>{brand}</span>
+                                      <span>{displayBrand(brand)}</span>
                                     </label>
                                   ))}
                                 </div>
@@ -1558,7 +1572,7 @@ export default function SendMoneyAgentBalance() {
                             <div className="flex shrink-0 items-center gap-1.5">
                               {showBrand && (
                                 <span className="rounded-full border-[0.5px] border-border px-2.5 py-0.5 text-[11px] text-muted-foreground">
-                                  {row.brand}
+                                  {displayBrand(row.brand)}
                                 </span>
                               )}
                               {showStatus && (
