@@ -599,12 +599,11 @@ export default function SendMoneyAgentBalance() {
       // No verified Send Money Top Up source exists yet, so Total Top Up
       // stays at 0 rather than risk pulling in the wrong figures.
       //
-      // Settlement is different: Cashout's own Settlement block (cols G-M)
-      // keys each row by col H ("Agent Name"), but col G ("From Agent") is
-      // the actual Send Money wallet name for these rows (e.g.
-      // "D-B2BD-DELTA073-NG") — confirmed by sampling, every value in col G
-      // that matches this shape is found in Send Money's own roster. So
-      // Settlement uses this same block, keyed by col G instead of col H.
+      // Settlement uses only cols A-G (indices 0-6) — Agent name/To Agent/
+      // Wallet/Amount/Date/Type/From Agent — a cohesive block that must not
+      // be mixed with cols H onward (a separate, unrelated dataset). Col G
+      // ("From Agent") is the actual Send Money wallet name for these rows
+      // (e.g. "D-B2BD-DELTA073-NG"); its Amount is col D and Date is col E.
       const topUpTotals = new Map<string, number>();
       const stlmTotals = new Map<string, number>();
       parseCsvLines(stlmText)
@@ -612,8 +611,8 @@ export default function SendMoneyAgentBalance() {
         .filter((row) => row.some((cell) => cell.trim() !== ''))
         .forEach((row) => {
           const stlmAgent = rawVal(row[6]);
-          const stlmAmount = rawVal(row[8]);
-          const stlmDate = reportCutoffDate ? parseSheetDate(rawVal(row[10])) : null;
+          const stlmAmount = rawVal(row[3]);
+          const stlmDate = reportCutoffDate ? parseSheetDate(rawVal(row[4])) : null;
           if (
             stlmAgent && stlmAgent !== '-' && stlmAmount && stlmAmount !== '-' &&
             (!reportCutoffDate || (stlmDate && stlmDate >= reportCutoffDate))
