@@ -18,19 +18,55 @@ type StlmRow = {
   brand: string;
 };
 
-function mapBrand(value: string): string {
-  const v = value.toUpperCase().trim();
-  if (v.includes('MCW')) return 'M1';
-  if (v.includes('MXW')) return 'M2';
-  if (v.includes('BB')) return 'B1';
-  if (v.includes('BGB')) return 'B2';
-  if (v.includes('BS')) return 'B3';
-  if (v.includes('BW')) return 'B4';
-  if (v.includes('BP')) return 'B5';
-  if (v.includes('KLG')) return 'K1';
-  if (v.includes('JY')) return 'J1';
-  if (v.includes('TK')) return 'T1';
-  return value || '−';
+// "AG BD STLM + TOPUP" no longer carries a brand/gateway column (removed from
+// the sheet), so brand is resolved by cross-referencing the bare agent code
+// against "SSP AG BalanceLimit" (same Group data and priority logic Cashout's
+// own Agent Balance page already uses), not by mapping a gateway label.
+const BRAND_PRIORITY = ['M1', 'M2', 'B1', 'B2', 'B3', 'B4', 'B5', 'K1', 'J1', 'T1'];
+const SKIP_GROUPS = ['wallet with issue', 'disconnected', 'dc account'];
+
+function computeBrand(groups: string[]): string {
+  const counts = new Map<string, number>();
+  groups.forEach((group) => {
+    const trimmed = (group ?? '').trim();
+    if (!trimmed || trimmed === '-') return;
+    if (SKIP_GROUPS.some((skip) => trimmed.toLowerCase().includes(skip))) return;
+    const code = trimmed.slice(0, 2).toUpperCase();
+    counts.set(code, (counts.get(code) ?? 0) + 1);
+  });
+
+  if (counts.size === 0) return '−';
+
+  const maxCount = Math.max(...counts.values());
+  const tied = Array.from(counts.keys()).filter((code) => counts.get(code) === maxCount);
+  const priorityTied = tied.filter((code) => BRAND_PRIORITY.includes(code));
+
+  if (priorityTied.length > 0) {
+    priorityTied.sort((a, b) => BRAND_PRIORITY.indexOf(a) - BRAND_PRIORITY.indexOf(b));
+    return priorityTied[0];
+  }
+
+  tied.sort((a, b) => a.localeCompare(b));
+  return tied[0];
+}
+
+const BRAND_CODES = ['M1', 'M2', 'B1', 'B2', 'B3', 'B4', 'B5', 'K1', 'J1', 'T1'];
+
+function resolveBrand(groups: string[], agentName: string): string {
+  const brand = computeBrand(groups);
+  if (brand !== '−') return brand;
+  return BRAND_CODES.find((code) => agentName.toUpperCase().includes(code)) ?? '−';
+}
+
+// "To Agent" values on the new sheet sometimes carry a trailing "-<brand>"
+// suffix (e.g. "KONAN001-M1"), sometimes not (e.g. "YUJI024") — strip it so
+// the bare code matches "SSP AG BalanceLimit"'s own (always-bare) wallet names.
+function stripBrandSuffix(name: string): string {
+  const parts = name.split('-');
+  if (parts.length >= 2 && BRAND_CODES.includes(parts[parts.length - 1].toUpperCase())) {
+    return parts.slice(0, -1).join('-');
+  }
+  return name;
 }
 
 function parseAmount(val: string): number {
@@ -85,7 +121,7 @@ function renderCell(row: StlmRow, key: ColumnKey) {
   const base = 'whitespace-nowrap overflow-hidden text-ellipsis px-3 py-1.5 text-center text-[11px]';
   switch (key) {
     case 'brand':
-      return <td key={key} className={`${base} text-muted-foreground`}>{mapBrand(row.brand)}</td>;
+      return <td key={key} className={`${base} text-muted-foreground`}>{row.brand}</td>;
     case 'agentName':
       return <td key={key} className={`${base} font-semibold text-foreground`}>{row.agentName}</td>;
     case 'wallet':
@@ -131,26 +167,55 @@ export default function StlmPage() {
       setLoading(true);
       setError(null);
 
-      const res = await fetch(`/api/stlm?t=${Date.now()}`);
+      const [res, balRes] = await Promise.all([
+        fetch(`/api/agstlmtopup?t=${Date.now()}`),
+        fetch(`/api/agentbal?t=${Date.now()}`),
+      ]);
       if (!res.ok) throw new Error((await res.text().catch(() => '')) || `Request failed with status ${res.status}`);
       const text = await res.text();
+      const balText = balRes.ok ? await balRes.text() : '';
+
+      // Brand cross-reference: "SSP AG BalanceLimit" col G (index 6) is the
+      // Group text; same computeBrand/resolveBrand priority logic as
+      // Cashout's own Agent Balance page, keyed by the bare wallet name.
+      const brandGroups: Record<string, string[]> = {};
+      if (balText) {
+        balText.trim().split('\n').slice(1).forEach(line => {
+          const cols = line.split(',');
+          const name = rawVal(cols[1]);
+          const group = rawVal(cols[6]);
+          if (name && group && group !== '-') {
+            (brandGroups[name.toUpperCase()] ??= []).push(group);
+          }
+        });
+      }
+
       const lines = text.trim().split('\n').slice(1);
 
       const stlm: StlmRow[] = [];
 
+      // "AG BD STLM + TOPUP" is Cashout's own dedicated Settlement + Top Up
+      // sheet (replaces the old shared "Stlm Top Up" source). Settlement
+      // lives in cols H-L (indices 7-11): To Agent/Amount/Date/Wallet/Type
+      // (the sheet's own header row mislabels cols D/E as "Wallet"/"Date" —
+      // the actual data order matches this, confirmed by sampling), amounts
+      // stored negative (money leaving) so they're abs()'d. Cols B-F are a
+      // separate Top Up block (see app/topup/page.tsx) and cols Q-AA are a
+      // last-month archive — neither belongs here.
       lines
         .filter(line => line.trim() !== '')
         .forEach(line => {
           const cols = line.split(',');
           const agentRight = rawVal(cols[7]);
           if (agentRight && agentRight !== '-' && agentRight !== '0') {
+            const bareAgent = stripBrandSuffix(agentRight);
             stlm.push({
-              agentName: agentRight,
-              amount: rawVal(cols[8]),
-              remarks: rawVal(cols[9]),
-              date: rawVal(cols[10]),
-              wallet: rawVal(cols[11]),
-              brand: rawVal(cols[12]),
+              agentName: bareAgent,
+              amount: String(Math.abs(parseAmount(rawVal(cols[8])))),
+              remarks: rawVal(cols[11]),
+              date: rawVal(cols[9]),
+              wallet: rawVal(cols[10]),
+              brand: resolveBrand(brandGroups[bareAgent.toUpperCase()] ?? [], agentRight),
             });
           }
         });
@@ -213,7 +278,7 @@ export default function StlmPage() {
   const anyFilterActive = anyColumnHidden;
 
   const brandOptions = useMemo(() => {
-    return Array.from(new Set(stlmRows.map((row) => mapBrand(row.brand)).filter(Boolean))).sort((a, b) => a.localeCompare(b));
+    return Array.from(new Set(stlmRows.map((row) => row.brand).filter(Boolean))).sort((a, b) => a.localeCompare(b));
   }, [stlmRows]);
 
   const isBrandChecked = (name: string) => brandFilter[name] !== false;
@@ -227,7 +292,7 @@ export default function StlmPage() {
   });
 
   const filteredRows = brandOptions.some((name) => brandFilter[name] === false)
-    ? searchedRows.filter((row) => brandFilter[mapBrand(row.brand)] !== false)
+    ? searchedRows.filter((row) => brandFilter[row.brand] !== false)
     : searchedRows;
 
   const sortedRows = useMemo(() => {
@@ -281,7 +346,7 @@ export default function StlmPage() {
     const getExportValue = (row: StlmRow, key: ColumnKey) => {
       switch (key) {
         case 'brand':
-          return mapBrand(row.brand);
+          return row.brand;
         case 'agentName':
           return row.agentName;
         case 'wallet':
@@ -610,7 +675,7 @@ export default function StlmPage() {
                       <div className="flex items-start justify-between gap-2">
                         <div className="min-w-0">
                           <p className="truncate text-sm font-bold text-foreground">{row.agentName}</p>
-                          <p className="truncate text-[11px] text-muted-foreground">{mapBrand(row.brand)} · {row.wallet}</p>
+                          <p className="truncate text-[11px] text-muted-foreground">{row.brand} · {row.wallet}</p>
                         </div>
                         <span className="shrink-0 text-[11px] text-muted-foreground">{row.date}</span>
                       </div>

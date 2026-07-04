@@ -9,19 +9,65 @@ import ConnectionErrorState from '../components/ConnectionErrorState';
 import { classifyFetchError, type ClassifiedError } from '../lib/errors';
 import { rawVal, fmtNum } from '@/app/lib/format';
 
-function getBrand(toAgent: string): string {
-  if (!toAgent || toAgent === '-' || !toAgent.includes('-')) return '−';
-  return toAgent.split('-').pop() || '−';
+// "AG BD STLM + TOPUP" no longer carries a brand/gateway column (removed from
+// the sheet), so brand is resolved by cross-referencing the bare agent code
+// against "SSP AG BalanceLimit" (same Group data and priority logic Cashout's
+// own Agent Balance page already uses), not by parsing the wallet name itself.
+const BRAND_PRIORITY = ['M1', 'M2', 'B1', 'B2', 'B3', 'B4', 'B5', 'K1', 'J1', 'T1'];
+const SKIP_GROUPS = ['wallet with issue', 'disconnected', 'dc account'];
+
+function computeBrand(groups: string[]): string {
+  const counts = new Map<string, number>();
+  groups.forEach((group) => {
+    const trimmed = (group ?? '').trim();
+    if (!trimmed || trimmed === '-') return;
+    if (SKIP_GROUPS.some((skip) => trimmed.toLowerCase().includes(skip))) return;
+    const code = trimmed.slice(0, 2).toUpperCase();
+    counts.set(code, (counts.get(code) ?? 0) + 1);
+  });
+
+  if (counts.size === 0) return '−';
+
+  const maxCount = Math.max(...counts.values());
+  const tied = Array.from(counts.keys()).filter((code) => counts.get(code) === maxCount);
+  const priorityTied = tied.filter((code) => BRAND_PRIORITY.includes(code));
+
+  if (priorityTied.length > 0) {
+    priorityTied.sort((a, b) => BRAND_PRIORITY.indexOf(a) - BRAND_PRIORITY.indexOf(b));
+    return priorityTied[0];
+  }
+
+  tied.sort((a, b) => a.localeCompare(b));
+  return tied[0];
+}
+
+const BRAND_CODES = ['M1', 'M2', 'B1', 'B2', 'B3', 'B4', 'B5', 'K1', 'J1', 'T1'];
+
+function resolveBrand(groups: string[], agentName: string): string {
+  const brand = computeBrand(groups);
+  if (brand !== '−') return brand;
+  return BRAND_CODES.find((code) => agentName.toUpperCase().includes(code)) ?? '−';
+}
+
+// "To Agent" values on the new sheet sometimes carry a trailing "-<brand>"
+// suffix (e.g. "KONAN001-M1"), sometimes not (e.g. "YUJI024") — strip it so
+// the bare code matches "SSP AG BalanceLimit"'s own (always-bare) wallet names.
+function stripBrandSuffix(name: string): string {
+  const parts = name.split('-');
+  if (parts.length >= 2 && BRAND_CODES.includes(parts[parts.length - 1].toUpperCase())) {
+    return parts.slice(0, -1).join('-');
+  }
+  return name;
 }
 
 type TopUpRow = {
   agentName: string;
-  toAgent: string;
   wallet: string;
   amount: string;
   date: string;
   type: string;
   leader: string;
+  brand: string;
 };
 
 function parseAmount(val: string): number {
@@ -78,7 +124,7 @@ function renderCell(row: TopUpRow, key: ColumnKey) {
   const base = 'whitespace-nowrap overflow-hidden text-ellipsis px-3 py-1.5 text-center text-[11px]';
   switch (key) {
     case 'brand':
-      return <td key={key} className={`${base} text-muted-foreground`}>{getBrand(row.toAgent)}</td>;
+      return <td key={key} className={`${base} text-muted-foreground`}>{row.brand}</td>;
     case 'leader':
       return <td key={key} className={`${base} text-muted-foreground`}>{row.leader || '−'}</td>;
     case 'agentName':
@@ -126,13 +172,15 @@ export default function TopUpPage() {
       setLoading(true);
       setError(null);
 
-      const [res, agentRes] = await Promise.all([
-        fetch(`/api/stlm?t=${Date.now()}`),
+      const [res, agentRes, balRes] = await Promise.all([
+        fetch(`/api/agstlmtopup?t=${Date.now()}`),
         fetch(`/api/opening?t=${Date.now()}`),
+        fetch(`/api/agentbal?t=${Date.now()}`),
       ]);
       if (!res.ok) throw new Error((await res.text().catch(() => '')) || `Request failed with status ${res.status}`);
       const text = await res.text();
       const agentText = agentRes.ok ? await agentRes.text() : '';
+      const balText = balRes.ok ? await balRes.text() : '';
 
       // build agentName → leader lookup from opening sheet
       const leaderMap: Record<string, string> = {};
@@ -145,6 +193,28 @@ export default function TopUpPage() {
         });
       }
 
+      // Brand cross-reference: "SSP AG BalanceLimit" col G (index 6) is the
+      // Group text; same computeBrand/resolveBrand priority logic as
+      // Cashout's own Agent Balance page, keyed by the bare wallet name.
+      const brandGroups: Record<string, string[]> = {};
+      if (balText) {
+        balText.trim().split('\n').slice(1).forEach(line => {
+          const cols = line.split(',');
+          const name = rawVal(cols[1]);
+          const group = rawVal(cols[6]);
+          if (name && group && group !== '-') {
+            (brandGroups[name.toUpperCase()] ??= []).push(group);
+          }
+        });
+      }
+
+      // "AG BD STLM + TOPUP" is Cashout's own dedicated Settlement + Top Up
+      // sheet — Top Up lives in cols B-F (indices 1-5): To Agent/Amount/
+      // Date/Wallet/Type (the sheet's own header row mislabels cols D/E as
+      // "Wallet"/"Date" — the actual data order matches this, confirmed by
+      // sampling), amounts stored positive. Cols H-L are a separate
+      // Settlement block (see app/stlm/page.tsx) and cols Q-AA are a
+      // last-month archive — neither belongs here.
       const lines = text.trim().split('\n').slice(1);
       const topUp: TopUpRow[] = [];
 
@@ -152,16 +222,17 @@ export default function TopUpPage() {
         .filter(line => line.trim() !== '')
         .forEach(line => {
           const cols = line.split(',');
-          const agentLeft = rawVal(cols[0]);
-          if (agentLeft && agentLeft !== '-') {
+          const toAgent = rawVal(cols[1]);
+          if (toAgent && toAgent !== '-') {
+            const bareAgent = stripBrandSuffix(toAgent);
             topUp.push({
-              agentName: agentLeft,
-              toAgent: rawVal(cols[1]),
-              wallet: rawVal(cols[2]),
-              amount: rawVal(cols[3]),
-              date: rawVal(cols[4]),
+              agentName: bareAgent,
+              wallet: rawVal(cols[4]),
+              amount: rawVal(cols[2]),
+              date: rawVal(cols[3]),
               type: rawVal(cols[5]),
-              leader: leaderMap[agentLeft.toUpperCase()] || '−',
+              leader: leaderMap[bareAgent.toUpperCase()] || '−',
+              brand: resolveBrand(brandGroups[bareAgent.toUpperCase()] ?? [], toAgent),
             });
           }
         });
@@ -224,7 +295,7 @@ export default function TopUpPage() {
   const anyFilterActive = anyColumnHidden;
 
   const brandOptions = useMemo(() => {
-    return Array.from(new Set(topUpRows.map((row) => getBrand(row.toAgent)).filter(Boolean))).sort((a, b) => a.localeCompare(b));
+    return Array.from(new Set(topUpRows.map((row) => row.brand).filter(Boolean))).sort((a, b) => a.localeCompare(b));
   }, [topUpRows]);
 
   const isBrandChecked = (name: string) => brandFilter[name] !== false;
@@ -233,12 +304,12 @@ export default function TopUpPage() {
   const selectedBrandCount = brandOptions.filter((name) => isBrandChecked(name)).length;
 
   const searchedRows = topUpRows.filter((row) => {
-    const haystack = `${row.agentName} ${row.toAgent} ${row.wallet} ${row.amount} ${row.date} ${row.type}`.toLowerCase();
+    const haystack = `${row.agentName} ${row.wallet} ${row.amount} ${row.date} ${row.type}`.toLowerCase();
     return haystack.includes(searchTerm.toLowerCase());
   });
 
   const filteredRows = brandOptions.some((name) => brandFilter[name] === false)
-    ? searchedRows.filter((row) => brandFilter[getBrand(row.toAgent)] !== false)
+    ? searchedRows.filter((row) => brandFilter[row.brand] !== false)
     : searchedRows;
 
   const sortedRows = useMemo(() => {
@@ -292,7 +363,7 @@ export default function TopUpPage() {
     const getExportValue = (row: TopUpRow, key: ColumnKey) => {
       switch (key) {
         case 'brand':
-          return getBrand(row.toAgent);
+          return row.brand;
         case 'agentName':
           return row.agentName;
         case 'wallet':
@@ -615,7 +686,7 @@ export default function TopUpPage() {
                       <div className="flex items-start justify-between gap-2">
                         <div className="min-w-0">
                           <p className="truncate text-sm font-bold text-foreground">{row.agentName}</p>
-                          <p className="truncate text-[11px] text-muted-foreground">{row.leader !== '−' ? `${row.leader} · ` : ''}{getBrand(row.toAgent)} · {row.wallet}</p>
+                          <p className="truncate text-[11px] text-muted-foreground">{row.leader !== '−' ? `${row.leader} · ` : ''}{row.brand} · {row.wallet}</p>
                         </div>
                         <span className="shrink-0 text-[11px] text-muted-foreground">{row.date}</span>
                       </div>

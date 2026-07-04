@@ -278,6 +278,17 @@ function resolveBrand(groups: string[], agentName: string): string {
   return BRAND_CODES.find((code) => agentName.toUpperCase().includes(code)) ?? '−';
 }
 
+// "To Agent" values on "AG BD STLM + TOPUP" sometimes carry a trailing
+// "-<brand>" suffix (e.g. "KONAN001-M1"), sometimes not (e.g. "YUJI024") —
+// strip it so the bare code matches Opening AG's own (always-bare) agent names.
+function stripBrandSuffix(name: string): string {
+  const parts = name.split('-');
+  if (parts.length >= 2 && BRAND_CODES.includes(parts[parts.length - 1].toUpperCase())) {
+    return parts.slice(0, -1).join('-');
+  }
+  return name;
+}
+
 type ColumnKey = 'brand' | 'leader' | 'walletName' | 'walletType' | 'sdp' | 'opening' | 'totalDP' | 'totalWD' | 'topUp' | 'settlement' | 'companyBalance' | 'balanceInside' | 'agentWithdrawal' | 'sdpVsBalance' | 'walletStatus';
 
 const columnDefs: { key: ColumnKey; label: string; sortable: boolean }[] = [
@@ -493,7 +504,7 @@ export default function AgentBalance() {
       const [openingRes, balRes, stlmRes] = await Promise.all([
         fetch(`/api/opening?t=${Date.now()}`),
         fetch(`/api/balance-limit?t=${Date.now()}`),
-        fetch(`/api/stlm?t=${Date.now()}`),
+        fetch(`/api/agstlmtopup?t=${Date.now()}`),
       ]);
 
       await assertAllOk([openingRes, balRes, stlmRes]);
@@ -571,31 +582,39 @@ export default function AgentBalance() {
         }
       });
 
+      // "AG BD STLM + TOPUP" is Cashout's own dedicated Settlement + Top Up
+      // sheet (replaces the old shared "Stlm Top Up" source). Top Up lives
+      // in cols B-F (indices 1-5): To Agent/Amount/Date/Wallet/Type (the
+      // sheet's own header row mislabels cols D/E as "Wallet"/"Date" — the
+      // actual data order matches this, confirmed by sampling), amounts
+      // stored positive. Settlement lives in cols H-L (indices 7-11), same
+      // field order, amounts stored negative (money leaving) so they're
+      // abs()'d. Cols Q-AA are a last-month archive and are not read.
       const topUpTotals = new Map<string, number>();
       const stlmTotals = new Map<string, number>();
       parseCsvLines(stlmText)
         .slice(1)
         .filter((row) => row.some((cell) => cell.trim() !== ''))
         .forEach((row) => {
-          const topUpAgent = rawVal(row[0]);
-          const topUpAmount = rawVal(row[3]);
-          const topUpDate = reportCutoffDate ? parseSheetDate(rawVal(row[4])) : null;
+          const topUpAgent = stripBrandSuffix(rawVal(row[1]));
+          const topUpAmount = rawVal(row[2]);
+          const topUpDate = reportCutoffDate ? parseSheetDate(rawVal(row[3])) : null;
           if (
             topUpAgent && topUpAgent !== '-' && topUpAmount && topUpAmount !== '-' &&
             (!reportCutoffDate || (topUpDate && topUpDate >= reportCutoffDate))
           ) {
-            const amount = parseFloat(topUpAmount.replace(/,/g, '')) || 0;
+            const amount = Math.abs(parseFloat(topUpAmount.replace(/,/g, '')) || 0);
             topUpTotals.set(topUpAgent, (topUpTotals.get(topUpAgent) ?? 0) + amount);
           }
 
-          const stlmAgent = rawVal(row[7]);
+          const stlmAgent = stripBrandSuffix(rawVal(row[7]));
           const stlmAmount = rawVal(row[8]);
-          const stlmDate = reportCutoffDate ? parseSheetDate(rawVal(row[10])) : null;
+          const stlmDate = reportCutoffDate ? parseSheetDate(rawVal(row[9])) : null;
           if (
             stlmAgent && stlmAgent !== '-' && stlmAmount && stlmAmount !== '-' &&
             (!reportCutoffDate || (stlmDate && stlmDate >= reportCutoffDate))
           ) {
-            const amount = parseFloat(stlmAmount.replace(/,/g, '')) || 0;
+            const amount = Math.abs(parseFloat(stlmAmount.replace(/,/g, '')) || 0);
             stlmTotals.set(stlmAgent, (stlmTotals.get(stlmAgent) ?? 0) + amount);
           }
         });

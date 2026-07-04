@@ -22,9 +22,17 @@
 - /api/sheet → Dashboard data
 - /api/opening → Opening Balance
 - /api/agentbal → Agent Balance
-- /api/stlm → Settlement + Top Up (shared)
+- /api/stlm → **Legacy, superseded.** Old shared "Stlm Top Up" sheet. No longer used by any page (Settlement/Top Up/Agent Balance/Transfer Queue all moved to /api/agstlmtopup below) — kept only in case something still needs the raw legacy sheet; safe to remove once confirmed unused.
+- /api/agstlmtopup → Cashout's Settlement + Top Up (reads "AG BD STLM + TOPUP", see note under Cashout Settlement/Top Up below)
 - /api/sendmoney/opening → Send Money Opening Balance (reads the same "Opening AG" tab, but columns L:O — a separate ~9,983-row roster from Cashout's own agent list, not related row-by-row)
 - /api/sendmoney/balances → Send Money Agent Balance (reads "SSP PS BalanceLimit", Send Money's own Balance Limit sheet — lines up column-for-column with Cashout's "SSP AG BalanceLimit" from index 4 onward, just without Cashout's leading "Reference" column)
+- /api/sendmoney/stlmtopup → Send Money's Settlement + Top Up (reads "PS BD STLM + TOPUP", see note under Send Money below)
+
+## Cashout Settlement + Top Up (app/stlm/page.tsx, app/topup/page.tsx, app/agentbal/page.tsx, app/transfer-queue/page.tsx, app/lib/transferQueueCount.ts)
+- All five now read from "AG BD STLM + TOPUP" via /api/agstlmtopup, replacing the old shared "Stlm Top Up" sheet. Layout: cols B-F (indices 1-5) = Top Up (To Agent/Amount/Date/Wallet/Type, amounts stored **positive**, Type "BUNDLE TRANSFER"); cols H-L (indices 7-11) = Settlement (same field order, amounts stored **negative** — abs() before use, Type "INTERNAL TRANSFER"); cols Q-AA are a last-month archive and are never read. Confirmed by user: this column-position mapping (B-F=TopUp, H-L=Settlement) holds despite the Type labels being the opposite pairing from Send Money's equivalent sheet (where "BUNDLE TRANSFER" is the Settlement type) — the two sheets don't share a labeling convention, only Send Money's own literal wallet-name markers ("BD"/"PS") carried meaning; Cashout's doesn't.
+- The sheet's own header row mislabels cols D/E as "Wallet"/"Date" — sampling confirmed the actual data order is Date then Wallet (matching Send Money's sheet), so the code reads column position by data pattern, not by trusting the header text.
+- **Brand is no longer a column in this sheet** (removed by the user). Brand is resolved by cross-referencing the bare agent code against "SSP AG BalanceLimit" (via /api/agentbal, same `computeBrand`/`resolveBrand` Group-priority logic Cashout's own Agent Balance page already uses) — not by mapping a gateway label like the old sheet's col M, and not by parsing a suffix off the wallet name.
+- "To Agent" values sometimes carry a trailing "-<brand>" suffix (e.g. "KONAN001-M1"), sometimes not (e.g. "YUJI024") — `stripBrandSuffix()` removes it so the bare code matches Opening AG's / SSP AG BalanceLimit's own always-bare agent names, used both as the display "Agent Name" and as the brand-lookup/leader-lookup key. The suffix itself, when present, is not trusted as the brand — it's stripped and brand is re-resolved fresh from SSP AG BalanceLimit for consistency.
 
 ## Send Money (multi-product)
 - Product switcher lives in the sidebar (indigo = Cashout, teal = Send Money), routes under /sendmoney/*, mapped to/from Cashout's legacy routes via app/lib/productRoutes.ts
