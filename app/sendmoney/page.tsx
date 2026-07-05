@@ -202,14 +202,19 @@ function BundleTooltip({ active, payload }: { active?: boolean; payload?: Array<
   );
 }
 
-type WalletColumnKey = 'wallet' | 'totalDP' | 'totalWD' | 'bdTransferIn' | 'stlm' | 'actualBal' | 'runningBal';
+// Settlement isn't shown as its own column here — it reads the same
+// underlying source as Bundle Transfer (both "BUNDLE TRANSFER" TYPE rows),
+// so displaying both was a duplicate. Bundle Transfer is kept since it
+// matches the chart name and the sheet's own TYPE value. Cashout's own
+// Wallet Summary (app/page.tsx) is unaffected — Settlement is a genuinely
+// distinct value there and keeps both columns.
+type WalletColumnKey = 'wallet' | 'totalDP' | 'totalWD' | 'bdTransferIn' | 'actualBal' | 'runningBal';
 
 const walletColumns: { key: WalletColumnKey; label: string }[] = [
   { key: 'wallet', label: 'Wallet' },
   { key: 'totalDP', label: 'Total DP' },
   { key: 'totalWD', label: 'Total WD' },
   { key: 'bdTransferIn', label: 'Bundle Transfer' },
-  { key: 'stlm', label: 'Settlement' },
   { key: 'actualBal', label: 'Actual Balance' },
   { key: 'runningBal', label: 'Running Balance' },
 ];
@@ -881,7 +886,7 @@ export default function SendMoneyDashboardPage() {
                               <td className="whitespace-nowrap px-4 py-3 text-left">
                                 <span className="text-[12px] font-bold text-muted-foreground">{row.wallet}</span>
                               </td>
-                              <td colSpan={6} className="px-4 py-3 text-center">
+                              <td colSpan={5} className="px-4 py-3 text-center">
                                 <span className="inline-flex items-center rounded-md border border-border bg-muted/40 px-2.5 py-1 text-[10px] font-medium text-muted-foreground">
                                   Coming Soon
                                 </span>
@@ -901,10 +906,7 @@ export default function SendMoneyDashboardPage() {
                             {fmtCell(row.totalWD, true)}
                           </td>
                           <td className="whitespace-nowrap px-4 py-3 text-right tabular-nums text-[11px] text-foreground">
-                            {fmtCell(row.bdTransferIn)}
-                          </td>
-                          <td className="whitespace-nowrap px-4 py-3 text-right tabular-nums text-[11px] text-foreground">
-                            {fmtCell(row.stlm, true)}
+                            {fmtCell(row.bdTransferIn, true)}
                           </td>
                           <td className="whitespace-nowrap px-4 py-3 text-right tabular-nums text-[11px] font-medium text-foreground">
                             {fmtCell(row.actualBal)}
@@ -921,7 +923,7 @@ export default function SendMoneyDashboardPage() {
                         );
                       }) : (
                         <tr>
-                          <td colSpan={7} className="px-4 py-8 text-center text-[11px] text-muted-foreground">No matching wallets found.</td>
+                          <td colSpan={6} className="px-4 py-8 text-center text-[11px] text-muted-foreground">No matching wallets found.</td>
                         </tr>
                       )}
                     </tbody>
@@ -970,11 +972,7 @@ export default function SendMoneyDashboardPage() {
                         </div>
                         <div className="min-w-0">
                           <p className="text-[11px] text-muted-foreground">Bundle Transfer</p>
-                          <p className="mt-0.5 text-[10.5px] font-semibold tabular-nums text-foreground">{fmtCell(row.bdTransferIn)}</p>
-                        </div>
-                        <div className="min-w-0">
-                          <p className="text-[11px] text-muted-foreground">Settlement</p>
-                          <p className="mt-0.5 text-[10.5px] font-semibold tabular-nums text-foreground">{fmtCell(row.stlm, true)}</p>
+                          <p className="mt-0.5 text-[10.5px] font-semibold tabular-nums text-foreground">{fmtCell(row.bdTransferIn, true)}</p>
                         </div>
                       </div>
                     </div>
