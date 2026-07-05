@@ -16,153 +16,80 @@
 - /topup → Top Up — app/topup/page.tsx
 - Sidebar: app/components/Sidebar.tsx
 - Shared utils: app/lib/format.ts (rawVal, fmtNum, displayNum)
-- Fetch error handling: app/lib/errors.ts (classifyFetchError, assertAllOk) + app/components/ConnectionErrorState.tsx — every page that fetches real data (all Cashout pages + every built-out /sendmoney/* page) uses these instead of a hand-rolled error message/box. Reuse them for any new fetching page rather than duplicating the old generic "Unable to load data" text.
+- Fetch errors: app/lib/errors.ts (classifyFetchError, assertAllOk) + app/components/ConnectionErrorState.tsx — every fetching page (all Cashout + built-out /sendmoney/*) uses these instead of a hand-rolled error box. Reuse for any new fetching page.
 
 ## API Routes (Google Sheets CSV proxy)
-- /api/sheet → Dashboard data. Scoped to `Dashboard Overview!A1:H6` (Cashout's own block only) — see the contamination note under Send Money Dashboard below for why this is scoped rather than a bare tab-name fetch.
+- /api/sheet → Dashboard data, scoped `Dashboard Overview!A1:H6` (Cashout's block only — unscoped fetch would blend in Send Money's rows, see /sendmoney note)
 - /api/opening → Opening Balance
 - /api/agentbal → Agent Balance
-- /api/stlm → **Legacy, superseded.** Old shared "Stlm Top Up" sheet. No longer used by any page (Settlement/Top Up/Agent Balance/Transfer Queue all moved to /api/agstlmtopup below) — kept only in case something still needs the raw legacy sheet; safe to remove once confirmed unused.
-- /api/agstlmtopup → Cashout's Settlement + Top Up (reads "AG BD STLM + TOPUP", see note under Cashout Settlement/Top Up below)
-- /api/sendmoney/opening → Send Money Opening Balance (reads the same "Opening AG" tab, but columns L:O — a separate ~9,983-row roster from Cashout's own agent list, not related row-by-row)
-- /api/sendmoney/balances → Send Money Agent Balance (reads "SSP PS BalanceLimit", Send Money's own Balance Limit sheet — lines up column-for-column with Cashout's "SSP AG BalanceLimit" from index 4 onward, just without Cashout's leading "Reference" column)
-- /api/sendmoney/stlmtopup → Send Money's Settlement + Top Up (reads "PS BD STLM + TOPUP", see note under Send Money below)
-- /api/sendmoney/sheet → Send Money Dashboard data. Scoped to `Dashboard Overview!A8:H13` — same tab as Cashout's /api/sheet, just a different row block (see note below).
+- /api/stlm → **Legacy, superseded** by /api/agstlmtopup. Safe to remove once confirmed unused.
+- /api/agstlmtopup → Cashout's Settlement + Top Up ("AG BD STLM + TOPUP")
+- /api/sendmoney/opening → reads "Opening AG" cols L:O — separate ~9,983-row roster, not related row-by-row to Cashout's
+- /api/sendmoney/balances → reads "SSP PS BalanceLimit", lines up column-for-column with Cashout's "SSP AG BalanceLimit" from index 4 on (no leading "Reference" col)
+- /api/sendmoney/stlmtopup → "PS BD STLM + TOPUP"
+- /api/sendmoney/sheet → Send Money Dashboard, scoped `Dashboard Overview!A8:H13` (same tab as /api/sheet, different row block)
 
-## Cashout Settlement + Top Up (app/stlm/page.tsx, app/topup/page.tsx, app/agentbal/page.tsx, app/transfer-queue/page.tsx, app/lib/transferQueueCount.ts)
-- All five now read from "AG BD STLM + TOPUP" via /api/agstlmtopup, replacing the old shared "Stlm Top Up" sheet. Layout: cols B-F (indices 1-5) = Top Up (To Agent/Amount/Date/Wallet/Type, amounts stored **positive**, Type "BUNDLE TRANSFER"); cols H-L (indices 7-11) = Settlement (same field order, amounts stored **negative** — abs() before use, Type "INTERNAL TRANSFER"); cols Q-AA are a last-month archive and are never read. Confirmed by user: this column-position mapping (B-F=TopUp, H-L=Settlement) holds despite the Type labels being the opposite pairing from Send Money's equivalent sheet (where "BUNDLE TRANSFER" is the Settlement type) — the two sheets don't share a labeling convention, only Send Money's own literal wallet-name markers ("BD"/"PS") carried meaning; Cashout's doesn't.
-- The sheet's own header row mislabels cols D/E as "Wallet"/"Date" — sampling confirmed the actual data order is Date then Wallet (matching Send Money's sheet), so the code reads column position by data pattern, not by trusting the header text.
-- **Brand is no longer a column in this sheet** (removed by the user). Brand is resolved by cross-referencing the bare agent code against "SSP AG BalanceLimit" (via /api/agentbal, same `computeBrand`/`resolveBrand` Group-priority logic Cashout's own Agent Balance page already uses) — not by mapping a gateway label like the old sheet's col M, and not by parsing a suffix off the wallet name.
-- "To Agent" values sometimes carry a trailing "-<brand>" suffix (e.g. "KONAN001-M1"), sometimes not (e.g. "YUJI024") — `stripBrandSuffix()` removes it so the bare code matches Opening AG's / SSP AG BalanceLimit's own always-bare agent names, used both as the display "Agent Name" and as the brand-lookup/leader-lookup key. The suffix itself, when present, is not trusted as the brand — it's stripped and brand is re-resolved fresh from SSP AG BalanceLimit for consistency.
+## Cashout Settlement + Top Up (app/stlm, app/topup, app/agentbal, app/transfer-queue, app/lib/transferQueueCount.ts)
+- All read "AG BD STLM + TOPUP" via /api/agstlmtopup. Cols B-F = Top Up (To Agent/Amount/Date/Wallet/Type, **positive**, Type "BUNDLE TRANSFER"); cols H-L = Settlement (same fields, **negative** — abs() before use, Type "INTERNAL TRANSFER"); cols Q-AA = last-month archive, unused. Type labels are the opposite pairing from Send Money's equivalent sheet — the two sheets share no labeling convention.
+- Header row mislabels cols D/E as "Wallet"/"Date" — actual order is Date then Wallet; code reads by data pattern, not header text.
+- Brand is not a column here (removed by user) — resolved by cross-referencing the bare agent code against "SSP AG BalanceLimit" (same computeBrand/resolveBrand logic as Agent Balance page).
+- "To Agent" sometimes carries a trailing "-<brand>" suffix (e.g. "KONAN001-M1") — `stripBrandSuffix()` strips it for display/lookup keys; the suffix itself is never trusted as brand, brand is always re-resolved from SSP AG BalanceLimit.
 
 ## Send Money (multi-product)
-- Product switcher lives in the sidebar (indigo = Cashout, teal = Send Money), routes under /sendmoney/*, mapped to/from Cashout's legacy routes via app/lib/productRoutes.ts
-- **/sendmoney/opening (app/sendmoney/opening/page.tsx) is the design reference** for every future Send Money page — when building the next page, match its patterns rather than reinventing them. Fidelity to it matters more than speed. Current pattern (supersedes the earlier icon-tile/flat-sortable version): a literal structural duplicate of Cashout's own Opening Balance page (app/summary/page.tsx) — legacy compact table style (10px uppercase headers, 11px cells, center-aligned), inline "Accounts" count pill + search box in the toolbar (no KPI card row), a single "Filter" button that controls column visibility only (Check All + one checkbox per column), per-column dropdown filters embedded directly in the Brand/Leader header cells (chevron/count badge, not a side panel), only Agent Name/Opening Balance/Security Deposit are sortable by clicking the header — Brand/Leader are filter-only, matching Cashout's own quirk; page-counter pagination ("X / Y" + Previous/Next, not range-style); 50 rows/page (matches Cashout's rowsPerPage constant); responsive mobile card list below sm breakpoint; sticky opaque table header; skeleton re-shown on every refresh, not just first load (page-scoped override of the app-wide "first load only" rule below); Export respects column visibility. Only deviations from a byte-for-byte Cashout copy: teal accent via the --product-accent CSS variable (not hardcoded indigo) and the 600ms minimum-visible-spin floor on Refresh (interaction polish, not layout). Nullable Opening Balance/Security Deposit (blank ≠ 0) is Send Money's own data model and was not changed by this UI duplication.
-- Dependencies: `googleapis` + the `google-auth-library` version override in package.json are committed and stable (resolved in commit c0c1bca) — not an open issue, no need to re-investigate.
-- **/api/sendmoney/stlmtopup** fetches "PS BD STLM + TOPUP" — Send Money's own dedicated Settlement + Top Up sheet, replacing the earlier approach of reusing Cashout's shared "Stlm Top Up" sheet cols A-G. Layout: cols B-F (indices 1-5) = Top Up (To Agent/Amount/Date/Wallet/TYPE, amounts stored **positive**); cols H-L (indices 7-11) = Settlement (same field order, amounts stored **negative** — abs() before use); cols Q-AA are a last-month archive block and are never read. Confirmed by direct sampling: Top Up rows are PS-named wallets with TYPE "INTERNAL TRANSFER" (e.g. "N-B4PS2-GYRO023-NG"); Settlement rows are BD-named wallets with TYPE "BUNDLE TRANSFER" (e.g. "D-B2BD-DELTA073-NG") — same wallets/amounts previously (and incorrectly) sourced as "Settlement" from the old shared sheet's cols A-G. Used by /sendmoney/balances, /sendmoney/settlement, and /sendmoney/transfer-queue.
-- **/sendmoney/balances (app/sendmoney/balances/page.tsx)** duplicates Cashout's Agent Balance page (app/agentbal/page.tsx) the same way Opening Balance duplicates Cashout's Opening page — same columns/layout/filters/buttons, teal accent instead of indigo. Data sources: master roster + SDP/Opening/Leader from "Opening AG" cols L-O (same sheet /api/opening already fetches for Cashout, index shift +11), wallet activity (Total DP/WD, Balance, Login, Account Status, Group/Bank) from "SSP PS BalanceLimit" via /api/sendmoney/balances, and Settlement + Top Up totals from /api/sendmoney/stlmtopup (see above). Adaptations from Cashout's version (not literal copies): no SDP VS Balance leader-exclusion list (Cashout's 19-name list doesn't apply to Send Money's own roster — add one here if a Send Money exclusion policy is ever defined); Type is read directly off the wallet name's own suffix ("N-T1PS2-NAVY040-NG" -> "NG"), not the Balance Limit sheet's Bank field — every Send Money shop is solo (one wallet per network, max 2 wallets per shop), so the row's own name already carries its type, and every suffix in the roster is confirmed to be one of NG/RK/UP/BK; brand codes include Send Money's own 'SH' brand. Same cutoff-date filtering as Cashout (col I of "Opening AG" instead of col G) applied to both Settlement and Top Up so entries already folded into the last Opening Balance reset aren't double-counted — this can make either total legitimately show 0 on a day with no post-cutoff entries in that block, which is correct, not a bug.
-- **/sendmoney/settlement (app/sendmoney/settlement/page.tsx)** duplicates Cashout's Settlement page (app/stlm/page.tsx) — same flat transaction-listing layout (Brand/Agent Name/Wallet/Amount/Remarks/Date), sourced from /api/sendmoney/stlmtopup cols H-L (no cutoff-date filtering here — this is a transaction log, not a running balance, so unlike the Agent Balance page it lists every row). Brand is derived from the wallet name itself (segment after first "-", e.g. "D-B2BD-DELTA073-NG" -> "B2"), not Cashout's own col-M gateway-label mapping — reuses the SH -> "Sharing" display-label pattern from the Agent Balance page.
-- **/sendmoney/topup (app/sendmoney/topup/page.tsx)** duplicates Cashout's Top Up page (app/topup/page.tsx) — same columns/layout (Brand/Leader/Agent Name/Wallet/Amount/Type/Date), sourced from /api/sendmoney/stlmtopup cols B-F. Brand is derived from the wallet name itself (segment after first "-"), same pattern as the Settlement page — not Cashout's own last-hyphen-segment convention, which would incorrectly return the NG/RK/UP/BK type suffix for Send Money's wallet names. Leader lookup reuses the same "Opening AG" cols L-O roster (index shift +11) as the other Send Money pages.
-- **/sendmoney (app/sendmoney/page.tsx)** duplicates Cashout's Dashboard (app/page.tsx) — same KPI cards / Wallet Summary / Top Performer Wallet / High Volume Agents layout, teal accent. Data source: the user added a Send Money block to the *same* "Dashboard Overview" tab Cashout's own dashboard reads, at rows 8-13 (header + BKASH/NAGAD/ROCKET/UPAY/Total) — fetched via the new, explicitly-scoped /api/sendmoney/sheet (`A8:H13`). **This required also re-scoping the existing /api/sheet to `A1:H6`**: an unscoped `fetchRange('Dashboard Overview')` (the pre-existing code) would otherwise return both products' blocks concatenated, and Cashout's own dashboard would silently double up its Wallet Summary table with Send Money's rows too (same lowercase wallet-name key, e.g. "Bkash" vs "BKASH", so the DP/WD patch step would even overwrite one with the other's numbers) — caught and fixed before it could reach production, not a reported bug. Wallet-type grouping (for patching Total DP/WD/Bundle Transfer/Settlement with live computed data over the sheet's manually-seeded values) is done by the wallet name's own suffix (NG/RK/UP/BK, same convention as /sendmoney/balances), not a literal wallet-type text column. Actual Balance and the wallet-level Opening Balance seed are read as-is from the sheet (manually tracked real balances, same as Cashout — no live equivalent exists to compute them from agent-level data). **Bundle Transfer Trend** renders via the shared `<TrendChart />` (see dedicated section below) — the page's own job is just building `TrendPoint[]` from "PS BD STLM + TOPUP" cols H-L (this month) unioned with cols W-AA (last month's archive, same 5-field layout shifted +15; cols Q-U hold the Top Up archive and are unused here), filtered to TYPE exactly "BUNDLE TRANSFER", grouped by the row's own literal "Wallet" field into `series: {nagad, rocket, upay}` — only 3 wallets exist in this data (no BKASH), consistent with Bkash being excluded/Coming-Soon everywhere else on this page. **Wallet Summary on this page only has 6 columns, not 7** — Settlement is deliberately omitted (it reads the same "BUNDLE TRANSFER" TYPE source as Bundle Transfer, so showing both was a duplicate; Bundle Transfer was kept since it matches the chart name). The underlying `stlm` field is still computed and still feeds Running Balance's math — only the rendered column was removed. Bundle Transfer's own cell shows its native sign (`fmtCell(row.bdTransferIn, true)`), kept neutral-colored (no semantic color) intentionally. Cashout's own Wallet Summary (app/page.tsx) is untouched and keeps both Bundle Transfer and Settlement — Settlement is a genuinely distinct value there.
-- **/sendmoney/transfer-queue (app/sendmoney/transfer-queue/page.tsx)** duplicates Cashout's Transfer Queue page (app/transfer-queue/page.tsx) — same columns/layout/filters/export, teal accent. Data sources identical to /sendmoney/balances (Opening AG cols L-O, "SSP PS BalanceLimit", /api/sendmoney/stlmtopup with cutoff filtering). Ruleset is genuinely different from Cashout's, confirmed with user against a real rule table screenshot: no DAY variant, no separate "Low Balance"/"Discrepancy" group names — every brand (M1, M2, B1-B5, K1, J1, T1) has exactly two possible correct groups, "{Brand} 24/7 DP + WD" and "{Brand} 24/7 WD Only". Three independent triggers all point to WD Only (checked first, in this order): SDP VS Balance > 50,000, Discrepancy > 10,000, Company Balance > 45,000; Company Balance < 20,000 is the only DP + WD trigger. 'SH' (Sharing) has no rule and is never queued. SDP VS Balance here is a raw, unfloored Company Balance − SDP gap (`computeSdpVsBalanceRaw`), deliberately different from the Agent Balance page's own SDP VS Balance column (which floors to 0 below 30,000 for display) — the Transfer Queue's own 50,000 gate needs the real gap, not a pre-floored one. Verified against real data: 8,671 of 9,983 Send Money agents (87%) have no recorded SDP; confirmed with user that these still fall back to using their full Company Balance as the gap (same fallback Cashout uses), gated at the corrected 50,000/10,000 thresholds (an earlier misreading of the source image as 8,000/8,000 was caught because it flagged half the entire roster — see git history for the correction). Shops whose wallet name carries a "BD" segment (e.g. "D-M2BD-DELTA063-NG") are excluded from this page entirely, per user instruction — note this means Transfer Queue itself never surfaces the "BD" wallets that /sendmoney/settlement's data comes from; that exclusion is Transfer-Queue-specific, not a data-source restriction.
+- Product switcher in sidebar (indigo=Cashout, teal=Send Money), routes under /sendmoney/*, mapped via app/lib/productRoutes.ts.
+- **/sendmoney/opening is the design reference** for every future Send Money page — match its patterns, don't reinvent. Structural duplicate of Cashout's Opening page: legacy compact table style, Accounts-count pill + search (no KPI cards), single Filter button = column visibility only, per-column dropdown filters in Brand/Leader headers, only Agent Name/Opening Bal/SDP sortable, page-counter pagination, 50 rows/page, mobile card list, sticky header, skeleton re-shown every refresh (page-scoped override of the app-wide first-load-only rule), Export respects visibility. Deviations: teal accent via --product-accent, 600ms min-spin on Refresh. Nullable Opening Bal/SDP (blank≠0) is Send Money's own data model.
+- googleapis + google-auth-library version override in package.json: stable (c0c1bca), not an open issue.
+- /api/sendmoney/stlmtopup reads "PS BD STLM + TOPUP": cols B-F = Top Up (positive, PS wallets, "INTERNAL TRANSFER"); cols H-L = Settlement (negative→abs(), BD wallets, "BUNDLE TRANSFER"); cols Q-AA archive, unused. Feeds /balances, /settlement, /transfer-queue.
+- **/sendmoney/balances** duplicates Agent Balance. Sources: "Opening AG" L-O (roster/SDP/Opening/Leader), "SSP PS BalanceLimit" (wallet activity), stlmtopup (Settlement+TopUp). Diffs from Cashout: no SDP-exclusion list; Type read from wallet-name suffix not Bank field (every shop solo; suffixes always NG/RK/UP/BK); brand includes 'SH'. Cutoff-date filtering (col I) same as Cashout — a total can legitimately show 0, not a bug.
+- **/sendmoney/settlement** duplicates Settlement page. Sourced from stlmtopup cols H-L, no cutoff filtering (transaction log, lists every row). Brand = wallet-name segment after first "-" (not col-M mapping).
+- **/sendmoney/topup** duplicates Top Up page. Sourced from stlmtopup cols B-F. Brand = same wallet-name-segment convention (not Cashout's last-hyphen-segment, which would return the NG/RK/UP/BK suffix instead). Leader from "Opening AG" L-O.
+- **/sendmoney (dashboard)** duplicates Cashout Dashboard. Data: Send Money block on the same "Dashboard Overview" tab, rows 8-13, via /api/sendmoney/sheet (`A8:H13`) — required re-scoping /api/sheet to `A1:H6` to stop Send Money's rows contaminating Cashout's Wallet Summary (same lowercase wallet-name keys). Wallet-type grouping by wallet-suffix. Actual Balance/Opening seed read as-is (manual, no live equivalent). **Bundle Transfer Trend is a standalone implementation, NOT the shared TrendChart component** — briefly wired to it, reverted per explicit user scope correction; don't re-link without being told. Sourced from stlmtopup cols H-L unioned with W-AA archive, filtered to TYPE="BUNDLE TRANSFER", grouped by literal Wallet field (nagad/rocket/upay only, no bkash). Stacked bars, Today-as-last-bar, static legend. Recharts gotcha: LabelList never fires for a series' zero-value day and renumbers `index` when it happens — match by `value` instead, attach to every bar and let each check if it's the topmost non-zero segment. Wallet Summary has 6 cols not 7 (Settlement omitted as a duplicate of Bundle Transfer's own source; `stlm` field still feeds Running Balance's math). Bundle Transfer shows native sign, neutral color.
+- **/sendmoney/transfer-queue** duplicates Transfer Queue. Same sources as /balances. Ruleset genuinely differs: no DAY variant; every brand has exactly 2 groups ("{Brand} 24/7 DP+WD" / "{Brand} 24/7 WD Only"). WD Only triggers (checked in order): SDP VS Balance>50k, Discrepancy>10k, Company Balance>45k. DP+WD trigger: Company Balance<20k. 'SH' never queued. SDP VS Balance here is raw/unfloored (`computeSdpVsBalanceRaw`), unlike Agent Balance page's floored version. 87% of agents (8,671/9,983) have no SDP and fall back to full Company Balance as the gap. Shops with "BD" in the wallet name are excluded entirely (Transfer-Queue-specific only).
 
 ## Shared TrendChart component (app/components/TrendChart.tsx)
-- Used by both Cashout's "CashGo Trend" (app/page.tsx) and Send Money's "Bundle Transfer Trend" (app/sendmoney/page.tsx) — one component, only the accent hue differs (each page's own `data-product` context sets `--product-accent` in app/globals.css; the component itself has zero hardcoded color literals). Each page keeps its own data-fetching/parsing entirely local — only the reshaping into `TrendPoint[]` (`{ day, tooltipLabel, isToday, total, series: Record<string, number> }`) and the rendering are shared. Root-level `components/` (as opposed to `app/components/`) is dead code — an orphaned, unimported `Sidebar.tsx` — don't use it; `app/components/*` is the real convention.
-- Component owns its own period (`week`/`month`) and per-series visibility state — pages just pass `title`, `seriesDefs` (stacking/ramp order, index 0 = fullest opacity), `weekData` (7 points: 6 history + Today), `monthData` (30 points: 29 history + Today).
-- Color ramp: every bar is `fill="var(--product-accent)"` with `fillOpacity` stepped by series index (`[1, 0.6, 0.35]`) — opacity-based rather than `color-mix()` so it behaves identically across light/dark and all four accent hex values already in globals.css. Today's bar/segments get an extra `stroke="var(--product-accent)"` outline plus a further opacity cut (`×0.55`, the "partial day" cue).
-- Week mode: no Y-axis, every bar labeled with its exact compact value. Month mode: minimal 3-tick Y-axis (0/mid/max), only the peak-total day and Today are labeled, plus a dashed `<ReferenceLine>` at the 30-day average (computed over the 29 historical points only, excluding the partial Today point so it doesn't skew the average down). X-axis uses `interval="preserveStartEnd"` in month mode so the last tick (Today) can't be skipped by numeric-interval parity on a 30-item array.
-- **Today annotation, revised from an earlier attempt**: the spec originally wanted a combined "Today · value" label in month mode. Tried it — but Today's bar is usually short (partial day) while its immediate neighbor is tall, and right/center-anchoring the wider combined text at Today's own low label height pushed it sideways into the taller neighbor's rectangle, which then visually painted over part of the text (confirmed via bounding-box measurement + isolated element screenshots, not a real recharts clip-path — the DOM text content was always correct, only the *visual* rendering collided). Settled on: Today's value label just shows the plain number (accent-colored, like every other today-styling cue), and the X-axis tick directly below the same bar already renders "Today" in bold accent — the pairing reads as one annotation without the collision risk.
-- Toggling a series chip is a real filter, not a visual-only hide: a per-point `visibleTotal` (sum of only currently-toggled-on series) drives stack height, peak detection, the average line, labels, tooltip totals, and the Today strip's total/delta. The chip's own dot is a separate, independent signal — solid (filled at that series' ramp opacity) if it has non-zero data specifically *today*, hollow/muted otherwise — regardless of the chip's own toggle state. A series with no data today never renders as "SeriesName —" text, only the hollow dot.
-- Today strip shows only `Today {total}` + a `▲/▼ {pct}% vs 30-day avg` delta (emerald up / rose down; hidden if the 30-day average is 0). Per-series amounts live in the tooltip only (`{label} {value > 0 ? amount : '—'}` per row).
-- **Recharts gotcha, hard-won** (first hit building Bundle Transfer standalone, now generalized inside the shared component for 2 or 3 series): a stacked `<Bar>`'s `LabelList`, even with a custom `content` function, is never invoked for a day where that specific series' own value is 0 that day — no rectangle to anchor a label to. Worse, when that happens, the `index` prop passed to `content` is silently renumbered to only count that series' own non-zero entries (confirmed by direct prop logging — one series' internal index topped out around 21 instead of 29 on a 30-day window), and this recharts version's LabelList props don't include `payload` as a fallback either. Fix: match the label's own `value` (from a shared `dataKey="visibleTotal"`) back against the full data array by numeric value instead of trusting `index`, and attach the same content function to *every* stacked bar, each one only actually rendering when it's the topmost non-zero (and currently visible) segment for that particular day.
+- Used ONLY by Cashout's CashGo Trend (app/page.tsx). Briefly shared with Send Money's Bundle Transfer Trend, reverted (scope over-reach) — don't re-link without explicit instruction. All colors via `var(--product-accent)`, no hardcoded hex. Root-level `components/` is dead code (orphaned `Sidebar.tsx`) — use `app/components/*`.
+- Owns its own `period` (week/month) and per-series visibility state. Props: `title`, `seriesDefs` (stack/ramp order), `weekData` (6 history + Today), `monthData` (29 history + Today).
+- Color ramp: single `fill="var(--product-accent)"`, `fillOpacity` stepped by series index (`[1, 0.6, 0.35]`). Today's segments get an accent `stroke` + extra `×0.55` opacity cut.
+- Week: no Y-axis, every bar labeled. Month: 3-tick Y-axis (0/mid/max), only peak-day + Today labeled, dashed avg line (over historical points only, excludes partial Today). X-axis `interval="preserveStartEnd"` in month mode so Today's tick can't be skipped.
+- The **last-declared series renders as the topmost stack segment** (bottom = base/touches axis), confirmed by real tooltip data — a 7x-larger first series still rendered as the larger BASE, not on top. Radius and label-host detection must target the last VISIBLE series, not the first.
+- Toggling a chip is a real filter: it zeroes that series' value in the data (not remove the `<Bar>` — unmounting/remounting reorders recharts' internal stack registration, a real bug hit and fixed). Dot signal (solid/hollow) reflects today's data independent of toggle state.
+- Today strip: `Today {total}` + `▲/▼ {pct}% vs 30-day avg` only (hidden if avg is 0). Per-series amounts live in the tooltip only (`—` for zero).
+- Recharts gotcha: a stacked Bar's `LabelList` never fires for a zero-value day and renumbers `index` when it happens (no `payload` fallback in this version) — match the label's `value` against the data array instead of trusting `index`.
 
 ## Data source gotchas
-- The "Opening AG" tab is mirrored via IMPORTRANGE from another spreadsheet. Blank cells or `#REF!` values appearing in it are a known failure mode of that link (source range shifted, permission lapsed, etc.) — investigate as a possible sheet-side issue before assuming a parsing bug.
-- **`rawVal()` never returns an empty string — blank cells become `'-'`.** Any roster filter written as `row.agentName && row.agentName !== 'OLD'` is a latent bug: `'-'` is truthy, so it silently passes and blank rows are counted. This stayed dormant for a long time because "Opening AG" hadn't grown past Cashout's own roster length; once Send Money's own roster (cols L-O) grew longer than Cashout's (cols A-D), the sheet's total row count exceeded 3,452 and every trailing blank-Cashout/filled-Send-Money row leaked through, inflating Cashout's own "Accounts" count to the Send Money roster's own count (9,972) even though Cashout's real roster is ~3,452. Fixed everywhere this filter pattern appeared (`app/agentbal/page.tsx`, `app/page.tsx`, `app/summary/page.tsx`, `app/transfer-queue/page.tsx`, `app/lib/transferQueueCount.ts`, `app/lib/sendMoneyOpening.ts`, `app/sendmoney/balances/page.tsx`, `app/sendmoney/transfer-queue/page.tsx`) by adding `&& row.agentName !== '-'`. If a *new* page ever copies this filter again, copy the 3-part version, not the 2-part one.
+- "Opening AG" is mirrored via IMPORTRANGE — blank cells/`#REF!` are a known link failure mode (range shift, permission lapse); check sheet-side before assuming a parsing bug.
+- **`rawVal()` never returns `''` — blanks become `'-'`, which is truthy.** A roster filter like `row.agentName && row.agentName !== 'OLD'` silently passes blank rows. Fixed everywhere via `&& row.agentName !== '-'` (app/agentbal, app/page, app/summary, app/transfer-queue, app/lib/transferQueueCount.ts, app/lib/sendMoneyOpening.ts, app/sendmoney/balances, app/sendmoney/transfer-queue). Copy the 3-part version if this filter is copied again.
 
-## Design System v2 (current standard — applies going forward; migrate legacy pages opportunistically)
+## Design System v2 (current standard; migrate legacy pages opportunistically)
 - Font: Inter — never font-mono
-- Design tokens (defined in app/globals.css `:root`/`.dark`, mapped in tailwind.config.js): `--background`, `--foreground`, `--border`, `--muted`, `--muted-foreground` → use as `bg-background`, `text-foreground`, `border-border`, `bg-muted`/`text-muted-foreground`
-- KPI cards: container `flex gap-4 mb-6`; card `bg-white rounded-xl border border-border p-5 flex-1 min-w-0`; title `text-xs text-muted-foreground font-medium mb-1`; big value `text-[28px] font-bold text-foreground mb-1`; change text `text-[11px] font-medium` + `text-rose-600`/`text-emerald-600`/`text-foreground` (negative/positive/neutral)
-- Table outer container: `bg-white rounded-xl border border-border overflow-hidden`
-- Table toolbar: `px-4 py-3 border-b border-border bg-muted/20 flex items-center justify-between`
-- Single "Filter" button (funnel icon + label) replaces per-column filter icons — opens one dropdown with all filter sections
-- Table header row: `border-b border-border bg-muted/10`; header cell: `px-4 py-3 text-xs font-semibold text-muted-foreground whitespace-nowrap` + alignment (`text-left`/`text-right`/`text-center`)
-- Table body row: `border-b border-border last:border-0 hover:bg-muted/10 transition-colors`; alternate rows may add `bg-muted/5`
-- Table body cell: `px-4 py-3 text-xs text-foreground whitespace-nowrap` + alignment; bold values add `font-medium`
-- Status badges: `inline-flex items-center px-2.5 py-1 rounded-md text-[11px] font-medium border` + semantic bg/text/border color pair (e.g. amber for "WD Only", emerald for healthy/active states, rose for issues, slate for inactive/no-record)
-- Zero/empty values: still display "−" (U+2212 proper minus sign) — unchanged by the visual redesign
-- Page title: text-lg font-bold text-foreground
-- Header search/refresh controls: text-sm, border border-border rounded-lg
+- Tokens (app/globals.css `:root`/`.dark`, mapped in tailwind.config.js): `--background`, `--foreground`, `--border`, `--muted`, `--muted-foreground`
+- KPI cards: `flex gap-4 mb-6`; card `bg-white rounded-xl border border-border p-5 flex-1 min-w-0`; title `text-xs text-muted-foreground font-medium mb-1`; value `text-[28px] font-bold text-foreground mb-1`; change `text-[11px] font-medium` + rose/emerald/foreground
+- Table container: `bg-white rounded-xl border border-border overflow-hidden`; toolbar `px-4 py-3 border-b border-border bg-muted/20 flex items-center justify-between`
+- Single "Filter" button (funnel + label) replaces per-column icons
+- Header row: `border-b border-border bg-muted/10`; header cell `px-4 py-3 text-xs font-semibold text-muted-foreground whitespace-nowrap` + alignment
+- Body row: `border-b border-border last:border-0 hover:bg-muted/10 transition-colors`; body cell `px-4 py-3 text-xs text-foreground whitespace-nowrap`
+- Status badges: `inline-flex items-center px-2.5 py-1 rounded-md text-[11px] font-medium border` + semantic color pair
+- Zero/empty: "−" (U+2212). Page title: `text-lg font-bold text-foreground`. Header controls: `text-sm border border-border rounded-lg`
 
-### Legacy style (still used by pages not yet migrated: /, /summary, /stlm, /topup)
-- Table headers (th): text-[10px] font-semibold text-slate-500 dark:text-slate-400 text-center whitespace-nowrap px-3 py-2
-- Table cells (td): text-[9px] text-center px-3 py-1 text-slate-700 dark:text-slate-300
-- No row borders (no border-b on tr), no zebra striping
-- Sticky thead: sticky top-0 z-[50] bg-white dark:bg-[#2a2a2d]
-- Page background: bg-[#f5f5f7] dark:bg-[#1c1c1e]
-- Card background: bg-white dark:bg-[#2a2a2d]
-- Border: border-[#e5e5e7] dark:border-[#3a3a3d]
-- Header controls: text-[11px], compact (px-2 py-1.5)
+- Legacy style (still used by /, /summary, /stlm, /topup): th `text-[10px] font-semibold text-slate-500 dark:text-slate-400 text-center whitespace-nowrap px-3 py-2`; td `text-[9px] text-center px-3 py-1 text-slate-700 dark:text-slate-300`; no row borders/zebra; sticky thead `sticky top-0 z-[50] bg-white dark:bg-[#2a2a2d]`; page bg `bg-[#f5f5f7] dark:bg-[#1c1c1e]`; card `bg-white dark:bg-[#2a2a2d]`; border `border-[#e5e5e7] dark:border-[#3a3a3d]`; header controls `text-[11px]`, compact `px-2 py-1.5`
 
-## Column Colors
-- Company Balance: font-bold, negative = text-rose-600 dark:text-rose-400, positive = neutral bold
-- Wallet Name / Agent Name: font-bold text-slate-900 dark:text-white
-- Total DP: text-emerald-600 dark:text-emerald-400
-- Total WD: text-rose-600 dark:text-rose-400
-- Top Up: text-teal-600 dark:text-teal-400
-- Settlement: text-orange-500 dark:text-orange-400
-- All others: neutral text-slate-700 dark:text-slate-300
-- Leader: neutral (no indigo)
+## Column Colors & Orders
+- Company Balance: bold, negative=rose, positive=neutral bold. Wallet/Agent Name: bold slate-900/white. Total DP: emerald. Total WD: rose. Top Up: teal. Settlement: orange. Leader: neutral. All others: neutral slate-700/300.
+- STLM: Brand | Agent Name | Wallet | Amount | Remarks | Date. Top Up: Brand | Agent Name | Wallet | Amount | Type | Date. Opening Balance: Leader | Agent Name | Opening Bal. | SDP
 
 ## Agent Balance Page (/agentbal)
-### Column Order
-Leader, Wallet Name, SDP, Opening, Total DP, Total WD, Top Up, Settlement, Company Balance, Balance Inside, Agent Withdrawal, SDP VS Balance, Wallet Status
-
-### Features
-- Master list: Opening sheet (~3,486 agents)
-- Pagination: 50 rows per page
-- Single "Filter" button (funnel icon + label) in table toolbar — opens one dropdown with Leader, Brand, Wallet Status, and Type filter sections (no per-column filter icons)
-- Column visibility: separate funnel icon next to pagination
-- Export Excel: download icon (SheetJS/xlsx) — respects column visibility
-- Sort arrows: always visible (ChevronUp/ChevronDown lucide-react) on sortable columns only
-- Default sort: Company Balance descending
-- Skeleton loader: first load only, subsequent refreshes keep existing data
-- Uses Design System v2 (see above) — first page migrated off the legacy table style
-
-### Computed Columns
-- Company Balance = Opening + Total DP + Top Up - Total WD - Settlement
-- Balance Inside = sum of Balance (cols[8]) where Login (cols[15]) = "Yes"
-- Agent Withdrawal = Company Balance - Balance Inside
-- SDP VS Balance = Company Balance - SDP (show only if positive and > 30,000, use Math.abs, excluded leaders show "−")
-- Wallet Status = determined from Account Status (cols[2]) priority rules
-
-### SDP VS Balance Excluded Leaders
-AFF JAR, AIMAN, ALADDIN, JISAN, MIR, MR LEE, MUNIM, NIHJUM, NURNOBY, ONEMEN, OSMAN, MOTIN, ROSE, SAM, XYZ, SHAKIL, SHARIF, SVEN, TANVIR, ZUBAIR
-
-### Wallet Status Priority Rules
-1. Has "DP + WD" → "DP + WD"
-2. Has both "DP Only" AND "WD Only" → "DP + WD"
-3. Has "DP Only" → "DP Only"
-4. Has "WD Only" → "WD Only"
-5. Has "Top Up" (any variant) → "Top Up Acc."
-6. Has "Wallet With Issue" → "Wallet With Issue"
-7. Has "Disconnected" or "X Group" → "Disconnected"
-8. Has "Check Account Problem" → "Account Problem"
-9. Zero matching rows in Agent Balance → "No Record"
-10. All others → "Disconnected"
-
-## STLM Page Column Order
-Brand | Agent Name | Wallet | Amount | Remarks | Date
-
-## Top Up Page Column Order
-Brand | Agent Name | Wallet | Amount | Type | Date
-
-## Opening Balance Column Order
-Leader | Agent Name | Opening Bal. | SDP
+- Columns: Leader, Wallet Name, SDP, Opening, Total DP, Total WD, Top Up, Settlement, Company Balance, Balance Inside, Agent Withdrawal, SDP VS Balance, Wallet Status
+- Master list: Opening sheet (~3,486 agents). 50 rows/page. Single Filter button (Leader/Brand/Wallet Status/Type). Separate column-visibility funnel. Export respects visibility. Sort arrows always visible on sortable columns. Default sort: Company Balance desc. Skeleton: first load only. Uses Design System v2.
+- Computed: Company Balance = Opening + Total DP + Top Up − Total WD − Settlement. Balance Inside = Σ Balance where Login="Yes". Agent Withdrawal = Company Balance − Balance Inside. SDP VS Balance = Company Balance − SDP (only if positive & >30,000, abs, excluded leaders show "−"). Wallet Status from Account Status priority rules below.
+- SDP VS Balance excluded leaders: AFF JAR, AIMAN, ALADDIN, JISAN, MIR, MR LEE, MUNIM, NIHJUM, NURNOBY, ONEMEN, OSMAN, MOTIN, ROSE, SAM, XYZ, SHAKIL, SHARIF, SVEN, TANVIR, ZUBAIR
+- Wallet Status priority: DP+WD > (DP Only & WD Only)→DP+WD > DP Only > WD Only > Top Up (any variant)→"Top Up Acc." > Wallet With Issue > Disconnected/X Group→Disconnected > Check Account Problem→Account Problem > zero rows→No Record > else→Disconnected
 
 ## Important Rules (ALWAYS FOLLOW)
-- Show summary before applying changes
-- Never change data logic when fixing UI
-- Never add auto-refresh (fetch on open + manual refresh only)
-- Always use Inter font, never font-mono
-- Shared formatting in app/lib/format.ts
-- Test locally before git push
-- One concern at a time — do not combine unrelated changes
-- Never expose phone numbers or sensitive agent data in UI
-- Skeleton loader: match exact td padding (px-3 py-1) and row height of actual table
-- Phased work (plan → go → implement → verify → one commit): each new phase's plan must open by stating current `git status` (working-tree clean or not) and any unanswered questions carried over from the previous phase — don't let them go unaddressed silently
-- Verification reports must state HOW each item was tested (exact steps/method: what was clicked, what was checked, what tool), not just a checkmark — a checkmark alone doesn't prove the interaction was exercised end-to-end. (Learned the hard way: "chips remove individually" and the Refresh button were both marked verified from checks that only confirmed the control entered a transient state — chip rendered, spinner appeared — not that the state-changing action actually completed and took effect.)
+- Show summary before applying changes. Never change data logic when fixing UI. Never add auto-refresh (fetch on open + manual refresh only). Always Inter, never font-mono. Shared formatting in app/lib/format.ts. Test locally before git push. One concern at a time. Never expose phone numbers or sensitive agent data. Skeleton loader must match exact td padding (px-3 py-1) and row height.
+- Phased work (plan → go → implement → verify → one commit): each new phase's plan opens with current `git status` and any unanswered questions carried from the previous phase.
+- Verification reports must state HOW each item was tested (exact steps/tool) — a checkmark alone doesn't prove the interaction was exercised end-to-end (learned the hard way: chip-removal and Refresh were marked verified from transient-state checks only).
+- **Token discipline**: for visual/chart debugging, dump geometry/DOM as JSON via evaluate scripts instead of screenshots; screenshots only as a last resort, tightly clipped. Don't re-read whole files at the start of a request — use Grep/offset reads; edits persist.
 
-## Subagents (.claude/agents/)
-- ONLY use subagents for major tasks (security audit, deep bug investigation)
-- For regular edits and fixes — NO subagents, direct instruction only
-- code-reader.md (haiku) — use ONLY when need to understand unfamiliar code
-- code-auditor.md (sonnet) — use ONLY before major deployments
-- code-checker.md (sonnet) — use ONLY after major refactors
-- ui-reviewer.md (sonnet) — use ONLY for full UI audit sessions
-- DEFAULT: skip all subagents for routine fixes, UI changes, and column updates
-
-## Git Workflow
-- Edit locally → test on localhost:3000 → git add . → git commit → git push
-- Vercel auto-deploys after push (1-2 minutes)
+## Subagents (.claude/agents/) & Git Workflow
+- Subagents ONLY for major tasks (security audit, deep bug investigation) — NOT for regular edits/fixes. code-reader (haiku): unfamiliar code only. code-auditor (sonnet): before major deployments only. code-checker (sonnet): after major refactors only. ui-reviewer (sonnet): full UI audit sessions only. DEFAULT: skip all subagents for routine fixes, UI changes, column updates.
+- Git: edit locally → test on localhost:3000 → git add . → git commit → git push. Vercel auto-deploys after push (1-2 minutes).
