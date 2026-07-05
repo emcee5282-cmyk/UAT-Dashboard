@@ -348,10 +348,13 @@ export default function SendMoneyDashboardPage() {
 
   const dataRows = rows.filter((r) => r.wallet && r.wallet.toLowerCase() !== 'total');
   const totalRow = rows.find((r) => r.wallet.toLowerCase() === 'total');
-  const filteredRows = dataRows.filter((row) => {
-    const haystack = `${row.wallet} ${row.actualBal} ${row.runningBal} ${row.totalDP} ${row.totalWD}`.toLowerCase();
-    return haystack.includes(searchTerm.toLowerCase());
-  });
+  const filteredRows = dataRows
+    .filter((row) => {
+      const haystack = `${row.wallet} ${row.actualBal} ${row.runningBal} ${row.totalDP} ${row.totalWD}`.toLowerCase();
+      return haystack.includes(searchTerm.toLowerCase());
+    })
+    // Bkash isn't integrated yet — always shown last, styled as "Coming Soon".
+    .sort((a, b) => Number(a.wallet.toUpperCase() === 'BKASH') - Number(b.wallet.toUpperCase() === 'BKASH'));
 
   const totalDPSum = dataRows.reduce((sum, row) => sum + row.totalDP, 0);
   const totalWDSum = dataRows.reduce((sum, row) => sum + Math.abs(row.totalWD), 0);
@@ -363,7 +366,9 @@ export default function SendMoneyDashboardPage() {
     .sort((a, b) => (b.runningBalance - b.opening) - (a.runningBalance - a.opening))
     .slice(0, 50);
 
+  // Bkash isn't integrated yet — excluded from Top Performer Wallet entirely.
   const walletGainRanking = dataRows
+    .filter((row) => row.wallet.toUpperCase() !== 'BKASH')
     .map((row) => ({ wallet: row.wallet, gain: row.totalDP + row.totalWD, actualBal: row.actualBal }))
     .sort((a, b) => a.gain - b.gain);
 
@@ -614,7 +619,23 @@ export default function SendMoneyDashboardPage() {
                       </tr>
                     </thead>
                     <tbody>
-                      {filteredRows.length > 0 ? filteredRows.map((row, i) => (
+                      {filteredRows.length > 0 ? filteredRows.map((row, i) => {
+                        const isComingSoon = row.wallet.toUpperCase() === 'BKASH';
+                        if (isComingSoon) {
+                          return (
+                            <tr key={row.wallet} className="border-b border-border last:border-0 bg-muted/5">
+                              <td className="whitespace-nowrap px-4 py-3 text-left">
+                                <span className="text-[12px] font-bold text-muted-foreground">{row.wallet}</span>
+                              </td>
+                              <td colSpan={6} className="px-4 py-3 text-center">
+                                <span className="inline-flex items-center rounded-md border border-border bg-muted/40 px-2.5 py-1 text-[10px] font-medium text-muted-foreground">
+                                  Coming Soon
+                                </span>
+                              </td>
+                            </tr>
+                          );
+                        }
+                        return (
                         <tr key={row.wallet} className={`border-b border-border last:border-0 transition-colors hover:bg-muted/30 ${i % 2 === 1 ? 'bg-muted/10' : ''}`}>
                           <td className="whitespace-nowrap px-4 py-3 text-left">
                             <span className="text-[12px] font-bold text-foreground">{row.wallet}</span>
@@ -643,7 +664,8 @@ export default function SendMoneyDashboardPage() {
                             </div>
                           </td>
                         </tr>
-                      )) : (
+                        );
+                      }) : (
                         <tr>
                           <td colSpan={7} className="px-4 py-8 text-center text-[11px] text-muted-foreground">No matching wallets found.</td>
                         </tr>
@@ -653,7 +675,19 @@ export default function SendMoneyDashboardPage() {
                 </div>
 
                 <div className="flex flex-col gap-3 p-4 sm:hidden">
-                  {filteredRows.length > 0 ? filteredRows.map((row) => (
+                  {filteredRows.length > 0 ? filteredRows.map((row) => {
+                    const isComingSoon = row.wallet.toUpperCase() === 'BKASH';
+                    if (isComingSoon) {
+                      return (
+                        <div key={row.wallet} className="flex items-center justify-between gap-2 rounded-xl border border-border bg-muted/5 p-4">
+                          <span className="text-[15px] font-bold text-muted-foreground">{row.wallet}</span>
+                          <span className="inline-flex items-center rounded-md border border-border bg-muted/40 px-2.5 py-1 text-[10px] font-medium text-muted-foreground">
+                            Coming Soon
+                          </span>
+                        </div>
+                      );
+                    }
+                    return (
                     <div key={row.wallet} className="rounded-xl border border-border bg-white p-4 dark:bg-[#2a2a2d]">
                       <div className="flex items-start justify-between gap-2">
                         <span className="text-[15px] font-bold text-foreground">{row.wallet}</span>
@@ -690,7 +724,8 @@ export default function SendMoneyDashboardPage() {
                         </div>
                       </div>
                     </div>
-                  )) : (
+                    );
+                  }) : (
                     <div className="px-4 py-8 text-center text-[11px] text-muted-foreground">No matching wallets found.</div>
                   )}
                 </div>
