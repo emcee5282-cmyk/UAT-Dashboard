@@ -1,42 +1,23 @@
 'use client';
 
 import { useEffect, useState, useCallback } from 'react';
-import { RefreshCw, TrendingUp, TrendingDown, Wallet, Activity, BarChart2 } from 'lucide-react';
-import { Bar, BarChart, ResponsiveContainer, XAxis, YAxis, Tooltip, CartesianGrid } from 'recharts';
+import { RefreshCw, TrendingUp, TrendingDown, Wallet, Activity } from 'lucide-react';
 import ThemeToggle from './components/ThemeToggle';
-import { useTheme } from './components/ThemeProvider';
 import ConnectionErrorState from './components/ConnectionErrorState';
+import TrendChart, { type TrendPoint, type TrendSeriesDef } from './components/TrendChart';
 import { classifyFetchError, type ClassifiedError, assertAllOk } from './lib/errors';
 
-type CashGoPoint = {
-  day: string;
-  dayName: string;
-  bkPct: number;
-  ngPct: number;
-  totalPct: number;
-  bkAmount: number;
-  bkQuota: number;
-  ngAmount: number;
-  ngQuota: number;
-  totalAmount: number;
-  totalQuota: number;
-};
-
-type TodayCashGo = {
-  dateLabel: string;
-  bkAmount: number;
-  bkPct: number;
-  ngAmount: number;
-  ngPct: number;
-  totalAmount: number;
-  totalPct: number;
-};
+const CASHGO_SERIES_DEFS: TrendSeriesDef[] = [
+  { key: 'bk', label: 'Bkash' },
+  { key: 'ng', label: 'Nagad' },
+];
 
 const MONTH_NAMES = [
   'january', 'february', 'march', 'april', 'may', 'june',
   'july', 'august', 'september', 'october', 'november', 'december',
 ];
 
+// "CashGo" sheet dates are formatted "June 1" (no year).
 function parseSheetDate(raw: string): Date | null {
   const match = raw.trim().match(/^([A-Za-z]+)\s+(\d{1,2})$/);
   if (!match) return null;
@@ -44,18 +25,6 @@ function parseSheetDate(raw: string): Date | null {
   if (monthIndex === -1) return null;
   const day = parseInt(match[2], 10);
   return new Date(new Date().getFullYear(), monthIndex, day);
-}
-
-function parseQuota(val: string): number {
-  const cleaned = (val ?? '').replace(/"/g, '').replace(/,/g, '').trim();
-  if (!cleaned || cleaned === '-') return 0;
-  const match = cleaned.match(/^([\d.]+)\s*([KMkm]?)$/);
-  if (!match) return parseFloat(cleaned) || 0;
-  const num = parseFloat(match[1]) || 0;
-  const suffix = match[2].toUpperCase();
-  if (suffix === 'M') return num * 1e6;
-  if (suffix === 'K') return num * 1e3;
-  return num;
 }
 
 type Row = {
@@ -188,62 +157,6 @@ function fmtCell(num: number, showSign = false): string {
   return showSign && num < 0 ? `-${formatted}` : formatted;
 }
 
-function fmtTooltipAbbrev(num: number): string {
-  const abs = Math.abs(num);
-  let value = abs;
-  let suffix = '';
-  if (abs >= 1e9) {
-    value = abs / 1e9;
-    suffix = 'B';
-  } else if (abs >= 1e6) {
-    value = abs / 1e6;
-    suffix = 'M';
-  } else if (abs >= 1e3) {
-    value = abs / 1e3;
-    suffix = 'K';
-  }
-  const rounded = Math.round(value * 10) / 10;
-  const str = rounded % 1 === 0 ? rounded.toFixed(0) : rounded.toFixed(1);
-  return `${str}${suffix}`;
-}
-
-function renderTooltipLine(label: string, amount: number, quota: number, boldLabel: boolean, pct?: number) {
-  const labelClassName = boldLabel ? 'font-bold text-slate-900 dark:text-white' : 'font-normal text-slate-600 dark:text-slate-300';
-  if (quota === 0) {
-    return (
-      <>
-        <span className={labelClassName}>{label}:</span> No Quota
-      </>
-    );
-  }
-  return (
-    <>
-      <span className={labelClassName}>{label}:</span> {fmtTooltipAbbrev(amount)} / {fmtTooltipAbbrev(quota)}
-      {pct !== undefined && ` (${pct.toFixed(0)}%)`}
-    </>
-  );
-}
-
-function CashGoTooltip({ active, payload }: { active?: boolean; payload?: Array<{ payload: CashGoPoint }> }) {
-  if (!active || !payload || payload.length === 0) return null;
-  const point = payload[0].payload;
-  const noQuotaAtAll = point.bkQuota === 0 && point.ngQuota === 0;
-  return (
-    <div className="rounded-lg border border-[#e5e5e7] bg-white px-3 py-2 text-[10px] shadow-sm dark:border-[#3a3a3d] dark:bg-[#2a2a2d]">
-      <p className="mb-1 font-bold text-slate-900 dark:text-white">{point.dayName}, {point.day}</p>
-      {noQuotaAtAll ? (
-        <p className="text-slate-600 dark:text-slate-300">No quota assigned for this date</p>
-      ) : (
-        <>
-          <p className="text-slate-600 dark:text-slate-300">{renderTooltipLine('Bkash', point.bkAmount, point.bkQuota, false)}</p>
-          <p className="text-slate-600 dark:text-slate-300">{renderTooltipLine('Nagad', point.ngAmount, point.ngQuota, false)}</p>
-          <p className="mt-1.5 text-slate-600 dark:text-slate-300">{renderTooltipLine('Total', point.totalAmount, point.totalQuota, true, point.totalPct)}</p>
-        </>
-      )}
-    </div>
-  );
-}
-
 type WalletColumnKey = 'wallet' | 'totalDP' | 'totalWD' | 'bdTransferIn' | 'stlm' | 'actualBal' | 'runningBal';
 
 const walletColumns: { key: WalletColumnKey; label: string }[] = [
@@ -257,8 +170,6 @@ const walletColumns: { key: WalletColumnKey; label: string }[] = [
 ];
 
 export default function Dashboard() {
-  const { theme } = useTheme();
-  const isDark = theme === 'dark';
   const [rows, setRows] = useState<Row[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<ClassifiedError | null>(null);
@@ -267,21 +178,8 @@ export default function Dashboard() {
   const searchTerm = '';
   const [openingTotal, setOpeningTotal] = useState(0);
   const [agentRows, setAgentRows] = useState<AgentRow[]>([]);
-  const [cashGoWeekData, setCashGoWeekData] = useState<CashGoPoint[]>([]);
-  const [cashGoMonthData, setCashGoMonthData] = useState<CashGoPoint[]>([]);
-  const [cashGoPeriod, setCashGoPeriod] = useState<'week' | 'month'>('week');
-  const [todayCashGo, setTodayCashGo] = useState<TodayCashGo | null>(null);
-  const [showBk, setShowBk] = useState(false);
-  const [showNg, setShowNg] = useState(false);
-  const [isMobile, setIsMobile] = useState(false);
-
-  useEffect(() => {
-    const mql = window.matchMedia('(max-width: 639px)');
-    setIsMobile(mql.matches);
-    const handleChange = (event: MediaQueryListEvent) => setIsMobile(event.matches);
-    mql.addEventListener('change', handleChange);
-    return () => mql.removeEventListener('change', handleChange);
-  }, []);
+  const [cashGoWeekData, setCashGoWeekData] = useState<TrendPoint[]>([]);
+  const [cashGoMonthData, setCashGoMonthData] = useState<TrendPoint[]>([]);
 
   const fetchData = useCallback(async () => {
     try {
@@ -446,109 +344,57 @@ export default function Dashboard() {
         };
       });
 
-      const cashGoRawRows = parseCsvLines(cashGoText);
-      console.log('[CashGo debug] raw CSV rows (first 5):', cashGoRawRows.slice(0, 5));
-
-      const cashGoRowsAfterFilter = cashGoRawRows
+      // CashGo Trend — daily Bkash/Nagad amounts, last 7/30 days. The sheet's
+      // own quota columns are no longer used (money values only now, no
+      // percentage-of-quota concept). Rows with an unparseable date (e.g. the
+      // sheet's own blank template rows for future dates) are dropped.
+      const cashGoByDate = new Map<string, { bk: number; ng: number }>();
+      parseCsvLines(cashGoText)
         .slice(1)
-        .filter((row) => row.some((cell) => cell.trim() !== ''));
-      console.log('[CashGo debug] rows after slice(1) + blank filter:', cashGoRowsAfterFilter.length);
-
-      const cashGoParsedRows = cashGoRowsAfterFilter.map((row) => {
-        const dateRaw = (row[1] ?? '').replace(/"/g, '').trim();
-        const bkQuota = parseQuota(row[2]);
-        const ngQuota = parseQuota(row[3]);
-        const cgBk = clean(row[4]);
-        const cgNg = clean(row[5]);
-        return { dateRaw, bkQuota, ngQuota, cgBk, cgNg, dateObj: parseSheetDate(dateRaw) };
-      });
-      console.log('[CashGo debug] parsed sample (first 5):', cashGoParsedRows.slice(0, 5));
-
-      const allCashGoRows = cashGoParsedRows
-        .filter((row): row is typeof row & { dateObj: Date } => row.dateObj !== null);
-      console.log('[CashGo debug] rows with valid parsed date:', allCashGoRows.length, '/', cashGoParsedRows.length);
-
-      const now = new Date();
-      const isToday = (row: { dateObj: Date }) =>
-        row.dateObj.getFullYear() === now.getFullYear() &&
-        row.dateObj.getMonth() === now.getMonth() &&
-        row.dateObj.getDate() === now.getDate();
-
-      const toPoint = (row: { dateObj: Date; bkQuota: number; ngQuota: number; cgBk: number; cgNg: number }): CashGoPoint => ({
-        day: `${String(row.dateObj.getMonth() + 1).padStart(2, '0')}/${String(row.dateObj.getDate()).padStart(2, '0')}`,
-        dayName: row.dateObj.toLocaleDateString('en-US', { weekday: 'long' }),
-        bkPct: row.bkQuota > 0 ? (row.cgBk / row.bkQuota) * 100 : 0,
-        ngPct: row.ngQuota > 0 ? (row.cgNg / row.ngQuota) * 100 : 0,
-        totalPct: row.bkQuota + row.ngQuota > 0 ? ((row.cgBk + row.cgNg) / (row.bkQuota + row.ngQuota)) * 100 : 0,
-        bkAmount: row.cgBk,
-        bkQuota: row.bkQuota,
-        ngAmount: row.cgNg,
-        ngQuota: row.ngQuota,
-        totalAmount: row.cgBk + row.cgNg,
-        totalQuota: row.bkQuota + row.ngQuota,
-      });
-
-      const yesterday = new Date(now.getFullYear(), now.getMonth(), now.getDate() - 1);
-      const weekStart = new Date(yesterday.getFullYear(), yesterday.getMonth(), yesterday.getDate() - 6);
-
-      const validCashGoRows = allCashGoRows.filter(
-        (row) => row.dateObj.getTime() >= weekStart.getTime() && row.dateObj.getTime() <= yesterday.getTime()
-      );
-      console.log('[CashGo debug] validCashGoRows (last 7 days ending yesterday):', validCashGoRows.length);
-
-      const cashGoWeekPoints: CashGoPoint[] = validCashGoRows
-        .sort((a, b) => a.dateObj.getTime() - b.dateObj.getTime())
-        .map(toPoint);
-      console.log('[CashGo debug] cashGoWeekPoints (final, week mode):', cashGoWeekPoints.length, cashGoWeekPoints);
-
-      const monthStart = new Date(yesterday.getFullYear(), yesterday.getMonth(), yesterday.getDate() - 29);
-
-      const monthDataMap = new Map<string, CashGoPoint>();
-      allCashGoRows
-        .filter((row) => row.dateObj.getTime() >= monthStart.getTime() && row.dateObj.getTime() <= yesterday.getTime())
+        .filter((row) => row.some((cell) => cell.trim() !== ''))
         .forEach((row) => {
-          const key = row.dateObj.toDateString();
-          monthDataMap.set(key, toPoint(row));
+          const dateObj = parseSheetDate((row[1] ?? '').replace(/"/g, '').trim());
+          if (!dateObj) return;
+          cashGoByDate.set(dateObj.toDateString(), { bk: clean(row[4]), ng: clean(row[5]) });
         });
 
-      const cashGoMonthPoints: CashGoPoint[] = Array.from({ length: 30 }, (_, i) => {
-        const d = new Date(monthStart.getFullYear(), monthStart.getMonth(), monthStart.getDate() + i);
-        const key = d.toDateString();
-        return monthDataMap.get(key) ?? {
-          day: `${String(d.getMonth() + 1).padStart(2, '0')}/${String(d.getDate()).padStart(2, '0')}`,
-          dayName: d.toLocaleDateString('en-US', { weekday: 'long' }),
-          bkPct: 0, ngPct: 0, totalPct: 0,
-          bkAmount: 0, bkQuota: 0,
-          ngAmount: 0, ngQuota: 0,
-          totalAmount: 0, totalQuota: 0,
+      const toCashGoPoint = (d: Date, isToday: boolean): TrendPoint => {
+        const totals = cashGoByDate.get(d.toDateString()) ?? { bk: 0, ng: 0 };
+        return {
+          day: isToday ? 'Today' : `${String(d.getMonth() + 1).padStart(2, '0')}/${String(d.getDate()).padStart(2, '0')}`,
+          tooltipLabel: isToday ? 'Today' : d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' }),
+          isToday,
+          total: totals.bk + totals.ng,
+          series: { bk: totals.bk, ng: totals.ng },
         };
-      });
-      console.log('[CashGo debug] cashGoMonthPoints (final, month mode):', cashGoMonthPoints.length, cashGoMonthPoints);
+      };
 
-      const todayRow = allCashGoRows.find(isToday);
-      const dateLabel = `${String(now.getMonth() + 1).padStart(2, '0')}/${String(now.getDate()).padStart(2, '0')}/${now.getFullYear()}`;
-      const todaySummary: TodayCashGo | null =
-        todayRow && (todayRow.cgBk !== 0 || todayRow.cgNg !== 0)
-          ? {
-              dateLabel,
-              bkAmount: todayRow.cgBk,
-              bkPct: todayRow.bkQuota > 0 ? (todayRow.cgBk / todayRow.bkQuota) * 100 : 0,
-              ngAmount: todayRow.cgNg,
-              ngPct: todayRow.ngQuota > 0 ? (todayRow.cgNg / todayRow.ngQuota) * 100 : 0,
-              totalAmount: todayRow.cgBk + todayRow.cgNg,
-              totalPct:
-                todayRow.bkQuota + todayRow.ngQuota > 0
-                  ? ((todayRow.cgBk + todayRow.cgNg) / (todayRow.bkQuota + todayRow.ngQuota)) * 100
-                  : 0,
-            }
-          : null;
+      // Today is always the last bar in the chart itself (highlighted), so
+      // each period is N-1 historical days ending yesterday, plus today.
+      const now = new Date();
+      const yesterday = new Date(now.getFullYear(), now.getMonth(), now.getDate() - 1);
+
+      const weekHistoryStart = new Date(yesterday.getFullYear(), yesterday.getMonth(), yesterday.getDate() - 5);
+      const cashGoWeekPoints: TrendPoint[] = [
+        ...Array.from({ length: 6 }, (_, i) =>
+          toCashGoPoint(new Date(weekHistoryStart.getFullYear(), weekHistoryStart.getMonth(), weekHistoryStart.getDate() + i), false)
+        ),
+        toCashGoPoint(now, true),
+      ];
+
+      const monthHistoryStart = new Date(yesterday.getFullYear(), yesterday.getMonth(), yesterday.getDate() - 28);
+      const cashGoMonthPoints: TrendPoint[] = [
+        ...Array.from({ length: 29 }, (_, i) =>
+          toCashGoPoint(new Date(monthHistoryStart.getFullYear(), monthHistoryStart.getMonth(), monthHistoryStart.getDate() + i), false)
+        ),
+        toCashGoPoint(now, true),
+      ];
 
       setRows(parsed);
       setOpeningTotal(openingSum);
       setAgentRows(mergedAgentRows);
       setCashGoWeekData(cashGoWeekPoints);
       setCashGoMonthData(cashGoMonthPoints);
-      setTodayCashGo(todaySummary);
       setLastUpdated(new Date().toLocaleTimeString('en-PH'));
     } catch (err) {
       setError(classifyFetchError(err instanceof Error ? err.message : String(err)));
@@ -561,11 +407,6 @@ export default function Dashboard() {
   useEffect(() => {
     fetchData();
   }, [fetchData]);
-
-  const chartData = cashGoPeriod === 'week' ? cashGoWeekData : cashGoMonthData;
-  const xAxisInterval = cashGoPeriod === 'month' && isMobile
-    ? Math.max(1, Math.ceil(chartData.length / 6) - 1)
-    : chartData.length > 10 ? 1 : 0;
 
   const dataRows = rows.filter((r) => r.wallet && r.wallet.toLowerCase() !== 'total');
   const totalRow = rows.find((r) => r.wallet.toLowerCase() === 'total');
@@ -825,121 +666,7 @@ export default function Dashboard() {
                   })}
                 </section>
 
-                <section className="overflow-hidden rounded-2xl border border-border bg-white shadow-sm dark:bg-[#2a2a2d]">
-                  {/* Header */}
-                  <div className="flex flex-wrap items-center justify-between gap-2 border-b border-border px-4 py-3">
-                    <div className="flex items-center gap-2.5">
-                      <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-indigo-50 dark:bg-indigo-500/15">
-                        <BarChart2 size={14} className="text-indigo-600 dark:text-indigo-400" />
-                      </div>
-                      <h2 className="whitespace-nowrap text-[13px] font-semibold text-foreground">CashGo Trend</h2>
-                    </div>
-                    <div className="flex items-center gap-0.5 rounded-lg border border-border p-0.5">
-                      <button
-                        onClick={() => setCashGoPeriod('week')}
-                        className={`whitespace-nowrap rounded-md px-3 py-1 text-[10px] font-medium transition-colors ${
-                          cashGoPeriod === 'week'
-                            ? 'bg-indigo-600 text-white'
-                            : 'text-muted-foreground hover:text-foreground'
-                        }`}
-                      >
-                        7 Days
-                      </button>
-                      <button
-                        onClick={() => setCashGoPeriod('month')}
-                        className={`whitespace-nowrap rounded-md px-3 py-1 text-[10px] font-medium transition-colors ${
-                          cashGoPeriod === 'month'
-                            ? 'bg-indigo-600 text-white'
-                            : 'text-muted-foreground hover:text-foreground'
-                        }`}
-                      >
-                        30 Days
-                      </button>
-                    </div>
-                  </div>
-
-                  {/* Today's usage + BK/NG toggles */}
-                  <div className="flex flex-wrap items-center gap-x-4 gap-y-2 border-b border-border px-4 py-2.5">
-                    <div className="flex items-center gap-1.5">
-                      <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-emerald-500" />
-                      <span className="text-[11px] font-semibold text-foreground">Today</span>
-                    </div>
-                    {todayCashGo ? (
-                      <>
-                        <div className="flex items-center gap-1.5">
-                          <span className="text-[10px] text-muted-foreground">Bkash</span>
-                          <span className="tabular-nums text-[11px] font-semibold text-foreground">{fmtCell(todayCashGo.bkAmount)}</span>
-                        </div>
-                        <div className="h-3 w-px bg-border" />
-                        <div className="flex items-center gap-1.5">
-                          <span className="text-[10px] text-muted-foreground">Nagad</span>
-                          <span className="tabular-nums text-[11px] font-semibold text-foreground">{fmtCell(todayCashGo.ngAmount)}</span>
-                        </div>
-                        <div className="h-3 w-px bg-border" />
-                        <div className="flex items-center gap-1.5">
-                          <span className="text-[10px] text-muted-foreground">Total</span>
-                          <span className="tabular-nums text-[11px] font-bold text-indigo-600 dark:text-indigo-400">{fmtCell(todayCashGo.totalAmount)}</span>
-                        </div>
-                      </>
-                    ) : (
-                      <span className="text-[10px] text-muted-foreground">No data yet for today</span>
-                    )}
-                    <div className="ml-auto flex items-center gap-1.5">
-                      <button
-                        onClick={() => setShowBk(!showBk)}
-                        className={`flex items-center gap-1.5 rounded-md border px-2.5 py-1 text-[10px] font-medium transition-colors ${
-                          showBk
-                            ? 'border-indigo-200 bg-indigo-50 text-indigo-700 dark:border-indigo-500/30 dark:bg-indigo-500/15 dark:text-indigo-300'
-                            : 'border-border text-muted-foreground hover:bg-muted'
-                        }`}
-                      >
-                        <span className="h-1.5 w-1.5 rounded-full" style={{ background: isDark ? '#818cf8' : '#6366f1' }} />
-                        BK
-                      </button>
-                      <button
-                        onClick={() => setShowNg(!showNg)}
-                        className={`flex items-center gap-1.5 rounded-md border px-2.5 py-1 text-[10px] font-medium transition-colors ${
-                          showNg
-                            ? 'border-violet-200 bg-violet-50 text-violet-700 dark:border-violet-500/30 dark:bg-violet-500/15 dark:text-violet-300'
-                            : 'border-border text-muted-foreground hover:bg-muted'
-                        }`}
-                      >
-                        <span className="h-1.5 w-1.5 rounded-full" style={{ background: isDark ? '#a78bfa' : '#7c3aed' }} />
-                        NG
-                      </button>
-                    </div>
-                  </div>
-
-                  {/* Chart */}
-                  <div className="h-[360px] select-none px-3 py-4">
-                    <ResponsiveContainer width="100%" height="100%">
-                      <BarChart data={chartData} margin={{ top: 5, right: 10, left: 0, bottom: 0 }}>
-                        <CartesianGrid vertical={false} stroke={isDark ? '#27272a' : '#e2e8f0'} strokeDasharray="4 4" />
-                        <XAxis
-                          dataKey="day"
-                          tick={{ fontSize: 10, fontWeight: 600, fill: isDark ? '#94a3b8' : '#64748b' }}
-                          axisLine={{ stroke: isDark ? '#334155' : '#cbd5e1' }}
-                          tickLine={false}
-                          interval={xAxisInterval}
-                        />
-                        <YAxis
-                          domain={[0, 100]}
-                          ticks={[0, 20, 40, 60, 80, 100]}
-                          tick={{ fontSize: 10, fontWeight: 600, fill: isDark ? '#94a3b8' : '#64748b' }}
-                          axisLine={false}
-                          tickLine={false}
-                          tickFormatter={(value: number) => `${value}%`}
-                          width={38}
-                          tickMargin={6}
-                        />
-                        <Tooltip content={<CashGoTooltip />} />
-                        <Bar dataKey="totalPct" name="Total Combined %" fill={isDark ? '#6366f1' : '#4f46e5'} radius={[4, 4, 0, 0]} maxBarSize={48} />
-                        {showBk && <Bar dataKey="bkPct" name="BK Usage %" fill={isDark ? '#818cf8' : '#818cf8'} radius={[4, 4, 0, 0]} maxBarSize={48} />}
-                        {showNg && <Bar dataKey="ngPct" name="NG Usage %" fill={isDark ? '#a78bfa' : '#7c3aed'} radius={[4, 4, 0, 0]} maxBarSize={48} />}
-                      </BarChart>
-                    </ResponsiveContainer>
-                  </div>
-                </section>
+                <TrendChart title="CashGo Trend" seriesDefs={CASHGO_SERIES_DEFS} weekData={cashGoWeekData} monthData={cashGoMonthData} />
 
                 <section className="overflow-hidden rounded-2xl border border-border bg-white shadow-sm dark:bg-[#2a2a2d]">
                   <div className="border-b border-border px-4 py-3">
