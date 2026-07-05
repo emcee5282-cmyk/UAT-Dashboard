@@ -2,23 +2,18 @@
 
 import { useEffect, useState, useCallback } from 'react';
 import { RefreshCw, TrendingUp, TrendingDown, Wallet, Activity } from 'lucide-react';
-import { Bar, BarChart, ResponsiveContainer, XAxis, YAxis, Tooltip, CartesianGrid, Cell, LabelList } from 'recharts';
 import ThemeToggle from '@/app/components/ThemeToggle';
-import { useTheme } from '@/app/components/ThemeProvider';
 import ConnectionErrorState from '@/app/components/ConnectionErrorState';
+import TrendChart, { type TrendPoint, type TrendSeriesDef } from '@/app/components/TrendChart';
 import { classifyFetchError, type ClassifiedError, assertAllOk } from '@/app/lib/errors';
 import { rawVal } from '@/app/lib/format';
 import { getSendMoneyRoute } from '@/app/lib/sendMoneyRoutes';
 
-type BundlePoint = {
-  day: string;
-  tooltipLabel: string;
-  nagad: number;
-  rocket: number;
-  upay: number;
-  total: number;
-  isToday: boolean;
-};
+const BUNDLE_SERIES_DEFS: TrendSeriesDef[] = [
+  { key: 'nagad', label: 'Nagad' },
+  { key: 'rocket', label: 'Rocket' },
+  { key: 'upay', label: 'UPay' },
+];
 
 type Row = {
   wallet: string;
@@ -162,47 +157,6 @@ function walletTypeLabelFromName(name: string): string | null {
   return WALLET_TYPE_LABELS[suffix] ?? null;
 }
 
-function fmtTooltipAbbrev(num: number): string {
-  const abs = Math.abs(num);
-  let value = abs;
-  let suffix = '';
-  if (abs >= 1e9) {
-    value = abs / 1e9;
-    suffix = 'B';
-  } else if (abs >= 1e6) {
-    value = abs / 1e6;
-    suffix = 'M';
-  } else if (abs >= 1e3) {
-    value = abs / 1e3;
-    suffix = 'K';
-  }
-  const rounded = Math.round(value * 10) / 10;
-  const str = rounded % 1 === 0 ? rounded.toFixed(0) : rounded.toFixed(1);
-  return `${str}${suffix}`;
-}
-
-function BundleXAxisTick({ x, y, payload }: { x?: number; y?: number; payload?: { value: string } }) {
-  const isToday = payload?.value === 'Today';
-  return (
-    <text x={x} y={(y ?? 0) + 12} textAnchor="middle" fontSize={10} fontWeight={isToday ? 700 : 600} fill={isToday ? 'var(--product-accent)' : 'var(--muted-foreground)'}>
-      {payload?.value}
-    </text>
-  );
-}
-
-function BundleTooltip({ active, payload }: { active?: boolean; payload?: Array<{ payload: BundlePoint }> }) {
-  if (!active || !payload || payload.length === 0) return null;
-  const point = payload[0].payload;
-  return (
-    <div className="rounded-lg border border-[#e5e5e7] bg-white px-3 py-2 text-[11px] shadow-md dark:border-[#3a3a3d] dark:bg-[#2a2a2d]">
-      <p className="mb-1.5 font-bold text-slate-900 dark:text-white">{point.tooltipLabel} · {fmtTooltipAbbrev(point.total)}</p>
-      <p className="text-slate-600 dark:text-slate-300">Nagad {fmtTooltipAbbrev(point.nagad)}</p>
-      <p className="text-slate-600 dark:text-slate-300">Rocket {fmtTooltipAbbrev(point.rocket)}</p>
-      <p className="text-slate-600 dark:text-slate-300">UPay {fmtTooltipAbbrev(point.upay)}</p>
-    </div>
-  );
-}
-
 // Settlement isn't shown as its own column here — it reads the same
 // underlying source as Bundle Transfer (both "BUNDLE TRANSFER" TYPE rows),
 // so displaying both was a duplicate. Bundle Transfer is kept since it
@@ -222,8 +176,6 @@ const walletColumns: { key: WalletColumnKey; label: string }[] = [
 
 export default function SendMoneyDashboardPage() {
   const route = getSendMoneyRoute('/sendmoney');
-  const { theme } = useTheme();
-  const isDark = theme === 'dark';
   const [rows, setRows] = useState<Row[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<ClassifiedError | null>(null);
@@ -232,9 +184,8 @@ export default function SendMoneyDashboardPage() {
   const searchTerm = '';
   const [openingTotal, setOpeningTotal] = useState(0);
   const [agentRows, setAgentRows] = useState<AgentRow[]>([]);
-  const [bundleWeekData, setBundleWeekData] = useState<BundlePoint[]>([]);
-  const [bundleMonthData, setBundleMonthData] = useState<BundlePoint[]>([]);
-  const [bundlePeriod, setBundlePeriod] = useState<'week' | 'month'>('week');
+  const [bundleWeekData, setBundleWeekData] = useState<TrendPoint[]>([]);
+  const [bundleMonthData, setBundleMonthData] = useState<TrendPoint[]>([]);
 
   const fetchData = useCallback(async () => {
     try {
@@ -425,16 +376,14 @@ export default function SendMoneyDashboardPage() {
           addBundleRow(row[22], row[23], row[24], row[25], row[26]); // prev month archive
         });
 
-      const toBundlePoint = (d: Date, isToday: boolean): BundlePoint => {
+      const toBundlePoint = (d: Date, isToday: boolean): TrendPoint => {
         const totals = bundleByDate.get(d.toDateString()) ?? { NAGAD: 0, ROCKET: 0, UPAY: 0 };
         return {
           day: isToday ? 'Today' : `${String(d.getMonth() + 1).padStart(2, '0')}/${String(d.getDate()).padStart(2, '0')}`,
           tooltipLabel: isToday ? 'Today' : d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' }),
-          nagad: totals.NAGAD,
-          rocket: totals.ROCKET,
-          upay: totals.UPAY,
-          total: totals.NAGAD + totals.ROCKET + totals.UPAY,
           isToday,
+          total: totals.NAGAD + totals.ROCKET + totals.UPAY,
+          series: { nagad: totals.NAGAD, rocket: totals.ROCKET, upay: totals.UPAY },
         };
       };
 
@@ -444,7 +393,7 @@ export default function SendMoneyDashboardPage() {
       const yesterday = new Date(now.getFullYear(), now.getMonth(), now.getDate() - 1);
 
       const weekHistoryStart = new Date(yesterday.getFullYear(), yesterday.getMonth(), yesterday.getDate() - 5);
-      const weekPoints: BundlePoint[] = [
+      const weekPoints: TrendPoint[] = [
         ...Array.from({ length: 6 }, (_, i) =>
           toBundlePoint(new Date(weekHistoryStart.getFullYear(), weekHistoryStart.getMonth(), weekHistoryStart.getDate() + i), false)
         ),
@@ -452,7 +401,7 @@ export default function SendMoneyDashboardPage() {
       ];
 
       const monthHistoryStart = new Date(yesterday.getFullYear(), yesterday.getMonth(), yesterday.getDate() - 28);
-      const monthPoints: BundlePoint[] = [
+      const monthPoints: TrendPoint[] = [
         ...Array.from({ length: 29 }, (_, i) =>
           toBundlePoint(new Date(monthHistoryStart.getFullYear(), monthHistoryStart.getMonth(), monthHistoryStart.getDate() + i), false)
         ),
@@ -476,47 +425,6 @@ export default function SendMoneyDashboardPage() {
   useEffect(() => {
     fetchData();
   }, [fetchData]);
-
-  const bundleChartData = bundlePeriod === 'week' ? bundleWeekData : bundleMonthData;
-  // "preserveStartEnd" (rather than a numeric interval) guarantees the very
-  // last tick — Today — always renders instead of being skipped by interval
-  // parity on a 30-item array.
-  const bundleXAxisInterval: number | 'preserveStartEnd' = bundlePeriod === 'month' ? 'preserveStartEnd' : 0;
-  // Week mode labels every bar; month mode only labels the peak day and
-  // today, to keep 30 stacked bars from turning into a wall of text.
-  const bundlePeakIndex = bundleChartData.length
-    ? bundleChartData.reduce((peakIdx, point, idx, arr) => (point.total > arr[peakIdx].total ? idx : peakIdx), 0)
-    : -1;
-  const shouldLabelBundleBar = (point: BundlePoint) =>
-    bundlePeriod === 'week' || point.day === bundleChartData[bundlePeakIndex]?.day || point.isToday;
-
-  // Recharts skips calling a stacked Bar's LabelList content function for any
-  // day where that specific series' own value is 0 (no rect to anchor to),
-  // even with a custom content prop — and worse, it re-numbers `index` to
-  // only count that series' own non-zero entries (confirmed via logging:
-  // `index` for the "upay" series topped out around 21 instead of 29, and
-  // this recharts version's LabelList props don't include `payload` at all
-  // to sidestep it). The only value that's reliably correct regardless of
-  // that re-numbering is `value` itself (from dataKey="total"), so the real
-  // day is recovered by matching it back against bundleChartData's own
-  // totals instead of trusting `index`.
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const makeBundleValueLabelRenderer = (seriesKey: 'nagad' | 'rocket' | 'upay') => (props: any) => {
-    const { x, y, width, value } = props;
-    const numValue = Number(value ?? 0);
-    const point = bundleChartData.find((p) => Math.abs(p.total - numValue) < 0.01);
-    if (!point || !shouldLabelBundleBar(point)) return null;
-    const hostKey = point.upay > 0 ? 'upay' : point.rocket > 0 ? 'rocket' : 'nagad';
-    if (hostKey !== seriesKey) return null;
-    const numX = Number(x ?? 0);
-    const numY = Number(y ?? 0);
-    const numWidth = Number(width ?? 0);
-    return (
-      <text x={numX + numWidth / 2} y={numY - 6} textAnchor="middle" fontSize={10} fontWeight={700} fill={point.isToday ? 'var(--product-accent)' : 'var(--foreground)'}>
-        {fmtTooltipAbbrev(point.total)}
-      </text>
-    );
-  };
 
   const dataRows = rows.filter((r) => r.wallet && r.wallet.toLowerCase() !== 'total');
   const totalRow = rows.find((r) => r.wallet.toLowerCase() === 'total');
@@ -759,97 +667,7 @@ export default function SendMoneyDashboardPage() {
                 })}
               </section>
 
-              <section className="overflow-hidden rounded-2xl border border-border bg-white shadow-sm dark:bg-[#2a2a2d]">
-                <div className="flex flex-wrap items-center justify-between gap-2 border-b border-border px-4 py-3">
-                  <h2 className="whitespace-nowrap text-[13px] font-semibold text-foreground">Bundle Transfer Trend</h2>
-                  <div className="flex items-center gap-0.5 rounded-lg border border-border p-0.5">
-                    <button
-                      onClick={() => setBundlePeriod('week')}
-                      className={`whitespace-nowrap rounded-md px-3 py-1 text-[10px] font-medium transition-colors ${
-                        bundlePeriod === 'week'
-                          ? 'bg-[color:var(--product-accent)] text-white'
-                          : 'text-muted-foreground hover:text-foreground'
-                      }`}
-                    >
-                      7D
-                    </button>
-                    <button
-                      onClick={() => setBundlePeriod('month')}
-                      className={`whitespace-nowrap rounded-md px-3 py-1 text-[10px] font-medium transition-colors ${
-                        bundlePeriod === 'month'
-                          ? 'bg-[color:var(--product-accent)] text-white'
-                          : 'text-muted-foreground hover:text-foreground'
-                      }`}
-                    >
-                      30D
-                    </button>
-                  </div>
-                </div>
-
-                {/* Static legend — no toggle interaction, matches reference layout */}
-                <div className="flex items-center gap-4 border-b border-border px-4 py-2">
-                  <div className="flex items-center gap-1.5">
-                    <span className="h-2 w-2 rounded-full" style={{ background: isDark ? '#2dd4bf' : '#0d9488' }} />
-                    <span className="text-[10px] font-medium text-muted-foreground">Nagad</span>
-                  </div>
-                  <div className="flex items-center gap-1.5">
-                    <span className="h-2 w-2 rounded-full" style={{ background: isDark ? '#a78bfa' : '#7c3aed' }} />
-                    <span className="text-[10px] font-medium text-muted-foreground">Rocket</span>
-                  </div>
-                  <div className="flex items-center gap-1.5">
-                    <span className="h-2 w-2 rounded-full" style={{ background: isDark ? '#fbbf24' : '#d97706' }} />
-                    <span className="text-[10px] font-medium text-muted-foreground">UPay</span>
-                  </div>
-                </div>
-
-                {/* Chart — stacked bars, Today is the last bar (highlighted).
-                    Week mode: value label on every bar, no Y-axis. Month
-                    mode: minimal Y-axis, only the peak day and Today are
-                    labeled, rest revealed via tooltip on hover. */}
-                <div className="h-[280px] select-none px-3 py-4 pt-6">
-                  <ResponsiveContainer width="100%" height="100%">
-                    <BarChart data={bundleChartData} margin={{ top: 20, right: 20, left: 0, bottom: 0 }}>
-                      <CartesianGrid vertical={false} stroke={isDark ? '#27272a' : '#e2e8f0'} strokeDasharray="4 4" />
-                      <XAxis
-                        dataKey="day"
-                        tick={<BundleXAxisTick />}
-                        axisLine={{ stroke: isDark ? '#334155' : '#cbd5e1' }}
-                        tickLine={false}
-                        interval={bundleXAxisInterval}
-                      />
-                      {bundlePeriod === 'month' && (
-                        <YAxis
-                          tick={{ fontSize: 10, fontWeight: 600, fill: isDark ? '#94a3b8' : '#64748b' }}
-                          axisLine={false}
-                          tickLine={false}
-                          tickFormatter={(value: number) => fmtTooltipAbbrev(value)}
-                          width={38}
-                          tickMargin={6}
-                        />
-                      )}
-                      <Tooltip content={<BundleTooltip />} cursor={{ fill: isDark ? 'rgba(148,163,184,0.12)' : 'rgba(100,116,139,0.08)' }} />
-                      <Bar dataKey="nagad" stackId="bundle" fill={isDark ? '#2dd4bf' : '#0d9488'} maxBarSize={40}>
-                        {bundleChartData.map((point, i) => (
-                          <Cell key={i} stroke={point.isToday ? 'var(--product-accent)' : 'none'} strokeWidth={point.isToday ? 1.5 : 0} />
-                        ))}
-                        <LabelList dataKey="total" content={makeBundleValueLabelRenderer('nagad')} />
-                      </Bar>
-                      <Bar dataKey="rocket" stackId="bundle" fill={isDark ? '#a78bfa' : '#7c3aed'} maxBarSize={40}>
-                        {bundleChartData.map((point, i) => (
-                          <Cell key={i} stroke={point.isToday ? 'var(--product-accent)' : 'none'} strokeWidth={point.isToday ? 1.5 : 0} />
-                        ))}
-                        <LabelList dataKey="total" content={makeBundleValueLabelRenderer('rocket')} />
-                      </Bar>
-                      <Bar dataKey="upay" stackId="bundle" fill={isDark ? '#fbbf24' : '#d97706'} radius={[3, 3, 0, 0]} maxBarSize={40}>
-                        {bundleChartData.map((point, i) => (
-                          <Cell key={i} stroke={point.isToday ? 'var(--product-accent)' : 'none'} strokeWidth={point.isToday ? 1.5 : 0} />
-                        ))}
-                        <LabelList dataKey="total" content={makeBundleValueLabelRenderer('upay')} />
-                      </Bar>
-                    </BarChart>
-                  </ResponsiveContainer>
-                </div>
-              </section>
+              <TrendChart title="Bundle Transfer Trend" seriesDefs={BUNDLE_SERIES_DEFS} weekData={bundleWeekData} monthData={bundleMonthData} />
 
               <section className="overflow-hidden rounded-2xl border border-border bg-white shadow-sm dark:bg-[#2a2a2d]">
                 <div className="border-b border-border px-4 py-3">
