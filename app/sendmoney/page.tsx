@@ -2,11 +2,30 @@
 
 import { useEffect, useState, useCallback } from 'react';
 import { RefreshCw, TrendingUp, TrendingDown, Wallet, Activity, BarChart2 } from 'lucide-react';
+import { Bar, BarChart, ResponsiveContainer, XAxis, YAxis, Tooltip, CartesianGrid } from 'recharts';
 import ThemeToggle from '@/app/components/ThemeToggle';
+import { useTheme } from '@/app/components/ThemeProvider';
 import ConnectionErrorState from '@/app/components/ConnectionErrorState';
 import { classifyFetchError, type ClassifiedError, assertAllOk } from '@/app/lib/errors';
 import { rawVal } from '@/app/lib/format';
 import { getSendMoneyRoute } from '@/app/lib/sendMoneyRoutes';
+
+type BundlePoint = {
+  day: string;
+  dayName: string;
+  nagad: number;
+  rocket: number;
+  upay: number;
+  total: number;
+};
+
+type TodayBundle = {
+  dateLabel: string;
+  nagad: number;
+  rocket: number;
+  upay: number;
+  total: number;
+};
 
 type Row = {
   wallet: string;
@@ -150,6 +169,39 @@ function walletTypeLabelFromName(name: string): string | null {
   return WALLET_TYPE_LABELS[suffix] ?? null;
 }
 
+function fmtTooltipAbbrev(num: number): string {
+  const abs = Math.abs(num);
+  let value = abs;
+  let suffix = '';
+  if (abs >= 1e9) {
+    value = abs / 1e9;
+    suffix = 'B';
+  } else if (abs >= 1e6) {
+    value = abs / 1e6;
+    suffix = 'M';
+  } else if (abs >= 1e3) {
+    value = abs / 1e3;
+    suffix = 'K';
+  }
+  const rounded = Math.round(value * 10) / 10;
+  const str = rounded % 1 === 0 ? rounded.toFixed(0) : rounded.toFixed(1);
+  return `${str}${suffix}`;
+}
+
+function BundleTooltip({ active, payload }: { active?: boolean; payload?: Array<{ payload: BundlePoint }> }) {
+  if (!active || !payload || payload.length === 0) return null;
+  const point = payload[0].payload;
+  return (
+    <div className="rounded-lg border border-[#e5e5e7] bg-white px-3 py-2 text-[10px] shadow-sm dark:border-[#3a3a3d] dark:bg-[#2a2a2d]">
+      <p className="mb-1 font-bold text-slate-900 dark:text-white">{point.dayName}, {point.day}</p>
+      <p className="text-slate-600 dark:text-slate-300"><span className="font-normal">Nagad:</span> {fmtTooltipAbbrev(point.nagad)}</p>
+      <p className="text-slate-600 dark:text-slate-300"><span className="font-normal">Rocket:</span> {fmtTooltipAbbrev(point.rocket)}</p>
+      <p className="text-slate-600 dark:text-slate-300"><span className="font-normal">UPay:</span> {fmtTooltipAbbrev(point.upay)}</p>
+      <p className="mt-1.5 text-slate-600 dark:text-slate-300"><span className="font-bold text-slate-900 dark:text-white">Total:</span> {fmtTooltipAbbrev(point.total)}</p>
+    </div>
+  );
+}
+
 type WalletColumnKey = 'wallet' | 'totalDP' | 'totalWD' | 'bdTransferIn' | 'stlm' | 'actualBal' | 'runningBal';
 
 const walletColumns: { key: WalletColumnKey; label: string }[] = [
@@ -164,6 +216,8 @@ const walletColumns: { key: WalletColumnKey; label: string }[] = [
 
 export default function SendMoneyDashboardPage() {
   const route = getSendMoneyRoute('/sendmoney');
+  const { theme } = useTheme();
+  const isDark = theme === 'dark';
   const [rows, setRows] = useState<Row[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<ClassifiedError | null>(null);
@@ -172,6 +226,22 @@ export default function SendMoneyDashboardPage() {
   const searchTerm = '';
   const [openingTotal, setOpeningTotal] = useState(0);
   const [agentRows, setAgentRows] = useState<AgentRow[]>([]);
+  const [bundleWeekData, setBundleWeekData] = useState<BundlePoint[]>([]);
+  const [bundleMonthData, setBundleMonthData] = useState<BundlePoint[]>([]);
+  const [bundlePeriod, setBundlePeriod] = useState<'week' | 'month'>('week');
+  const [todayBundle, setTodayBundle] = useState<TodayBundle | null>(null);
+  const [showNagad, setShowNagad] = useState(false);
+  const [showRocket, setShowRocket] = useState(false);
+  const [showUpay, setShowUpay] = useState(false);
+  const [isMobile, setIsMobile] = useState(false);
+
+  useEffect(() => {
+    const mql = window.matchMedia('(max-width: 639px)');
+    setIsMobile(mql.matches);
+    const handleChange = (event: MediaQueryListEvent) => setIsMobile(event.matches);
+    mql.addEventListener('change', handleChange);
+    return () => mql.removeEventListener('change', handleChange);
+  }, []);
 
   const fetchData = useCallback(async () => {
     try {
@@ -330,9 +400,74 @@ export default function SendMoneyDashboardPage() {
         };
       });
 
+      // Bundle Transfer Trend — daily Settlement ("Type" = BUNDLE TRANSFER)
+      // totals per wallet, last 7/30 days. Cols H-L (idx 7-11) hold this
+      // month's Settlement rows; cols W-AA (idx 22-26) hold last month's
+      // archived Settlement rows, same field order shifted +15 — both are
+      // unioned since a 30-day window can span the month boundary. Amounts
+      // are stored negative in the sheet; displayed as abs().
+      const bundleByDate = new Map<string, { NAGAD: number; ROCKET: number; UPAY: number }>();
+      const addBundleRow = (nameRaw: string, amountRaw: string, dateRaw: string, walletRaw: string, typeRaw: string) => {
+        const type = rawVal(typeRaw).trim().toUpperCase();
+        if (type !== 'BUNDLE TRANSFER') return;
+        const name = rawVal(nameRaw);
+        if (!name || name === '-') return;
+        const amount = Math.abs(clean(rawVal(amountRaw)));
+        if (!amount) return;
+        const date = parseStlmRowDate(rawVal(dateRaw));
+        if (!date) return;
+        const wallet = rawVal(walletRaw).trim().toUpperCase();
+        if (wallet !== 'NAGAD' && wallet !== 'ROCKET' && wallet !== 'UPAY') return;
+        const key = date.toDateString();
+        const existing = bundleByDate.get(key) ?? { NAGAD: 0, ROCKET: 0, UPAY: 0 };
+        existing[wallet as 'NAGAD' | 'ROCKET' | 'UPAY'] += amount;
+        bundleByDate.set(key, existing);
+      };
+
+      parseCsvLines(stlmText)
+        .slice(1)
+        .filter((row) => row.some((cell) => cell.trim() !== ''))
+        .forEach((row) => {
+          addBundleRow(row[7], row[8], row[9], row[10], row[11]); // this month
+          addBundleRow(row[22], row[23], row[24], row[25], row[26]); // prev month archive
+        });
+
+      const toBundlePoint = (d: Date): BundlePoint => {
+        const totals = bundleByDate.get(d.toDateString()) ?? { NAGAD: 0, ROCKET: 0, UPAY: 0 };
+        return {
+          day: `${String(d.getMonth() + 1).padStart(2, '0')}/${String(d.getDate()).padStart(2, '0')}`,
+          dayName: d.toLocaleDateString('en-US', { weekday: 'long' }),
+          nagad: totals.NAGAD,
+          rocket: totals.ROCKET,
+          upay: totals.UPAY,
+          total: totals.NAGAD + totals.ROCKET + totals.UPAY,
+        };
+      };
+
+      const now = new Date();
+      const yesterday = new Date(now.getFullYear(), now.getMonth(), now.getDate() - 1);
+      const weekStart = new Date(yesterday.getFullYear(), yesterday.getMonth(), yesterday.getDate() - 6);
+      const weekPoints: BundlePoint[] = Array.from({ length: 7 }, (_, i) =>
+        toBundlePoint(new Date(weekStart.getFullYear(), weekStart.getMonth(), weekStart.getDate() + i))
+      );
+
+      const monthStart = new Date(yesterday.getFullYear(), yesterday.getMonth(), yesterday.getDate() - 29);
+      const monthPoints: BundlePoint[] = Array.from({ length: 30 }, (_, i) =>
+        toBundlePoint(new Date(monthStart.getFullYear(), monthStart.getMonth(), monthStart.getDate() + i))
+      );
+
+      const todayPoint = toBundlePoint(now);
+      const dateLabel = `${String(now.getMonth() + 1).padStart(2, '0')}/${String(now.getDate()).padStart(2, '0')}/${now.getFullYear()}`;
+      const todaySummary: TodayBundle | null = todayPoint.total !== 0
+        ? { dateLabel, nagad: todayPoint.nagad, rocket: todayPoint.rocket, upay: todayPoint.upay, total: todayPoint.total }
+        : null;
+
       setRows(parsed);
       setOpeningTotal(openingSum);
       setAgentRows(mergedAgentRows);
+      setBundleWeekData(weekPoints);
+      setBundleMonthData(monthPoints);
+      setTodayBundle(todaySummary);
       setLastUpdated(new Date().toLocaleTimeString('en-PH'));
     } catch (err) {
       setError(classifyFetchError(err instanceof Error ? err.message : String(err)));
@@ -345,6 +480,11 @@ export default function SendMoneyDashboardPage() {
   useEffect(() => {
     fetchData();
   }, [fetchData]);
+
+  const bundleChartData = bundlePeriod === 'week' ? bundleWeekData : bundleMonthData;
+  const bundleXAxisInterval = bundlePeriod === 'month' && isMobile
+    ? Math.max(1, Math.ceil(bundleChartData.length / 6) - 1)
+    : bundleChartData.length > 10 ? 1 : 0;
 
   const dataRows = rows.filter((r) => r.wallet && r.wallet.toLowerCase() !== 'total');
   const totalRow = rows.find((r) => r.wallet.toLowerCase() === 'total');
@@ -587,19 +727,133 @@ export default function SendMoneyDashboardPage() {
                 })}
               </section>
 
-              {/* CashGo Trend — empty container. No Send Money data source for this yet; layout only, per instruction. */}
               <section className="overflow-hidden rounded-2xl border border-border bg-white shadow-sm dark:bg-[#2a2a2d]">
-                <div className="flex items-center justify-between border-b border-border px-4 py-3">
+                <div className="flex flex-wrap items-center justify-between gap-2 border-b border-border px-4 py-3">
                   <div className="flex items-center gap-2.5">
                     <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-[color:var(--product-accent-soft)]">
                       <BarChart2 size={14} className="text-[color:var(--product-accent)]" />
                     </div>
-                    <h2 className="whitespace-nowrap text-[13px] font-semibold text-foreground">CashGo Trend</h2>
+                    <h2 className="whitespace-nowrap text-[13px] font-semibold text-foreground">Bundle Transfer Trend</h2>
+                  </div>
+                  <div className="flex items-center gap-0.5 rounded-lg border border-border p-0.5">
+                    <button
+                      onClick={() => setBundlePeriod('week')}
+                      className={`whitespace-nowrap rounded-md px-3 py-1 text-[10px] font-medium transition-colors ${
+                        bundlePeriod === 'week'
+                          ? 'bg-[color:var(--product-accent)] text-white'
+                          : 'text-muted-foreground hover:text-foreground'
+                      }`}
+                    >
+                      7 Days
+                    </button>
+                    <button
+                      onClick={() => setBundlePeriod('month')}
+                      className={`whitespace-nowrap rounded-md px-3 py-1 text-[10px] font-medium transition-colors ${
+                        bundlePeriod === 'month'
+                          ? 'bg-[color:var(--product-accent)] text-white'
+                          : 'text-muted-foreground hover:text-foreground'
+                      }`}
+                    >
+                      30 Days
+                    </button>
                   </div>
                 </div>
-                <div className="flex h-[200px] flex-col items-center justify-center gap-1 px-4 text-center">
-                  <p className="text-[12px] font-medium text-muted-foreground">No data source connected yet</p>
-                  <p className="text-[11px] text-muted-foreground/70">Will be wired up once a Send Money CashGo source is ready.</p>
+
+                {/* Today's usage + per-wallet toggles */}
+                <div className="flex flex-wrap items-center gap-x-4 gap-y-2 border-b border-border px-4 py-2.5">
+                  <div className="flex items-center gap-1.5">
+                    <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-emerald-500" />
+                    <span className="text-[11px] font-semibold text-foreground">Today</span>
+                  </div>
+                  {todayBundle ? (
+                    <>
+                      <div className="flex items-center gap-1.5">
+                        <span className="text-[10px] text-muted-foreground">Nagad</span>
+                        <span className="tabular-nums text-[11px] font-semibold text-foreground">{fmtCell(todayBundle.nagad)}</span>
+                      </div>
+                      <div className="h-3 w-px bg-border" />
+                      <div className="flex items-center gap-1.5">
+                        <span className="text-[10px] text-muted-foreground">Rocket</span>
+                        <span className="tabular-nums text-[11px] font-semibold text-foreground">{fmtCell(todayBundle.rocket)}</span>
+                      </div>
+                      <div className="h-3 w-px bg-border" />
+                      <div className="flex items-center gap-1.5">
+                        <span className="text-[10px] text-muted-foreground">UPay</span>
+                        <span className="tabular-nums text-[11px] font-semibold text-foreground">{fmtCell(todayBundle.upay)}</span>
+                      </div>
+                      <div className="h-3 w-px bg-border" />
+                      <div className="flex items-center gap-1.5">
+                        <span className="text-[10px] text-muted-foreground">Total</span>
+                        <span className="tabular-nums text-[11px] font-bold text-[color:var(--product-accent)]">{fmtCell(todayBundle.total)}</span>
+                      </div>
+                    </>
+                  ) : (
+                    <span className="text-[10px] text-muted-foreground">No data yet for today</span>
+                  )}
+                  <div className="ml-auto flex items-center gap-1.5">
+                    <button
+                      onClick={() => setShowNagad(!showNagad)}
+                      className={`flex items-center gap-1.5 rounded-md border px-2.5 py-1 text-[10px] font-medium transition-colors ${
+                        showNagad
+                          ? 'border-sky-200 bg-sky-50 text-sky-700 dark:border-sky-500/30 dark:bg-sky-500/15 dark:text-sky-300'
+                          : 'border-border text-muted-foreground hover:bg-muted'
+                      }`}
+                    >
+                      <span className="h-1.5 w-1.5 rounded-full" style={{ background: isDark ? '#38bdf8' : '#0284c7' }} />
+                      Nagad
+                    </button>
+                    <button
+                      onClick={() => setShowRocket(!showRocket)}
+                      className={`flex items-center gap-1.5 rounded-md border px-2.5 py-1 text-[10px] font-medium transition-colors ${
+                        showRocket
+                          ? 'border-violet-200 bg-violet-50 text-violet-700 dark:border-violet-500/30 dark:bg-violet-500/15 dark:text-violet-300'
+                          : 'border-border text-muted-foreground hover:bg-muted'
+                      }`}
+                    >
+                      <span className="h-1.5 w-1.5 rounded-full" style={{ background: isDark ? '#a78bfa' : '#7c3aed' }} />
+                      Rocket
+                    </button>
+                    <button
+                      onClick={() => setShowUpay(!showUpay)}
+                      className={`flex items-center gap-1.5 rounded-md border px-2.5 py-1 text-[10px] font-medium transition-colors ${
+                        showUpay
+                          ? 'border-amber-200 bg-amber-50 text-amber-700 dark:border-amber-500/30 dark:bg-amber-500/15 dark:text-amber-300'
+                          : 'border-border text-muted-foreground hover:bg-muted'
+                      }`}
+                    >
+                      <span className="h-1.5 w-1.5 rounded-full" style={{ background: isDark ? '#fbbf24' : '#d97706' }} />
+                      UPay
+                    </button>
+                  </div>
+                </div>
+
+                {/* Chart */}
+                <div className="h-[300px] select-none px-3 py-4">
+                  <ResponsiveContainer width="100%" height="100%">
+                    <BarChart data={bundleChartData} margin={{ top: 5, right: 10, left: 0, bottom: 0 }}>
+                      <CartesianGrid vertical={false} stroke={isDark ? '#27272a' : '#e2e8f0'} strokeDasharray="4 4" />
+                      <XAxis
+                        dataKey="day"
+                        tick={{ fontSize: 10, fontWeight: 600, fill: isDark ? '#94a3b8' : '#64748b' }}
+                        axisLine={{ stroke: isDark ? '#334155' : '#cbd5e1' }}
+                        tickLine={false}
+                        interval={bundleXAxisInterval}
+                      />
+                      <YAxis
+                        tick={{ fontSize: 10, fontWeight: 600, fill: isDark ? '#94a3b8' : '#64748b' }}
+                        axisLine={false}
+                        tickLine={false}
+                        tickFormatter={(value: number) => fmtTooltipAbbrev(value)}
+                        width={38}
+                        tickMargin={6}
+                      />
+                      <Tooltip content={<BundleTooltip />} />
+                      <Bar dataKey="total" name="Total Bundle Transfer" fill={isDark ? '#2dd4bf' : '#0d9488'} radius={[4, 4, 0, 0]} maxBarSize={48} />
+                      {showNagad && <Bar dataKey="nagad" name="Nagad" fill={isDark ? '#38bdf8' : '#0284c7'} radius={[4, 4, 0, 0]} maxBarSize={48} />}
+                      {showRocket && <Bar dataKey="rocket" name="Rocket" fill={isDark ? '#a78bfa' : '#7c3aed'} radius={[4, 4, 0, 0]} maxBarSize={48} />}
+                      {showUpay && <Bar dataKey="upay" name="UPay" fill={isDark ? '#fbbf24' : '#d97706'} radius={[4, 4, 0, 0]} maxBarSize={48} />}
+                    </BarChart>
+                  </ResponsiveContainer>
                 </div>
               </section>
 
