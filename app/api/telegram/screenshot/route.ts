@@ -4,12 +4,31 @@ import type { Browser, Page } from 'puppeteer-core';
 export const runtime = 'nodejs';
 export const maxDuration = 60;
 
-// Vercel serverless has no system Chromium, so production uses
-// puppeteer-core + @sparticuz/chromium's Lambda-compatible binary. Locally
-// (Windows/Mac dev) that binary won't run at all, so dev instead launches
-// the full `puppeteer` package's own bundled, cross-platform Chromium.
+// puppeteer / puppeteer-core / @sparticuz/chromium are pure-ESM packages
+// (webpack's build error confirms it explicitly: "ESM packages need to be
+// imported. Use 'import'") — require() can never load them correctly, so
+// dynamic `await import()` is the only valid way to load them, not
+// createRequire(). (That was tried: Turbopack's own dynamic-import handling
+// had a separate, real bug — a broken hash-suffixed module reference — but
+// switching to require() masked it behind an even more confusing silent
+// failure, an empty stub object, since require() genuinely cannot load an
+// ESM module. Building with webpack instead of Turbopack, which handles
+// this import() correctly, is the fix.)
+//
+// Neither Vercel's serverless functions nor the self-hosted Linux VPS have a
+// system Chromium, so both use puppeteer-core + @sparticuz/chromium's
+// portable binary. `puppeteer` (with its own bundled, cross-platform
+// Chromium) is a devDependency used only for local Windows/Mac dev.
+//
+// This must branch on a process.env.* var, not process.platform: builds are
+// always produced on the local Windows dev machine (per the VPS deploy
+// workflow — "the VPS never runs a build"), and process.platform has been
+// observed getting frozen to the BUILD machine's OS rather than staying a
+// live runtime check under this bundler. IS_LOCAL_DEV is only ever set in
+// this machine's own .env.local (gitignored, never deployed), so its
+// absence is what every deployed target shares.
 async function launchBrowser(): Promise<Browser> {
-  if (process.env.VERCEL) {
+  if (!process.env.IS_LOCAL_DEV) {
     const chromium = (await import('@sparticuz/chromium')).default;
     const puppeteer = await import('puppeteer-core');
     return puppeteer.launch({
