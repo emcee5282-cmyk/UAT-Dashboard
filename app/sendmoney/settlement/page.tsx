@@ -43,6 +43,17 @@ function parseAmount(val: string): number {
   return parseFloat(cleaned) || 0;
 }
 
+// "PS BD STLM + TOPUP" dates are formatted "M/D/YYYY" — only today's rows
+// should ever render on this page.
+function isToday(dateStr: string): boolean {
+  const parts = (dateStr ?? '').trim().split('/');
+  if (parts.length !== 3) return false;
+  const [m, d, y] = parts.map(Number);
+  if (!m || !d || !y) return false;
+  const now = new Date();
+  return m === now.getMonth() + 1 && d === now.getDate() && y === now.getFullYear();
+}
+
 type SortColumn = '' | 'agentName' | 'wallet' | 'amount' | 'remarks' | 'date';
 type ColumnKey = 'brand' | SortColumn;
 
@@ -109,7 +120,6 @@ export default function SendMoneySettlementPage() {
   const [stlmRows, setStlmRows] = useState<StlmRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<ClassifiedError | null>(null);
-  const [lastUpdated, setLastUpdated] = useState('');
   const [spinning, setSpinning] = useState(false);
   const [searchTerm, setSearchTerm] = useState('');
   const [sortColumn, setSortColumn] = useState<SortColumn>('');
@@ -168,8 +178,7 @@ export default function SendMoneySettlementPage() {
           }
         });
 
-      setStlmRows(stlm.filter(row => row.agentName && row.agentName !== '-' && row.agentName !== '0'));
-      setLastUpdated(new Date().toLocaleTimeString('en-PH'));
+      setStlmRows(stlm.filter(row => row.agentName && row.agentName !== '-' && row.agentName !== '0' && isToday(row.date)));
     } catch (err) {
       setError(classifyFetchError(err instanceof Error ? err.message : String(err)));
     } finally {
@@ -337,19 +346,15 @@ export default function SendMoneySettlementPage() {
             </span>
           </div>
           <div className="flex items-center gap-2">
-            <div className="hidden items-center gap-1.5 rounded-md bg-emerald-50 px-2 py-0.5 dark:bg-emerald-500/10 sm:flex">
-              <span className="h-1.5 w-1.5 rounded-full bg-emerald-500" />
-              <span className="tabular-nums text-[9px] font-medium text-emerald-700 dark:text-emerald-400">{loading ? '—' : (lastUpdated || '—')}</span>
-            </div>
-            <span className="h-2 w-2 rounded-full bg-emerald-500 sm:hidden" />
             <ThemeToggle />
             <button
               onClick={fetchData}
               disabled={spinning || loading}
+              aria-label="Refresh"
+              title="Refresh"
               className="flex items-center gap-1.5 rounded-lg border border-border bg-muted/60 px-2.5 py-1.5 text-[11px] font-medium text-foreground transition-colors hover:bg-muted disabled:opacity-50"
             >
               <RefreshCw size={11} className={spinning ? 'animate-spin' : ''} />
-              <span className="hidden sm:inline">Refresh</span>
             </button>
           </div>
         </div>

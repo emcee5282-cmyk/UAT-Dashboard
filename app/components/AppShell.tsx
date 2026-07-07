@@ -14,7 +14,7 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
   return (
     <div data-product={activeProduct} className="contents">
       <Sidebar isExpanded={isExpanded} onExpandedChange={setIsExpanded} />
-      <main className="h-screen flex-1 overflow-y-auto md:ml-[52px]">
+      <main className="h-screen flex-1 overflow-y-auto md:ml-[52px] [scrollbar-gutter:stable]">
         <PageTransition>{children}</PageTransition>
       </main>
     </div>

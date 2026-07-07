@@ -459,7 +459,6 @@ export default function SendMoneyAgentBalance() {
   const [rows, setRows] = useState<MergedRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<ClassifiedError | null>(null);
-  const [lastUpdated, setLastUpdated] = useState('');
   const [spinning, setSpinning] = useState(false);
   const [cardsExpanded, setCardsExpanded] = useState(false);
   const [searchTerm, setSearchTerm] = useState('');
@@ -654,7 +653,6 @@ export default function SendMoneyAgentBalance() {
       });
 
       setRows(merged);
-      setLastUpdated(new Date().toLocaleTimeString('en-PH', { hour: 'numeric', minute: '2-digit', hour12: true }));
       setTimeout(() => {
         requestAnimationFrame(() => {
           requestAnimationFrame(() => {
@@ -853,7 +851,6 @@ export default function SendMoneyAgentBalance() {
     const totalDP = filteredRows.reduce((sum, row) => sum + row.agentTotalDP, 0);
     const totalWD = filteredRows.reduce((sum, row) => sum + row.agentTotalWD, 0);
     const totalSdp = filteredRows.reduce((sum, row) => sum + parseNumber(row.sdp), 0);
-    const totalTopUp = filteredRows.reduce((sum, row) => sum + row.totalTopUp, 0);
     const totalSettlement = filteredRows.reduce((sum, row) => sum + row.totalStlm, 0);
     const totalBalanceInside = filteredRows.reduce((sum, row) => sum + row.balanceInside, 0);
     const totalRunningBalance = filteredRows.reduce((sum, row) => sum + row.runningBalance, 0);
@@ -886,13 +883,6 @@ export default function SendMoneyAgentBalance() {
         label: 'SDP',
         bigValue: fmtAbbrev(totalSdp),
         subAmount: fmt(totalSdp),
-        subPositive: false,
-        showArrow: false,
-      },
-      {
-        label: 'Total Top Up',
-        bigValue: fmtAbbrev(totalTopUp),
-        subAmount: fmt(totalTopUp),
         subPositive: false,
         showArrow: false,
       },
@@ -1066,19 +1056,15 @@ export default function SendMoneyAgentBalance() {
               </>
             ) : (
               <>
-                <div className="hidden items-center gap-1.5 rounded-md bg-emerald-50 px-2 py-0.5 dark:bg-emerald-500/10 sm:flex">
-                  <span className="h-1.5 w-1.5 rounded-full bg-emerald-500" />
-                  <span className="tabular-nums text-[9px] font-medium text-emerald-700 dark:text-emerald-400">{lastUpdated || '—'}</span>
-                </div>
-                <span className="h-2 w-2 rounded-full bg-emerald-500 sm:hidden" />
                 <ThemeToggle />
                 <button
                   onClick={fetchData}
                   disabled={spinning || loading}
+                  aria-label="Refresh"
+                  title="Refresh"
                   className="flex items-center gap-1.5 rounded-lg border border-border bg-muted/60 px-2.5 py-1.5 text-[11px] font-medium text-foreground transition-colors hover:bg-muted disabled:opacity-50"
                 >
                   <RefreshCw size={11} className={spinning ? 'animate-spin' : ''} />
-                  <span className="hidden sm:inline">Refresh</span>
                 </button>
                 <button
                   type="button"
@@ -1098,19 +1084,19 @@ export default function SendMoneyAgentBalance() {
         {error && <ConnectionErrorState error={error} onRetry={fetchData} />}
 
         {!error && (
-          <div className={`shrink-0 overflow-hidden transition-all duration-300 ease-in-out ${cardsExpanded ? 'h-[84px] opacity-100 mb-1' : 'h-0 opacity-0 mb-0'}`}>
+          <div className={`shrink-0 overflow-hidden transition-all duration-300 ease-in-out ${cardsExpanded ? 'h-[102px] opacity-100 mb-1' : 'h-0 opacity-0 mb-0'}`}>
             <div className="flex gap-2 overflow-x-auto pb-3">
               {loading ? (
-                Array.from({ length: 7 }).map((_, i) => (
+                Array.from({ length: 6 }).map((_, i) => (
                   <div key={i} className="rounded-xl border border-border bg-white dark:bg-[#2a2a2d] shadow-sm flex-1 min-w-[100px] p-2.5">
-                    <div className="h-2.5 w-12 animate-pulse rounded-md bg-slate-200 dark:bg-slate-700" />
-                    <div className="mt-1.5 h-4 w-16 animate-pulse rounded-md bg-slate-200 dark:bg-slate-700" />
-                    <div className="mt-1 h-2 w-16 animate-pulse rounded-md bg-slate-200 dark:bg-slate-700" />
+                    <div className="h-3 w-12 animate-pulse rounded-md bg-slate-200 dark:bg-slate-700" />
+                    <div className="mt-1.5 h-6 w-16 animate-pulse rounded-md bg-slate-200 dark:bg-slate-700" />
+                    <div className="mt-1 h-5 w-16 animate-pulse rounded-md bg-slate-200 dark:bg-slate-700" />
                   </div>
                 ))
               ) : (
                 summaryCards.map((card) => (
-                  <div key={card.label} className="rounded-xl border border-border bg-white dark:bg-[#2a2a2d] shadow-sm flex-1 min-w-[100px] p-2.5 transition-shadow hover:shadow-md">
+                  <div key={card.label} className="rounded-xl border border-border bg-white dark:bg-[#2a2a2d] shadow-sm flex-1 min-w-[100px] p-2.5 hover:shadow-md">
                     <p className="text-[10px] font-semibold text-muted-foreground truncate">{card.label}</p>
                     <p className="mt-1 text-[15px] font-bold leading-tight text-foreground">{card.bigValue}</p>
                     <div className={`mt-0.5 text-[9px] font-medium ${

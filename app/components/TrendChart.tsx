@@ -87,29 +87,29 @@ export default function TrendChart({ title, seriesDefs, weekData, monthData }: T
   // peak detection, the average line, labels, tooltip totals, and the Today
   // strip all recompute from a per-point visibleTotal (sum of only
   // currently-toggled-on series).
+  // Zeroing a hidden series' own value here (rather than removing its <Bar>
+  // from the tree) keeps every Bar permanently mounted across toggles — see
+  // the dataKey note below for why that matters.
   const attachVisibleTotal = (points: TrendPoint[]): PlotPoint[] =>
-    points.map((p) => ({
-      ...p,
-      visibleTotal: seriesDefs.reduce((sum, def) => sum + (visibleSeries[def.key] ? (p.series[def.key] ?? 0) : 0), 0),
-    }));
+    points.map((p) => {
+      const series = Object.fromEntries(
+        seriesDefs.map((def) => [def.key, visibleSeries[def.key] ? (p.series[def.key] ?? 0) : 0])
+      );
+      const visibleTotal = seriesDefs.reduce((sum, def) => sum + series[def.key], 0);
+      return { ...p, series, visibleTotal };
+    });
 
   const weekPoints = useMemo(() => attachVisibleTotal(weekData), [weekData, visibleSeries, seriesDefs]);
   const monthPoints = useMemo(() => attachVisibleTotal(monthData), [monthData, visibleSeries, seriesDefs]);
   const chartData = period === 'week' ? weekPoints : monthPoints;
 
-  const todayPoint = monthData.find((p) => p.isToday) ?? weekData.find((p) => p.isToday) ?? null;
-  const todayVisibleTotal = todayPoint
-    ? seriesDefs.reduce((sum, def) => sum + (visibleSeries[def.key] ? (todayPoint.series[def.key] ?? 0) : 0), 0)
-    : 0;
-
   // 30-day average excludes the partial "Today" point — including a
   // half-finished day would skew the average down and misrepresent the
-  // "% vs 30-day avg" delta below.
+  // reference line below.
   const historicalMonthPoints = monthPoints.filter((p) => !p.isToday);
   const thirtyDayAvg = historicalMonthPoints.length
     ? historicalMonthPoints.reduce((sum, p) => sum + p.visibleTotal, 0) / historicalMonthPoints.length
     : 0;
-  const deltaPct = thirtyDayAvg > 0 ? ((todayVisibleTotal - thirtyDayAvg) / thirtyDayAvg) * 100 : null;
 
   const peakDay = chartData.length
     ? chartData.reduce((peak, point) => (point.visibleTotal > peak.visibleTotal ? point : peak), chartData[0]).day
@@ -138,6 +138,13 @@ export default function TrendChart({ title, seriesDefs, weekData, monthData }: T
       const point = chartData.find((p) => Math.abs(p.visibleTotal - numValue) < 0.01);
       if (!point || !shouldLabel(point)) return null;
 
+      // Recharts stacks the LAST-declared series (seriesDefs[seriesDefs.
+      // length - 1]) on top of the stack, and the first-declared as the
+      // base touching the axis — confirmed against real tooltip data
+      // (a day where the first series' value was 7x the second's still
+      // rendered the first series as the larger BASE segment, not on top).
+      // So the topmost non-zero segment for a given day is the last
+      // (highest-index) visible series with data that day.
       let hostKey: string | null = null;
       for (let i = seriesDefs.length - 1; i >= 0; i -= 1) {
         const def = seriesDefs[i];
@@ -167,65 +174,55 @@ export default function TrendChart({ title, seriesDefs, weekData, monthData }: T
       );
     };
 
+  // The last-declared series renders as the topmost stack segment (see
+  // hostKey note above), so the rounded top corners belong on the last
+  // VISIBLE series, not the first.
   const visibleDefs = seriesDefs.filter((def) => visibleSeries[def.key]);
-  const lastVisibleKey = visibleDefs.length ? visibleDefs[visibleDefs.length - 1].key : null;
+  const topmostVisibleKey = visibleDefs.length ? visibleDefs[visibleDefs.length - 1].key : null;
 
   return (
     <section className="overflow-hidden rounded-2xl border border-border bg-white shadow-sm dark:bg-[#2a2a2d]">
-      <div className="flex flex-wrap items-center justify-between gap-2 border-b border-border px-4 py-3">
-        <h2 className="whitespace-nowrap text-[13px] font-semibold text-foreground">{title}</h2>
-        <div className="flex items-center gap-0.5 rounded-lg border border-border p-0.5">
-          <button
-            onClick={() => setPeriod('week')}
-            className={`whitespace-nowrap rounded-md px-3 py-1 text-[10px] font-medium transition-colors ${
-              period === 'week' ? 'bg-[color:var(--product-accent)] text-white' : 'text-muted-foreground hover:text-foreground'
-            }`}
-          >
-            7D
-          </button>
-          <button
-            onClick={() => setPeriod('month')}
-            className={`whitespace-nowrap rounded-md px-3 py-1 text-[10px] font-medium transition-colors ${
-              period === 'month' ? 'bg-[color:var(--product-accent)] text-white' : 'text-muted-foreground hover:text-foreground'
-            }`}
-          >
-            30D
-          </button>
+      <div className="border-b border-border px-4 py-3">
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <h2 className="whitespace-nowrap text-[13px] font-semibold text-foreground">{title}</h2>
+          <div className="flex items-center gap-0.5 rounded-lg border border-border p-0.5">
+            <button
+              onClick={() => setPeriod('week')}
+              className={`whitespace-nowrap rounded-md px-3 py-1 text-[10px] font-medium ${
+                period === 'week' ? 'bg-[color:var(--product-accent)] text-white' : 'text-muted-foreground hover:text-foreground'
+              }`}
+            >
+              7D
+            </button>
+            <button
+              onClick={() => setPeriod('month')}
+              className={`whitespace-nowrap rounded-md px-3 py-1 text-[10px] font-medium ${
+                period === 'month' ? 'bg-[color:var(--product-accent)] text-white' : 'text-muted-foreground hover:text-foreground'
+              }`}
+            >
+              30D
+            </button>
+          </div>
         </div>
-      </div>
-
-      {/* Today strip: total + delta vs 30-day avg only — per-series amounts
-          live in the tooltip now, not here. Chips are dual-signal: the
-          background reflects toggle on/off, the dot reflects whether that
-          series has any data specifically today (independent of toggle state). */}
-      <div className="flex flex-wrap items-center gap-3 border-b border-border px-4 py-2.5">
-        <div className="flex items-center gap-1.5">
-          <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-emerald-500" />
-          <span className="text-[11px] font-semibold text-foreground">Today</span>
-          <span className="tabular-nums text-[12px] font-bold text-foreground">{fmtAmount(todayVisibleTotal)}</span>
-        </div>
-        {deltaPct !== null && (
-          <span className={`inline-flex items-center gap-0.5 text-[10px] font-semibold ${deltaPct >= 0 ? 'text-emerald-600 dark:text-emerald-400' : 'text-rose-500 dark:text-rose-400'}`}>
-            {deltaPct >= 0 ? '▲' : '▼'} {Math.abs(deltaPct).toFixed(0)}% vs 30-day avg
-          </span>
-        )}
-        <div className="ml-auto flex items-center gap-1.5">
+        {/* Wallet-type legend row: plain dot + label, no button chrome —
+            still clickable as a real filter. Filled dot = currently added to
+            the chart; hollow ring = tap to add it back. */}
+        <div className="mt-2 flex flex-wrap items-center gap-4">
           {seriesDefs.map((def, i) => {
             const isOn = visibleSeries[def.key];
-            const hasDataToday = !!todayPoint && (todayPoint.series[def.key] ?? 0) > 0;
             const rampOpacity = RAMP_OPACITY[i] ?? RAMP_OPACITY[RAMP_OPACITY.length - 1];
             return (
               <button
                 key={def.key}
                 onClick={() => toggleSeries(def.key)}
-                className={`flex items-center gap-1.5 rounded-md border px-2.5 py-1 text-[10px] font-medium transition-colors ${
-                  isOn ? 'border-transparent bg-[color:var(--product-accent-soft)] text-foreground' : 'border-border text-muted-foreground hover:bg-muted'
+                className={`flex items-center gap-1.5 text-[11px] font-medium ${
+                  isOn ? 'text-foreground' : 'text-muted-foreground'
                 }`}
               >
                 <span
-                  className="h-1.5 w-1.5 rounded-full"
+                  className="h-2 w-2 rounded-full"
                   style={
-                    hasDataToday
+                    isOn
                       ? { background: 'var(--product-accent)', opacity: rampOpacity }
                       : { background: 'transparent', border: '1.5px solid var(--muted-foreground)' }
                   }
@@ -252,7 +249,7 @@ export default function TrendChart({ title, seriesDefs, weekData, monthData }: T
                 axisLine={false}
                 tickLine={false}
                 tickFormatter={(value: number) => fmtAmount(value)}
-                width={38}
+                width={46}
                 tickMargin={6}
               />
             )}
@@ -261,11 +258,19 @@ export default function TrendChart({ title, seriesDefs, weekData, monthData }: T
               <ReferenceLine y={thirtyDayAvg} stroke="var(--muted-foreground)" strokeDasharray="4 4" strokeWidth={1} />
             )}
             {seriesDefs.map((def, i) => {
-              if (!visibleSeries[def.key]) return null;
-              const isLast = def.key === lastVisibleKey;
+              const isTopmost = def.key === topmostVisibleKey;
               const rampOpacity = RAMP_OPACITY[i] ?? RAMP_OPACITY[RAMP_OPACITY.length - 1];
+              // Every series' <Bar> stays mounted at all times with a
+              // stable string dataKey. Toggling a chip zeroes that series'
+              // value in the data itself (see attachVisibleTotal above)
+              // instead of unmounting the <Bar> — unmounting/remounting on
+              // toggle was the root cause of a real bug: recharts registers
+              // each stacked Bar's stack position by mount order, so
+              // re-adding a previously-removed Bar re-registered it at the
+              // END of the stack, reversing the visual arrangement after an
+              // untick/tick cycle.
               return (
-                <Bar key={def.key} dataKey={`series.${def.key}`} stackId="trend" fill="var(--product-accent)" maxBarSize={40} radius={isLast ? [3, 3, 0, 0] : undefined}>
+                <Bar key={def.key} dataKey={`series.${def.key}`} stackId="trend" fill="var(--product-accent)" maxBarSize={40} radius={isTopmost ? [3, 3, 0, 0] : undefined}>
                   {chartData.map((point, idx) => (
                     <Cell
                       key={idx}

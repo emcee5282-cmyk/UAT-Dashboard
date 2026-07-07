@@ -387,3 +387,243 @@ export async function fetchTransferQueueCount(): Promise<number> {
 
   return count;
 }
+
+// --- Send Money's own Transfer Queue count (app/sendmoney/transfer-queue/page.tsx) ---
+// Mirrors that page's ruleset exactly (genuinely different from Cashout's — see
+// comments there): no DAY variant, every brand has exactly two possible correct
+// groups, and 'SH' (Sharing) is never queued. Reuses parseCsvLines/parseNumber/
+// normalizeWalletStatus/computeWalletStatus/EXCLUDED_WALLET_STATUSES/normalizeGroup
+// above since those are byte-identical between the two pages.
+
+// Opening sheet col I holds Send Money's own "UPDATED TIME" card — Settlement
+// rows dated before this reset point are excluded so they aren't double-counted.
+function parseSendMoneyReportCutoffDate(openingRawRows: string[][]): Date | null {
+  for (const row of openingRawRows) {
+    const cell = (row[8] ?? '').trim();
+    const match = cell.match(/^([A-Za-z]+)\s+(\d{1,2})\s*-\s*\d{1,2}:\d{2}\s*[AP]M$/i);
+    if (match) {
+      const [, monthName, day] = match;
+      const year = new Date().getFullYear();
+      const parsed = new Date(`${monthName} ${day}, ${year}`);
+      if (!isNaN(parsed.getTime())) {
+        parsed.setHours(0, 0, 0, 0);
+        return parsed;
+      }
+    }
+  }
+  return null;
+}
+
+function parseSendMoneySheetDate(dateStr: string): Date | null {
+  const parts = (dateStr ?? '').trim().split('/');
+  if (parts.length !== 3) return null;
+  const [m, d, y] = parts.map(Number);
+  if (!m || !d || !y) return null;
+  return new Date(y, m - 1, d);
+}
+
+// No Send Money leaders are excluded — Cashout's exclusion list doesn't carry
+// over (different leader roster).
+function computeSendMoneySdpVsBalanceRaw(sdpRaw: string, sdpNum: number, companyBalance: number): number {
+  const sdpTrimmed = sdpRaw.trim().toUpperCase();
+  return sdpTrimmed === 'NO SDP' || sdpNum === 0 ? companyBalance : companyBalance - sdpNum;
+}
+
+const SEND_MONEY_BRAND_PRIORITY = ['M1', 'M2', 'B1', 'B2', 'B3', 'B4', 'B5', 'K1', 'J1', 'T1', 'SH'];
+const SEND_MONEY_SKIP_GROUPS = ['wallet with issue', 'disconnected', 'dc account'];
+const SEND_MONEY_BRAND_CODES = [...BRAND_CODES, 'SH'];
+
+function computeSendMoneyBrand(groups: string[]): string {
+  const counts = new Map<string, number>();
+  groups.forEach((group) => {
+    const trimmed = (group ?? '').trim();
+    if (!trimmed || trimmed === '-') return;
+    if (SEND_MONEY_SKIP_GROUPS.some((skip) => trimmed.toLowerCase().includes(skip))) return;
+    const code = trimmed.slice(0, 2).toUpperCase();
+    counts.set(code, (counts.get(code) ?? 0) + 1);
+  });
+
+  if (counts.size === 0) return '−';
+
+  const maxCount = Math.max(...counts.values());
+  const tied = Array.from(counts.keys()).filter((code) => counts.get(code) === maxCount);
+  const priorityTied = tied.filter((code) => SEND_MONEY_BRAND_PRIORITY.includes(code));
+
+  if (priorityTied.length > 0) {
+    priorityTied.sort((a, b) => SEND_MONEY_BRAND_PRIORITY.indexOf(a) - SEND_MONEY_BRAND_PRIORITY.indexOf(b));
+    return priorityTied[0];
+  }
+
+  tied.sort((a, b) => a.localeCompare(b));
+  return tied[0];
+}
+
+function resolveSendMoneyBrand(groups: string[], agentName: string): string {
+  const brand = computeSendMoneyBrand(groups);
+  if (brand !== '−' && SEND_MONEY_BRAND_CODES.includes(brand)) return brand;
+  return SEND_MONEY_BRAND_CODES.find((code) => agentName.toUpperCase().includes(code)) ?? '−';
+}
+
+// Every brand has exactly two possible correct groups. Three independent
+// triggers all point to WD Only (checked first, in this order): SDP VS
+// Balance > 50,000, Discrepancy > 10,000, Company Balance > 45,000; Company
+// Balance < 20,000 is the only DP + WD trigger. 'SH' has no rule.
+function resolveSendMoneyCorrectGroup(brand: string, companyBalance: number, sdpVsBalance: number, discrepancy: number): string | null {
+  if (!BRAND_CODES.includes(brand)) return null;
+
+  if (sdpVsBalance > 50000) return `${brand} 24/7 WD Only`;
+  if (discrepancy > 10000) return `${brand} 24/7 WD Only`;
+  if (companyBalance > 45000) return `${brand} 24/7 WD Only`;
+  if (companyBalance < 20000) return `${brand} 24/7 DP + WD`;
+
+  return null;
+}
+
+export async function fetchSendMoneyTransferQueueCount(): Promise<number> {
+  const [openingRes, balRes, stlmRes] = await Promise.all([
+    fetch(`/api/opening?t=${Date.now()}`),
+    fetch(`/api/sendmoney/balances?t=${Date.now()}`),
+    fetch(`/api/sendmoney/stlmtopup?t=${Date.now()}`),
+  ]);
+
+  if (!openingRes.ok || !balRes.ok || !stlmRes.ok) throw new Error('Failed to fetch');
+
+  const openingText = await openingRes.text();
+  const balData: string[][] = await balRes.json();
+  const stlmText = await stlmRes.text();
+
+  const openingRawRows = parseCsvLines(openingText);
+  const reportCutoffDate = parseSendMoneyReportCutoffDate(openingRawRows);
+
+  // Send Money's own roster lives in cols L-O (indices 11-14) of "Opening AG".
+  const openingRows = openingRawRows
+    .slice(1)
+    .filter((row) => row.some((cell) => cell.trim() !== ''))
+    .map((row) => ({
+      agentName: rawVal(row[11]),
+      openingBal: rawVal(row[12]),
+      sdp: rawVal(row[13]),
+    }))
+    .filter((row) => row.agentName && row.agentName !== '-' && row.agentName !== 'OLD');
+
+  // "SSP PS BalanceLimit" lines up with Cashout's own Balance Limit sheet
+  // from index 4 onward, just without Cashout's leading "Reference" column.
+  const balRows = balData
+    .slice(1)
+    .filter((row) => row.some((cell) => cell.trim() !== ''))
+    .map((row) => ({
+      walletName: rawVal(row[0]),
+      totalDP: rawVal(row[11]),
+      totalWD: rawVal(row[13]),
+      balance: rawVal(row[8]),
+      login: rawVal(row[15]),
+      accountStatus: rawVal(row[1]),
+      group: rawVal(row[6]),
+    }))
+    .filter((row) => row.walletName && row.walletName !== '-');
+
+  const balWalletNames = new Set(balRows.map((bal) => bal.walletName));
+  const balanceTotals = new Map<string, { dp: number; wd: number }>();
+  const balanceInsideTotals = new Map<string, number>();
+  const walletStatusValues = new Map<string, string[]>();
+  const brandGroups = new Map<string, string[]>();
+  balRows.forEach((bal) => {
+    const name = bal.walletName;
+    const dp = parseFloat(bal.totalDP.replace(/,/g, '')) || 0;
+    const wd = parseFloat(bal.totalWD.replace(/,/g, '')) || 0;
+    const existing = balanceTotals.get(name) ?? { dp: 0, wd: 0 };
+    balanceTotals.set(name, { dp: existing.dp + dp, wd: existing.wd + wd });
+
+    if (bal.group && bal.group !== '-') {
+      const groups = brandGroups.get(name) ?? [];
+      groups.push(bal.group);
+      brandGroups.set(name, groups);
+    }
+
+    if (bal.accountStatus && bal.accountStatus !== '-') {
+      const statuses = walletStatusValues.get(name) ?? [];
+      statuses.push(bal.accountStatus);
+      walletStatusValues.set(name, statuses);
+    }
+
+    if (bal.login.trim().toLowerCase() === 'yes') {
+      const balance = parseFloat(bal.balance.replace(/,/g, '')) || 0;
+      balanceInsideTotals.set(name, (balanceInsideTotals.get(name) ?? 0) + balance);
+    }
+  });
+
+  // "PS BD STLM + TOPUP" is Send Money's own dedicated sheet. Top Up lives in
+  // cols B-F (indices 1-5), positive amounts; Settlement lives in cols H-L
+  // (indices 7-11), negative amounts (abs()'d) — same cutoff-date filtering
+  // as /sendmoney/balances so rows already folded into the last Opening
+  // Balance reset aren't double-counted.
+  const topUpTotals = new Map<string, number>();
+  const stlmTotals = new Map<string, number>();
+  parseCsvLines(stlmText)
+    .slice(1)
+    .filter((row) => row.some((cell) => cell.trim() !== ''))
+    .forEach((row) => {
+      const topUpAgent = rawVal(row[1]);
+      const topUpAmount = rawVal(row[2]);
+      const topUpDate = reportCutoffDate ? parseSendMoneySheetDate(rawVal(row[3])) : null;
+      if (
+        topUpAgent && topUpAgent !== '-' && topUpAmount && topUpAmount !== '-' &&
+        (!reportCutoffDate || (topUpDate && topUpDate >= reportCutoffDate))
+      ) {
+        const amount = Math.abs(parseFloat(topUpAmount.replace(/,/g, '')) || 0);
+        topUpTotals.set(topUpAgent, (topUpTotals.get(topUpAgent) ?? 0) + amount);
+      }
+
+      const stlmAgent = rawVal(row[7]);
+      const stlmAmount = rawVal(row[8]);
+      const stlmDate = reportCutoffDate ? parseSendMoneySheetDate(rawVal(row[9])) : null;
+      if (
+        stlmAgent && stlmAgent !== '-' && stlmAmount && stlmAmount !== '-' &&
+        (!reportCutoffDate || (stlmDate && stlmDate >= reportCutoffDate))
+      ) {
+        const amount = Math.abs(parseFloat(stlmAmount.replace(/,/g, '')) || 0);
+        stlmTotals.set(stlmAgent, (stlmTotals.get(stlmAgent) ?? 0) + amount);
+      }
+    });
+
+  const agentInfo = new Map<string, { companyBalance: number; sdpVsBalance: number; discrepancy: number; walletStatus: string; brand: string }>();
+  openingRows.forEach((opening) => {
+    const totals = balanceTotals.get(opening.agentName) ?? { dp: 0, wd: 0 };
+    const totalTopUp = topUpTotals.get(opening.agentName) ?? 0;
+    const totalStlm = stlmTotals.get(opening.agentName) ?? 0;
+    const balanceInside = balanceInsideTotals.get(opening.agentName) ?? 0;
+    const companyBalance = parseNumber(opening.openingBal) + totals.dp + totalTopUp - totals.wd - totalStlm;
+    const sdpNum = parseNumber(opening.sdp);
+    const walletStatus = balWalletNames.has(opening.agentName)
+      ? computeWalletStatus(walletStatusValues.get(opening.agentName) ?? [])
+      : 'No Record';
+
+    agentInfo.set(opening.agentName, {
+      companyBalance,
+      sdpVsBalance: computeSendMoneySdpVsBalanceRaw(opening.sdp, sdpNum, companyBalance),
+      discrepancy: companyBalance - balanceInside,
+      walletStatus,
+      brand: resolveSendMoneyBrand(brandGroups.get(opening.agentName) ?? [], opening.agentName),
+    });
+  });
+
+  let count = 0;
+  balRows.forEach((bal) => {
+    const info = agentInfo.get(bal.walletName);
+    if (!info) return;
+    if (EXCLUDED_WALLET_STATUSES.includes(info.walletStatus)) return;
+
+    const currentGroup = bal.group.trim();
+    if (currentGroup.toLowerCase().includes('top up')) return;
+    // Shops whose wallet name carries a "BD" segment are excluded from the
+    // Transfer Queue entirely, per user instruction (Transfer-Queue-specific).
+    if (bal.walletName.toUpperCase().includes('BD')) return;
+    const correctGroupName = resolveSendMoneyCorrectGroup(info.brand, info.companyBalance, info.sdpVsBalance, info.discrepancy);
+    if (!correctGroupName) return;
+    if (normalizeGroup(currentGroup) === normalizeGroup(correctGroupName)) return;
+
+    count += 1;
+  });
+
+  return count;
+}

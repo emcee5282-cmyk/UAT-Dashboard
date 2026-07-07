@@ -1,10 +1,12 @@
 'use client';
 
 import { useEffect, useState, useCallback } from 'react';
-import { RefreshCw, TrendingUp, TrendingDown, Wallet, Activity } from 'lucide-react';
+import { usePathname } from 'next/navigation';
+import { RefreshCw, Send, TrendingUp, TrendingDown, Wallet, Activity } from 'lucide-react';
 import ThemeToggle from './components/ThemeToggle';
 import ConnectionErrorState from './components/ConnectionErrorState';
 import TrendChart, { type TrendPoint, type TrendSeriesDef } from './components/TrendChart';
+import Toast, { type ToastState } from './components/Toast';
 import { classifyFetchError, type ClassifiedError, assertAllOk } from './lib/errors';
 
 const CASHGO_SERIES_DEFS: TrendSeriesDef[] = [
@@ -170,11 +172,13 @@ const walletColumns: { key: WalletColumnKey; label: string }[] = [
 ];
 
 export default function Dashboard() {
+  const pathname = usePathname();
   const [rows, setRows] = useState<Row[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<ClassifiedError | null>(null);
-  const [lastUpdated, setLastUpdated] = useState('');
   const [spinning, setSpinning] = useState(false);
+  const [telegramSending, setTelegramSending] = useState(false);
+  const [toast, setToast] = useState<ToastState>(null);
   const searchTerm = '';
   const [openingTotal, setOpeningTotal] = useState(0);
   const [agentRows, setAgentRows] = useState<AgentRow[]>([]);
@@ -395,7 +399,6 @@ export default function Dashboard() {
       setAgentRows(mergedAgentRows);
       setCashGoWeekData(cashGoWeekPoints);
       setCashGoMonthData(cashGoMonthPoints);
-      setLastUpdated(new Date().toLocaleTimeString('en-PH'));
     } catch (err) {
       setError(classifyFetchError(err instanceof Error ? err.message : String(err)));
     } finally {
@@ -407,6 +410,26 @@ export default function Dashboard() {
   useEffect(() => {
     fetchData();
   }, [fetchData]);
+
+  const handleSendToTelegram = async () => {
+    setTelegramSending(true);
+    try {
+      const res = await fetch('/api/telegram/screenshot', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ path: pathname, label: 'CashOut Overview' }),
+      });
+      const json = await res.json();
+      if (!res.ok || !json.ok) {
+        throw new Error(json.error || 'Failed to send screenshot.');
+      }
+      setToast({ type: 'success', message: 'Sent to Telegram.' });
+    } catch (err) {
+      setToast({ type: 'error', message: err instanceof Error ? err.message : 'Failed to send screenshot.' });
+    } finally {
+      setTelegramSending(false);
+    }
+  };
 
   const dataRows = rows.filter((r) => r.wallet && r.wallet.toLowerCase() !== 'total');
   const totalRow = rows.find((r) => r.wallet.toLowerCase() === 'total');
@@ -481,26 +504,32 @@ export default function Dashboard() {
         <div className="flex h-12 items-center justify-between gap-2">
           <div className="flex min-w-0 items-center gap-3">
             <div className="h-4 w-[3px] shrink-0 rounded-full bg-indigo-500" />
-            <h1 className="truncate text-[13px] font-semibold tracking-[-0.01em] text-foreground">SSP Cash Out Overview</h1>
+            <h1 className="truncate text-[13px] font-semibold tracking-[-0.01em] text-foreground">Cash Out Overview</h1>
           </div>
           <div className="flex shrink-0 items-center gap-2">
-            <div className="hidden items-center gap-1.5 rounded-md bg-emerald-50 px-2 py-0.5 dark:bg-emerald-500/10 sm:flex">
-              <span className="h-1.5 w-1.5 rounded-full bg-emerald-500" />
-              <span className="tabular-nums text-[9px] font-medium text-emerald-700 dark:text-emerald-400">{lastUpdated || '—'}</span>
-            </div>
-            <span className="h-2 w-2 rounded-full bg-emerald-500 sm:hidden" />
+            <button
+              onClick={handleSendToTelegram}
+              disabled={telegramSending || loading}
+              aria-label="Send to Telegram"
+              title="Send to Telegram"
+              className="flex items-center justify-center rounded-lg border border-border bg-muted/60 p-1.5 text-foreground hover:bg-muted disabled:cursor-not-allowed disabled:opacity-40"
+            >
+              <Send size={13} className={telegramSending ? 'animate-spin' : ''} />
+            </button>
             <ThemeToggle />
             <button
               onClick={fetchData}
               disabled={spinning}
-              className="flex items-center gap-1.5 rounded-lg border border-border bg-muted/60 px-2.5 py-1.5 text-[11px] font-medium text-foreground transition-colors hover:bg-muted disabled:opacity-50"
+              aria-label="Refresh"
+              title="Refresh"
+              className="flex items-center gap-1.5 rounded-lg border border-border bg-muted/60 px-2.5 py-1.5 text-[11px] font-medium text-foreground hover:bg-muted disabled:opacity-50"
             >
               <RefreshCw size={11} className={spinning ? 'animate-spin' : ''} />
-              <span className="hidden sm:inline">Refresh</span>
             </button>
           </div>
         </div>
       </header>
+      <Toast toast={toast} onDismiss={() => setToast(null)} />
 
       <main className="space-y-6 px-4 py-6 md:px-8 md:py-8">
         {loading && (
@@ -522,26 +551,20 @@ export default function Dashboard() {
                   ))}
                 </section>
 
-                {/* CashGo Trend skeleton — mirrors: icon+title header / today strip+toggles / 360px chart */}
+                {/* CashGo Trend skeleton — mirrors the real TrendChart: single bordered
+                    header (title+period-toggle row, then legend row), 280px chart */}
                 <section className="overflow-hidden rounded-2xl border border-border bg-white shadow-sm dark:bg-[#2a2a2d]">
-                  <div className="flex items-center justify-between border-b border-border px-4 py-3">
-                    <div className="flex items-center gap-2.5">
-                      <div className="h-7 w-7 animate-pulse rounded-lg bg-slate-200 dark:bg-slate-700" />
+                  <div className="border-b border-border px-4 py-3">
+                    <div className="flex flex-wrap items-center justify-between gap-2">
                       <div className="h-4 w-28 animate-pulse rounded-md bg-slate-200 dark:bg-slate-700" />
+                      <div className="h-7 w-24 animate-pulse rounded-lg bg-slate-200 dark:bg-slate-700" />
                     </div>
-                    <div className="h-7 w-28 animate-pulse rounded-lg bg-slate-200 dark:bg-slate-700" />
-                  </div>
-                  <div className="flex items-center gap-4 border-b border-border px-4 py-2.5">
-                    <div className="h-3 w-10 animate-pulse rounded-md bg-slate-200 dark:bg-slate-700" />
-                    <div className="h-3 w-24 animate-pulse rounded-md bg-slate-200 dark:bg-slate-700" />
-                    <div className="h-3 w-24 animate-pulse rounded-md bg-slate-200 dark:bg-slate-700" />
-                    <div className="h-3 w-28 animate-pulse rounded-md bg-slate-200 dark:bg-slate-700" />
-                    <div className="ml-auto flex gap-1.5">
-                      <div className="h-6 w-12 animate-pulse rounded-md bg-slate-200 dark:bg-slate-700" />
-                      <div className="h-6 w-12 animate-pulse rounded-md bg-slate-200 dark:bg-slate-700" />
+                    <div className="mt-2 flex items-center gap-4">
+                      <div className="h-3 w-12 animate-pulse rounded-md bg-slate-200 dark:bg-slate-700" />
+                      <div className="h-3 w-12 animate-pulse rounded-md bg-slate-200 dark:bg-slate-700" />
                     </div>
                   </div>
-                  <div className="h-[360px] px-3 py-4">
+                  <div className="h-[280px] px-3 py-4 pt-6">
                     <div className="h-full w-full animate-pulse rounded-xl bg-slate-100 dark:bg-slate-800" />
                   </div>
                 </section>
@@ -635,7 +658,7 @@ export default function Dashboard() {
         {!loading && !error && (
           <>
             <div className="relative flex flex-col gap-4 lg:flex-row">
-              <div className="flex flex-1 flex-col gap-4 lg:w-[calc(100%-326px)] lg:flex-none">
+              <div data-telegram-capture className="flex flex-1 flex-col gap-4 lg:w-[calc(100%-326px)] lg:flex-none">
                 <section className="grid grid-cols-2 gap-3 sm:grid-cols-4">
                   {summaryCards.map((card, i) => {
                     const themes = [
@@ -646,7 +669,7 @@ export default function Dashboard() {
                     ];
                     const { Icon, iconBg, iconColor } = themes[i] ?? themes[0];
                     return (
-                      <div key={card.label} className="rounded-2xl border border-[#e5e5e7] bg-white p-4 shadow-sm transition-shadow hover:shadow-md dark:border-[#3a3a3d] dark:bg-[#2a2a2d]">
+                      <div key={card.label} className="rounded-2xl border border-[#e5e5e7] bg-white p-4 shadow-sm hover:shadow-md dark:border-[#3a3a3d] dark:bg-[#2a2a2d]">
                         <div className="flex items-start justify-between gap-2">
                           <span className="text-[10px] font-semibold uppercase tracking-[0.07em] text-muted-foreground">{card.label}</span>
                           <div className={`flex h-7 w-7 shrink-0 items-center justify-center rounded-lg ${iconBg}`}>
@@ -685,7 +708,7 @@ export default function Dashboard() {
                       </thead>
                       <tbody>
                         {filteredRows.length > 0 ? filteredRows.map((row, i) => (
-                          <tr key={row.wallet} className={`border-b border-border last:border-0 transition-colors hover:bg-muted/30 ${i % 2 === 1 ? 'bg-muted/10' : ''}`}>
+                          <tr key={row.wallet} className={`border-b border-border last:border-0 hover:bg-muted/30 ${i % 2 === 1 ? 'bg-muted/10' : ''}`}>
                             <td className="whitespace-nowrap px-4 py-3 text-left">
                               <span className="text-[12px] font-bold text-foreground">{row.wallet}</span>
                             </td>
@@ -825,7 +848,7 @@ export default function Dashboard() {
                       return (
                         <div
                           key={agent.agentName}
-                          className={`flex items-center gap-3 border-b border-border px-4 py-2.5 last:border-0 transition-colors hover:bg-muted/40 ${index < 3 ? 'bg-muted/20' : ''}`}
+                          className={`flex items-center gap-3 border-b border-border px-4 py-2.5 last:border-0 hover:bg-muted/40 ${index < 3 ? 'bg-muted/20' : ''}`}
                         >
                           <div className={`flex h-6 w-6 shrink-0 items-center justify-center rounded-full text-[9px] font-bold ${rankBadge ?? 'text-[10px] font-semibold text-muted-foreground'}`}>
                             {index + 1}

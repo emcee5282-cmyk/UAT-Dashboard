@@ -1,19 +1,25 @@
 'use client';
 
 import { useEffect, useState, useCallback } from 'react';
-import { RefreshCw, TrendingUp, TrendingDown, Wallet, Activity } from 'lucide-react';
+import { RefreshCw, Send, TrendingUp, TrendingDown, Wallet, Activity } from 'lucide-react';
+import { Bar, BarChart, ResponsiveContainer, XAxis, YAxis, Tooltip, CartesianGrid, Cell, LabelList } from 'recharts';
 import ThemeToggle from '@/app/components/ThemeToggle';
+import Toast, { type ToastState } from '@/app/components/Toast';
+import { useTheme } from '@/app/components/ThemeProvider';
 import ConnectionErrorState from '@/app/components/ConnectionErrorState';
-import TrendChart, { type TrendPoint, type TrendSeriesDef } from '@/app/components/TrendChart';
 import { classifyFetchError, type ClassifiedError, assertAllOk } from '@/app/lib/errors';
 import { rawVal } from '@/app/lib/format';
 import { getSendMoneyRoute } from '@/app/lib/sendMoneyRoutes';
 
-const BUNDLE_SERIES_DEFS: TrendSeriesDef[] = [
-  { key: 'nagad', label: 'Nagad' },
-  { key: 'rocket', label: 'Rocket' },
-  { key: 'upay', label: 'UPay' },
-];
+type BundlePoint = {
+  day: string;
+  tooltipLabel: string;
+  nagad: number;
+  rocket: number;
+  upay: number;
+  total: number;
+  isToday: boolean;
+};
 
 type Row = {
   wallet: string;
@@ -157,6 +163,47 @@ function walletTypeLabelFromName(name: string): string | null {
   return WALLET_TYPE_LABELS[suffix] ?? null;
 }
 
+function fmtTooltipAbbrev(num: number): string {
+  const abs = Math.abs(num);
+  let value = abs;
+  let suffix = '';
+  if (abs >= 1e9) {
+    value = abs / 1e9;
+    suffix = 'B';
+  } else if (abs >= 1e6) {
+    value = abs / 1e6;
+    suffix = 'M';
+  } else if (abs >= 1e3) {
+    value = abs / 1e3;
+    suffix = 'K';
+  }
+  const rounded = Math.round(value * 10) / 10;
+  const str = rounded % 1 === 0 ? rounded.toFixed(0) : rounded.toFixed(1);
+  return `${str}${suffix}`;
+}
+
+function BundleXAxisTick({ x, y, payload }: { x?: number; y?: number; payload?: { value: string } }) {
+  const isToday = payload?.value === 'Today';
+  return (
+    <text x={x} y={(y ?? 0) + 12} textAnchor="middle" fontSize={10} fontWeight={isToday ? 700 : 600} fill={isToday ? 'var(--product-accent)' : 'var(--muted-foreground)'}>
+      {payload?.value}
+    </text>
+  );
+}
+
+function BundleTooltip({ active, payload }: { active?: boolean; payload?: Array<{ payload: BundlePoint }> }) {
+  if (!active || !payload || payload.length === 0) return null;
+  const point = payload[0].payload;
+  return (
+    <div className="rounded-lg border border-[#e5e5e7] bg-white px-3 py-2 text-[11px] shadow-md dark:border-[#3a3a3d] dark:bg-[#2a2a2d]">
+      <p className="mb-1.5 font-bold text-slate-900 dark:text-white">{point.tooltipLabel} · {fmtTooltipAbbrev(point.total)}</p>
+      <p className="text-slate-600 dark:text-slate-300">Nagad {fmtTooltipAbbrev(point.nagad)}</p>
+      <p className="text-slate-600 dark:text-slate-300">Rocket {fmtTooltipAbbrev(point.rocket)}</p>
+      <p className="text-slate-600 dark:text-slate-300">UPay {fmtTooltipAbbrev(point.upay)}</p>
+    </div>
+  );
+}
+
 // Settlement isn't shown as its own column here — it reads the same
 // underlying source as Bundle Transfer (both "BUNDLE TRANSFER" TYPE rows),
 // so displaying both was a duplicate. Bundle Transfer is kept since it
@@ -176,16 +223,20 @@ const walletColumns: { key: WalletColumnKey; label: string }[] = [
 
 export default function SendMoneyDashboardPage() {
   const route = getSendMoneyRoute('/sendmoney');
+  const { theme } = useTheme();
+  const isDark = theme === 'dark';
   const [rows, setRows] = useState<Row[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<ClassifiedError | null>(null);
-  const [lastUpdated, setLastUpdated] = useState('');
   const [spinning, setSpinning] = useState(false);
+  const [telegramSending, setTelegramSending] = useState(false);
+  const [toast, setToast] = useState<ToastState>(null);
   const searchTerm = '';
   const [openingTotal, setOpeningTotal] = useState(0);
   const [agentRows, setAgentRows] = useState<AgentRow[]>([]);
-  const [bundleWeekData, setBundleWeekData] = useState<TrendPoint[]>([]);
-  const [bundleMonthData, setBundleMonthData] = useState<TrendPoint[]>([]);
+  const [bundleWeekData, setBundleWeekData] = useState<BundlePoint[]>([]);
+  const [bundleMonthData, setBundleMonthData] = useState<BundlePoint[]>([]);
+  const [bundlePeriod, setBundlePeriod] = useState<'week' | 'month'>('week');
 
   const fetchData = useCallback(async () => {
     try {
@@ -376,14 +427,16 @@ export default function SendMoneyDashboardPage() {
           addBundleRow(row[22], row[23], row[24], row[25], row[26]); // prev month archive
         });
 
-      const toBundlePoint = (d: Date, isToday: boolean): TrendPoint => {
+      const toBundlePoint = (d: Date, isToday: boolean): BundlePoint => {
         const totals = bundleByDate.get(d.toDateString()) ?? { NAGAD: 0, ROCKET: 0, UPAY: 0 };
         return {
           day: isToday ? 'Today' : `${String(d.getMonth() + 1).padStart(2, '0')}/${String(d.getDate()).padStart(2, '0')}`,
           tooltipLabel: isToday ? 'Today' : d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' }),
-          isToday,
+          nagad: totals.NAGAD,
+          rocket: totals.ROCKET,
+          upay: totals.UPAY,
           total: totals.NAGAD + totals.ROCKET + totals.UPAY,
-          series: { nagad: totals.NAGAD, rocket: totals.ROCKET, upay: totals.UPAY },
+          isToday,
         };
       };
 
@@ -393,7 +446,7 @@ export default function SendMoneyDashboardPage() {
       const yesterday = new Date(now.getFullYear(), now.getMonth(), now.getDate() - 1);
 
       const weekHistoryStart = new Date(yesterday.getFullYear(), yesterday.getMonth(), yesterday.getDate() - 5);
-      const weekPoints: TrendPoint[] = [
+      const weekPoints: BundlePoint[] = [
         ...Array.from({ length: 6 }, (_, i) =>
           toBundlePoint(new Date(weekHistoryStart.getFullYear(), weekHistoryStart.getMonth(), weekHistoryStart.getDate() + i), false)
         ),
@@ -401,7 +454,7 @@ export default function SendMoneyDashboardPage() {
       ];
 
       const monthHistoryStart = new Date(yesterday.getFullYear(), yesterday.getMonth(), yesterday.getDate() - 28);
-      const monthPoints: TrendPoint[] = [
+      const monthPoints: BundlePoint[] = [
         ...Array.from({ length: 29 }, (_, i) =>
           toBundlePoint(new Date(monthHistoryStart.getFullYear(), monthHistoryStart.getMonth(), monthHistoryStart.getDate() + i), false)
         ),
@@ -413,7 +466,6 @@ export default function SendMoneyDashboardPage() {
       setAgentRows(mergedAgentRows);
       setBundleWeekData(weekPoints);
       setBundleMonthData(monthPoints);
-      setLastUpdated(new Date().toLocaleTimeString('en-PH'));
     } catch (err) {
       setError(classifyFetchError(err instanceof Error ? err.message : String(err)));
     } finally {
@@ -425,6 +477,75 @@ export default function SendMoneyDashboardPage() {
   useEffect(() => {
     fetchData();
   }, [fetchData]);
+
+  const handleSendToTelegram = async () => {
+    setTelegramSending(true);
+    try {
+      const res = await fetch('/api/telegram/screenshot', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ path: '/sendmoney', label: 'Send Money Overview' }),
+      });
+      const json = await res.json();
+      if (!res.ok || !json.ok) {
+        throw new Error(json.error || 'Failed to send screenshot.');
+      }
+      setToast({ type: 'success', message: 'Sent to Telegram.' });
+    } catch (err) {
+      setToast({ type: 'error', message: err instanceof Error ? err.message : 'Failed to send screenshot.' });
+    } finally {
+      setTelegramSending(false);
+    }
+  };
+
+  const bundleChartData = bundlePeriod === 'week' ? bundleWeekData : bundleMonthData;
+  // Recharts' default "nice number" auto-ticking produced awkward values
+  // (e.g. 22.5M) that don't divide evenly and, combined with the Y-axis's
+  // fixed width, got their leading digit clipped — reading as a broken/
+  // out-of-sequence number. Forcing exactly 3 ticks (0 / half / max) keeps
+  // labels short and predictable, matching the shared TrendChart component's
+  // approach.
+  const bundleYMax = Math.max(1, ...bundleMonthData.map((p) => p.total));
+  const bundleYTicks = [0, Math.round(bundleYMax / 2), bundleYMax];
+  // "preserveStartEnd" (rather than a numeric interval) guarantees the very
+  // last tick — Today — always renders instead of being skipped by interval
+  // parity on a 30-item array.
+  const bundleXAxisInterval: number | 'preserveStartEnd' = bundlePeriod === 'month' ? 'preserveStartEnd' : 0;
+  // Week mode labels every bar; month mode only labels the peak day and
+  // today, to keep 30 stacked bars from turning into a wall of text.
+  const bundlePeakIndex = bundleChartData.length
+    ? bundleChartData.reduce((peakIdx, point, idx, arr) => (point.total > arr[peakIdx].total ? idx : peakIdx), 0)
+    : -1;
+  const shouldLabelBundleBar = (point: BundlePoint) =>
+    bundlePeriod === 'week' || point.day === bundleChartData[bundlePeakIndex]?.day || point.isToday;
+
+  // Recharts skips calling a stacked Bar's LabelList content function for any
+  // day where that specific series' own value is 0 (no rect to anchor to),
+  // even with a custom content prop — and worse, it re-numbers `index` to
+  // only count that series' own non-zero entries (confirmed via logging:
+  // `index` for the "upay" series topped out around 21 instead of 29, and
+  // this recharts version's LabelList props don't include `payload` at all
+  // to sidestep it). The only value that's reliably correct regardless of
+  // that re-numbering is `value` itself (from dataKey="total"), so the real
+  // day is recovered by matching it back against bundleChartData's own
+  // totals instead of trusting `index`.
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const makeBundleValueLabelRenderer = (seriesKey: 'nagad' | 'rocket' | 'upay') => (props: any) => {
+    const { x, y, width, value } = props;
+    const numValue = Number(value ?? 0);
+    const point = bundleChartData.find((p) => Math.abs(p.total - numValue) < 0.01);
+    if (!point || !shouldLabelBundleBar(point)) return null;
+    const hostKey = point.upay > 0 ? 'upay' : point.rocket > 0 ? 'rocket' : 'nagad';
+    if (hostKey !== seriesKey) return null;
+    const numX = Number(x ?? 0);
+    const numY = Number(y ?? 0);
+    const numWidth = Number(width ?? 0);
+    return (
+      <text x={numX + numWidth / 2} y={numY - 6} textAnchor="middle" fontSize={10} fontWeight={700} fill={point.isToday ? 'var(--product-accent)' : 'var(--foreground)'}>
+        {fmtTooltipAbbrev(point.total)}
+      </text>
+    );
+  };
 
   const dataRows = rows.filter((r) => r.wallet && r.wallet.toLowerCase() !== 'total');
   const totalRow = rows.find((r) => r.wallet.toLowerCase() === 'total');
@@ -506,23 +627,29 @@ export default function SendMoneyDashboardPage() {
             <h1 className="truncate text-[13px] font-semibold tracking-[-0.01em] text-foreground">{route.title} Overview</h1>
           </div>
           <div className="flex shrink-0 items-center gap-2">
-            <div className="hidden items-center gap-1.5 rounded-md bg-emerald-50 px-2 py-0.5 dark:bg-emerald-500/10 sm:flex">
-              <span className="h-1.5 w-1.5 rounded-full bg-emerald-500" />
-              <span className="tabular-nums text-[9px] font-medium text-emerald-700 dark:text-emerald-400">{lastUpdated || '—'}</span>
-            </div>
-            <span className="h-2 w-2 rounded-full bg-emerald-500 sm:hidden" />
+            <button
+              onClick={handleSendToTelegram}
+              disabled={telegramSending || loading}
+              aria-label="Send to Telegram"
+              title="Send to Telegram"
+              className="flex items-center justify-center rounded-lg border border-border bg-muted/60 p-1.5 text-foreground hover:bg-muted disabled:cursor-not-allowed disabled:opacity-40"
+            >
+              <Send size={13} className={telegramSending ? 'animate-spin' : ''} />
+            </button>
             <ThemeToggle />
             <button
               onClick={fetchData}
               disabled={spinning}
-              className="flex items-center gap-1.5 rounded-lg border border-border bg-muted/60 px-2.5 py-1.5 text-[11px] font-medium text-foreground transition-colors hover:bg-muted disabled:opacity-50"
+              aria-label="Refresh"
+              title="Refresh"
+              className="flex items-center gap-1.5 rounded-lg border border-border bg-muted/60 px-2.5 py-1.5 text-[11px] font-medium text-foreground hover:bg-muted disabled:opacity-50"
             >
               <RefreshCw size={11} className={spinning ? 'animate-spin' : ''} />
-              <span className="hidden sm:inline">Refresh</span>
             </button>
           </div>
         </div>
       </header>
+      <Toast toast={toast} onDismiss={() => setToast(null)} />
 
       <main className="space-y-6 px-4 py-6 md:px-8 md:py-8">
         {loading && (
@@ -543,12 +670,15 @@ export default function SendMoneyDashboardPage() {
 
               <section className="overflow-hidden rounded-2xl border border-border bg-white shadow-sm dark:bg-[#2a2a2d]">
                 <div className="flex items-center justify-between border-b border-border px-4 py-3">
-                  <div className="flex items-center gap-2.5">
-                    <div className="h-7 w-7 animate-pulse rounded-lg bg-slate-200 dark:bg-slate-700" />
-                    <div className="h-4 w-28 animate-pulse rounded-md bg-slate-200 dark:bg-slate-700" />
-                  </div>
+                  <div className="h-4 w-28 animate-pulse rounded-md bg-slate-200 dark:bg-slate-700" />
+                  <div className="h-7 w-24 animate-pulse rounded-lg bg-slate-200 dark:bg-slate-700" />
                 </div>
-                <div className="h-[200px] px-3 py-4">
+                <div className="flex items-center gap-4 border-b border-border px-4 py-2">
+                  <div className="h-3 w-12 animate-pulse rounded-md bg-slate-200 dark:bg-slate-700" />
+                  <div className="h-3 w-12 animate-pulse rounded-md bg-slate-200 dark:bg-slate-700" />
+                  <div className="h-3 w-12 animate-pulse rounded-md bg-slate-200 dark:bg-slate-700" />
+                </div>
+                <div className="h-[280px] px-3 py-4 pt-6">
                   <div className="h-full w-full animate-pulse rounded-xl bg-slate-100 dark:bg-slate-800" />
                 </div>
               </section>
@@ -636,7 +766,7 @@ export default function SendMoneyDashboardPage() {
 
         {!loading && !error && (
           <div className="relative flex flex-col gap-4 lg:flex-row">
-            <div className="flex flex-1 flex-col gap-4 lg:w-[calc(100%-326px)] lg:flex-none">
+            <div data-telegram-capture className="flex flex-1 flex-col gap-4 lg:w-[calc(100%-326px)] lg:flex-none">
               <section className="grid grid-cols-2 gap-3 sm:grid-cols-4">
                 {summaryCards.map((card, i) => {
                   const themes = [
@@ -647,7 +777,7 @@ export default function SendMoneyDashboardPage() {
                   ];
                   const { Icon, iconBg, iconColor } = themes[i] ?? themes[0];
                   return (
-                    <div key={card.label} className="rounded-2xl border border-[#e5e5e7] bg-white p-4 shadow-sm transition-shadow hover:shadow-md dark:border-[#3a3a3d] dark:bg-[#2a2a2d]">
+                    <div key={card.label} className="rounded-2xl border border-[#e5e5e7] bg-white p-4 shadow-sm hover:shadow-md dark:border-[#3a3a3d] dark:bg-[#2a2a2d]">
                       <div className="flex items-start justify-between gap-2">
                         <span className="text-[10px] font-semibold uppercase tracking-[0.07em] text-muted-foreground">{card.label}</span>
                         <div className={`flex h-7 w-7 shrink-0 items-center justify-center rounded-lg ${iconBg}`}>
@@ -667,7 +797,99 @@ export default function SendMoneyDashboardPage() {
                 })}
               </section>
 
-              <TrendChart title="Bundle Transfer Trend" seriesDefs={BUNDLE_SERIES_DEFS} weekData={bundleWeekData} monthData={bundleMonthData} />
+              <section className="overflow-hidden rounded-2xl border border-border bg-white shadow-sm dark:bg-[#2a2a2d]">
+                <div className="flex flex-wrap items-center justify-between gap-2 border-b border-border px-4 py-3">
+                  <h2 className="whitespace-nowrap text-[13px] font-semibold text-foreground">Bundle Transfer Trend</h2>
+                  <div className="flex items-center gap-0.5 rounded-lg border border-border p-0.5">
+                    <button
+                      onClick={() => setBundlePeriod('week')}
+                      className={`whitespace-nowrap rounded-md px-3 py-1 text-[10px] font-medium ${
+                        bundlePeriod === 'week'
+                          ? 'bg-[color:var(--product-accent)] text-white'
+                          : 'text-muted-foreground hover:text-foreground'
+                      }`}
+                    >
+                      7D
+                    </button>
+                    <button
+                      onClick={() => setBundlePeriod('month')}
+                      className={`whitespace-nowrap rounded-md px-3 py-1 text-[10px] font-medium ${
+                        bundlePeriod === 'month'
+                          ? 'bg-[color:var(--product-accent)] text-white'
+                          : 'text-muted-foreground hover:text-foreground'
+                      }`}
+                    >
+                      30D
+                    </button>
+                  </div>
+                </div>
+
+                {/* Static legend — no toggle interaction, matches reference layout */}
+                <div className="flex items-center gap-4 border-b border-border px-4 py-2">
+                  <div className="flex items-center gap-1.5">
+                    <span className="h-2 w-2 rounded-full" style={{ background: isDark ? '#2dd4bf' : '#0d9488' }} />
+                    <span className="text-[10px] font-medium text-muted-foreground">Nagad</span>
+                  </div>
+                  <div className="flex items-center gap-1.5">
+                    <span className="h-2 w-2 rounded-full" style={{ background: isDark ? '#a78bfa' : '#7c3aed' }} />
+                    <span className="text-[10px] font-medium text-muted-foreground">Rocket</span>
+                  </div>
+                  <div className="flex items-center gap-1.5">
+                    <span className="h-2 w-2 rounded-full" style={{ background: isDark ? '#fbbf24' : '#d97706' }} />
+                    <span className="text-[10px] font-medium text-muted-foreground">UPay</span>
+                  </div>
+                </div>
+
+                {/* Chart — stacked bars, Today is the last bar (highlighted).
+                    Week mode: value label on every bar, no Y-axis. Month
+                    mode: minimal Y-axis, only the peak day and Today are
+                    labeled, rest revealed via tooltip on hover. */}
+                <div className="h-[280px] select-none px-3 py-4 pt-6">
+                  <ResponsiveContainer width="100%" height="100%">
+                    <BarChart data={bundleChartData} margin={{ top: 20, right: 20, left: 0, bottom: 0 }}>
+                      <CartesianGrid vertical={false} stroke={isDark ? '#27272a' : '#e2e8f0'} strokeDasharray="4 4" />
+                      <XAxis
+                        dataKey="day"
+                        tick={<BundleXAxisTick />}
+                        axisLine={{ stroke: isDark ? '#334155' : '#cbd5e1' }}
+                        tickLine={false}
+                        interval={bundleXAxisInterval}
+                      />
+                      {bundlePeriod === 'month' && (
+                        <YAxis
+                          domain={[0, bundleYMax]}
+                          ticks={bundleYTicks}
+                          tick={{ fontSize: 10, fontWeight: 600, fill: isDark ? '#94a3b8' : '#64748b' }}
+                          axisLine={false}
+                          tickLine={false}
+                          tickFormatter={(value: number) => fmtTooltipAbbrev(value)}
+                          width={46}
+                          tickMargin={6}
+                        />
+                      )}
+                      <Tooltip content={<BundleTooltip />} cursor={{ fill: isDark ? 'rgba(148,163,184,0.12)' : 'rgba(100,116,139,0.08)' }} />
+                      <Bar dataKey="nagad" stackId="bundle" fill={isDark ? '#2dd4bf' : '#0d9488'} maxBarSize={40}>
+                        {bundleChartData.map((point, i) => (
+                          <Cell key={i} stroke={point.isToday ? 'var(--product-accent)' : 'none'} strokeWidth={point.isToday ? 1.5 : 0} />
+                        ))}
+                        <LabelList dataKey="total" content={makeBundleValueLabelRenderer('nagad')} />
+                      </Bar>
+                      <Bar dataKey="rocket" stackId="bundle" fill={isDark ? '#a78bfa' : '#7c3aed'} maxBarSize={40}>
+                        {bundleChartData.map((point, i) => (
+                          <Cell key={i} stroke={point.isToday ? 'var(--product-accent)' : 'none'} strokeWidth={point.isToday ? 1.5 : 0} />
+                        ))}
+                        <LabelList dataKey="total" content={makeBundleValueLabelRenderer('rocket')} />
+                      </Bar>
+                      <Bar dataKey="upay" stackId="bundle" fill={isDark ? '#fbbf24' : '#d97706'} radius={[3, 3, 0, 0]} maxBarSize={40}>
+                        {bundleChartData.map((point, i) => (
+                          <Cell key={i} stroke={point.isToday ? 'var(--product-accent)' : 'none'} strokeWidth={point.isToday ? 1.5 : 0} />
+                        ))}
+                        <LabelList dataKey="total" content={makeBundleValueLabelRenderer('upay')} />
+                      </Bar>
+                    </BarChart>
+                  </ResponsiveContainer>
+                </div>
+              </section>
 
               <section className="overflow-hidden rounded-2xl border border-border bg-white shadow-sm dark:bg-[#2a2a2d]">
                 <div className="border-b border-border px-4 py-3">
@@ -702,7 +924,7 @@ export default function SendMoneyDashboardPage() {
                           );
                         }
                         return (
-                        <tr key={row.wallet} className={`border-b border-border last:border-0 transition-colors hover:bg-muted/30 ${i % 2 === 1 ? 'bg-muted/10' : ''}`}>
+                        <tr key={row.wallet} className={`border-b border-border last:border-0 hover:bg-muted/30 ${i % 2 === 1 ? 'bg-muted/10' : ''}`}>
                           <td className="whitespace-nowrap px-4 py-3 text-left">
                             <span className="text-[12px] font-bold text-foreground">{row.wallet}</span>
                           </td>
@@ -849,7 +1071,7 @@ export default function SendMoneyDashboardPage() {
                     return (
                       <div
                         key={agent.agentName}
-                        className={`flex items-center gap-3 border-b border-border px-4 py-2.5 last:border-0 transition-colors hover:bg-muted/40 ${index < 3 ? 'bg-muted/20' : ''}`}
+                        className={`flex items-center gap-3 border-b border-border px-4 py-2.5 last:border-0 hover:bg-muted/40 ${index < 3 ? 'bg-muted/20' : ''}`}
                       >
                         <div className={`flex h-6 w-6 shrink-0 items-center justify-center rounded-full text-[9px] font-bold ${rankBadge ?? 'text-[10px] font-semibold text-muted-foreground'}`}>
                           {index + 1}

@@ -27,14 +27,14 @@ const GeoLogo = () => (
     <rect x="17" y="4" width="6" height="16" rx="0.5" fill="white" />
     {/* Trend line */}
     <polyline points="4,14 12,9 20,4" stroke="#10b981" strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round" />
-    {/* Dark ring so dot lifts off the white bar */}
-    <circle cx="20" cy="4" r="2" fill="#0c1020" />
+    {/* Ring matching the tile bg so dot lifts off the white bar */}
+    <circle cx="20" cy="4" r="2" fill="var(--product-accent)" />
     {/* Emerald dot */}
     <circle cx="20" cy="4" r="1.4" fill="#10b981" />
   </svg>
 );
 import { useEffect, useState } from 'react';
-import { fetchTransferQueueCount } from '@/app/lib/transferQueueCount';
+import { fetchTransferQueueCount, fetchSendMoneyTransferQueueCount } from '@/app/lib/transferQueueCount';
 
 const navItems = [
   { href: '/', label: 'Dashboard', icon: LayoutDashboard },
@@ -64,7 +64,8 @@ export default function Sidebar({ isExpanded, onExpandedChange }: SidebarProps) 
   const [agentOpen, setAgentOpen] = useState(false);
   // URL is the single source of truth for the active product — never client state.
   const activeProduct = getActiveProduct(pathname);
-  const [transferQueueCount, setTransferQueueCount] = useState<number | null>(null);
+  const [cashoutTransferQueueCount, setCashoutTransferQueueCount] = useState<number | null>(null);
+  const [sendMoneyTransferQueueCount, setSendMoneyTransferQueueCount] = useState<number | null>(null);
 
   const goToProduct = (target: 'cashout' | 'sendmoney') => {
     router.push(getCounterpartPath(pathname, target));
@@ -80,8 +81,11 @@ export default function Sidebar({ isExpanded, onExpandedChange }: SidebarProps) 
   useEffect(() => {
     const load = () => {
       fetchTransferQueueCount()
-        .then(setTransferQueueCount)
-        .catch(() => setTransferQueueCount(null));
+        .then(setCashoutTransferQueueCount)
+        .catch(() => setCashoutTransferQueueCount(null));
+      fetchSendMoneyTransferQueueCount()
+        .then(setSendMoneyTransferQueueCount)
+        .catch(() => setSendMoneyTransferQueueCount(null));
     };
 
     load();
@@ -90,16 +94,17 @@ export default function Sidebar({ isExpanded, onExpandedChange }: SidebarProps) 
   }, []);
 
   const isMockup = pathname.startsWith('/mockup');
-  const displayCount = isMockup ? 150 : transferQueueCount;
+  const rawCount = activeProduct === 'cashout' ? cashoutTransferQueueCount : sendMoneyTransferQueueCount;
+  const displayCount = isMockup ? 150 : rawCount;
 
   const NavContent = ({ expanded }: { expanded: boolean }) => (
     <>
       {/* Brand */}
-      <div className={`flex h-14 shrink-0 items-center border-b border-border ${expanded ? 'gap-3 px-4' : 'justify-center'}`}>
-        <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-[#0c1020] ring-1 ring-white/10">
+      <div className={`flex h-[49px] shrink-0 items-center border-b border-border ${expanded ? 'gap-3 px-4' : 'justify-center'}`}>
+        <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-[color:var(--product-accent)] ring-1 ring-white/10">
           <GeoLogo />
         </div>
-        <div className={`overflow-hidden transition-all duration-300 ${expanded ? 'max-w-[160px] opacity-100' : 'max-w-0 opacity-0'}`}>
+        <div className={`overflow-hidden ${expanded ? 'max-w-[160px] opacity-100' : 'max-w-0 opacity-0'}`}>
           <p className="whitespace-nowrap text-[13px] font-semibold leading-tight text-foreground">Operations</p>
           <p className="whitespace-nowrap text-[8px] leading-snug text-muted-foreground/70">Real-time Operational Dashboard</p>
         </div>
@@ -124,7 +129,7 @@ export default function Sidebar({ isExpanded, onExpandedChange }: SidebarProps) 
             {/* Smart Solution — product-scoped nav */}
             <div
               data-product={activeProduct}
-              className={`rounded-xl border border-[color:var(--product-accent)]/40 transition-colors duration-200 ${expanded ? 'p-2' : 'p-1'}`}
+              className={`rounded-xl border border-[color:var(--product-accent)]/40 ${expanded ? 'p-2' : 'p-1'}`}
             >
               {expanded && (
                 <>
@@ -136,7 +141,7 @@ export default function Sidebar({ isExpanded, onExpandedChange }: SidebarProps) 
                       type="button"
                       aria-pressed={activeProduct === 'cashout'}
                       onClick={() => goToProduct('cashout')}
-                      className={`flex-1 whitespace-nowrap rounded-md px-2 py-1 text-[10.5px] font-semibold transition-colors ${
+                      className={`flex-1 whitespace-nowrap rounded-md px-2 py-1 text-[10.5px] font-semibold ${
                         activeProduct === 'cashout'
                           ? 'bg-indigo-600 text-white shadow-sm'
                           : 'text-muted-foreground hover:text-foreground'
@@ -148,7 +153,7 @@ export default function Sidebar({ isExpanded, onExpandedChange }: SidebarProps) 
                       type="button"
                       aria-pressed={activeProduct === 'sendmoney'}
                       onClick={() => goToProduct('sendmoney')}
-                      className={`flex-1 whitespace-nowrap rounded-md px-2 py-1 text-[10.5px] font-semibold transition-colors ${
+                      className={`flex-1 whitespace-nowrap rounded-md px-2 py-1 text-[10.5px] font-semibold ${
                         activeProduct === 'sendmoney'
                           ? 'bg-teal-600 text-white shadow-sm'
                           : 'text-muted-foreground hover:text-foreground'
@@ -170,9 +175,9 @@ export default function Sidebar({ isExpanded, onExpandedChange }: SidebarProps) 
                     onClick={() => goToProduct(activeProduct === 'cashout' ? 'sendmoney' : 'cashout')}
                     title={activeProduct === 'cashout' ? 'Switch to Send Money' : 'Switch to Cashout'}
                     aria-label={activeProduct === 'cashout' ? 'Switch to Send Money' : 'Switch to Cashout'}
-                    className="flex h-4 w-4 items-center justify-center rounded-full transition-colors hover:bg-[color:var(--product-accent-active-bg)]"
+                    className="flex h-4 w-4 items-center justify-center rounded-full hover:bg-[color:var(--product-accent-active-bg)]"
                   >
-                    <span className="h-1.5 w-1.5 rounded-full bg-[color:var(--product-accent)]" />
+                    <span className="h-1 w-1 rounded-full bg-[color:var(--product-accent)]" />
                   </button>
                 </div>
               )}
@@ -189,7 +194,7 @@ export default function Sidebar({ isExpanded, onExpandedChange }: SidebarProps) 
                         href={targetHref}
                         onClick={() => setMobileOpen(false)}
                         title={expanded ? undefined : item.label}
-                        className={`flex w-full items-center rounded-lg px-3 py-2 text-[12px] font-medium transition-all duration-150 ${
+                        className={`flex w-full items-center rounded-lg px-3 py-2 text-[12px] font-medium ${
                           expanded ? 'gap-3' : 'justify-center gap-0 px-0'
                         } ${
                           active
@@ -198,7 +203,7 @@ export default function Sidebar({ isExpanded, onExpandedChange }: SidebarProps) 
                         }`}
                       >
                         <Icon size={15} strokeWidth={1.75} className="shrink-0" />
-                        <span className={`overflow-hidden whitespace-nowrap transition-all duration-300 ${expanded ? 'max-w-[160px] opacity-100' : 'max-w-0 opacity-0'}`}>
+                        <span className={`overflow-hidden whitespace-nowrap ${expanded ? 'max-w-[160px] opacity-100' : 'max-w-0 opacity-0'}`}>
                           {item.label}
                         </span>
                       </Link>
@@ -213,7 +218,7 @@ export default function Sidebar({ isExpanded, onExpandedChange }: SidebarProps) 
                       <button
                         onClick={() => setAgentOpen((prev) => !prev)}
                         title={expanded ? undefined : item.label}
-                        className={`group flex w-full items-center rounded-lg px-3 py-2 text-[12px] font-medium transition-all duration-150 ${
+                        className={`group flex w-full items-center rounded-lg px-3 py-2 text-[12px] font-medium ${
                           expanded ? 'justify-between gap-3' : 'justify-center gap-0 px-0'
                         } ${
                           childActive
@@ -224,18 +229,18 @@ export default function Sidebar({ isExpanded, onExpandedChange }: SidebarProps) 
                         <span className={`flex items-center ${expanded ? 'gap-3' : 'justify-center gap-0'}`}>
                           <span className="relative shrink-0">
                             <ParentIcon size={15} strokeWidth={1.75} />
-                            {activeProduct === 'cashout' && !expanded && !!displayCount && displayCount > 0 && (
+                            {!expanded && !!displayCount && displayCount > 0 && (
                               <span className="absolute -right-1.5 -top-1.5 flex h-3 min-w-[12px] items-center justify-center rounded-full bg-[color:var(--product-accent)] px-0.5 text-[7px] font-bold leading-none text-white">
                                 {displayCount > 99 ? '99+' : displayCount}
                               </span>
                             )}
                           </span>
-                          <span className={`overflow-hidden whitespace-nowrap transition-all duration-300 ${expanded ? 'max-w-[160px] opacity-100' : 'max-w-0 opacity-0'}`}>
+                          <span className={`overflow-hidden whitespace-nowrap ${expanded ? 'max-w-[160px] opacity-100' : 'max-w-0 opacity-0'}`}>
                             {item.label}
                           </span>
-                          {activeProduct === 'cashout' && expanded && !!displayCount && displayCount > 0 && (
+                          {expanded && !!displayCount && displayCount > 0 && (
                             <span className="flex h-4 min-w-[20px] shrink-0 items-center justify-center rounded-full bg-[color:var(--product-accent)] px-1.5 text-[9px] font-bold leading-none text-white">
-                              {displayCount > 999 ? '999+' : displayCount}
+                              {displayCount > 99 ? '99+' : displayCount}
                             </span>
                           )}
                         </span>
@@ -243,7 +248,7 @@ export default function Sidebar({ isExpanded, onExpandedChange }: SidebarProps) 
                           <ChevronDown
                             size={13}
                             strokeWidth={1.75}
-                            className={`shrink-0 transition-all duration-200 ease-in-out group-hover:text-foreground ${
+                            className={`shrink-0 group-hover:text-foreground ${
                               agentOpen ? 'rotate-180 text-foreground' : 'text-muted-foreground'
                             }`}
                           />
@@ -270,7 +275,7 @@ export default function Sidebar({ isExpanded, onExpandedChange }: SidebarProps) 
                                     ? { animation: `navItemIn 180ms ease-out ${idx * 35}ms both` }
                                     : undefined
                                 }
-                                className={`flex w-full items-center justify-between gap-2 whitespace-nowrap rounded-lg px-3 py-2 text-[11px] font-medium transition-all duration-150 ${
+                                className={`flex w-full items-center justify-between gap-2 whitespace-nowrap rounded-lg px-3 py-2 text-[11px] font-medium ${
                                   active
                                     ? 'bg-[color:var(--product-accent-active-bg)] text-[color:var(--product-accent)]'
                                     : 'text-muted-foreground hover:bg-muted hover:text-foreground'
@@ -280,12 +285,12 @@ export default function Sidebar({ isExpanded, onExpandedChange }: SidebarProps) 
                                   <ChildIcon size={13} strokeWidth={1.75} className="shrink-0" />
                                   {child.label}
                                 </span>
-                                {activeProduct === 'cashout' && isTransferQueue && !!displayCount && displayCount > 0 && (
+                                {isTransferQueue && !!displayCount && displayCount > 0 && (
                                   <span
                                     title={`${displayCount} agent${displayCount === 1 ? '' : 's'} need transfer`}
                                     className="flex h-4 min-w-[20px] shrink-0 items-center justify-center rounded-full bg-[color:var(--product-accent)] px-1.5 text-[9px] font-bold leading-none text-white"
                                   >
-                                    {displayCount > 999 ? '999+' : displayCount}
+                                    {displayCount > 99 ? '99+' : displayCount}
                                   </span>
                                 )}
                               </Link>
@@ -329,7 +334,7 @@ export default function Sidebar({ isExpanded, onExpandedChange }: SidebarProps) 
           <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-indigo-100 text-[10px] font-bold text-indigo-700 dark:bg-indigo-500/20 dark:text-indigo-300">
             OP
           </div>
-          <div className={`min-w-0 overflow-hidden whitespace-nowrap transition-all duration-300 ${expanded ? 'max-w-[160px] opacity-100' : 'max-w-0 opacity-0'}`}>
+          <div className={`min-w-0 overflow-hidden whitespace-nowrap ${expanded ? 'max-w-[160px] opacity-100' : 'max-w-0 opacity-0'}`}>
             <p className="truncate text-[12px] font-semibold text-foreground">Operations Admin</p>
             <p className="truncate text-[10px] text-muted-foreground">admin@operations.com</p>
           </div>
@@ -355,15 +360,32 @@ export default function Sidebar({ isExpanded, onExpandedChange }: SidebarProps) 
         <NavContent expanded />
       </aside>
 
-      <aside
+      {/* Desktop rail — icon strip and the expanded white panel share this one
+          hover group, so moving the cursor between them (instead of off the
+          sidebar entirely) never closes the panel. */}
+      <div
         onMouseEnter={() => onExpandedChange(true)}
         onMouseLeave={() => onExpandedChange(false)}
-        className={`fixed left-0 top-0 z-[60] hidden h-screen flex-col overflow-hidden border-r border-border bg-white text-foreground transition-[width] duration-300 dark:bg-[#0d1117] md:flex ${
-          isExpanded ? 'w-60 shadow-lg' : 'w-[52px]'
-        }`}
+        className="fixed left-0 top-0 z-[60] hidden h-screen w-[52px] md:block"
       >
-        <NavContent expanded={isExpanded} />
-      </aside>
+        {/* Icon strip — always visible, fixed width, no hover animation. */}
+        <aside className="relative z-10 flex h-full w-[52px] flex-col overflow-hidden border-r border-border bg-white text-foreground dark:bg-[#0d1117]">
+          <NavContent expanded={false} />
+        </aside>
+
+        {/* Expanded panel — slides in from the left with opacity + translateX.
+            Disabled (snaps instantly) while the Agent submenu is open, so its
+            own accordion animation isn't fighting this one. */}
+        <aside
+          className={`absolute left-0 top-0 z-20 flex h-screen w-60 flex-col overflow-hidden border-r border-border bg-white text-foreground shadow-lg dark:bg-[#0d1117] ${
+            agentOpen ? '' : 'transition-[opacity,transform] duration-300'
+          } ${
+            isExpanded ? 'translate-x-0 opacity-100' : 'pointer-events-none -translate-x-2 opacity-0'
+          }`}
+        >
+          <NavContent expanded />
+        </aside>
+      </div>
     </>
   );
 }
