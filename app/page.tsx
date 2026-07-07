@@ -74,7 +74,20 @@ function parseReportCutoffDate(openingRawRows: string[][]): Date | null {
   return null;
 }
 
-// Stlm Top Up sheet dates are formatted "M/D/YYYY".
+const BRAND_CODES = ['M1', 'M2', 'B1', 'B2', 'B3', 'B4', 'B5', 'K1', 'J1', 'T1'];
+
+// "To Agent" values on "AG BD STLM + TOPUP" sometimes carry a trailing
+// "-<brand>" suffix (e.g. "KONAN001-M1") — strip it so the bare code matches
+// the Opening sheet's own (always-bare) agent names.
+function stripBrandSuffix(name: string): string {
+  const parts = name.split('-');
+  if (parts.length >= 2 && BRAND_CODES.includes(parts[parts.length - 1].toUpperCase())) {
+    return parts.slice(0, -1).join('-');
+  }
+  return name;
+}
+
+// "AG BD STLM + TOPUP" dates are formatted "M/D/YYYY".
 function parseStlmRowDate(dateStr: string): Date | null {
   const parts = (dateStr ?? '').trim().split('/');
   if (parts.length !== 3) return null;
@@ -195,7 +208,7 @@ export default function Dashboard() {
         fetch(`/api/sheet?t=${Date.now()}`),
         fetch(`/api/opening?t=${Date.now()}`),
         fetch(`/api/agentbal?t=${Date.now()}`),
-        fetch(`/api/stlm?t=${Date.now()}`),
+        fetch(`/api/agstlmtopup?t=${Date.now()}`),
         fetch(`/api/cashgo?t=${Date.now()}`),
       ]);
       await assertAllOk([res, openingRes, agentBalRes, stlmRes, cashGoRes]);
@@ -291,30 +304,31 @@ export default function Dashboard() {
         .slice(1)
         .filter((row) => row.some((cell) => cell.trim() !== ''))
         .forEach((row) => {
-          // Top Up section (cols A-F = 0-5): col[0]=agent, col[2]=wallet, col[3]=amount, col[4]=date
-          const topUpAmountNum = clean((row[3] ?? '').replace(/"/g, '').trim());
-          const topUpAgent = (row[0] ?? '').replace(/"/g, '').trim();
-          const topUpDate = reportCutoffDate ? parseStlmRowDate((row[4] ?? '').replace(/"/g, '').trim()) : null;
+          // Top Up section (cols B-F = 1-5): col[1]=agent, col[2]=amount, col[3]=date, col[4]=wallet
+          const topUpAmountNum = clean((row[2] ?? '').replace(/"/g, '').trim());
+          const topUpAgent = stripBrandSuffix((row[1] ?? '').replace(/"/g, '').trim());
+          const topUpDate = reportCutoffDate ? parseStlmRowDate((row[3] ?? '').replace(/"/g, '').trim()) : null;
           const topUpInRange = !reportCutoffDate || (topUpDate !== null && topUpDate >= reportCutoffDate);
           if (topUpAgent && topUpAgent !== '-' && topUpAmountNum && topUpInRange) {
             topUpTotals.set(topUpAgent, (topUpTotals.get(topUpAgent) ?? 0) + topUpAmountNum);
           }
-          // wallet-level top up — col[2] = wallet brand
-          const tuWallet = (row[2] ?? '').replace(/"/g, '').trim().toLowerCase();
+          // wallet-level top up — col[4] = wallet brand
+          const tuWallet = (row[4] ?? '').replace(/"/g, '').trim().toLowerCase();
           if (tuWallet && tuWallet !== '-' && topUpAmountNum && topUpInRange) {
             walletTopUpTotals.set(tuWallet, (walletTopUpTotals.get(tuWallet) ?? 0) + topUpAmountNum);
           }
 
-          // Settlement section (cols H-M = 7-12): col[7]=agent, col[8]=amount, col[10]=date, col[11]=wallet
-          const stlmAgent = (row[7] ?? '').replace(/"/g, '').trim();
-          const stlmAmountNum = clean((row[8] ?? '').replace(/"/g, '').trim());
-          const stlmDate = reportCutoffDate ? parseStlmRowDate((row[10] ?? '').replace(/"/g, '').trim()) : null;
+          // Settlement section (cols H-L = 7-11): col[7]=agent, col[8]=amount (stored
+          // negative, abs()'d below), col[9]=date, col[10]=wallet
+          const stlmAgent = stripBrandSuffix((row[7] ?? '').replace(/"/g, '').trim());
+          const stlmAmountNum = Math.abs(clean((row[8] ?? '').replace(/"/g, '').trim()));
+          const stlmDate = reportCutoffDate ? parseStlmRowDate((row[9] ?? '').replace(/"/g, '').trim()) : null;
           const stlmInRange = !reportCutoffDate || (stlmDate !== null && stlmDate >= reportCutoffDate);
           if (stlmAgent && stlmAgent !== '-' && stlmAmountNum && stlmInRange) {
             stlmTotals.set(stlmAgent, (stlmTotals.get(stlmAgent) ?? 0) + stlmAmountNum);
           }
-          // wallet-level settlement — col[11] = wallet brand (Bkash/Nagad/etc.)
-          const stlmWallet = (row[11] ?? '').replace(/"/g, '').trim().toLowerCase();
+          // wallet-level settlement — col[10] = wallet brand (Bkash/Nagad/etc.)
+          const stlmWallet = (row[10] ?? '').replace(/"/g, '').trim().toLowerCase();
           if (stlmWallet && stlmWallet !== '-' && stlmAmountNum && stlmInRange) {
             walletStlmTotals.set(stlmWallet, (walletStlmTotals.get(stlmWallet) ?? 0) + stlmAmountNum);
           }
