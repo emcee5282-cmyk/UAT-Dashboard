@@ -81,7 +81,13 @@ export async function POST(request: NextRequest) {
     // (often shrunk) mobile preview size.
     await page.setViewport({ width: 1440, height: 900, deviceScaleFactor: 2 });
 
-    const targetUrl = new URL(path, request.nextUrl.origin).toString();
+    // On IP-restricted deployments, nginx blocks every source not on the
+    // allowlist — including this same box's own outbound request back to its
+    // public domain. INTERNAL_BASE_URL (set only in that deployment's own
+    // .env.local) routes this internal navigation straight to the local
+    // Next.js server instead, bypassing nginx entirely.
+    const origin = process.env.INTERNAL_BASE_URL || request.nextUrl.origin;
+    const targetUrl = new URL(path, origin).toString();
     await page.goto(targetUrl, { waitUntil: 'networkidle0', timeout: 30000 });
     await waitForRealData(page);
 
