@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useState, useCallback } from 'react';
+import Image from 'next/image';
 import { RefreshCw } from 'lucide-react';
 import ThemeToggle from '../components/ThemeToggle';
 import ConnectionErrorState from '../components/ConnectionErrorState';
@@ -32,14 +33,52 @@ const WALLET_DISPLAY_NAMES: Record<string, string> = {
   ROCKET: 'Rocket',
   UPAY: 'UPay',
 };
-// Brand-adjacent placeholder colors for the fallback circle+initial logo —
-// swap for real asset files in /public/wallets/ once supplied.
+// Filenames match the actual case on disk — the VPS deploy target is Linux,
+// where paths are case-sensitive, so this must match exactly (not the
+// lowercase convention used in the rest of this file).
+const WALLET_LOGOS: Record<string, string> = {
+  BKASH: '/wallets/Bkash.png',
+  NAGAD: '/wallets/Nagad.png',
+  ROCKET: '/wallets/Rocket.png',
+  UPAY: '/wallets/Upay.png',
+};
+// Brand-adjacent colors for the circle+initial fallback, used if a logo file
+// is missing or fails to load.
 const WALLET_COLORS: Record<string, string> = {
   BKASH: '#E2136E',
   NAGAD: '#F5821F',
   ROCKET: '#8C3494',
   UPAY: '#3EB549',
 };
+
+function WalletLogo({ wallet, muted }: { wallet: string; muted?: boolean }) {
+  const [imgError, setImgError] = useState(false);
+  const src = WALLET_LOGOS[wallet];
+
+  if (!src || imgError) {
+    return (
+      <div
+        className={`flex h-5 w-5 shrink-0 items-center justify-center rounded-md text-[9px] font-bold text-white ${muted ? 'grayscale opacity-50' : ''}`}
+        style={{ backgroundColor: WALLET_COLORS[wallet] ?? '#94a3b8' }}
+      >
+        {wallet.charAt(0)}
+      </div>
+    );
+  }
+
+  return (
+    <div className={`relative h-5 w-5 shrink-0 overflow-hidden rounded-md ${muted ? 'grayscale opacity-50' : ''}`}>
+      <Image
+        src={src}
+        alt={WALLET_DISPLAY_NAMES[wallet] ?? wallet}
+        fill
+        sizes="20px"
+        className="object-contain"
+        onError={() => setImgError(true)}
+      />
+    </div>
+  );
+}
 
 type WalletFlow = {
   wallet: string;
@@ -132,9 +171,7 @@ function WalletTile({ wallet }: { wallet: CardWallet }) {
     return (
       <div className="rounded-xl border border-border bg-muted/20 px-3 py-2.5">
         <div className="flex items-center gap-1.5">
-          <div className="flex h-[18px] w-[18px] shrink-0 items-center justify-center rounded-full bg-muted text-[9px] font-bold text-muted-foreground">
-            {wallet.wallet.charAt(0)}
-          </div>
+          <WalletLogo wallet={wallet.wallet} muted />
           <span className="text-[11px] text-muted-foreground">{name}</span>
         </div>
         <p className="mt-2 text-[12px] font-medium text-muted-foreground">Coming soon</p>
@@ -146,12 +183,7 @@ function WalletTile({ wallet }: { wallet: CardWallet }) {
   return (
     <div className="rounded-xl border border-border bg-white px-3 py-2.5 dark:bg-[#2a2a2d]">
       <div className="flex items-center gap-1.5">
-        <div
-          className="flex h-[18px] w-[18px] shrink-0 items-center justify-center rounded-full text-[9px] font-bold text-white"
-          style={{ backgroundColor: WALLET_COLORS[wallet.wallet] ?? '#94a3b8' }}
-        >
-          {wallet.wallet.charAt(0)}
-        </div>
+        <WalletLogo wallet={wallet.wallet} />
         <span className="text-[11px] text-muted-foreground">{name}</span>
       </div>
       <p className="mt-1.5 text-[15px] font-medium tabular-nums text-foreground">{fmt(wallet.runningBal)}</p>
