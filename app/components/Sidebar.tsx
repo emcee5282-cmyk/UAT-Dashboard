@@ -15,6 +15,7 @@ import {
   X,
   Shuffle,
   Settings,
+  Scale,
 } from 'lucide-react';
 
 const GeoLogo = () => (
@@ -38,6 +39,7 @@ import { fetchTransferQueueCount, fetchSendMoneyTransferQueueCount } from '@/app
 
 const navItems = [
   { href: '/', label: 'Dashboard', icon: LayoutDashboard },
+  { href: '/balance-overview', label: 'Balance Overview', icon: Scale },
   {
     label: 'Agent',
     icon: Users,

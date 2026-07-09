@@ -20,6 +20,9 @@ export const ROUTE_MAP: RoutePair[] = [
   { cashout: '/stlm', sendmoney: '/sendmoney/settlement' },
   { cashout: '/topup', sendmoney: '/sendmoney/topup' },
   { cashout: '/transfer-queue', sendmoney: '/sendmoney/transfer-queue' },
+  // Balance Overview combines both products on one page — self-mapped so it
+  // never redirects away when the Cashout/Send Money switcher is toggled.
+  { cashout: '/balance-overview', sendmoney: '/balance-overview' },
 ];
 
 // The URL is the single source of truth for the active product — never client
