@@ -15,7 +15,7 @@ import {
   X,
   Shuffle,
   Settings,
-  Scale,
+  BarChart3,
 } from 'lucide-react';
 
 const GeoLogo = () => (
@@ -39,7 +39,6 @@ import { fetchTransferQueueCount, fetchSendMoneyTransferQueueCount } from '@/app
 
 const navItems = [
   { href: '/', label: 'Dashboard', icon: LayoutDashboard },
-  { href: '/balance-overview', label: 'Balance Overview', icon: Scale },
   {
     label: 'Agent',
     icon: Users,
@@ -128,6 +127,26 @@ export default function Sidebar({ isExpanded, onExpandedChange }: SidebarProps) 
           </div>
         ) : (
           <>
+            {/* Overview — product-agnostic, spans both Cashout and Send Money,
+                so it sits above the Smart Solution box rather than inside it. */}
+            <Link
+              href={resolveHref('/balance-overview')}
+              onClick={() => setMobileOpen(false)}
+              title={expanded ? undefined : 'Overview'}
+              className={`flex w-full items-center rounded-lg px-3 py-2 text-[12px] font-medium ${
+                expanded ? 'gap-3' : 'justify-center gap-0 px-0'
+              } ${
+                pathname === resolveHref('/balance-overview')
+                  ? 'bg-[color:var(--product-accent-active-bg)] text-[color:var(--product-accent)]'
+                  : 'text-muted-foreground hover:bg-muted hover:text-foreground'
+              }`}
+            >
+              <BarChart3 size={15} strokeWidth={1.75} className="shrink-0" />
+              <span className={`overflow-hidden whitespace-nowrap ${expanded ? 'max-w-[160px] opacity-100' : 'max-w-0 opacity-0'}`}>
+                Overview
+              </span>
+            </Link>
+
             {/* Smart Solution — product-scoped nav */}
             <div
               data-product={activeProduct}

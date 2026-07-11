@@ -1,10 +1,9 @@
 'use client';
 
 import { useEffect, useState, useCallback } from 'react';
-import { RefreshCw, Send, TrendingUp, TrendingDown, Wallet, Activity } from 'lucide-react';
+import { RefreshCw, TrendingUp, TrendingDown, Wallet, Activity } from 'lucide-react';
 import { Bar, BarChart, ResponsiveContainer, XAxis, YAxis, Tooltip, CartesianGrid, Cell, LabelList } from 'recharts';
 import ThemeToggle from '@/app/components/ThemeToggle';
-import Toast, { type ToastState } from '@/app/components/Toast';
 import { useTheme } from '@/app/components/ThemeProvider';
 import ConnectionErrorState from '@/app/components/ConnectionErrorState';
 import { classifyFetchError, type ClassifiedError, assertAllOk } from '@/app/lib/errors';
@@ -204,19 +203,14 @@ function BundleTooltip({ active, payload }: { active?: boolean; payload?: Array<
   );
 }
 
-// Settlement isn't shown as its own column here — it reads the same
-// underlying source as Bundle Transfer (both "BUNDLE TRANSFER" TYPE rows),
-// so displaying both was a duplicate. Bundle Transfer is kept since it
-// matches the chart name and the sheet's own TYPE value. Cashout's own
-// Wallet Summary (app/page.tsx) is unaffected — Settlement is a genuinely
-// distinct value there and keeps both columns.
-type WalletColumnKey = 'wallet' | 'totalDP' | 'totalWD' | 'bdTransferIn' | 'actualBal' | 'runningBal';
+type WalletColumnKey = 'wallet' | 'totalDP' | 'totalWD' | 'bdTransferIn' | 'stlm' | 'actualBal' | 'runningBal';
 
 const walletColumns: { key: WalletColumnKey; label: string }[] = [
   { key: 'wallet', label: 'Wallet' },
   { key: 'totalDP', label: 'Total DP' },
   { key: 'totalWD', label: 'Total WD' },
-  { key: 'bdTransferIn', label: 'Bundle Transfer' },
+  { key: 'bdTransferIn', label: 'Top Up' },
+  { key: 'stlm', label: 'Settlement' },
   { key: 'actualBal', label: 'Actual Balance' },
   { key: 'runningBal', label: 'Running Balance' },
 ];
@@ -229,8 +223,6 @@ export default function SendMoneyDashboardPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<ClassifiedError | null>(null);
   const [spinning, setSpinning] = useState(false);
-  const [telegramSending, setTelegramSending] = useState(false);
-  const [toast, setToast] = useState<ToastState>(null);
   const searchTerm = '';
   const [openingTotal, setOpeningTotal] = useState(0);
   const [agentRows, setAgentRows] = useState<AgentRow[]>([]);
@@ -478,26 +470,6 @@ export default function SendMoneyDashboardPage() {
     fetchData();
   }, [fetchData]);
 
-  const handleSendToTelegram = async () => {
-    setTelegramSending(true);
-    try {
-      const res = await fetch('/api/telegram/screenshot', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ path: '/sendmoney', label: 'Send Money Overview' }),
-      });
-      const json = await res.json();
-      if (!res.ok || !json.ok) {
-        throw new Error(json.error || 'Failed to send screenshot.');
-      }
-      setToast({ type: 'success', message: 'Sent to Telegram.' });
-    } catch (err) {
-      setToast({ type: 'error', message: err instanceof Error ? err.message : 'Failed to send screenshot.' });
-    } finally {
-      setTelegramSending(false);
-    }
-  };
-
   const bundleChartData = bundlePeriod === 'week' ? bundleWeekData : bundleMonthData;
   // Recharts' default "nice number" auto-ticking produced awkward values
   // (e.g. 22.5M) that don't divide evenly and, combined with the Y-axis's
@@ -561,6 +533,14 @@ export default function SendMoneyDashboardPage() {
   const totalWDSum = dataRows.reduce((sum, row) => sum + Math.abs(row.totalWD), 0);
   const runningBalTotal = dataRows.reduce((sum, row) => sum + row.runningBal, 0);
   const runningVsOpening = runningBalTotal - openingTotal;
+  // The sheet's own "Total" row can drift from a straight sum of the wallet
+  // rows actually shown — the Wallet Summary footer sums the displayed rows
+  // directly instead of trusting it, same as every KPI card above already does.
+  const bdTransferInSum = dataRows.reduce((sum, row) => sum + row.bdTransferIn, 0);
+  const stlmSum = dataRows.reduce((sum, row) => sum + row.stlm, 0);
+  // Signed (not abs'd like totalWDSum above) so the footer's "-" prefix
+  // matches how each individual wallet row displays Total WD.
+  const totalWDSignedSum = dataRows.reduce((sum, row) => sum + row.totalWD, 0);
 
   const top50Agents = agentRows
     .filter((agent) => agent.totalDP > 0 && agent.runningBalance > 30000 && agent.runningBalance - agent.opening > 0)
@@ -627,15 +607,6 @@ export default function SendMoneyDashboardPage() {
             <h1 className="truncate text-[13px] font-semibold tracking-[-0.01em] text-foreground">{route.title} Overview</h1>
           </div>
           <div className="flex shrink-0 items-center gap-2">
-            <button
-              onClick={handleSendToTelegram}
-              disabled={telegramSending || loading}
-              aria-label="Send to Telegram"
-              title="Send to Telegram"
-              className="flex items-center justify-center rounded-lg border border-border bg-muted/60 p-1.5 text-foreground hover:bg-muted disabled:cursor-not-allowed disabled:opacity-40"
-            >
-              <Send size={13} className={telegramSending ? 'animate-spin' : ''} />
-            </button>
             <ThemeToggle />
             <button
               onClick={fetchData}
@@ -649,7 +620,6 @@ export default function SendMoneyDashboardPage() {
           </div>
         </div>
       </header>
-      <Toast toast={toast} onDismiss={() => setToast(null)} />
 
       <main className="space-y-6 px-4 py-6 md:px-8 md:py-8">
         {loading && (
@@ -766,7 +736,7 @@ export default function SendMoneyDashboardPage() {
 
         {!loading && !error && (
           <div className="relative flex flex-col gap-4 lg:flex-row">
-            <div data-telegram-capture className="flex flex-1 flex-col gap-4 lg:w-[calc(100%-326px)] lg:flex-none">
+            <div className="flex flex-1 flex-col gap-4 lg:w-[calc(100%-326px)] lg:flex-none">
               <section className="grid grid-cols-2 gap-3 sm:grid-cols-4">
                 {summaryCards.map((card, i) => {
                   const themes = [
@@ -915,7 +885,7 @@ export default function SendMoneyDashboardPage() {
                               <td className="whitespace-nowrap px-4 py-3 text-left">
                                 <span className="text-[12px] font-bold text-muted-foreground">{row.wallet}</span>
                               </td>
-                              <td colSpan={5} className="px-4 py-3 text-center">
+                              <td colSpan={6} className="px-4 py-3 text-center">
                                 <span className="inline-flex items-center rounded-md border border-border bg-muted/40 px-2.5 py-1 text-[10px] font-medium text-muted-foreground">
                                   Coming Soon
                                 </span>
@@ -937,25 +907,70 @@ export default function SendMoneyDashboardPage() {
                           <td className="whitespace-nowrap px-4 py-3 text-right tabular-nums text-[11px] text-foreground">
                             {fmtCell(row.bdTransferIn, true)}
                           </td>
+                          <td className="whitespace-nowrap px-4 py-3 text-right tabular-nums text-[11px] text-foreground">
+                            {fmtCell(row.stlm, true)}
+                          </td>
                           <td className="whitespace-nowrap px-4 py-3 text-right tabular-nums text-[11px] font-medium text-foreground">
                             {fmtCell(row.actualBal)}
                           </td>
                           <td className="whitespace-nowrap px-4 py-3 text-right">
-                            <div className={`tabular-nums text-[11px] font-bold ${row.runningBal < 0 ? 'text-rose-600 dark:text-rose-400' : 'text-foreground'}`}>
-                              {fmtCell(row.runningBal, true)}
-                            </div>
-                            <div className={`mt-0.5 tabular-nums text-[10px] font-medium ${row.runningBal >= row.opening ? 'text-emerald-600 dark:text-emerald-400' : 'text-rose-500 dark:text-rose-400'}`}>
-                              {row.runningBal >= row.opening ? '▲' : '▼'} {fmtCell(row.runningBal - row.opening)}
+                            {/* Actual Balance is the reference — its td keeps the browser's
+                                default vertical-align (centered as a single line). This block
+                                is 2 lines, so centering it as a whole leaves the top (black)
+                                figure sitting above that center; translateY nudges the whole
+                                block down by the measured offset so the black figure lines up
+                                with Actual Balance, without touching Actual Balance itself. */}
+                            <div style={{ transform: 'translateY(8.25px)' }}>
+                              <div className={`tabular-nums text-[11px] font-bold ${row.runningBal < 0 ? 'text-rose-600 dark:text-rose-400' : 'text-foreground'}`}>
+                                {fmtCell(row.runningBal, true)}
+                              </div>
+                              <div className={`mt-0.5 tabular-nums text-[10px] font-medium ${row.runningBal >= row.opening ? 'text-emerald-600 dark:text-emerald-400' : 'text-rose-500 dark:text-rose-400'}`}>
+                                {row.runningBal >= row.opening ? '▲' : '▼'} {fmtCell(row.runningBal - row.opening)}
+                              </div>
                             </div>
                           </td>
                         </tr>
                         );
                       }) : (
                         <tr>
-                          <td colSpan={6} className="px-4 py-8 text-center text-[11px] text-muted-foreground">No matching wallets found.</td>
+                          <td colSpan={7} className="px-4 py-8 text-center text-[11px] text-muted-foreground">No matching wallets found.</td>
                         </tr>
                       )}
                     </tbody>
+                    {totalRow && (
+                      <tfoot>
+                        <tr className="border-t-2 border-border bg-muted/20">
+                          <td className="whitespace-nowrap px-4 py-3 text-left">
+                            <span className="text-[12px] font-bold text-foreground">Total</span>
+                          </td>
+                          <td className="whitespace-nowrap px-4 py-3 text-right tabular-nums text-[11px] font-bold text-foreground">
+                            {fmtCell(totalDPSum)}
+                          </td>
+                          <td className="whitespace-nowrap px-4 py-3 text-right tabular-nums text-[11px] font-bold text-foreground">
+                            {fmtCell(totalWDSignedSum, true)}
+                          </td>
+                          <td className="whitespace-nowrap px-4 py-3 text-right tabular-nums text-[11px] font-bold text-foreground">
+                            {fmtCell(bdTransferInSum, true)}
+                          </td>
+                          <td className="whitespace-nowrap px-4 py-3 text-right tabular-nums text-[11px] font-bold text-foreground">
+                            {fmtCell(stlmSum, true)}
+                          </td>
+                          <td className="whitespace-nowrap px-4 py-3 text-right tabular-nums text-[11px] font-bold text-foreground">
+                            {fmtCell(actualBalTotal)}
+                          </td>
+                          <td className="whitespace-nowrap px-4 py-3 text-right">
+                            <div style={{ transform: 'translateY(8.25px)' }}>
+                              <div className="tabular-nums text-[11px] font-bold text-foreground">
+                                {fmtCell(runningBalTotal, true)}
+                              </div>
+                              <div className={`mt-0.5 tabular-nums text-[10px] font-medium ${runningBalTotal >= openingTotal ? 'text-emerald-600 dark:text-emerald-400' : 'text-rose-500 dark:text-rose-400'}`}>
+                                {runningBalTotal >= openingTotal ? '▲' : '▼'} {fmtCell(runningVsOpening)}
+                              </div>
+                            </div>
+                          </td>
+                        </tr>
+                      </tfoot>
+                    )}
                   </table>
                 </div>
 
@@ -1000,14 +1015,56 @@ export default function SendMoneyDashboardPage() {
                           <p className="mt-0.5 text-[10.5px] font-semibold tabular-nums text-foreground">{fmtCell(row.actualBal)}</p>
                         </div>
                         <div className="min-w-0">
-                          <p className="text-[11px] text-muted-foreground">Bundle Transfer</p>
+                          <p className="text-[11px] text-muted-foreground">Top Up</p>
                           <p className="mt-0.5 text-[10.5px] font-semibold tabular-nums text-foreground">{fmtCell(row.bdTransferIn, true)}</p>
+                        </div>
+                        <div className="min-w-0">
+                          <p className="text-[11px] text-muted-foreground">Settlement</p>
+                          <p className="mt-0.5 text-[10.5px] font-semibold tabular-nums text-foreground">{fmtCell(row.stlm, true)}</p>
                         </div>
                       </div>
                     </div>
                     );
                   }) : (
                     <div className="px-4 py-8 text-center text-[11px] text-muted-foreground">No matching wallets found.</div>
+                  )}
+                  {totalRow && (
+                    <div className="rounded-xl border-2 border-border bg-muted/20 p-4">
+                      <div className="flex items-center justify-between gap-2">
+                        <span className="text-[15px] font-bold text-foreground">Total</span>
+                        <div className="text-right">
+                          <div className="text-lg font-bold tabular-nums text-foreground">
+                            {fmtCell(runningBalTotal, true)}
+                          </div>
+                          <div className={`mt-0.5 text-[11px] font-medium tabular-nums ${runningBalTotal >= openingTotal ? 'text-emerald-600 dark:text-emerald-400' : 'text-rose-500 dark:text-rose-400'}`}>
+                            {runningBalTotal >= openingTotal ? '↗' : '↘'} {fmtCell(runningVsOpening)}
+                          </div>
+                        </div>
+                      </div>
+
+                      <div className="mt-3 grid grid-cols-3 gap-x-2 gap-y-3 border-t border-border pt-3">
+                        <div className="min-w-0">
+                          <p className="text-[11px] text-muted-foreground">Total DP</p>
+                          <p className="mt-0.5 text-[10.5px] font-semibold tabular-nums text-foreground">{fmtCell(totalDPSum)}</p>
+                        </div>
+                        <div className="min-w-0">
+                          <p className="text-[11px] text-muted-foreground">Total WD</p>
+                          <p className="mt-0.5 text-[10.5px] font-semibold tabular-nums text-foreground">{fmtCell(totalWDSignedSum, true)}</p>
+                        </div>
+                        <div className="min-w-0">
+                          <p className="text-[11px] text-muted-foreground">Actual Balance</p>
+                          <p className="mt-0.5 text-[10.5px] font-semibold tabular-nums text-foreground">{fmtCell(actualBalTotal)}</p>
+                        </div>
+                        <div className="min-w-0">
+                          <p className="text-[11px] text-muted-foreground">Top Up</p>
+                          <p className="mt-0.5 text-[10.5px] font-semibold tabular-nums text-foreground">{fmtCell(bdTransferInSum, true)}</p>
+                        </div>
+                        <div className="min-w-0">
+                          <p className="text-[11px] text-muted-foreground">Settlement</p>
+                          <p className="mt-0.5 text-[10.5px] font-semibold tabular-nums text-foreground">{fmtCell(stlmSum, true)}</p>
+                        </div>
+                      </div>
+                    </div>
                   )}
                 </div>
               </section>
