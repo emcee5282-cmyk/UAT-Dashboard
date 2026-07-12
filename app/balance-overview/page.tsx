@@ -367,7 +367,7 @@ function WalletTile({ wallet }: { wallet: CardWallet }) {
       </div>
       <p className="mt-1.5 text-[17px] font-bold tabular-nums text-foreground">{fmtAbbrev(wallet.runningBal)}</p>
       <p className={`mt-0.5 text-[12px] font-medium ${up ? 'text-emerald-600 dark:text-emerald-400' : 'text-rose-500 dark:text-rose-400'}`}>
-        {up ? '▴' : '▾'} {fmtAbbrev(wallet.delta)} today
+        {up ? '▴' : '▾'} {fmtAbbrev(wallet.delta)}
       </p>
       <div className="mt-1.5 flex items-center justify-between border-t border-border pt-1.5">
         <span className="text-[11px] text-muted-foreground">Actual Balance</span>
@@ -497,7 +497,11 @@ function CardSkeleton() {
         </div>
         <div className="mt-3 h-[71px] animate-pulse rounded-[10px] bg-slate-100 dark:bg-slate-800" />
         <div className="mt-3 h-[93px] animate-pulse rounded-[10px] bg-slate-100 dark:bg-slate-800" />
-        <div className="mb-3 mt-5 h-[18px] w-full animate-pulse rounded-md bg-slate-100 dark:bg-slate-800" />
+        <div className="mb-3 mt-5 flex items-center gap-3">
+          <div className="h-px flex-1 bg-border" />
+          <div className="h-[18px] w-28 shrink-0 animate-pulse rounded-md bg-slate-200 dark:bg-slate-700" />
+          <div className="h-px flex-1 bg-border" />
+        </div>
         <div className="grid grid-cols-2 gap-3">
           {Array.from({ length: 4 }).map((_, i) => (
             <div key={i} className="h-[123px] animate-pulse rounded-xl bg-slate-100 dark:bg-slate-800" />
@@ -560,7 +564,11 @@ function BrandCashInhandSection({ rows, total }: { rows: BrandCashRow[]; total: 
     worksheet['!cols'] = headers.map(() => ({ wch: 16 }));
     const workbook = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(workbook, worksheet, 'Brand Balance');
-    XLSX.writeFile(workbook, 'brand-balance.xlsx');
+
+    const now = new Date();
+    const datePart = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
+    const timePart = `${String(now.getHours()).padStart(2, '0')}${String(now.getMinutes()).padStart(2, '0')}`;
+    XLSX.writeFile(workbook, `BRAND_BALANCE_${datePart}_${timePart}.xlsx`);
   }, [rows, total]);
 
   return (
@@ -627,6 +635,10 @@ function BrandCashInhandSection({ rows, total }: { rows: BrandCashRow[]; total: 
   );
 }
 
+// Mirrors the real table's own <table>/<thead>/<tbody>/<tfoot> markup and
+// padding (same 10 brand rows + header + footer as the live sheet) instead
+// of a handful of generic placeholder lines — a shorter fake table was
+// causing a visible size jump when the real ~600px-tall table popped in.
 function BrandCashInhandSkeleton() {
   return (
     <section className="overflow-hidden rounded-xl border border-border bg-white dark:bg-[#2a2a2d]">
@@ -634,19 +646,54 @@ function BrandCashInhandSkeleton() {
         <div className="flex min-w-0 items-center gap-3">
           <div className="h-9 w-9 shrink-0 animate-pulse rounded-lg bg-slate-200 dark:bg-slate-700" />
           <div>
-            <div className="h-4 w-40 animate-pulse rounded-md bg-slate-200 dark:bg-slate-700" />
-            <div className="mt-1.5 h-3 w-56 animate-pulse rounded-md bg-slate-200 dark:bg-slate-700" />
+            <div className="h-[20px] w-40 animate-pulse rounded-md bg-slate-200 dark:bg-slate-700" />
+            <div className="mt-1.5 h-[16px] w-56 animate-pulse rounded-md bg-slate-200 dark:bg-slate-700" />
           </div>
         </div>
         <div className="h-8 w-24 shrink-0 animate-pulse rounded-lg bg-slate-200 dark:bg-slate-700" />
       </div>
-      <div className="p-4">
-        {Array.from({ length: 5 }).map((_, i) => (
-          <div key={i} className="flex items-center justify-between py-2.5">
-            <div className="h-3 w-14 animate-pulse rounded-md bg-slate-100 dark:bg-slate-800" />
-            <div className="h-3 w-72 animate-pulse rounded-md bg-slate-100 dark:bg-slate-800" />
-          </div>
-        ))}
+
+      <div className="overflow-x-auto">
+        <table className="w-full min-w-[760px]">
+          <thead>
+            <tr className="border-b border-border bg-muted/10" style={{ height: '42.5px' }}>
+              <th className="px-4 py-3 text-left">
+                <div className="h-3 w-10 animate-pulse rounded-md bg-slate-300 dark:bg-slate-600" />
+              </th>
+              {BRAND_CASH_COLUMNS.map((col) => (
+                <th key={col.key} className="px-4 py-3">
+                  <div className="mx-auto h-3 w-14 animate-pulse rounded-md bg-slate-300 dark:bg-slate-600" />
+                </th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {Array.from({ length: 10 }).map((_, i) => (
+              <tr key={i} className="border-b border-border last:border-0" style={{ height: '44.5px' }}>
+                <td className="px-4 py-3">
+                  <div className="h-3 w-10 animate-pulse rounded-md bg-slate-200 dark:bg-slate-700" />
+                </td>
+                {BRAND_CASH_COLUMNS.map((col) => (
+                  <td key={col.key} className="px-4 py-3">
+                    <div className="mx-auto h-3 w-16 animate-pulse rounded-md bg-slate-100 dark:bg-slate-800" />
+                  </td>
+                ))}
+              </tr>
+            ))}
+          </tbody>
+          <tfoot>
+            <tr className="border-t-2 border-border bg-muted/20" style={{ height: '44.5px' }}>
+              <td className="px-4 py-3">
+                <div className="h-3 w-10 animate-pulse rounded-md bg-slate-300 dark:bg-slate-600" />
+              </td>
+              {BRAND_CASH_COLUMNS.map((col) => (
+                <td key={col.key} className="px-4 py-3">
+                  <div className="mx-auto h-3 w-16 animate-pulse rounded-md bg-slate-300 dark:bg-slate-600" />
+                </td>
+              ))}
+            </tr>
+          </tfoot>
+        </table>
       </div>
     </section>
   );

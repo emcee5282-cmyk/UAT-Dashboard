@@ -1,4 +1,5 @@
 import type { Metadata } from "next";
+import { Suspense } from "react";
 import { Geist_Mono, Inter } from "next/font/google";
 import "./globals.css";
 import AppShell from "./components/AppShell";
@@ -39,7 +40,13 @@ export default function RootLayout({
     >
       <body className={`${inter.variable} font-sans flex min-h-screen overflow-x-auto overflow-y-hidden bg-[#f5f5f7] text-[#1a1a1a] transition-colors duration-300 dark:bg-[#1c1c1e] dark:text-white`}>
         <ThemeProvider>
-          <AppShell>{children}</AppShell>
+          {/* AppShell/Sidebar read the ?product= query param (useSearchParams)
+              to know which product is selected on shared routes like Balance
+              Overview — Next.js requires a Suspense boundary around any
+              useSearchParams() consumer for static pages to prerender. */}
+          <Suspense fallback={null}>
+            <AppShell>{children}</AppShell>
+          </Suspense>
         </ThemeProvider>
       </body>
     </html>

@@ -229,6 +229,15 @@ export default function SendMoneyDashboardPage() {
   const [bundleWeekData, setBundleWeekData] = useState<BundlePoint[]>([]);
   const [bundleMonthData, setBundleMonthData] = useState<BundlePoint[]>([]);
   const [bundlePeriod, setBundlePeriod] = useState<'week' | 'month'>('week');
+  // Shops whose wallet name carries a "BD" segment (e.g. "D-M2BD-DELTA063-NG")
+  // sit outside the normal bundle/wallet-type grouping — same "BD" keyword
+  // convention Transfer Queue already excludes on. Tracked as its own P&L
+  // line in Top Performer Wallet, additive only: doesn't touch the existing
+  // per-wallet-type (NAGAD/ROCKET/UPAY) totals used elsewhere on this page.
+  const [bdKeywordTotals, setBdKeywordTotals] = useState({ dp: 0, wd: 0, balance: 0 });
+  // Non-BD DP/WD gain per wallet type (NAGAD/ROCKET/UPAY), keyed the same as
+  // WALLET_TYPE_LABELS values — feeds Top Performer Wallet only.
+  const [walletGainNonBD, setWalletGainNonBD] = useState<Record<string, number>>({});
 
   const fetchData = useCallback(async () => {
     try {
@@ -301,6 +310,17 @@ export default function SendMoneyDashboardPage() {
       // wallet name's own suffix (NG/RK/UP/BK), not a Bank/Group text field.
       const walletDPTotals = new Map<string, number>();
       const walletWDTotals = new Map<string, number>();
+      // Top Performer Wallet-only split: "BD"-keyword shops must NOT be
+      // blended into the regular NAGAD/ROCKET/UPAY P&L figures shown there
+      // (per explicit correction — those rows should reflect non-BD shops
+      // only, with BD's own DP/WD broken out as its own line). Kept separate
+      // from walletDPTotals/walletWDTotals above, which still include BD
+      // shops and continue to feed the Wallet Summary table/KPI cards as before.
+      const walletDPTotalsNonBD = new Map<string, number>();
+      const walletWDTotalsNonBD = new Map<string, number>();
+      let bdKeywordDP = 0;
+      let bdKeywordWD = 0;
+      let bdKeywordBalance = 0;
       balData
         .slice(1)
         .filter((row) => row.some((cell) => cell.trim() !== ''))
@@ -313,9 +333,20 @@ export default function SendMoneyDashboardPage() {
           agentTotals.set(name, { dp: existing.dp + dp, wd: existing.wd + wd });
 
           const typeLabel = walletTypeLabelFromName(name);
+          const isBdKeyword = name.toUpperCase().includes('BD');
           if (typeLabel) {
             walletDPTotals.set(typeLabel, (walletDPTotals.get(typeLabel) ?? 0) + dp);
             walletWDTotals.set(typeLabel, (walletWDTotals.get(typeLabel) ?? 0) + wd);
+            if (!isBdKeyword) {
+              walletDPTotalsNonBD.set(typeLabel, (walletDPTotalsNonBD.get(typeLabel) ?? 0) + dp);
+              walletWDTotalsNonBD.set(typeLabel, (walletWDTotalsNonBD.get(typeLabel) ?? 0) + wd);
+            }
+          }
+
+          if (isBdKeyword) {
+            bdKeywordDP += dp;
+            bdKeywordWD += wd;
+            bdKeywordBalance += clean(row[8]);
           }
 
           const login = rawVal(row[15]).trim().toLowerCase();
@@ -458,6 +489,12 @@ export default function SendMoneyDashboardPage() {
       setAgentRows(mergedAgentRows);
       setBundleWeekData(weekPoints);
       setBundleMonthData(monthPoints);
+      setBdKeywordTotals({ dp: bdKeywordDP, wd: bdKeywordWD, balance: bdKeywordBalance });
+      const nonBdGain: Record<string, number> = {};
+      Object.values(WALLET_TYPE_LABELS).forEach((label) => {
+        nonBdGain[label] = (walletDPTotalsNonBD.get(label) ?? 0) - (walletWDTotalsNonBD.get(label) ?? 0);
+      });
+      setWalletGainNonBD(nonBdGain);
     } catch (err) {
       setError(classifyFetchError(err instanceof Error ? err.message : String(err)));
     } finally {
@@ -548,9 +585,17 @@ export default function SendMoneyDashboardPage() {
     .slice(0, 50);
 
   // Bkash isn't integrated yet — excluded from Top Performer Wallet entirely.
+  // "BD"-keyword shops must not be blended into NAGAD/ROCKET/UPAY's own P&L
+  // here — each row uses walletGainNonBD (BD shops stripped out), and BD gets
+  // its own separate line (bdKeywordTotals) instead.
   const walletGainRanking = dataRows
     .filter((row) => row.wallet.toUpperCase() !== 'BKASH')
-    .map((row) => ({ wallet: row.wallet, gain: row.totalDP + row.totalWD, actualBal: row.actualBal }))
+    .map((row) => ({
+      wallet: row.wallet,
+      gain: walletGainNonBD[row.wallet.toUpperCase()] ?? (row.totalDP + row.totalWD),
+      actualBal: row.actualBal,
+    }))
+    .concat([{ wallet: 'Bundle Deposit', gain: bdKeywordTotals.dp - bdKeywordTotals.wd, actualBal: bdKeywordTotals.balance }])
     .sort((a, b) => a.gain - b.gain);
 
   const actualBalTotal = dataRows.reduce((sum, row) => sum + row.actualBal, 0);

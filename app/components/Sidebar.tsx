@@ -1,7 +1,7 @@
 'use client';
 
 import Link from 'next/link';
-import { usePathname, useRouter } from 'next/navigation';
+import { usePathname, useRouter, useSearchParams } from 'next/navigation';
 import { getActiveProduct, getCounterpartPath } from '@/app/lib/productRoutes';
 import {
   LayoutDashboard,
@@ -15,7 +15,7 @@ import {
   X,
   Shuffle,
   Settings,
-  BarChart3,
+  Home,
 } from 'lucide-react';
 
 const GeoLogo = () => (
@@ -43,7 +43,7 @@ const navItems = [
     label: 'Agent',
     icon: Users,
     children: [
-      { href: '/agentbal', label: 'Balances', icon: Wallet },
+      { href: '/agentbal', label: 'Balance', icon: Wallet },
       { href: '/summary', label: 'Opening', icon: BookOpen },
       { href: '/stlm', label: 'Settlement', icon: ArrowLeftRight },
       { href: '/topup', label: 'Top Up', icon: PlusCircle },
@@ -59,12 +59,15 @@ type SidebarProps = {
 
 export default function Sidebar({ isExpanded, onExpandedChange }: SidebarProps) {
   const pathname = usePathname();
+  const searchParams = useSearchParams();
   const router = useRouter();
   const [mobileOpen, setMobileOpen] = useState(false);
   const [mounted, setMounted] = useState(false);
   const [agentOpen, setAgentOpen] = useState(false);
-  // URL is the single source of truth for the active product — never client state.
-  const activeProduct = getActiveProduct(pathname);
+  // URL is the single source of truth for the active product — never client
+  // state. The ?product= param only matters on shared routes (Balance
+  // Overview), where the path alone can't distinguish the two.
+  const activeProduct = getActiveProduct(pathname, searchParams.get('product'));
   const [cashoutTransferQueueCount, setCashoutTransferQueueCount] = useState<number | null>(null);
   const [sendMoneyTransferQueueCount, setSendMoneyTransferQueueCount] = useState<number | null>(null);
 
@@ -141,7 +144,7 @@ export default function Sidebar({ isExpanded, onExpandedChange }: SidebarProps) 
                   : 'text-muted-foreground hover:bg-muted hover:text-foreground'
               }`}
             >
-              <BarChart3 size={15} strokeWidth={1.75} className="shrink-0" />
+              <Home size={15} strokeWidth={1.75} className="shrink-0" />
               <span className={`overflow-hidden whitespace-nowrap ${expanded ? 'max-w-[160px] opacity-100' : 'max-w-0 opacity-0'}`}>
                 Overview
               </span>

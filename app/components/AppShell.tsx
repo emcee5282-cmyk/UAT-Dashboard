@@ -1,7 +1,7 @@
 'use client';
 
 import { useState } from 'react';
-import { usePathname } from 'next/navigation';
+import { usePathname, useSearchParams } from 'next/navigation';
 import Sidebar from './Sidebar';
 import PageTransition from './PageTransition';
 import { getActiveProduct } from '@/app/lib/productRoutes';
@@ -9,7 +9,8 @@ import { getActiveProduct } from '@/app/lib/productRoutes';
 export default function AppShell({ children }: { children: React.ReactNode }) {
   const [isExpanded, setIsExpanded] = useState(false);
   const pathname = usePathname();
-  const activeProduct = getActiveProduct(pathname);
+  const searchParams = useSearchParams();
+  const activeProduct = getActiveProduct(pathname, searchParams.get('product'));
 
   return (
     <div data-product={activeProduct} className="contents">
