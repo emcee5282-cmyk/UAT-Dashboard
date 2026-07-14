@@ -6,9 +6,8 @@ import { Bar, BarChart, CartesianGrid, Cell, LabelList, ReferenceLine, Responsiv
 export type TrendSeriesDef = { key: string; label: string };
 
 export type TrendPoint = {
-  day: string; // 'MM/DD' or 'Today' — x-axis label
-  tooltipLabel: string; // 'Jun 21' or 'Today' — tooltip header
-  isToday: boolean;
+  day: string; // 'MM/DD' — x-axis label
+  tooltipLabel: string; // 'Jun 21' — tooltip header
   total: number;
   series: Record<string, number>; // keyed by TrendSeriesDef.key
 };
@@ -16,8 +15,8 @@ export type TrendPoint = {
 type TrendChartProps = {
   title: string;
   seriesDefs: TrendSeriesDef[]; // stacking order = ramp order, index 0 = fullest opacity
-  weekData: TrendPoint[]; // 7 points: 6 history + Today
-  monthData: TrendPoint[]; // 30 points: 29 history + Today
+  weekData: TrendPoint[]; // 7 points: 7 full days of history (today excluded — partial/in-progress)
+  monthData: TrendPoint[]; // 30 points: 30 full days of history
 };
 
 type PlotPoint = TrendPoint & { visibleTotal: number };
@@ -27,7 +26,6 @@ type PlotPoint = TrendPoint & { visibleTotal: number };
 // component reads as indigo on Cashout and teal on Send Money purely from
 // the page's own data-product CSS context.
 const RAMP_OPACITY = [1, 0.6, 0.35];
-const TODAY_OPACITY_MULTIPLIER = 0.55;
 
 function fmtAmount(num: number): string {
   const abs = Math.abs(num);
@@ -49,9 +47,8 @@ function fmtAmount(num: number): string {
 }
 
 function TrendXAxisTick({ x, y, payload }: { x?: number; y?: number; payload?: { value: string } }) {
-  const isToday = payload?.value === 'Today';
   return (
-    <text x={x} y={(y ?? 0) + 12} textAnchor="middle" fontSize={10} fontWeight={isToday ? 700 : 600} fill={isToday ? 'var(--product-accent)' : 'var(--muted-foreground)'}>
+    <text x={x} y={(y ?? 0) + 12} textAnchor="middle" fontSize={10} fontWeight={600} fill="var(--muted-foreground)">
       {payload?.value}
     </text>
   );
@@ -84,9 +81,8 @@ export default function TrendChart({ title, seriesDefs, weekData, monthData }: T
   const toggleSeries = (key: string) => setVisibleSeries((prev) => ({ ...prev, [key]: !prev[key] }));
 
   // Toggling a chip is a real filter, not just a visual hide — stack height,
-  // peak detection, the average line, labels, tooltip totals, and the Today
-  // strip all recompute from a per-point visibleTotal (sum of only
-  // currently-toggled-on series).
+  // peak detection, the average line, labels, and tooltip totals all recompute
+  // from a per-point visibleTotal (sum of only currently-toggled-on series).
   // Zeroing a hidden series' own value here (rather than removing its <Bar>
   // from the tree) keeps every Bar permanently mounted across toggles — see
   // the dataKey note below for why that matters.
@@ -103,19 +99,15 @@ export default function TrendChart({ title, seriesDefs, weekData, monthData }: T
   const monthPoints = useMemo(() => attachVisibleTotal(monthData), [monthData, visibleSeries, seriesDefs]);
   const chartData = period === 'week' ? weekPoints : monthPoints;
 
-  // 30-day average excludes the partial "Today" point — including a
-  // half-finished day would skew the average down and misrepresent the
-  // reference line below.
-  const historicalMonthPoints = monthPoints.filter((p) => !p.isToday);
-  const thirtyDayAvg = historicalMonthPoints.length
-    ? historicalMonthPoints.reduce((sum, p) => sum + p.visibleTotal, 0) / historicalMonthPoints.length
+  const thirtyDayAvg = monthPoints.length
+    ? monthPoints.reduce((sum, p) => sum + p.visibleTotal, 0) / monthPoints.length
     : 0;
 
   const peakDay = chartData.length
     ? chartData.reduce((peak, point) => (point.visibleTotal > peak.visibleTotal ? point : peak), chartData[0]).day
     : null;
 
-  const shouldLabel = (point: PlotPoint) => period === 'week' || point.day === peakDay || point.isToday;
+  const shouldLabel = (point: PlotPoint) => period === 'week' || point.day === peakDay;
 
   const yMax = Math.max(1, ...monthPoints.map((p) => p.visibleTotal));
   const yTicks = [0, Math.round(yMax / 2), yMax];
@@ -158,17 +150,8 @@ export default function TrendChart({ title, seriesDefs, weekData, monthData }: T
       const numX = Number(x ?? 0);
       const numY = Number(y ?? 0);
       const numWidth = Number(width ?? 0);
-      // A combined "Today · value" string was tried here, but Today's bar is
-      // usually short (partial day) while its immediate neighbors are tall —
-      // right- or center-anchoring the wider combined text at Today's own
-      // (low) label height pushed it sideways into a taller neighboring
-      // bar's rectangle, which then visually painted over part of the text.
-      // The X-axis tick already renders "Today" in accent/bold directly
-      // below this same bar, so the value label just needs the number —
-      // the pairing of both elements around the same bar already reads as
-      // one annotation without the overlap risk.
       return (
-        <text x={numX + numWidth / 2} y={numY - 6} textAnchor="middle" fontSize={10} fontWeight={700} fill={point.isToday ? 'var(--product-accent)' : 'var(--foreground)'}>
+        <text x={numX + numWidth / 2} y={numY - 6} textAnchor="middle" fontSize={10} fontWeight={700} fill="var(--foreground)">
           {fmtAmount(point.visibleTotal)}
         </text>
       );
@@ -235,7 +218,7 @@ export default function TrendChart({ title, seriesDefs, weekData, monthData }: T
       </div>
 
       {/* Chart — 7D: no Y-axis, every bar labeled. 30D: minimal 3-tick Y-axis,
-          only the peak day + Today labeled, dashed 30-day average line. */}
+          only the peak day labeled, dashed 30-day average line. */}
       <div className="h-[280px] select-none px-3 py-4 pt-6">
         <ResponsiveContainer width="100%" height="100%">
           <BarChart data={chartData} margin={{ top: 20, right: 45, left: 0, bottom: 0 }}>
@@ -272,12 +255,7 @@ export default function TrendChart({ title, seriesDefs, weekData, monthData }: T
               return (
                 <Bar key={def.key} dataKey={`series.${def.key}`} stackId="trend" fill="var(--product-accent)" maxBarSize={40} radius={isTopmost ? [3, 3, 0, 0] : undefined}>
                   {chartData.map((point, idx) => (
-                    <Cell
-                      key={idx}
-                      fillOpacity={rampOpacity * (point.isToday ? TODAY_OPACITY_MULTIPLIER : 1)}
-                      stroke={point.isToday ? 'var(--product-accent)' : 'none'}
-                      strokeWidth={point.isToday ? 1.5 : 0}
-                    />
+                    <Cell key={idx} fillOpacity={rampOpacity} />
                   ))}
                   <LabelList dataKey="visibleTotal" content={makeValueLabelRenderer(def.key)} />
                 </Bar>

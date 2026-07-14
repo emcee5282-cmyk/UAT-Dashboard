@@ -371,37 +371,30 @@ export default function Dashboard() {
           cashGoByDate.set(dateObj.toDateString(), { bk: clean(row[4]), ng: clean(row[5]) });
         });
 
-      const toCashGoPoint = (d: Date, isToday: boolean): TrendPoint => {
+      const toCashGoPoint = (d: Date): TrendPoint => {
         const totals = cashGoByDate.get(d.toDateString()) ?? { bk: 0, ng: 0 };
         return {
-          day: isToday ? 'Today' : `${String(d.getMonth() + 1).padStart(2, '0')}/${String(d.getDate()).padStart(2, '0')}`,
-          tooltipLabel: isToday ? 'Today' : d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' }),
-          isToday,
+          day: `${String(d.getMonth() + 1).padStart(2, '0')}/${String(d.getDate()).padStart(2, '0')}`,
+          tooltipLabel: d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' }),
           total: totals.bk + totals.ng,
           series: { bk: totals.bk, ng: totals.ng },
         };
       };
 
-      // Today is always the last bar in the chart itself (highlighted), so
-      // each period is N-1 historical days ending yesterday, plus today.
+      // Today's data is partial/in-progress, so it's excluded entirely — both
+      // windows are full days of history ending yesterday.
       const now = new Date();
       const yesterday = new Date(now.getFullYear(), now.getMonth(), now.getDate() - 1);
 
-      const weekHistoryStart = new Date(yesterday.getFullYear(), yesterday.getMonth(), yesterday.getDate() - 5);
-      const cashGoWeekPoints: TrendPoint[] = [
-        ...Array.from({ length: 6 }, (_, i) =>
-          toCashGoPoint(new Date(weekHistoryStart.getFullYear(), weekHistoryStart.getMonth(), weekHistoryStart.getDate() + i), false)
-        ),
-        toCashGoPoint(now, true),
-      ];
+      const weekHistoryStart = new Date(yesterday.getFullYear(), yesterday.getMonth(), yesterday.getDate() - 6);
+      const cashGoWeekPoints: TrendPoint[] = Array.from({ length: 7 }, (_, i) =>
+        toCashGoPoint(new Date(weekHistoryStart.getFullYear(), weekHistoryStart.getMonth(), weekHistoryStart.getDate() + i))
+      );
 
-      const monthHistoryStart = new Date(yesterday.getFullYear(), yesterday.getMonth(), yesterday.getDate() - 28);
-      const cashGoMonthPoints: TrendPoint[] = [
-        ...Array.from({ length: 29 }, (_, i) =>
-          toCashGoPoint(new Date(monthHistoryStart.getFullYear(), monthHistoryStart.getMonth(), monthHistoryStart.getDate() + i), false)
-        ),
-        toCashGoPoint(now, true),
-      ];
+      const monthHistoryStart = new Date(yesterday.getFullYear(), yesterday.getMonth(), yesterday.getDate() - 29);
+      const cashGoMonthPoints: TrendPoint[] = Array.from({ length: 30 }, (_, i) =>
+        toCashGoPoint(new Date(monthHistoryStart.getFullYear(), monthHistoryStart.getMonth(), monthHistoryStart.getDate() + i))
+      );
 
       setRows(parsed);
       setOpeningTotal(openingSum);

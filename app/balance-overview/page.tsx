@@ -217,6 +217,85 @@ function parseTodayBundle(text: string): { nagad: number; rocket: number; upay: 
   return totals;
 }
 
+// "Opening AG" sheet's own "REPORT LAST UPDATE" card, e.g. "July 14 - 8:45
+// AM" — same cutoff Cashout/Send Money's own Overview pages use so Top Up
+// and Settlement totals only include rows on/after the last reset (col 6 =
+// Cashout's card, col 8 = Send Money's card, same sheet).
+function parseReportCutoffDate(text: string, colIndex: number): Date | null {
+  const lines = text.trim().split('\n');
+  for (const line of lines) {
+    const cols = line.split(',');
+    const cell = (cols[colIndex] ?? '').replace(/"/g, '').trim();
+    const match = cell.match(/^([A-Za-z]+)\s+(\d{1,2})\s*-\s*\d{1,2}:\d{2}\s*[AP]M$/i);
+    if (match) {
+      const [, monthName, day] = match;
+      const year = new Date().getFullYear();
+      const parsed = new Date(`${monthName} ${day}, ${year}`);
+      if (!isNaN(parsed.getTime())) {
+        parsed.setHours(0, 0, 0, 0);
+        return parsed;
+      }
+    }
+  }
+  return null;
+}
+
+// The "Dashboard Overview" sheet's own BD-Transfer IN / STLM columns are
+// always seeded at 0 (never manually updated) — Cashout/Send Money's own
+// Overview pages don't trust them either, patching in live totals from "AG/PS
+// BD STLM + TOPUP" instead. Mirrors app/page.tsx's exact same computation
+// (Top Up cols B-F idx 1-5 positive; Settlement cols H-L idx 7-11 stored
+// negative, abs()'d for magnitude then re-signed negative for display) so
+// this total matches Cashout Overview's own Wallet Summary Total row.
+function computeCashoutTopUpStlm(text: string, cutoff: Date | null): { topUp: number; stlm: number } {
+  let topUp = 0;
+  let stlm = 0;
+  text.trim().split('\n').slice(1).forEach((line) => {
+    if (!line.trim()) return;
+    const cols = line.split(',');
+    const topUpAgent = (cols[1] ?? '').replace(/"/g, '').trim();
+    const topUpAmount = clean(cols[2]);
+    const topUpDate = cutoff ? parseSlashDate((cols[3] ?? '').replace(/"/g, '').trim()) : null;
+    if (topUpAgent && topUpAgent !== '-' && topUpAmount && (!cutoff || (topUpDate && topUpDate >= cutoff))) {
+      topUp += topUpAmount;
+    }
+    const stlmAgent = (cols[7] ?? '').replace(/"/g, '').trim();
+    const stlmAmount = Math.abs(clean(cols[8]));
+    const stlmDate = cutoff ? parseSlashDate((cols[9] ?? '').replace(/"/g, '').trim()) : null;
+    if (stlmAgent && stlmAgent !== '-' && stlmAmount && (!cutoff || (stlmDate && stlmDate >= cutoff))) {
+      stlm += stlmAmount;
+    }
+  });
+  return { topUp, stlm: -stlm };
+}
+
+// Mirrors app/sendmoney/page.tsx's own wallet-type patch — Settlement's raw
+// sign is negative in the sheet, so it's abs()'d for magnitude then
+// re-signed negative at the end, same convention as Cashout and Send
+// Money's own /balances page (a missing abs() here previously double-
+// negated Settlement to a wrong positive sign; fixed in both places).
+function computeSendMoneyTopUpStlm(text: string, cutoff: Date | null): { topUp: number; stlm: number } {
+  let topUp = 0;
+  let stlm = 0;
+  text.trim().split('\n').slice(1).forEach((line) => {
+    if (!line.trim()) return;
+    const cols = line.split(',');
+    const topUpName = (cols[1] ?? '').replace(/"/g, '').trim();
+    const topUpAmount = clean(cols[2]);
+    const topUpDate = cutoff ? parseSlashDate((cols[3] ?? '').replace(/"/g, '').trim()) : null;
+    if (topUpName && topUpName !== '-' && topUpAmount && (!cutoff || (topUpDate && topUpDate >= cutoff))) {
+      topUp += topUpAmount;
+    }
+    const stlmName = (cols[7] ?? '').replace(/"/g, '').trim();
+    const stlmAmount = Math.abs(clean(cols[8]));
+    const stlmDate = cutoff ? parseSlashDate((cols[9] ?? '').replace(/"/g, '').trim()) : null;
+    if (stlmName && stlmName !== '-' && stlmAmount && (!cutoff || (stlmDate && stlmDate >= cutoff))) {
+      stlm += stlmAmount;
+    }
+  });
+  return { topUp, stlm: -stlm };
+}
+
 type BrandCashRow = {
   brand: string;
   sspAg: number;
@@ -296,17 +375,20 @@ function buildCardData(
   productLabel: string,
   todayLabel: string,
   todayWallets: TodayWallet[],
-  todayQuota: TodayQuota | null
+  todayQuota: TodayQuota | null,
+  topUpStlm: { topUp: number; stlm: number }
 ): CardData {
   const total = rows.find((r) => r.wallet.toUpperCase() === 'TOTAL');
   const opening = total?.opening ?? 0;
   const deposit = total?.totalDP ?? 0;
   const withdrawal = total?.totalWD ?? 0;
-  const bdTransferIn = total?.bdTransferIn ?? 0;
-  const stlmOut = total?.stlmOut ?? 0;
-  // Both already signed in the source sheet (IN positive, OUT negative), so
-  // Adjustment's net effect on Ending Balance is a straight sum, not a
-  // subtraction — verified against the sheet's own Running Bal. column.
+  // The sheet's own BD-Transfer IN / STLM columns are always seeded at 0 —
+  // computeCashoutTopUpStlm/computeSendMoneyTopUpStlm above patch in live
+  // totals instead, same as Cashout/Send Money's own Overview pages already do.
+  const bdTransferIn = topUpStlm.topUp;
+  const stlmOut = topUpStlm.stlm;
+  // Both already signed (IN positive, OUT negative), so Adjustment's net
+  // effect on Ending Balance is a straight sum, not a subtraction.
   const ending = opening + deposit - withdrawal + bdTransferIn + stlmOut;
 
   const wallets: CardWallet[] = WALLET_ORDER.map((key) => {
@@ -528,16 +610,20 @@ const BRAND_CASH_COLUMNS: { key: keyof Omit<BrandCashRow, 'brand'>; label: strin
 // genuine sum across the brands that do support it).
 const AUTOPAY_UNSUPPORTED_BRANDS = ['B3', 'B4', 'B5', 'J1', 'T1'];
 
-function CihCell({ value, bold }: { value: number; bold?: boolean }) {
+function cihValueDisplay(value: number): { text: string; className: string } {
   const zero = Math.abs(value) < 0.005;
   const negative = value < 0;
+  return {
+    text: zero ? '−' : `${negative ? '−' : ''}${fmt(value)}`,
+    className: zero ? 'text-muted-foreground' : negative ? 'text-rose-600 dark:text-rose-400' : 'text-foreground',
+  };
+}
+
+function CihCell({ value, bold }: { value: number; bold?: boolean }) {
+  const display = cihValueDisplay(value);
   return (
-    <td
-      className={`whitespace-nowrap px-4 py-3 text-center text-[13px] tabular-nums ${bold ? 'font-bold' : 'font-medium'} ${
-        zero ? 'text-muted-foreground' : negative ? 'text-rose-600 dark:text-rose-400' : 'text-foreground'
-      }`}
-    >
-      {zero ? '−' : `${negative ? '−' : ''}${fmt(value)}`}
+    <td className={`whitespace-nowrap px-4 py-3 text-center text-[13px] tabular-nums ${bold ? 'font-bold' : 'font-medium'} ${display.className}`}>
+      {display.text}
     </td>
   );
 }
@@ -593,7 +679,7 @@ function BrandCashInhandSection({ rows, total }: { rows: BrandCashRow[]; total: 
         </button>
       </div>
 
-      <div className="overflow-x-auto">
+      <div className="hidden overflow-x-auto sm:block">
         <table className="w-full min-w-[760px]">
           <thead>
             <tr className="border-b border-border bg-muted/10">
@@ -631,6 +717,67 @@ function BrandCashInhandSection({ rows, total }: { rows: BrandCashRow[]; total: 
           )}
         </table>
       </div>
+
+      {/* Mobile: one card per brand — the 7-column table forces horizontal
+          scroll on narrow screens, same "card list" pattern already used for
+          Wallet Summary tables elsewhere in the app. */}
+      <div className="flex flex-col gap-3 p-4 sm:hidden">
+        {rows.map((row) => {
+          const totalDisplay = cihValueDisplay(row.totalBrandCIH);
+          return (
+            <div key={row.brand} className="rounded-xl border border-border bg-white p-4 dark:bg-[#2a2a2d]">
+              <div className="flex items-start justify-between gap-2">
+                <span className="text-[15px] font-bold text-foreground">{row.brand}</span>
+                <div className="text-right">
+                  <p className="text-[11px] text-muted-foreground">Total CIH</p>
+                  <p className={`text-lg font-bold tabular-nums ${totalDisplay.className}`}>{totalDisplay.text}</p>
+                </div>
+              </div>
+              <div className="mt-3 grid grid-cols-3 gap-x-2 gap-y-3 border-t border-border pt-3">
+                {BRAND_CASH_COLUMNS.filter((col) => col.key !== 'totalBrandCIH').map((col) => {
+                  const notSupported = col.key === 'autopay' && AUTOPAY_UNSUPPORTED_BRANDS.includes(row.brand.toUpperCase());
+                  const display = cihValueDisplay(row[col.key]);
+                  return (
+                    <div key={col.key} className="min-w-0">
+                      <p className="text-[11px] text-muted-foreground">{col.label}</p>
+                      {notSupported ? (
+                        <p className="mt-0.5 text-[10.5px] font-semibold italic text-muted-foreground">Not Supported</p>
+                      ) : (
+                        <p className={`mt-0.5 text-[10.5px] font-semibold tabular-nums ${display.className}`}>{display.text}</p>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          );
+        })}
+        {total && (() => {
+          const totalDisplay = cihValueDisplay(total.totalBrandCIH);
+          return (
+            <div className="rounded-xl border-2 border-border bg-muted/20 p-4">
+              <div className="flex items-start justify-between gap-2">
+                <span className="text-[15px] font-bold text-foreground">{total.brand}</span>
+                <div className="text-right">
+                  <p className="text-[11px] text-muted-foreground">Total CIH</p>
+                  <p className={`text-lg font-bold tabular-nums ${totalDisplay.className}`}>{totalDisplay.text}</p>
+                </div>
+              </div>
+              <div className="mt-3 grid grid-cols-3 gap-x-2 gap-y-3 border-t border-border pt-3">
+                {BRAND_CASH_COLUMNS.filter((col) => col.key !== 'totalBrandCIH').map((col) => {
+                  const display = cihValueDisplay(total[col.key]);
+                  return (
+                    <div key={col.key} className="min-w-0">
+                      <p className="text-[11px] text-muted-foreground">{col.label}</p>
+                      <p className={`mt-0.5 text-[10.5px] font-bold tabular-nums ${display.className}`}>{display.text}</p>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          );
+        })()}
+      </div>
     </section>
   );
 }
@@ -653,7 +800,7 @@ function BrandCashInhandSkeleton() {
         <div className="h-8 w-24 shrink-0 animate-pulse rounded-lg bg-slate-200 dark:bg-slate-700" />
       </div>
 
-      <div className="overflow-x-auto">
+      <div className="hidden overflow-x-auto sm:block">
         <table className="w-full min-w-[760px]">
           <thead>
             <tr className="border-b border-border bg-muted/10" style={{ height: '42.5px' }}>
@@ -695,6 +842,48 @@ function BrandCashInhandSkeleton() {
           </tfoot>
         </table>
       </div>
+
+      {/* Mobile skeleton — mirrors the real card list's own height (184px per
+          brand card, 186px for the bordered Total card) so nothing jumps in
+          size once live data replaces this. */}
+      <div className="flex flex-col gap-3 p-4 sm:hidden">
+        {Array.from({ length: 10 }).map((_, i) => (
+          <div key={i} className="rounded-xl border border-border bg-white p-4 dark:bg-[#2a2a2d]" style={{ height: '184px' }}>
+            <div className="flex items-start justify-between gap-2">
+              <div className="h-[18px] w-14 animate-pulse rounded-md bg-slate-200 dark:bg-slate-700" />
+              <div className="flex flex-col items-end gap-1.5">
+                <div className="h-3 w-16 animate-pulse rounded-md bg-slate-200 dark:bg-slate-700" />
+                <div className="h-[22px] w-24 animate-pulse rounded-md bg-slate-300 dark:bg-slate-600" />
+              </div>
+            </div>
+            <div className="mt-3 grid grid-cols-3 gap-x-2 gap-y-3 border-t border-border pt-3">
+              {BRAND_CASH_COLUMNS.filter((col) => col.key !== 'totalBrandCIH').map((col) => (
+                <div key={col.key} className="min-w-0">
+                  <div className="h-3 w-10 animate-pulse rounded-md bg-slate-200 dark:bg-slate-700" />
+                  <div className="mt-1 h-3 w-14 animate-pulse rounded-md bg-slate-100 dark:bg-slate-800" />
+                </div>
+              ))}
+            </div>
+          </div>
+        ))}
+        <div className="rounded-xl border-2 border-border bg-muted/20 p-4" style={{ height: '186px' }}>
+          <div className="flex items-start justify-between gap-2">
+            <div className="h-[18px] w-20 animate-pulse rounded-md bg-slate-300 dark:bg-slate-600" />
+            <div className="flex flex-col items-end gap-1.5">
+              <div className="h-3 w-16 animate-pulse rounded-md bg-slate-300 dark:bg-slate-600" />
+              <div className="h-[22px] w-24 animate-pulse rounded-md bg-slate-400 dark:bg-slate-500" />
+            </div>
+          </div>
+          <div className="mt-3 grid grid-cols-3 gap-x-2 gap-y-3 border-t border-border pt-3">
+            {BRAND_CASH_COLUMNS.filter((col) => col.key !== 'totalBrandCIH').map((col) => (
+              <div key={col.key} className="min-w-0">
+                <div className="h-3 w-10 animate-pulse rounded-md bg-slate-300 dark:bg-slate-600" />
+                <div className="mt-1 h-3 w-14 animate-pulse rounded-md bg-slate-300 dark:bg-slate-600" />
+              </div>
+            ))}
+          </div>
+        </div>
+      </div>
     </section>
   );
 }
@@ -716,19 +905,23 @@ export default function BalanceOverviewPage() {
       setLoading(true);
       setError(null);
 
-      const [cashoutRes, sendMoneyRes, cashGoRes, bundleRes, brandCashRes] = await Promise.all([
+      const [cashoutRes, sendMoneyRes, cashGoRes, bundleRes, brandCashRes, openingRes, agstlmRes] = await Promise.all([
         fetch(`/api/sheet?t=${Date.now()}`),
         fetch(`/api/sendmoney/sheet?t=${Date.now()}`),
         fetch(`/api/cashgo?t=${Date.now()}`),
         fetch(`/api/sendmoney/stlmtopup?t=${Date.now()}`),
         fetch(`/api/brand-cash-inhand?t=${Date.now()}`),
+        fetch(`/api/opening?t=${Date.now()}`),
+        fetch(`/api/agstlmtopup?t=${Date.now()}`),
       ]);
-      await assertAllOk([cashoutRes, sendMoneyRes, cashGoRes, bundleRes, brandCashRes]);
+      await assertAllOk([cashoutRes, sendMoneyRes, cashGoRes, bundleRes, brandCashRes, openingRes, agstlmRes]);
       const cashoutText = await cashoutRes.text();
       const sendMoneyText = await sendMoneyRes.text();
       const cashGoText = await cashGoRes.text();
       const bundleText = await bundleRes.text();
       const brandCashText = await brandCashRes.text();
+      const openingText = await openingRes.text();
+      const agstlmText = await agstlmRes.text();
 
       const todayCashGo = parseTodayCashGo(cashGoText);
       const todayBundle = parseTodayBundle(bundleText);
@@ -738,15 +931,20 @@ export default function BalanceOverviewPage() {
       const cashGoQuotaTotal = todayCashGo.quotaBk + todayCashGo.quotaNg;
       const cashGoQuota = cashGoQuotaTotal > 0 ? { processed: todayCashGo.bk + todayCashGo.ng, total: cashGoQuotaTotal } : null;
 
+      const cashoutCutoff = parseReportCutoffDate(openingText, 6);
+      const sendMoneyCutoff = parseReportCutoffDate(openingText, 8);
+      const cashoutTopUpStlm = computeCashoutTopUpStlm(agstlmText, cashoutCutoff);
+      const sendMoneyTopUpStlm = computeSendMoneyTopUpStlm(bundleText, sendMoneyCutoff);
+
       setCashoutCard(buildCardData(parseSheetBlock(cashoutText), 'cashout', 'Cashout', 'CashGo', [
         { key: 'bk', label: 'Bkash', value: todayCashGo.bk, quota: todayCashGo.quotaBk },
         { key: 'ng', label: 'Nagad', value: todayCashGo.ng, quota: todayCashGo.quotaNg },
-      ], cashGoQuota));
+      ], cashGoQuota, cashoutTopUpStlm));
       setSendMoneyCard(buildCardData(parseSheetBlock(sendMoneyText), 'sendmoney', 'Send Money', 'Bundle Transfer', [
         { key: 'nagad', label: 'Nagad', value: todayBundle.nagad },
         { key: 'rocket', label: 'Rocket', value: todayBundle.rocket },
         { key: 'upay', label: 'UPay', value: todayBundle.upay },
-      ], null));
+      ], null, sendMoneyTopUpStlm));
 
       const brandCash = parseBrandCashInhand(brandCashText);
       setBrandCashRows(brandCash.rows);

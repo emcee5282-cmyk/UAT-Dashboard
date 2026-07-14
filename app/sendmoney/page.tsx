@@ -2,7 +2,7 @@
 
 import { useEffect, useState, useCallback } from 'react';
 import { RefreshCw, TrendingUp, TrendingDown, Wallet, Activity } from 'lucide-react';
-import { Bar, BarChart, ResponsiveContainer, XAxis, YAxis, Tooltip, CartesianGrid, Cell, LabelList } from 'recharts';
+import { Bar, BarChart, ResponsiveContainer, XAxis, YAxis, Tooltip, CartesianGrid, LabelList } from 'recharts';
 import ThemeToggle from '@/app/components/ThemeToggle';
 import { useTheme } from '@/app/components/ThemeProvider';
 import ConnectionErrorState from '@/app/components/ConnectionErrorState';
@@ -17,7 +17,6 @@ type BundlePoint = {
   rocket: number;
   upay: number;
   total: number;
-  isToday: boolean;
 };
 
 type Row = {
@@ -182,9 +181,8 @@ function fmtTooltipAbbrev(num: number): string {
 }
 
 function BundleXAxisTick({ x, y, payload }: { x?: number; y?: number; payload?: { value: string } }) {
-  const isToday = payload?.value === 'Today';
   return (
-    <text x={x} y={(y ?? 0) + 12} textAnchor="middle" fontSize={10} fontWeight={isToday ? 700 : 600} fill={isToday ? 'var(--product-accent)' : 'var(--muted-foreground)'}>
+    <text x={x} y={(y ?? 0) + 12} textAnchor="middle" fontSize={10} fontWeight={600} fill="var(--muted-foreground)">
       {payload?.value}
     </text>
   );
@@ -375,9 +373,13 @@ export default function SendMoneyDashboardPage() {
             if (typeLabel) walletTopUpTotals.set(typeLabel, (walletTopUpTotals.get(typeLabel) ?? 0) + topUpAmountNum);
           }
 
-          // Settlement block (cols H-L = idx 7-11): idx7=wallet name, idx8=amount, idx9=date
+          // Settlement block (cols H-L = idx 7-11): idx7=wallet name, idx8=amount
+          // (stored negative, so abs()'d before accumulating — same convention
+          // as app/sendmoney/balances/page.tsx and Cashout's own app/page.tsx;
+          // this was missing here, which double-negated Settlement to a wrong
+          // positive sign via the `row.stlm = -computedStlm` line below), idx9=date
           const stlmName = rawVal(row[7]);
-          const stlmAmountNum = clean(rawVal(row[8]));
+          const stlmAmountNum = Math.abs(clean(rawVal(row[8])));
           const stlmDate = reportCutoffDate ? parseStlmRowDate(rawVal(row[9])) : null;
           const stlmInRange = !reportCutoffDate || (stlmDate !== null && stlmDate >= reportCutoffDate);
           if (stlmName && stlmName !== '-' && stlmAmountNum && stlmInRange) {
@@ -450,39 +452,32 @@ export default function SendMoneyDashboardPage() {
           addBundleRow(row[22], row[23], row[24], row[25], row[26]); // prev month archive
         });
 
-      const toBundlePoint = (d: Date, isToday: boolean): BundlePoint => {
+      const toBundlePoint = (d: Date): BundlePoint => {
         const totals = bundleByDate.get(d.toDateString()) ?? { NAGAD: 0, ROCKET: 0, UPAY: 0 };
         return {
-          day: isToday ? 'Today' : `${String(d.getMonth() + 1).padStart(2, '0')}/${String(d.getDate()).padStart(2, '0')}`,
-          tooltipLabel: isToday ? 'Today' : d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' }),
+          day: `${String(d.getMonth() + 1).padStart(2, '0')}/${String(d.getDate()).padStart(2, '0')}`,
+          tooltipLabel: d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' }),
           nagad: totals.NAGAD,
           rocket: totals.ROCKET,
           upay: totals.UPAY,
           total: totals.NAGAD + totals.ROCKET + totals.UPAY,
-          isToday,
         };
       };
 
-      // Today is always the last bar in the chart itself (highlighted), so
-      // each period is N-1 historical days ending yesterday, plus today.
+      // Today's data is partial/in-progress, so it's excluded entirely — both
+      // windows are full days of history ending yesterday.
       const now = new Date();
       const yesterday = new Date(now.getFullYear(), now.getMonth(), now.getDate() - 1);
 
-      const weekHistoryStart = new Date(yesterday.getFullYear(), yesterday.getMonth(), yesterday.getDate() - 5);
-      const weekPoints: BundlePoint[] = [
-        ...Array.from({ length: 6 }, (_, i) =>
-          toBundlePoint(new Date(weekHistoryStart.getFullYear(), weekHistoryStart.getMonth(), weekHistoryStart.getDate() + i), false)
-        ),
-        toBundlePoint(now, true),
-      ];
+      const weekHistoryStart = new Date(yesterday.getFullYear(), yesterday.getMonth(), yesterday.getDate() - 6);
+      const weekPoints: BundlePoint[] = Array.from({ length: 7 }, (_, i) =>
+        toBundlePoint(new Date(weekHistoryStart.getFullYear(), weekHistoryStart.getMonth(), weekHistoryStart.getDate() + i))
+      );
 
-      const monthHistoryStart = new Date(yesterday.getFullYear(), yesterday.getMonth(), yesterday.getDate() - 28);
-      const monthPoints: BundlePoint[] = [
-        ...Array.from({ length: 29 }, (_, i) =>
-          toBundlePoint(new Date(monthHistoryStart.getFullYear(), monthHistoryStart.getMonth(), monthHistoryStart.getDate() + i), false)
-        ),
-        toBundlePoint(now, true),
-      ];
+      const monthHistoryStart = new Date(yesterday.getFullYear(), yesterday.getMonth(), yesterday.getDate() - 29);
+      const monthPoints: BundlePoint[] = Array.from({ length: 30 }, (_, i) =>
+        toBundlePoint(new Date(monthHistoryStart.getFullYear(), monthHistoryStart.getMonth(), monthHistoryStart.getDate() + i))
+      );
 
       setRows(parsed);
       setOpeningTotal(openingSum);
@@ -517,16 +512,16 @@ export default function SendMoneyDashboardPage() {
   const bundleYMax = Math.max(1, ...bundleMonthData.map((p) => p.total));
   const bundleYTicks = [0, Math.round(bundleYMax / 2), bundleYMax];
   // "preserveStartEnd" (rather than a numeric interval) guarantees the very
-  // last tick — Today — always renders instead of being skipped by interval
-  // parity on a 30-item array.
+  // last tick always renders instead of being skipped by interval parity on
+  // a 30-item array.
   const bundleXAxisInterval: number | 'preserveStartEnd' = bundlePeriod === 'month' ? 'preserveStartEnd' : 0;
-  // Week mode labels every bar; month mode only labels the peak day and
-  // today, to keep 30 stacked bars from turning into a wall of text.
+  // Week mode labels every bar; month mode only labels the peak day, to keep
+  // 30 stacked bars from turning into a wall of text.
   const bundlePeakIndex = bundleChartData.length
     ? bundleChartData.reduce((peakIdx, point, idx, arr) => (point.total > arr[peakIdx].total ? idx : peakIdx), 0)
     : -1;
   const shouldLabelBundleBar = (point: BundlePoint) =>
-    bundlePeriod === 'week' || point.day === bundleChartData[bundlePeakIndex]?.day || point.isToday;
+    bundlePeriod === 'week' || point.day === bundleChartData[bundlePeakIndex]?.day;
 
   // Recharts skips calling a stacked Bar's LabelList content function for any
   // day where that specific series' own value is 0 (no rect to anchor to),
@@ -550,7 +545,7 @@ export default function SendMoneyDashboardPage() {
     const numY = Number(y ?? 0);
     const numWidth = Number(width ?? 0);
     return (
-      <text x={numX + numWidth / 2} y={numY - 6} textAnchor="middle" fontSize={10} fontWeight={700} fill={point.isToday ? 'var(--product-accent)' : 'var(--foreground)'}>
+      <text x={numX + numWidth / 2} y={numY - 6} textAnchor="middle" fontSize={10} fontWeight={700} fill="var(--foreground)">
         {fmtTooltipAbbrev(point.total)}
       </text>
     );
@@ -855,10 +850,11 @@ export default function SendMoneyDashboardPage() {
                   </div>
                 </div>
 
-                {/* Chart — stacked bars, Today is the last bar (highlighted).
-                    Week mode: value label on every bar, no Y-axis. Month
-                    mode: minimal Y-axis, only the peak day and Today are
-                    labeled, rest revealed via tooltip on hover. */}
+                {/* Chart — stacked bars, last 7/30 full days of history
+                    (today excluded — partial/in-progress). Week mode: value
+                    label on every bar, no Y-axis. Month mode: minimal
+                    Y-axis, only the peak day labeled, rest revealed via
+                    tooltip on hover. */}
                 <div className="h-[280px] select-none px-3 py-4 pt-6">
                   <ResponsiveContainer width="100%" height="100%">
                     <BarChart data={bundleChartData} margin={{ top: 20, right: 20, left: 0, bottom: 0 }}>
@@ -884,21 +880,12 @@ export default function SendMoneyDashboardPage() {
                       )}
                       <Tooltip content={<BundleTooltip />} cursor={{ fill: isDark ? 'rgba(148,163,184,0.12)' : 'rgba(100,116,139,0.08)' }} />
                       <Bar dataKey="nagad" stackId="bundle" fill={isDark ? '#2dd4bf' : '#0d9488'} maxBarSize={40}>
-                        {bundleChartData.map((point, i) => (
-                          <Cell key={i} stroke={point.isToday ? 'var(--product-accent)' : 'none'} strokeWidth={point.isToday ? 1.5 : 0} />
-                        ))}
                         <LabelList dataKey="total" content={makeBundleValueLabelRenderer('nagad')} />
                       </Bar>
                       <Bar dataKey="rocket" stackId="bundle" fill={isDark ? '#a78bfa' : '#7c3aed'} maxBarSize={40}>
-                        {bundleChartData.map((point, i) => (
-                          <Cell key={i} stroke={point.isToday ? 'var(--product-accent)' : 'none'} strokeWidth={point.isToday ? 1.5 : 0} />
-                        ))}
                         <LabelList dataKey="total" content={makeBundleValueLabelRenderer('rocket')} />
                       </Bar>
                       <Bar dataKey="upay" stackId="bundle" fill={isDark ? '#fbbf24' : '#d97706'} radius={[3, 3, 0, 0]} maxBarSize={40}>
-                        {bundleChartData.map((point, i) => (
-                          <Cell key={i} stroke={point.isToday ? 'var(--product-accent)' : 'none'} strokeWidth={point.isToday ? 1.5 : 0} />
-                        ))}
                         <LabelList dataKey="total" content={makeBundleValueLabelRenderer('upay')} />
                       </Bar>
                     </BarChart>
