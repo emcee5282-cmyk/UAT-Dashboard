@@ -1,4 +1,5 @@
 import { rawVal } from '@/app/lib/format';
+import { getBusinessToday } from '@/app/lib/businessDate';
 
 function parseCsvLines(text: string): string[][] {
   const rows: string[][] = [];
@@ -395,25 +396,6 @@ export async function fetchTransferQueueCount(): Promise<number> {
 // normalizeWalletStatus/computeWalletStatus/EXCLUDED_WALLET_STATUSES/normalizeGroup
 // above since those are byte-identical between the two pages.
 
-// Opening sheet col I holds Send Money's own "UPDATED TIME" card — Settlement
-// rows dated before this reset point are excluded so they aren't double-counted.
-function parseSendMoneyReportCutoffDate(openingRawRows: string[][]): Date | null {
-  for (const row of openingRawRows) {
-    const cell = (row[8] ?? '').trim();
-    const match = cell.match(/^([A-Za-z]+)\s+(\d{1,2})\s*-\s*\d{1,2}:\d{2}\s*[AP]M$/i);
-    if (match) {
-      const [, monthName, day] = match;
-      const year = new Date().getFullYear();
-      const parsed = new Date(`${monthName} ${day}, ${year}`);
-      if (!isNaN(parsed.getTime())) {
-        parsed.setHours(0, 0, 0, 0);
-        return parsed;
-      }
-    }
-  }
-  return null;
-}
-
 function parseSendMoneySheetDate(dateStr: string): Date | null {
   const parts = (dateStr ?? '').trim().split('/');
   if (parts.length !== 3) return null;
@@ -493,7 +475,10 @@ export async function fetchSendMoneyTransferQueueCount(): Promise<number> {
   const stlmText = await stlmRes.text();
 
   const openingRawRows = parseCsvLines(openingText);
-  const reportCutoffDate = parseSendMoneyReportCutoffDate(openingRawRows);
+  // Top Up/Settlement totals reset at the 2AM business-day rollover (see
+  // app/lib/businessDate.ts) — clock-based, not gated on whether Opening's
+  // own "Updated Time" card has been manually refreshed yet.
+  const reportCutoffDate = getBusinessToday();
 
   // Send Money's own roster lives in cols L-O (indices 11-14) of "Opening AG".
   const openingRows = openingRawRows

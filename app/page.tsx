@@ -5,6 +5,7 @@ import { RefreshCw, TrendingUp, TrendingDown, Wallet, Activity } from 'lucide-re
 import ThemeToggle from './components/ThemeToggle';
 import ConnectionErrorState from './components/ConnectionErrorState';
 import TrendChart, { type TrendPoint, type TrendSeriesDef } from './components/TrendChart';
+import { getBusinessToday } from './lib/businessDate';
 import { classifyFetchError, type ClassifiedError, assertAllOk } from './lib/errors';
 
 const CASHGO_SERIES_DEFS: TrendSeriesDef[] = [
@@ -50,26 +51,6 @@ const RANK_LABELS = ['1st', '2nd', '3rd', '4th'];
 
 function clean(val: string): number {
   return parseFloat((val ?? '0').replace(/"/g, '').replace(/,/g, '').trim()) || 0;
-}
-
-// Opening sheet col G holds a "REPORT LAST UPDATE" card, e.g. "July 2 - 8:54 AM".
-// Top Up totals should only include rows dated on/after this reset point, so
-// entries already folded into the last Opening Balance reset aren't double-counted.
-function parseReportCutoffDate(openingRawRows: string[][]): Date | null {
-  for (const row of openingRawRows) {
-    const cell = (row[6] ?? '').trim();
-    const match = cell.match(/^([A-Za-z]+)\s+(\d{1,2})\s*-\s*\d{1,2}:\d{2}\s*[AP]M$/i);
-    if (match) {
-      const [, monthName, day] = match;
-      const year = new Date().getFullYear();
-      const parsed = new Date(`${monthName} ${day}, ${year}`);
-      if (!isNaN(parsed.getTime())) {
-        parsed.setHours(0, 0, 0, 0);
-        return parsed;
-      }
-    }
-  }
-  return null;
 }
 
 const BRAND_CODES = ['M1', 'M2', 'B1', 'B2', 'B3', 'B4', 'B5', 'K1', 'J1', 'T1'];
@@ -250,7 +231,10 @@ export default function Dashboard() {
       console.log('Total Opening Balance sum:', openingSum);
 
       const openingRawRows = parseCsvLines(openingText);
-      const reportCutoffDate = parseReportCutoffDate(openingRawRows);
+      // Top Up/Settlement totals reset at the 2AM business-day rollover
+      // (see app/lib/businessDate.ts) — clock-based, not gated on whether
+      // Opening's own "Updated Time" card has been manually refreshed yet.
+      const reportCutoffDate = getBusinessToday();
 
       const openingAgentRows = openingRawRows
         .slice(1)
@@ -382,8 +366,10 @@ export default function Dashboard() {
       };
 
       // Today's data is partial/in-progress, so it's excluded entirely — both
-      // windows are full days of history ending yesterday.
-      const now = new Date();
+      // windows are full days of history ending yesterday. "Today" here is
+      // the 2AM-rollover business date (getBusinessToday), not the literal
+      // calendar day — e.g. at 12:38 AM this still resolves to yesterday.
+      const now = getBusinessToday();
       const yesterday = new Date(now.getFullYear(), now.getMonth(), now.getDate() - 1);
 
       const weekHistoryStart = new Date(yesterday.getFullYear(), yesterday.getMonth(), yesterday.getDate() - 6);

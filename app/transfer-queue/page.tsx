@@ -8,6 +8,7 @@ import ThemeToggle from '../components/ThemeToggle';
 import ConnectionErrorState from '../components/ConnectionErrorState';
 import { classifyFetchError, type ClassifiedError, assertAllOk } from '../lib/errors';
 import { rawVal } from '@/app/lib/format';
+import { getBusinessToday } from '../lib/businessDate';
 
 function parseCsvLines(text: string): string[][] {
   const rows: string[][] = [];
@@ -75,29 +76,6 @@ function parseNumber(val: string): number {
   if (cleaned === '-' || cleaned === '') return 0;
   const num = parseFloat(cleaned);
   return isNaN(num) ? 0 : num;
-}
-
-// Opening sheet col G holds a "REPORT LAST UPDATE" card, e.g. "July 2 - 8:54 AM".
-// This is the cutoff: Top Up / Settlement totals should only include rows dated
-// on or after this reset point, so entries already folded into the last Opening
-// Balance reset aren't double-counted. Same logic as app/agentbal/page.tsx —
-// this page was missing it, which inflated Company Balance's Settlement/Top Up
-// totals with stale pre-reset rows.
-function parseReportCutoffDate(openingRawRows: string[][]): Date | null {
-  for (const row of openingRawRows) {
-    const cell = (row[6] ?? '').trim();
-    const match = cell.match(/^([A-Za-z]+)\s+(\d{1,2})\s*-\s*\d{1,2}:\d{2}\s*[AP]M$/i);
-    if (match) {
-      const [, monthName, day] = match;
-      const year = new Date().getFullYear();
-      const parsed = new Date(`${monthName} ${day}, ${year}`);
-      if (!isNaN(parsed.getTime())) {
-        parsed.setHours(0, 0, 0, 0);
-        return parsed;
-      }
-    }
-  }
-  return null;
 }
 
 // Stlm Top Up sheet dates are formatted "M/D/YYYY".
@@ -545,7 +523,10 @@ export default function TransferQueue() {
       const stlmText = await stlmRes.text();
 
       const openingRawRows = parseCsvLines(openingText);
-      const reportCutoffDate = parseReportCutoffDate(openingRawRows);
+      // Top Up/Settlement totals reset at the 2AM business-day rollover
+      // (see app/lib/businessDate.ts) — clock-based, not gated on whether
+      // Opening's own "Updated Time" card has been manually refreshed yet.
+      const reportCutoffDate = getBusinessToday();
 
       const openingRows = openingRawRows
         .slice(1)

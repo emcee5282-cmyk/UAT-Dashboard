@@ -8,6 +8,7 @@ import ThemeToggle from '../components/ThemeToggle';
 import ConnectionErrorState from '../components/ConnectionErrorState';
 import { classifyFetchError, type ClassifiedError } from '../lib/errors';
 import { rawVal, fmtNum } from '@/app/lib/format';
+import { getBusinessToday } from '../lib/businessDate';
 
 // "AG BD STLM + TOPUP" no longer carries a brand/gateway column (removed from
 // the sheet), so brand is resolved by cross-referencing the bare agent code
@@ -77,13 +78,15 @@ function parseAmount(val: string): number {
 }
 
 // "AG BD STLM + TOPUP" dates are formatted "M/D/YYYY" — only today's rows
-// should ever render on this page.
+// should ever render on this page. "Today" is the 2AM-rollover business
+// date (getBusinessToday), not the literal calendar day — e.g. at 12:38 AM
+// this still resolves to yesterday.
 function isToday(dateStr: string): boolean {
   const parts = (dateStr ?? '').trim().split('/');
   if (parts.length !== 3) return false;
   const [m, d, y] = parts.map(Number);
   if (!m || !d || !y) return false;
-  const now = new Date();
+  const now = getBusinessToday();
   return m === now.getMonth() + 1 && d === now.getDate() && y === now.getFullYear();
 }
 

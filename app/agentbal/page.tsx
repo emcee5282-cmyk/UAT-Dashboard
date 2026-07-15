@@ -8,6 +8,7 @@ import ThemeToggle from '../components/ThemeToggle';
 import ConnectionErrorState from '../components/ConnectionErrorState';
 import { classifyFetchError, type ClassifiedError, assertAllOk } from '../lib/errors';
 import { rawVal } from '@/app/lib/format';
+import { getBusinessToday, toBusinessDate } from '../lib/businessDate';
 
 type OpeningRow = {
   agentName: string;
@@ -500,20 +501,51 @@ export default function AgentBalance() {
       setLoading(true);
       setError(null);
 
-      const [openingRes, balRes, stlmRes] = await Promise.all([
+      const [openingRes, balRes, stlmRes, estimatedRes] = await Promise.all([
         fetch(`/api/opening?t=${Date.now()}`),
         fetch(`/api/balance-limit?t=${Date.now()}`),
         fetch(`/api/agstlmtopup?t=${Date.now()}`),
+        fetch(`/api/opening/estimated-balance?t=${Date.now()}`),
       ]);
 
-      await assertAllOk([openingRes, balRes, stlmRes]);
+      await assertAllOk([openingRes, balRes, stlmRes, estimatedRes]);
 
       const openingText = await openingRes.text();
       const balData: string[][] = await balRes.json();
       const stlmText = await stlmRes.text();
+      const estimatedData: { balances: Record<string, number>; uploadedAt: string | null } = await estimatedRes.json();
 
       const openingRawRows = parseCsvLines(openingText);
+      // Opening's own "Updated Time" card — kept separate from the Top
+      // Up/Settlement cutoff below (which is purely clock-based). This one
+      // is still needed to detect whether Opening AG has been manually
+      // refreshed yet, for the Assumed Balance validity check further down.
       const reportCutoffDate = parseReportCutoffDate(openingRawRows);
+      // Top Up/Settlement totals (feeding Company Balance) reset at the 2AM
+      // business-day rollover (see app/lib/businessDate.ts) — clock-based,
+      // independent of whether Opening's own "Updated Time" card has been
+      // manually refreshed.
+      const topUpSettlementCutoff = getBusinessToday();
+
+      // Assumed Balance (uploaded via Opening's "Upload Excel Data") only
+      // takes over when BOTH hold:
+      // 1. Opening's own "Updated Time" card is still showing the PREVIOUS
+      //    business day — i.e. the real Opening reset for today hasn't
+      //    happened yet. The instant "Updated Time" catches up to today,
+      //    this stops applying on its own (no manual delete needed).
+      // 2. The upload's OWN "Last Updated" timestamp is itself from TODAY's
+      //    business day — a fresh upload made right around/after the 2AM
+      //    rollover reads as "today" already (see app/lib/businessDate.ts).
+      //    An upload left over from a prior business day (stale — no fresh
+      //    file was uploaded for today) must NOT keep being applied just
+      //    because Opening's own reset happens to be running late too.
+      const estimatedUploadedAt = estimatedData.uploadedAt ? new Date(estimatedData.uploadedAt) : null;
+      const estimatedOpeningValid =
+        reportCutoffDate !== null &&
+        reportCutoffDate.getTime() < getBusinessToday().getTime() &&
+        estimatedUploadedAt !== null &&
+        toBusinessDate(estimatedUploadedAt).getTime() === getBusinessToday().getTime();
+      const estimatedBalances = new Map(Object.entries(estimatedData.balances ?? {}));
 
       const openingRows = openingRawRows
         .slice(1)
@@ -524,7 +556,12 @@ export default function AgentBalance() {
           sdp: rawVal(row[2]),
           leader: rawVal(row[3]),
         }))
-        .filter((row) => row.agentName && row.agentName !== '-' && row.agentName !== 'OLD');
+        .filter((row) => row.agentName && row.agentName !== '-' && row.agentName !== 'OLD')
+        .map((row) => {
+          if (!estimatedOpeningValid) return row;
+          const assumedBalance = estimatedBalances.get(row.agentName);
+          return assumedBalance === undefined ? row : { ...row, openingBal: String(assumedBalance) };
+        });
 
       const balRows = balData
         .slice(1)
@@ -597,10 +634,10 @@ export default function AgentBalance() {
         .forEach((row) => {
           const topUpAgent = stripBrandSuffix(rawVal(row[1]));
           const topUpAmount = rawVal(row[2]);
-          const topUpDate = reportCutoffDate ? parseSheetDate(rawVal(row[3])) : null;
+          const topUpDate = parseSheetDate(rawVal(row[3]));
           if (
             topUpAgent && topUpAgent !== '-' && topUpAmount && topUpAmount !== '-' &&
-            (!reportCutoffDate || (topUpDate && topUpDate >= reportCutoffDate))
+            topUpDate && topUpDate >= topUpSettlementCutoff
           ) {
             const amount = Math.abs(parseFloat(topUpAmount.replace(/,/g, '')) || 0);
             topUpTotals.set(topUpAgent, (topUpTotals.get(topUpAgent) ?? 0) + amount);
@@ -608,10 +645,10 @@ export default function AgentBalance() {
 
           const stlmAgent = stripBrandSuffix(rawVal(row[7]));
           const stlmAmount = rawVal(row[8]);
-          const stlmDate = reportCutoffDate ? parseSheetDate(rawVal(row[9])) : null;
+          const stlmDate = parseSheetDate(rawVal(row[9]));
           if (
             stlmAgent && stlmAgent !== '-' && stlmAmount && stlmAmount !== '-' &&
-            (!reportCutoffDate || (stlmDate && stlmDate >= reportCutoffDate))
+            stlmDate && stlmDate >= topUpSettlementCutoff
           ) {
             const amount = Math.abs(parseFloat(stlmAmount.replace(/,/g, '')) || 0);
             stlmTotals.set(stlmAgent, (stlmTotals.get(stlmAgent) ?? 0) + amount);

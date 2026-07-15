@@ -9,6 +9,7 @@ import ConnectionErrorState from '@/app/components/ConnectionErrorState';
 import { classifyFetchError, type ClassifiedError, assertAllOk } from '@/app/lib/errors';
 import { rawVal } from '@/app/lib/format';
 import { getSendMoneyRoute } from '@/app/lib/sendMoneyRoutes';
+import { getBusinessToday } from '@/app/lib/businessDate';
 
 type BundlePoint = {
   day: string;
@@ -40,27 +41,6 @@ type AgentRow = {
 
 function clean(val: string): number {
   return parseFloat((val ?? '0').replace(/"/g, '').replace(/,/g, '').trim()) || 0;
-}
-
-// Opening AG col I (index 8) holds Send Money's own "UPDATED TIME" card, e.g.
-// "July 4 - 7:03 AM" — same reset-marker pattern as Cashout's own col G.
-// Settlement/Top Up totals only include rows dated on/after this point so
-// entries already folded into the last Opening Balance reset aren't double-counted.
-function parseReportCutoffDate(openingRawRows: string[][]): Date | null {
-  for (const row of openingRawRows) {
-    const cell = (row[8] ?? '').trim();
-    const match = cell.match(/^([A-Za-z]+)\s+(\d{1,2})\s*-\s*\d{1,2}:\d{2}\s*[AP]M$/i);
-    if (match) {
-      const [, monthName, day] = match;
-      const year = new Date().getFullYear();
-      const parsed = new Date(`${monthName} ${day}, ${year}`);
-      if (!isNaN(parsed.getTime())) {
-        parsed.setHours(0, 0, 0, 0);
-        return parsed;
-      }
-    }
-  }
-  return null;
 }
 
 // "PS BD STLM + TOPUP" sheet dates are formatted "M/D/YYYY".
@@ -278,7 +258,10 @@ export default function SendMoneyDashboardPage() {
         });
 
       const openingRawRows = parseCsvLines(openingText);
-      const reportCutoffDate = parseReportCutoffDate(openingRawRows);
+      // Top Up/Settlement totals reset at the 2AM business-day rollover
+      // (see app/lib/businessDate.ts) — clock-based, not gated on whether
+      // Opening's own "Updated Time" card has been manually refreshed yet.
+      const reportCutoffDate = getBusinessToday();
 
       // Send Money's own roster lives in cols L-O (indices 11-14) of the same
       // "Opening AG" sheet Cashout uses for cols A-D.
@@ -465,8 +448,10 @@ export default function SendMoneyDashboardPage() {
       };
 
       // Today's data is partial/in-progress, so it's excluded entirely — both
-      // windows are full days of history ending yesterday.
-      const now = new Date();
+      // windows are full days of history ending yesterday. "Today" here is
+      // the 2AM-rollover business date (getBusinessToday), not the literal
+      // calendar day — e.g. at 12:38 AM this still resolves to yesterday.
+      const now = getBusinessToday();
       const yesterday = new Date(now.getFullYear(), now.getMonth(), now.getDate() - 1);
 
       const weekHistoryStart = new Date(yesterday.getFullYear(), yesterday.getMonth(), yesterday.getDate() - 6);

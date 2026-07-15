@@ -11,7 +11,28 @@
       "Bash(grep -n \"col.key === 'brand'\\\\|col.key === 'correctGroup'\\\\|</div>$\" app/transfer-queue/page.tsx)",
       "Bash(grep -n \"For Transfer:\\\\|flex items-center gap-3\\\\\">$\" app/transfer-queue/page.tsx)",
       "Bash(grep -n \"document.body\\\\s*$\\\\|^\\\\s*\\)\\\\}\\\\s*$\" app/agentbal/page.tsx)",
-      "Bash(grep -n \"ChevronUp\\\\s*$\\\\|anyBrandUnchecked && \\(\" app/agentbal/page.tsx)"
+      "Bash(grep -n \"ChevronUp\\\\s*$\\\\|anyBrandUnchecked && \\(\" app/agentbal/page.tsx)",
+      "Bash(node \"C:\\\\Users\\\\ejboy\\\\AppData\\\\Local\\\\Temp\\\\claude\\\\c--Users-ejboy-Desktop-dashbaord-project\\\\c4332cb2-fa17-45b2-a757-eb725c8d18c9\\\\scratchpad\\\\error-retry-verify.js\")",
+      "Bash(node \"C:\\\\Users\\\\ejboy\\\\AppData\\\\Local\\\\Temp\\\\claude\\\\c--Users-ejboy-Desktop-dashbaord-project\\\\c4332cb2-fa17-45b2-a757-eb725c8d18c9\\\\scratchpad\\\\regression-check.js\")",
+      "Bash(curl -s http://localhost:3000/api/debugpsbal)",
+      "Bash(curl -s http://localhost:3000/api/balance-limit)",
+      "Bash(node -e \"let d='';process.stdin.on\\('data',c=>d+=c\\);process.stdin.on\\('end',\\(\\)=>{const j=JSON.parse\\(d\\);console.log\\('header:',JSON.stringify\\(j[0]\\)\\);console.log\\('sample row:',JSON.stringify\\(j[1]\\)\\);}\\)\")",
+      "Bash(curl -s http://localhost:3000/api/stlm)",
+      "Bash(curl -s http://localhost:3000/api/debugopeningfull)",
+      "Bash(curl -s \"http://localhost:3000/api/debugpsbal\")",
+      "Bash(curl -s http://localhost:3000/api/debugpsbal2)",
+      "Bash(node \"C:\\\\Users\\\\ejboy\\\\AppData\\\\Local\\\\Temp\\\\claude\\\\c--Users-ejboy-Desktop-dashbaord-project\\\\c4332cb2-fa17-45b2-a757-eb725c8d18c9\\\\scratchpad\\\\sendmoney-balances-verify.js\")",
+      "Bash(curl -s http://localhost:3000/api/opening)",
+      "Bash(node \"C:\\\\Users\\\\ejboy\\\\AppData\\\\Local\\\\Temp\\\\claude\\\\c--Users-ejboy-Desktop-dashbaord-project\\\\c4332cb2-fa17-45b2-a757-eb725c8d18c9\\\\scratchpad\\\\sm-balances-final-check.js\")",
+      "Bash(curl -s http://localhost:3000/api/debugsuffix)",
+      "Bash(node \"C:\\\\Users\\\\ejboy\\\\AppData\\\\Local\\\\Temp\\\\claude\\\\c--Users-ejboy-Desktop-dashbaord-project\\\\c4332cb2-fa17-45b2-a757-eb725c8d18c9\\\\scratchpad\\\\regression.js\")",
+      "Bash(node \"C:\\\\Users\\\\ejboy\\\\AppData\\\\Local\\\\Temp\\\\claude\\\\c--Users-ejboy-Desktop-dashbaord-project\\\\c4332cb2-fa17-45b2-a757-eb725c8d18c9\\\\scratchpad\\\\sidebar-check.js\")",
+      "Bash(node \"C:\\\\Users\\\\ejboy\\\\AppData\\\\Local\\\\Temp\\\\claude\\\\c--Users-ejboy-Desktop-dashbaord-project\\\\c4332cb2-fa17-45b2-a757-eb725c8d18c9\\\\scratchpad\\\\newsheet-verify.js\")",
+      "Bash(curl -s \"http://localhost:3000/api/sendmoney/stlmtopup\")",
+      "Bash(curl -s -o /dev/null -w \"%{http_code}\\\\n\" http://localhost:3000/sendmoney/topup)",
+      "Bash(node \"C:\\\\Users\\\\ejboy\\\\AppData\\\\Local\\\\Temp\\\\claude\\\\c--Users-ejboy-Desktop-dashbaord-project\\\\c4332cb2-fa17-45b2-a757-eb725c8d18c9\\\\scratchpad\\\\tq-verify.js\")",
+      "Bash(curl -s \"http://localhost:3000/api/stlm\")",
+      "Bash(node \"C:\\\\Users\\\\ejboy\\\\AppData\\\\Local\\\\Temp\\\\claude\\\\c--Users-ejboy-Desktop-dashbaord-project\\\\c4332cb2-fa17-45b2-a757-eb725c8d18c9\\\\scratchpad\\\\cashout-verify.js\")"
     ]
   }
 }

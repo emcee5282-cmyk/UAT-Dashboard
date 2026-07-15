@@ -9,6 +9,27 @@ import ConnectionErrorState from '@/app/components/ConnectionErrorState';
 import { classifyFetchError, type ClassifiedError, assertAllOk } from '@/app/lib/errors';
 import { rawVal } from '@/app/lib/format';
 import { BRAND_CODES as CASHOUT_BRAND_CODES } from '@/app/lib/transferQueueCount';
+import { getBusinessToday, toBusinessDate } from '@/app/lib/businessDate';
+
+// "Opening AG" sheet col I — Send Money's own "UPDATED TIME" card (Cashout's
+// equivalent card lives in col G instead — the two products' cards sit
+// side by side on the same sheet, confirmed by the user, not shared).
+function parseSendMoneyReportCutoffDate(openingRawRows: string[][]): Date | null {
+  for (const row of openingRawRows) {
+    const cell = (row[8] ?? '').trim();
+    const match = cell.match(/^([A-Za-z]+)\s+(\d{1,2})\s*-\s*\d{1,2}:\d{2}\s*[AP]M$/i);
+    if (match) {
+      const [, monthName, day] = match;
+      const year = new Date().getFullYear();
+      const parsed = new Date(`${monthName} ${day}, ${year}`);
+      if (!isNaN(parsed.getTime())) {
+        parsed.setHours(0, 0, 0, 0);
+        return parsed;
+      }
+    }
+  }
+  return null;
+}
 
 type OpeningRow = {
   agentName: string;
@@ -130,27 +151,6 @@ function parseNumber(val: string): number {
   return isNaN(num) ? 0 : num;
 }
 
-// Opening sheet col I holds Send Money's own "UPDATED TIME" card, e.g.
-// "July 4 - 7:03 AM" (same format as Cashout's col G card). This is the
-// cutoff: Settlement totals should only include rows dated on or after this
-// reset point, so entries already folded into the last Opening Balance reset
-// aren't double-counted.
-function parseReportCutoffDate(openingRawRows: string[][]): Date | null {
-  for (const row of openingRawRows) {
-    const cell = (row[8] ?? '').trim();
-    const match = cell.match(/^([A-Za-z]+)\s+(\d{1,2})\s*-\s*\d{1,2}:\d{2}\s*[AP]M$/i);
-    if (match) {
-      const [, monthName, day] = match;
-      const year = new Date().getFullYear();
-      const parsed = new Date(`${monthName} ${day}, ${year}`);
-      if (!isNaN(parsed.getTime())) {
-        parsed.setHours(0, 0, 0, 0);
-        return parsed;
-      }
-    }
-  }
-  return null;
-}
 
 // Stlm Top Up sheet dates are formatted "M/D/YYYY".
 function parseSheetDate(dateStr: string): Date | null {
@@ -509,21 +509,51 @@ export default function SendMoneyAgentBalance() {
       // /api/sendmoney/balances ("SSP PS BalanceLimit") and
       // /api/sendmoney/stlmtopup ("PS BD STLM + TOPUP", Send Money's own
       // dedicated Settlement + Top Up sheet — replaces the old shared
-      // "Stlm Top Up" source).
-      const [openingRes, balRes, stlmRes] = await Promise.all([
+      // "Stlm Top Up" source) — plus the Send Money Estimated Opening upload,
+      // same Assumed Balance substitution app/agentbal/page.tsx already does
+      // for Cashout.
+      const [openingRes, balRes, stlmRes, estimatedRes] = await Promise.all([
         fetch(`/api/opening?t=${Date.now()}`),
         fetch(`/api/sendmoney/balances?t=${Date.now()}`),
         fetch(`/api/sendmoney/stlmtopup?t=${Date.now()}`),
+        fetch(`/api/sendmoney/opening/estimated-balance?t=${Date.now()}`),
       ]);
 
-      await assertAllOk([openingRes, balRes, stlmRes]);
+      await assertAllOk([openingRes, balRes, stlmRes, estimatedRes]);
 
       const openingText = await openingRes.text();
       const balData: string[][] = await balRes.json();
       const stlmText = await stlmRes.text();
+      const estimatedData: { balances: Record<string, number>; uploadedAt: string | null } = await estimatedRes.json();
 
       const openingRawRows = parseCsvLines(openingText);
-      const reportCutoffDate = parseReportCutoffDate(openingRawRows);
+      // Opening's own "UPDATED TIME" card — Send Money's own, col I (Cashout's
+      // equivalent is col G, see parseReportCutoffDate in app/agentbal/page.tsx)
+      // — kept separate from the Top Up/Settlement cutoff below (purely
+      // clock-based). Needed to detect whether Opening AG has been manually
+      // refreshed yet, for the Assumed Balance validity check further down.
+      const reportCutoffDate = parseSendMoneyReportCutoffDate(openingRawRows);
+      // Top Up/Settlement totals reset at the 2AM business-day rollover
+      // (see app/lib/businessDate.ts) — clock-based, not gated on whether
+      // Opening's own "Updated Time" card has been manually refreshed yet.
+      const topUpSettlementCutoff = getBusinessToday();
+
+      // Assumed Balance (uploaded via Send Money Opening's "Upload Excel
+      // Data") only takes over when BOTH hold — same two conditions as
+      // Cashout's own check in app/agentbal/page.tsx:
+      // 1. Opening's own "UPDATED TIME" card (col I) is still showing the
+      //    PREVIOUS business day — the real Opening reset for today hasn't
+      //    happened yet.
+      // 2. The upload's OWN "Last Updated" timestamp is itself from TODAY's
+      //    business day — a stale leftover upload from a prior day must not
+      //    keep being applied.
+      const estimatedUploadedAt = estimatedData.uploadedAt ? new Date(estimatedData.uploadedAt) : null;
+      const estimatedOpeningValid =
+        reportCutoffDate !== null &&
+        reportCutoffDate.getTime() < getBusinessToday().getTime() &&
+        estimatedUploadedAt !== null &&
+        toBusinessDate(estimatedUploadedAt).getTime() === getBusinessToday().getTime();
+      const estimatedBalances = new Map(Object.entries(estimatedData.balances ?? {}));
 
       // Send Money's own roster lives in cols L-O (indices 11-14) of the same
       // "Opening AG" sheet Cashout uses for cols A-D — a separate ~9,983-row
@@ -537,7 +567,12 @@ export default function SendMoneyAgentBalance() {
           sdp: rawVal(row[13]),
           leader: rawVal(row[14]),
         }))
-        .filter((row) => row.agentName && row.agentName !== '-' && row.agentName !== 'OLD');
+        .filter((row) => row.agentName && row.agentName !== '-' && row.agentName !== 'OLD')
+        .map((row) => {
+          if (!estimatedOpeningValid) return row;
+          const assumedBalance = estimatedBalances.get(row.agentName);
+          return assumedBalance === undefined ? row : { ...row, openingBal: String(assumedBalance) };
+        });
 
       // "SSP PS BalanceLimit" lines up column-for-column with Cashout's own
       // "SSP AG BalanceLimit" from index 4 onward; it just lacks Cashout's
@@ -605,10 +640,10 @@ export default function SendMoneyAgentBalance() {
         .forEach((row) => {
           const topUpAgent = rawVal(row[1]);
           const topUpAmount = rawVal(row[2]);
-          const topUpDate = reportCutoffDate ? parseSheetDate(rawVal(row[3])) : null;
+          const topUpDate = topUpSettlementCutoff ? parseSheetDate(rawVal(row[3])) : null;
           if (
             topUpAgent && topUpAgent !== '-' && topUpAmount && topUpAmount !== '-' &&
-            (!reportCutoffDate || (topUpDate && topUpDate >= reportCutoffDate))
+            (!topUpSettlementCutoff || (topUpDate && topUpDate >= topUpSettlementCutoff))
           ) {
             const amount = Math.abs(parseFloat(topUpAmount.replace(/,/g, '')) || 0);
             topUpTotals.set(topUpAgent, (topUpTotals.get(topUpAgent) ?? 0) + amount);
@@ -616,10 +651,10 @@ export default function SendMoneyAgentBalance() {
 
           const stlmAgent = rawVal(row[7]);
           const stlmAmount = rawVal(row[8]);
-          const stlmDate = reportCutoffDate ? parseSheetDate(rawVal(row[9])) : null;
+          const stlmDate = topUpSettlementCutoff ? parseSheetDate(rawVal(row[9])) : null;
           if (
             stlmAgent && stlmAgent !== '-' && stlmAmount && stlmAmount !== '-' &&
-            (!reportCutoffDate || (stlmDate && stlmDate >= reportCutoffDate))
+            (!topUpSettlementCutoff || (stlmDate && stlmDate >= topUpSettlementCutoff))
           ) {
             const amount = Math.abs(parseFloat(stlmAmount.replace(/,/g, '')) || 0);
             stlmTotals.set(stlmAgent, (stlmTotals.get(stlmAgent) ?? 0) + amount);

@@ -9,6 +9,7 @@ import ConnectionErrorState from '@/app/components/ConnectionErrorState';
 import { classifyFetchError, type ClassifiedError } from '@/app/lib/errors';
 import { rawVal, displayNum } from '@/app/lib/format';
 import { BRAND_CODES as CASHOUT_BRAND_CODES } from '@/app/lib/transferQueueCount';
+import { getBusinessToday } from '@/app/lib/businessDate';
 
 type StlmRow = {
   agentName: string;
@@ -44,13 +45,15 @@ function parseAmount(val: string): number {
 }
 
 // "PS BD STLM + TOPUP" dates are formatted "M/D/YYYY" — only today's rows
-// should ever render on this page.
+// should ever render on this page. "Today" is the 2AM-rollover business
+// date (getBusinessToday), not the literal calendar day — e.g. at 12:38 AM
+// this still resolves to yesterday.
 function isToday(dateStr: string): boolean {
   const parts = (dateStr ?? '').trim().split('/');
   if (parts.length !== 3) return false;
   const [m, d, y] = parts.map(Number);
   if (!m || !d || !y) return false;
-  const now = new Date();
+  const now = getBusinessToday();
   return m === now.getMonth() + 1 && d === now.getDate() && y === now.getFullYear();
 }
 

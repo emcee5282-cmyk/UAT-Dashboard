@@ -8,6 +8,7 @@ import ThemeToggle from '../components/ThemeToggle';
 import ConnectionErrorState from '../components/ConnectionErrorState';
 import Toast, { type ToastState } from '../components/Toast';
 import { classifyFetchError, type ClassifiedError, assertAllOk } from '../lib/errors';
+import { getBusinessToday, toBusinessDate } from '../lib/businessDate';
 
 function clean(val: string): number {
   return parseFloat((val ?? '0').replace(/"/g, '').replace(/,/g, '').trim()) || 0;
@@ -162,7 +163,7 @@ function parseCashGoDate(raw: string): Date | null {
 // /api/cashgo cols: [1]=date ("June 1"), [2]=Bkash quota, [3]=Nagad quota,
 // [4]=Bkash processed, [5]=Nagad processed.
 function parseTodayCashGo(text: string): { bk: number; ng: number; quotaBk: number; quotaNg: number } {
-  const now = new Date();
+  const now = getBusinessToday();
   const lines = text.trim().split('\n').slice(1);
   for (const line of lines) {
     if (!line.trim()) continue;
@@ -190,7 +191,7 @@ function parseSlashDate(raw: string): Date | null {
 // shifted +15 — both are unioned same as the Bundle Transfer Trend chart.
 // Amounts are stored negative; displayed as abs().
 function parseTodayBundle(text: string): { nagad: number; rocket: number; upay: number } {
-  const now = new Date();
+  const now = getBusinessToday();
   const totals = { nagad: 0, rocket: 0, upay: 0 };
   const addRow = (nameRaw: string, amountRaw: string, dateRaw: string, walletRaw: string, typeRaw: string) => {
     const type = (typeRaw ?? '').replace(/"/g, '').trim().toUpperCase();
@@ -217,15 +218,38 @@ function parseTodayBundle(text: string): { nagad: number; rocket: number; upay: 
   return totals;
 }
 
-// "Opening AG" sheet's own "REPORT LAST UPDATE" card, e.g. "July 14 - 8:45
-// AM" — same cutoff Cashout/Send Money's own Overview pages use so Top Up
-// and Settlement totals only include rows on/after the last reset (col 6 =
-// Cashout's card, col 8 = Send Money's card, same sheet).
-function parseReportCutoffDate(text: string, colIndex: number): Date | null {
+// "Opening AG" sheet col G — Cashout's own "REPORT LAST UPDATE" card, e.g.
+// "July 14 - 8:45 AM". Used only to detect whether Opening AG has been
+// manually refreshed for today yet (Estimated Opening validity check) —
+// NOT for Top Up/Settlement gating, which is purely clock-based (see
+// computeCashoutTopUpStlm/computeSendMoneyTopUpStlm below).
+function parseCashoutReportCutoffDate(text: string): Date | null {
   const lines = text.trim().split('\n');
   for (const line of lines) {
     const cols = line.split(',');
-    const cell = (cols[colIndex] ?? '').replace(/"/g, '').trim();
+    const cell = (cols[6] ?? '').replace(/"/g, '').trim();
+    const match = cell.match(/^([A-Za-z]+)\s+(\d{1,2})\s*-\s*\d{1,2}:\d{2}\s*[AP]M$/i);
+    if (match) {
+      const [, monthName, day] = match;
+      const year = new Date().getFullYear();
+      const parsed = new Date(`${monthName} ${day}, ${year}`);
+      if (!isNaN(parsed.getTime())) {
+        parsed.setHours(0, 0, 0, 0);
+        return parsed;
+      }
+    }
+  }
+  return null;
+}
+
+// "Opening AG" sheet col I — Send Money's own "UPDATED TIME" card, side by
+// side with Cashout's own card in col G above (confirmed by the user, not
+// shared). Same validity-check purpose as parseCashoutReportCutoffDate.
+function parseSendMoneyReportCutoffDate(text: string): Date | null {
+  const lines = text.trim().split('\n');
+  for (const line of lines) {
+    const cols = line.split(',');
+    const cell = (cols[8] ?? '').replace(/"/g, '').trim();
     const match = cell.match(/^([A-Za-z]+)\s+(\d{1,2})\s*-\s*\d{1,2}:\d{2}\s*[AP]M$/i);
     if (match) {
       const [, monthName, day] = match;
@@ -269,6 +293,41 @@ function computeCashoutTopUpStlm(text: string, cutoff: Date | null): { topUp: nu
   return { topUp, stlm: -stlm };
 }
 
+// Same source/cutoff as computeCashoutTopUpStlm, but grouped by wallet type
+// (Bkash/Nagad/Rocket/Upay — col[4] for Top Up, col[10] for Settlement, same
+// column layout app/page.tsx's own Wallet Summary table already uses)
+// instead of summed into one grand total — feeds Balance Overview's Wallet
+// Breakdown Assumed Running Balance.
+function computeCashoutWalletTopUpStlm(text: string, cutoff: Date | null): Map<string, { topUp: number; stlm: number }> {
+  const totals = new Map<string, { topUp: number; stlm: number }>();
+  const add = (wallet: string, key: 'topUp' | 'stlm', amount: number) => {
+    const existing = totals.get(wallet) ?? { topUp: 0, stlm: 0 };
+    existing[key] += amount;
+    totals.set(wallet, existing);
+  };
+
+  text.trim().split('\n').slice(1).forEach((line) => {
+    if (!line.trim()) return;
+    const cols = line.split(',');
+    const topUpAgent = (cols[1] ?? '').replace(/"/g, '').trim();
+    const topUpAmount = clean(cols[2]);
+    const topUpDate = cutoff ? parseSlashDate((cols[3] ?? '').replace(/"/g, '').trim()) : null;
+    const topUpWallet = (cols[4] ?? '').replace(/"/g, '').trim().toUpperCase();
+    if (topUpAgent && topUpAgent !== '-' && topUpAmount && topUpWallet && (!cutoff || (topUpDate && topUpDate >= cutoff))) {
+      add(topUpWallet, 'topUp', topUpAmount);
+    }
+    const stlmAgent = (cols[7] ?? '').replace(/"/g, '').trim();
+    const stlmAmount = Math.abs(clean(cols[8]));
+    const stlmDate = cutoff ? parseSlashDate((cols[9] ?? '').replace(/"/g, '').trim()) : null;
+    const stlmWallet = (cols[10] ?? '').replace(/"/g, '').trim().toUpperCase();
+    if (stlmAgent && stlmAgent !== '-' && stlmAmount && stlmWallet && (!cutoff || (stlmDate && stlmDate >= cutoff))) {
+      add(stlmWallet, 'stlm', stlmAmount);
+    }
+  });
+
+  return totals;
+}
+
 // Mirrors app/sendmoney/page.tsx's own wallet-type patch — Settlement's raw
 // sign is negative in the sheet, so it's abs()'d for magnitude then
 // re-signed negative at the end, same convention as Cashout and Send
@@ -294,6 +353,42 @@ function computeSendMoneyTopUpStlm(text: string, cutoff: Date | null): { topUp: 
     }
   });
   return { topUp, stlm: -stlm };
+}
+
+// Same source/cutoff/column layout as computeSendMoneyTopUpStlm, but grouped
+// by wallet type (col[4] for Top Up, col[10] for Settlement — identical
+// column positions to computeCashoutWalletTopUpStlm's own agstlm sheet, only
+// the Type labels are swapped between the two products) instead of summed
+// into one grand total — feeds Send Money's own Wallet Breakdown Assumed
+// Running Balance.
+function computeSendMoneyWalletTopUpStlm(text: string, cutoff: Date | null): Map<string, { topUp: number; stlm: number }> {
+  const totals = new Map<string, { topUp: number; stlm: number }>();
+  const add = (wallet: string, key: 'topUp' | 'stlm', amount: number) => {
+    const existing = totals.get(wallet) ?? { topUp: 0, stlm: 0 };
+    existing[key] += amount;
+    totals.set(wallet, existing);
+  };
+
+  text.trim().split('\n').slice(1).forEach((line) => {
+    if (!line.trim()) return;
+    const cols = line.split(',');
+    const topUpAgent = (cols[1] ?? '').replace(/"/g, '').trim();
+    const topUpAmount = clean(cols[2]);
+    const topUpDate = cutoff ? parseSlashDate((cols[3] ?? '').replace(/"/g, '').trim()) : null;
+    const topUpWallet = (cols[4] ?? '').replace(/"/g, '').trim().toUpperCase();
+    if (topUpAgent && topUpAgent !== '-' && topUpAmount && topUpWallet && (!cutoff || (topUpDate && topUpDate >= cutoff))) {
+      add(topUpWallet, 'topUp', topUpAmount);
+    }
+    const stlmAgent = (cols[7] ?? '').replace(/"/g, '').trim();
+    const stlmAmount = Math.abs(clean(cols[8]));
+    const stlmDate = cutoff ? parseSlashDate((cols[9] ?? '').replace(/"/g, '').trim()) : null;
+    const stlmWallet = (cols[10] ?? '').replace(/"/g, '').trim().toUpperCase();
+    if (stlmAgent && stlmAgent !== '-' && stlmAmount && stlmWallet && (!cutoff || (stlmDate && stlmDate >= cutoff))) {
+      add(stlmWallet, 'stlm', stlmAmount);
+    }
+  });
+
+  return totals;
 }
 
 type BrandCashRow = {
@@ -376,10 +471,16 @@ function buildCardData(
   todayLabel: string,
   todayWallets: TodayWallet[],
   todayQuota: TodayQuota | null,
-  topUpStlm: { topUp: number; stlm: number }
+  topUpStlm: { topUp: number; stlm: number },
+  openingOverride?: number,
+  walletRunningBalOverride?: Map<string, number>
 ): CardData {
   const total = rows.find((r) => r.wallet.toUpperCase() === 'TOTAL');
-  const opening = total?.opening ?? 0;
+  // Once the 2AM business-day rollover has happened and a fresh "Estimated
+  // Opening" upload is on file (see app/lib/estimatedOpening.ts), Opening
+  // Balance comes from there instead of the "Dashboard Overview" sheet's own
+  // (not-yet-updated-for-today) seed value.
+  const opening = openingOverride ?? total?.opening ?? 0;
   const deposit = total?.totalDP ?? 0;
   const withdrawal = total?.totalWD ?? 0;
   // The sheet's own BD-Transfer IN / STLM columns are always seeded at 0 —
@@ -393,11 +494,14 @@ function buildCardData(
 
   const wallets: CardWallet[] = WALLET_ORDER.map((key) => {
     const row = rows.find((r) => r.wallet.toUpperCase() === key);
+    // Same Assumed-Balance override as the card's own Opening Balance above,
+    // applied per wallet (Bkash/Nagad/Rocket/Upay) instead of the aggregate.
+    const runningBal = walletRunningBalOverride?.get(key) ?? row?.runningBal ?? 0;
     return {
       wallet: key,
-      runningBal: row?.runningBal ?? 0,
+      runningBal,
       actualBal: row?.actualBal ?? 0,
-      delta: row ? row.runningBal - row.opening : 0,
+      delta: row ? runningBal - row.opening : 0,
       comingSoon: product === 'sendmoney' && key === 'BKASH',
     };
   });
@@ -905,23 +1009,35 @@ export default function BalanceOverviewPage() {
       setLoading(true);
       setError(null);
 
-      const [cashoutRes, sendMoneyRes, cashGoRes, bundleRes, brandCashRes, openingRes, agstlmRes] = await Promise.all([
+      const [cashoutRes, sendMoneyRes, cashGoRes, bundleRes, brandCashRes, agstlmRes, openingRes, estimatedRes, estimatedSendMoneyRes] = await Promise.all([
         fetch(`/api/sheet?t=${Date.now()}`),
         fetch(`/api/sendmoney/sheet?t=${Date.now()}`),
         fetch(`/api/cashgo?t=${Date.now()}`),
         fetch(`/api/sendmoney/stlmtopup?t=${Date.now()}`),
         fetch(`/api/brand-cash-inhand?t=${Date.now()}`),
-        fetch(`/api/opening?t=${Date.now()}`),
         fetch(`/api/agstlmtopup?t=${Date.now()}`),
+        fetch(`/api/opening?t=${Date.now()}`),
+        fetch(`/api/opening/estimated-balance?t=${Date.now()}`),
+        fetch(`/api/sendmoney/opening/estimated-balance?t=${Date.now()}`),
       ]);
-      await assertAllOk([cashoutRes, sendMoneyRes, cashGoRes, bundleRes, brandCashRes, openingRes, agstlmRes]);
+      await assertAllOk([cashoutRes, sendMoneyRes, cashGoRes, bundleRes, brandCashRes, agstlmRes, openingRes, estimatedRes, estimatedSendMoneyRes]);
       const cashoutText = await cashoutRes.text();
       const sendMoneyText = await sendMoneyRes.text();
       const cashGoText = await cashGoRes.text();
       const bundleText = await bundleRes.text();
       const brandCashText = await brandCashRes.text();
-      const openingText = await openingRes.text();
       const agstlmText = await agstlmRes.text();
+      const openingText = await openingRes.text();
+      const estimatedData: {
+        balances: Record<string, number>;
+        walletTotals: Record<string, { totalDP: number; totalWD: number }>;
+        uploadedAt: string | null;
+      } = await estimatedRes.json();
+      const estimatedSendMoneyData: {
+        balances: Record<string, number>;
+        walletTotals: Record<string, { totalDP: number; totalWD: number }>;
+        uploadedAt: string | null;
+      } = await estimatedSendMoneyRes.json();
 
       const todayCashGo = parseTodayCashGo(cashGoText);
       const todayBundle = parseTodayBundle(bundleText);
@@ -931,20 +1047,98 @@ export default function BalanceOverviewPage() {
       const cashGoQuotaTotal = todayCashGo.quotaBk + todayCashGo.quotaNg;
       const cashGoQuota = cashGoQuotaTotal > 0 ? { processed: todayCashGo.bk + todayCashGo.ng, total: cashGoQuotaTotal } : null;
 
-      const cashoutCutoff = parseReportCutoffDate(openingText, 6);
-      const sendMoneyCutoff = parseReportCutoffDate(openingText, 8);
-      const cashoutTopUpStlm = computeCashoutTopUpStlm(agstlmText, cashoutCutoff);
-      const sendMoneyTopUpStlm = computeSendMoneyTopUpStlm(bundleText, sendMoneyCutoff);
+      // Top Up/Settlement totals reset at the 2AM business-day rollover (see
+      // app/lib/businessDate.ts) — clock-based, not gated on whether
+      // Opening's own "Updated Time" card has been manually refreshed yet.
+      const cutoff = getBusinessToday();
+      const cashoutTopUpStlm = computeCashoutTopUpStlm(agstlmText, cutoff);
+      const sendMoneyTopUpStlm = computeSendMoneyTopUpStlm(bundleText, cutoff);
 
-      setCashoutCard(buildCardData(parseSheetBlock(cashoutText), 'cashout', 'Cashout', 'CashGo', [
+      // Cashout's Opening Balance card figure switches to the sum of
+      // "Estimated Opening" (Assumed Balance) once BOTH hold — same rule as
+      // the Balance tab (app/agentbal/page.tsx):
+      // 1. Opening AG's own "Updated Time" card is still showing the
+      //    PREVIOUS business day (the real reset for today hasn't happened).
+      // 2. The upload's own "Last Updated" timestamp is itself from TODAY's
+      //    business day (a stale, un-refreshed upload must not keep being
+      //    used just because Opening's own reset is also running late).
+      // Otherwise it falls back to the "Dashboard Overview" sheet's own
+      // Opening figure, unchanged.
+      const cashoutCutoffDate = parseCashoutReportCutoffDate(openingText);
+      const estimatedUploadedAt = estimatedData.uploadedAt ? new Date(estimatedData.uploadedAt) : null;
+      const estimatedOpeningValid =
+        cashoutCutoffDate !== null &&
+        cashoutCutoffDate.getTime() < getBusinessToday().getTime() &&
+        estimatedUploadedAt !== null &&
+        toBusinessDate(estimatedUploadedAt).getTime() === getBusinessToday().getTime();
+      const cashoutOpeningOverride = estimatedOpeningValid
+        ? Object.values(estimatedData.balances ?? {}).reduce((sum, v) => sum + v, 0)
+        : undefined;
+
+      const cashoutRows = parseSheetBlock(cashoutText);
+
+      // Same validity gate as the Opening Balance override above, applied
+      // per wallet (Bkash/Nagad/Rocket/Upay) for the Wallet Breakdown tiles:
+      //   Assumed Running Balance = Dashboard Running Balance − Settlement
+      //     (live) + Top Up (live) − Uploaded Total WD + Uploaded Total DP
+      const cashoutWalletRunningBalOverride = estimatedOpeningValid
+        ? (() => {
+            const liveWalletTopUpStlm = computeCashoutWalletTopUpStlm(agstlmText, cutoff);
+            const overrideMap = new Map<string, number>();
+            Object.entries(estimatedData.walletTotals ?? {}).forEach(([wallet, uploaded]) => {
+              const dashboardRow = cashoutRows.find((r) => r.wallet.toUpperCase() === wallet);
+              const dashboardRunningBal = dashboardRow?.runningBal ?? 0;
+              const live = liveWalletTopUpStlm.get(wallet) ?? { topUp: 0, stlm: 0 };
+              const assumedRunningBal = dashboardRunningBal - live.stlm + live.topUp - uploaded.totalWD + uploaded.totalDP;
+              overrideMap.set(wallet, assumedRunningBal);
+            });
+            return overrideMap;
+          })()
+        : undefined;
+
+      // Send Money's own Opening Balance card figure — same rule as
+      // Cashout's above, except the validity check is based on col I's
+      // "UPDATED TIME" card (Send Money's own) instead of col G's.
+      const sendMoneyCutoffDate = parseSendMoneyReportCutoffDate(openingText);
+      const estimatedSendMoneyUploadedAt = estimatedSendMoneyData.uploadedAt ? new Date(estimatedSendMoneyData.uploadedAt) : null;
+      const estimatedSendMoneyOpeningValid =
+        sendMoneyCutoffDate !== null &&
+        sendMoneyCutoffDate.getTime() < getBusinessToday().getTime() &&
+        estimatedSendMoneyUploadedAt !== null &&
+        toBusinessDate(estimatedSendMoneyUploadedAt).getTime() === getBusinessToday().getTime();
+      const sendMoneyOpeningOverride = estimatedSendMoneyOpeningValid
+        ? Object.values(estimatedSendMoneyData.balances ?? {}).reduce((sum, v) => sum + v, 0)
+        : undefined;
+
+      const sendMoneyRows = parseSheetBlock(sendMoneyText);
+
+      // Same validity gate as the Opening Balance override above, applied
+      // per wallet (Nagad/Rocket/Upay) for Send Money's own Wallet
+      // Breakdown tiles.
+      const sendMoneyWalletRunningBalOverride = estimatedSendMoneyOpeningValid
+        ? (() => {
+            const liveWalletTopUpStlm = computeSendMoneyWalletTopUpStlm(bundleText, cutoff);
+            const overrideMap = new Map<string, number>();
+            Object.entries(estimatedSendMoneyData.walletTotals ?? {}).forEach(([wallet, uploaded]) => {
+              const dashboardRow = sendMoneyRows.find((r) => r.wallet.toUpperCase() === wallet);
+              const dashboardRunningBal = dashboardRow?.runningBal ?? 0;
+              const live = liveWalletTopUpStlm.get(wallet) ?? { topUp: 0, stlm: 0 };
+              const assumedRunningBal = dashboardRunningBal - live.stlm + live.topUp - uploaded.totalWD + uploaded.totalDP;
+              overrideMap.set(wallet, assumedRunningBal);
+            });
+            return overrideMap;
+          })()
+        : undefined;
+
+      setCashoutCard(buildCardData(cashoutRows, 'cashout', 'Cashout', 'CashGo', [
         { key: 'bk', label: 'Bkash', value: todayCashGo.bk, quota: todayCashGo.quotaBk },
         { key: 'ng', label: 'Nagad', value: todayCashGo.ng, quota: todayCashGo.quotaNg },
-      ], cashGoQuota, cashoutTopUpStlm));
-      setSendMoneyCard(buildCardData(parseSheetBlock(sendMoneyText), 'sendmoney', 'Send Money', 'Bundle Transfer', [
+      ], cashGoQuota, cashoutTopUpStlm, cashoutOpeningOverride, cashoutWalletRunningBalOverride));
+      setSendMoneyCard(buildCardData(sendMoneyRows, 'sendmoney', 'Send Money', 'Bundle Transfer', [
         { key: 'nagad', label: 'Nagad', value: todayBundle.nagad },
         { key: 'rocket', label: 'Rocket', value: todayBundle.rocket },
         { key: 'upay', label: 'UPay', value: todayBundle.upay },
-      ], null, sendMoneyTopUpStlm));
+      ], null, sendMoneyTopUpStlm, sendMoneyOpeningOverride, sendMoneyWalletRunningBalOverride));
 
       const brandCash = parseBrandCashInhand(brandCashText);
       setBrandCashRows(brandCash.rows);

@@ -9,6 +9,7 @@ import ConnectionErrorState from '@/app/components/ConnectionErrorState';
 import { classifyFetchError, type ClassifiedError, assertAllOk } from '@/app/lib/errors';
 import { rawVal } from '@/app/lib/format';
 import { BRAND_CODES as CASHOUT_BRAND_CODES } from '@/app/lib/transferQueueCount';
+import { getBusinessToday } from '@/app/lib/businessDate';
 
 function parseCsvLines(text: string): string[][] {
   const rows: string[][] = [];
@@ -76,26 +77,6 @@ function parseNumber(val: string): number {
   if (cleaned === '-' || cleaned === '') return 0;
   const num = parseFloat(cleaned);
   return isNaN(num) ? 0 : num;
-}
-
-// Opening sheet col I holds Send Money's own "UPDATED TIME" card (same cutoff
-// mechanism used on /sendmoney/balances) — Settlement rows dated before this
-// reset point are excluded so they aren't double-counted into Company Balance.
-function parseReportCutoffDate(openingRawRows: string[][]): Date | null {
-  for (const row of openingRawRows) {
-    const cell = (row[8] ?? '').trim();
-    const match = cell.match(/^([A-Za-z]+)\s+(\d{1,2})\s*-\s*\d{1,2}:\d{2}\s*[AP]M$/i);
-    if (match) {
-      const [, monthName, day] = match;
-      const year = new Date().getFullYear();
-      const parsed = new Date(`${monthName} ${day}, ${year}`);
-      if (!isNaN(parsed.getTime())) {
-        parsed.setHours(0, 0, 0, 0);
-        return parsed;
-      }
-    }
-  }
-  return null;
 }
 
 function parseSheetDate(dateStr: string): Date | null {
@@ -403,7 +384,10 @@ export default function SendMoneyTransferQueue() {
       const stlmText = await stlmRes.text();
 
       const openingRawRows = parseCsvLines(openingText);
-      const reportCutoffDate = parseReportCutoffDate(openingRawRows);
+      // Top Up/Settlement totals reset at the 2AM business-day rollover
+      // (see app/lib/businessDate.ts) — clock-based, not gated on whether
+      // Opening's own "Updated Time" card has been manually refreshed yet.
+      const reportCutoffDate = getBusinessToday();
 
       // Send Money's own roster lives in cols L-O (indices 11-14) of "Opening AG".
       const openingRows = openingRawRows
