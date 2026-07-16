@@ -9,11 +9,14 @@ import ConnectionErrorState from '@/app/components/ConnectionErrorState';
 import { classifyFetchError, type ClassifiedError } from '@/app/lib/errors';
 import { parseSendMoneyOpeningCsv, type SendMoneyOpeningRow } from '@/app/lib/sendMoneyOpening';
 import { extractSendMoneyShopName } from '@/app/lib/realShopName';
+import { fromManilaWallClockMs } from '@/app/lib/businessDate';
 
 type ImportRecord = { fileName: string; shopCount: number; importedAt: string; importedBy: string };
 
 // Inverse of the server's own "MM/DD/YYYY HH:MM AM/PM" timestamp format
-// (app/lib/estimatedOpening.ts's formatUploadTimestamp).
+// (app/lib/estimatedOpening.ts's formatUploadTimestamp) — written in Manila
+// wall-clock time, so parsed the same way here regardless of the viewer's
+// own device timezone.
 function parseServerTimestamp(str: string): Date | null {
   const match = str.trim().match(/^(\d{2})\/(\d{2})\/(\d{4})\s+(\d{2}):(\d{2})\s*(AM|PM)$/i);
   if (!match) return null;
@@ -21,17 +24,20 @@ function parseServerTimestamp(str: string): Date | null {
   let hours = parseInt(hh, 10);
   if (/PM/i.test(ampm) && hours !== 12) hours += 12;
   if (/AM/i.test(ampm) && hours === 12) hours = 0;
-  return new Date(parseInt(yyyy, 10), parseInt(mm, 10) - 1, parseInt(dd, 10), hours, parseInt(min, 10));
+  const manilaWallClockMs = Date.UTC(parseInt(yyyy, 10), parseInt(mm, 10) - 1, parseInt(dd, 10), hours, parseInt(min, 10));
+  return fromManilaWallClockMs(manilaWallClockMs);
 }
 
 // "Jul 14, 2026 01:42 PM" — display-only formatting for the Last
 // Import/Import Success UI (separate from the sheet's own "Last Updated"
-// cell format, which is untouched).
+// cell format, which is untouched). Explicit Asia/Manila timeZone so this
+// always reads as the business's own time, regardless of the viewer's own
+// device/browser timezone.
 function formatImportTimestamp(serverTimestamp: string): string {
   const date = parseServerTimestamp(serverTimestamp);
   if (!date) return serverTimestamp;
-  const datePart = date.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
-  const timePart = date.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: true });
+  const datePart = date.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric', timeZone: 'Asia/Manila' });
+  const timePart = date.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: true, timeZone: 'Asia/Manila' });
   return `${datePart} ${timePart}`;
 }
 

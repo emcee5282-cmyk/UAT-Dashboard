@@ -8,7 +8,7 @@ import ThemeToggle from '../components/ThemeToggle';
 import ConnectionErrorState from '../components/ConnectionErrorState';
 import Toast, { type ToastState } from '../components/Toast';
 import { classifyFetchError, type ClassifiedError, assertAllOk } from '../lib/errors';
-import { getBusinessToday, toBusinessDate } from '../lib/businessDate';
+import { getBusinessToday, toBusinessDate, parseCardCutoffDate } from '../lib/businessDate';
 
 function clean(val: string): number {
   return parseFloat((val ?? '0').replace(/"/g, '').replace(/,/g, '').trim()) || 0;
@@ -228,16 +228,8 @@ function parseCashoutReportCutoffDate(text: string): Date | null {
   for (const line of lines) {
     const cols = line.split(',');
     const cell = (cols[6] ?? '').replace(/"/g, '').trim();
-    const match = cell.match(/^([A-Za-z]+)\s+(\d{1,2})\s*-\s*\d{1,2}:\d{2}\s*[AP]M$/i);
-    if (match) {
-      const [, monthName, day] = match;
-      const year = new Date().getFullYear();
-      const parsed = new Date(`${monthName} ${day}, ${year}`);
-      if (!isNaN(parsed.getTime())) {
-        parsed.setHours(0, 0, 0, 0);
-        return parsed;
-      }
-    }
+    const parsed = parseCardCutoffDate(cell);
+    if (parsed) return parsed;
   }
   return null;
 }
@@ -250,16 +242,8 @@ function parseSendMoneyReportCutoffDate(text: string): Date | null {
   for (const line of lines) {
     const cols = line.split(',');
     const cell = (cols[8] ?? '').replace(/"/g, '').trim();
-    const match = cell.match(/^([A-Za-z]+)\s+(\d{1,2})\s*-\s*\d{1,2}:\d{2}\s*[AP]M$/i);
-    if (match) {
-      const [, monthName, day] = match;
-      const year = new Date().getFullYear();
-      const parsed = new Date(`${monthName} ${day}, ${year}`);
-      if (!isNaN(parsed.getTime())) {
-        parsed.setHours(0, 0, 0, 0);
-        return parsed;
-      }
-    }
+    const parsed = parseCardCutoffDate(cell);
+    if (parsed) return parsed;
   }
   return null;
 }
@@ -1531,6 +1515,7 @@ export default function BalanceOverviewPage() {
       } = await estimatedRes.json();
       const estimatedSendMoneyData: {
         balances: Record<string, number>;
+        balancesWithFallback: Record<string, number>;
         walletTotals: Record<string, { totalDP: number; totalWD: number }>;
         uploadedAt: string | null;
       } = await estimatedSendMoneyRes.json();
@@ -1603,7 +1588,7 @@ export default function BalanceOverviewPage() {
         estimatedSendMoneyUploadedAt !== null &&
         toBusinessDate(estimatedSendMoneyUploadedAt).getTime() === getBusinessToday().getTime();
       const sendMoneyOpeningOverride = estimatedSendMoneyOpeningValid
-        ? Object.values(estimatedSendMoneyData.balances ?? {}).reduce((sum, v) => sum + v, 0)
+        ? Object.values(estimatedSendMoneyData.balancesWithFallback ?? {}).reduce((sum, v) => sum + v, 0)
         : undefined;
 
       const sendMoneyRows = parseSheetBlock(sendMoneyText);

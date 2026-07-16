@@ -8,7 +8,7 @@ import ThemeToggle from '../components/ThemeToggle';
 import ConnectionErrorState from '../components/ConnectionErrorState';
 import { classifyFetchError, type ClassifiedError, assertAllOk } from '../lib/errors';
 import { rawVal } from '@/app/lib/format';
-import { getBusinessToday, toBusinessDate } from '../lib/businessDate';
+import { getBusinessToday, toBusinessDate, parseCardCutoffDate } from '../lib/businessDate';
 
 type OpeningRow = {
   agentName: string;
@@ -136,17 +136,8 @@ function parseNumber(val: string): number {
 // Balance reset aren't double-counted.
 function parseReportCutoffDate(openingRawRows: string[][]): Date | null {
   for (const row of openingRawRows) {
-    const cell = (row[6] ?? '').trim();
-    const match = cell.match(/^([A-Za-z]+)\s+(\d{1,2})\s*-\s*\d{1,2}:\d{2}\s*[AP]M$/i);
-    if (match) {
-      const [, monthName, day] = match;
-      const year = new Date().getFullYear();
-      const parsed = new Date(`${monthName} ${day}, ${year}`);
-      if (!isNaN(parsed.getTime())) {
-        parsed.setHours(0, 0, 0, 0);
-        return parsed;
-      }
-    }
+    const parsed = parseCardCutoffDate(row[6] ?? '');
+    if (parsed) return parsed;
   }
   return null;
 }

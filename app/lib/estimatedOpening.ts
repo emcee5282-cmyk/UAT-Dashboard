@@ -2,7 +2,7 @@ import { google, Auth } from 'googleapis';
 import { extractRealShopName, extractSendMoneyShopName } from './realShopName';
 import { fetchRange } from './googleSheets';
 import { BRAND_CODES } from './transferQueueCount';
-import { getBusinessToday } from './businessDate';
+import { getBusinessToday, toManilaWallClock, fromManilaWallClockMs } from './businessDate';
 
 // "Estimated Opening" — a dedicated sheet tab (in the same spreadsheet as
 // everything else) that holds a raw upload of "assumed balance" data used
@@ -81,12 +81,16 @@ function getSpreadsheetId(): string {
 // "MM/DD/YYYY HH:MM AM/PM", e.g. "07/15/2026 02:14 AM" — this sheet's own
 // timestamp convention (deliberately more explicit than the "Month Day - H:MM
 // AM/PM" card format the "Opening AG" sheet already uses elsewhere).
+// Written in Manila wall-clock time (see app/lib/businessDate.ts) — NOT the
+// server runtime's own local time (Vercel defaults to UTC), otherwise an
+// upload made at, say, 2 AM Manila gets logged as "6 PM the previous day."
 function formatUploadTimestamp(date: Date): string {
-  const mm = String(date.getMonth() + 1).padStart(2, '0');
-  const dd = String(date.getDate()).padStart(2, '0');
-  const yyyy = date.getFullYear();
-  let hours = date.getHours();
-  const minutes = String(date.getMinutes()).padStart(2, '0');
+  const manila = toManilaWallClock(date);
+  const mm = String(manila.getUTCMonth() + 1).padStart(2, '0');
+  const dd = String(manila.getUTCDate()).padStart(2, '0');
+  const yyyy = manila.getUTCFullYear();
+  let hours = manila.getUTCHours();
+  const minutes = String(manila.getUTCMinutes()).padStart(2, '0');
   const ampm = hours >= 12 ? 'PM' : 'AM';
   hours = hours % 12;
   if (hours === 0) hours = 12;
@@ -589,7 +593,8 @@ export async function writeSendMoneyEstimatedOpening(
   return { uploadedAt, shopCount: shopTotals.length };
 }
 
-// Inverse of formatUploadTimestamp: "MM/DD/YYYY HH:MM AM/PM" -> Date.
+// Inverse of formatUploadTimestamp: "MM/DD/YYYY HH:MM AM/PM" (Manila wall
+// clock, see formatUploadTimestamp above) -> the true absolute instant.
 function parseUploadTimestamp(str: string): Date | null {
   const match = str.trim().match(/^(\d{2})\/(\d{2})\/(\d{4})\s+(\d{2}):(\d{2})\s*(AM|PM)$/i);
   if (!match) return null;
@@ -597,7 +602,8 @@ function parseUploadTimestamp(str: string): Date | null {
   let hours = parseInt(hh, 10);
   if (/PM/i.test(ampm) && hours !== 12) hours += 12;
   if (/AM/i.test(ampm) && hours === 12) hours = 0;
-  return new Date(parseInt(yyyy, 10), parseInt(mm, 10) - 1, parseInt(dd, 10), hours, parseInt(min, 10));
+  const manilaWallClockMs = Date.UTC(parseInt(yyyy, 10), parseInt(mm, 10) - 1, parseInt(dd, 10), hours, parseInt(min, 10));
+  return fromManilaWallClockMs(manilaWallClockMs);
 }
 
 export type EstimatedOpeningWalletTotals = { totalDP: number; totalWD: number };
@@ -654,9 +660,23 @@ export async function readCashoutEstimatedOpening(): Promise<{
  * Send Money's own counterpart to readCashoutEstimatedOpening — same shape,
  * reads from Send Money's own reserved column block (M onward) in the same
  * "Estimated Opening" tab instead of Cashout's (A onward).
+ *
+ * Also returns `balancesWithFallback`: the same uploaded balances, PLUS one
+ * entry per shop from the live roster ("Opening AG" cols L-O) that the
+ * upload didn't cover — appended after the uploaded entries (Map insertion
+ * order), so a total built from this map isn't silently missing shops the
+ * uploaded Excel didn't include. A missing shop's fallback value is
+ * `Opening + TopUp − Settlement` using LIVE figures only (no uploaded Total
+ * DP/WD to substitute, since that shop was never in the upload) — the same
+ * shape as the Assumed Balance formula above with the uploaded DP/WD terms
+ * zeroed out. `balances` itself (uploaded-only) is left unchanged for
+ * existing per-shop consumers (e.g. app/sendmoney/balances/page.tsx) that
+ * already fall back to their own live Opening Bal when a shop isn't in this
+ * map.
  */
 export async function readSendMoneyEstimatedOpening(): Promise<{
   balances: Map<string, number>;
+  balancesWithFallback: Map<string, number>;
   walletTotals: Map<string, EstimatedOpeningWalletTotals>;
   uploadedAt: Date | null;
 }> {
@@ -668,7 +688,7 @@ export async function readSendMoneyEstimatedOpening(): Promise<{
       fetchRange(`${SHEET_TITLE}!${SENDMONEY_WALLET_TOTALS_START_COL}1:R10`),
     ]);
   } catch {
-    return { balances: new Map(), walletTotals: new Map(), uploadedAt: null };
+    return { balances: new Map(), balancesWithFallback: new Map(), walletTotals: new Map(), uploadedAt: null };
   }
 
   // Same layout as Cashout's own block (see writeSendMoneyEstimatedOpening).
@@ -688,5 +708,14 @@ export async function readSendMoneyEstimatedOpening(): Promise<{
     walletTotals.set(wallet, { totalDP: parseNumber(row[1]), totalWD: parseNumber(row[2]) });
   });
 
-  return { balances, walletTotals, uploadedAt };
+  const balancesWithFallback = new Map(balances);
+  const { openingByShop, topUpByShop, stlmByShop } = await fetchLiveSendMoneyShopFigures();
+  openingByShop.forEach((opening, shopName) => {
+    if (balancesWithFallback.has(shopName)) return;
+    const topUp = topUpByShop.get(shopName) ?? 0;
+    const stlm = stlmByShop.get(shopName) ?? 0;
+    balancesWithFallback.set(shopName, opening + topUp - stlm);
+  });
+
+  return { balances, balancesWithFallback, walletTotals, uploadedAt };
 }

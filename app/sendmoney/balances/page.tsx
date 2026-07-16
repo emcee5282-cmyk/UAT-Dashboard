@@ -9,24 +9,15 @@ import ConnectionErrorState from '@/app/components/ConnectionErrorState';
 import { classifyFetchError, type ClassifiedError, assertAllOk } from '@/app/lib/errors';
 import { rawVal } from '@/app/lib/format';
 import { BRAND_CODES as CASHOUT_BRAND_CODES } from '@/app/lib/transferQueueCount';
-import { getBusinessToday, toBusinessDate } from '@/app/lib/businessDate';
+import { getBusinessToday, toBusinessDate, parseCardCutoffDate } from '@/app/lib/businessDate';
 
 // "Opening AG" sheet col I — Send Money's own "UPDATED TIME" card (Cashout's
 // equivalent card lives in col G instead — the two products' cards sit
 // side by side on the same sheet, confirmed by the user, not shared).
 function parseSendMoneyReportCutoffDate(openingRawRows: string[][]): Date | null {
   for (const row of openingRawRows) {
-    const cell = (row[8] ?? '').trim();
-    const match = cell.match(/^([A-Za-z]+)\s+(\d{1,2})\s*-\s*\d{1,2}:\d{2}\s*[AP]M$/i);
-    if (match) {
-      const [, monthName, day] = match;
-      const year = new Date().getFullYear();
-      const parsed = new Date(`${monthName} ${day}, ${year}`);
-      if (!isNaN(parsed.getTime())) {
-        parsed.setHours(0, 0, 0, 0);
-        return parsed;
-      }
-    }
+    const parsed = parseCardCutoffDate(row[8] ?? '');
+    if (parsed) return parsed;
   }
   return null;
 }

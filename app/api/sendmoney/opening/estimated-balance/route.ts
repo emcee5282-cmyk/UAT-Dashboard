@@ -3,7 +3,7 @@ import { readSendMoneyEstimatedOpening, readSendMoneyImportLog } from '@/app/lib
 
 export async function GET() {
   try {
-    const [{ balances, walletTotals, uploadedAt }, importLog] = await Promise.all([
+    const [{ balances, balancesWithFallback, walletTotals, uploadedAt }, importLog] = await Promise.all([
       readSendMoneyEstimatedOpening(),
       readSendMoneyImportLog(),
     ]);
@@ -11,6 +11,7 @@ export async function GET() {
     return NextResponse.json(
       {
         balances: Object.fromEntries(balances),
+        balancesWithFallback: Object.fromEntries(balancesWithFallback),
         walletTotals: Object.fromEntries(walletTotals),
         uploadedAt: uploadedAt ? uploadedAt.toISOString() : null,
         lastImport,
