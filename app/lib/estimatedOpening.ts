@@ -2,7 +2,7 @@ import { google, Auth } from 'googleapis';
 import { extractRealShopName, extractSendMoneyShopName } from './realShopName';
 import { fetchRange } from './googleSheets';
 import { BRAND_CODES } from './transferQueueCount';
-import { getBusinessToday, toManilaWallClock, fromManilaWallClockMs } from './businessDate';
+import { getBusinessToday, toManilaWallClock, fromManilaWallClockMs, parseCardCutoffDate } from './businessDate';
 
 // "Estimated Opening" — a dedicated sheet tab (in the same spreadsheet as
 // everything else) that holds a raw upload of "assumed balance" data used
@@ -466,9 +466,26 @@ export async function writeCashoutEstimatedOpening(
 // upload's Total DP/Total WD the same way Cashout's does. Unlike Cashout's
 // "AG BD STLM + TOPUP", Send Money's own agent names here need no brand-
 // suffix stripping (app/sendmoney/balances/page.tsx reads them raw).
+//
+// The TopUp/Settlement cutoff here is Send Money's own "Opening AG" col I
+// "Updated Time" card (e.g. "July 16 - 7:46 AM") — i.e. everything since
+// Opening was ACTUALLY last refreshed — NOT getBusinessToday()'s pure
+// calendar/2AM-rollover cutoff used elsewhere in the app for the general
+// Top Up/Settlement columns (Agent Balance, Balance page, etc., which are
+// intentionally calendar-based per that feature's own design). Estimated
+// Opening exists specifically to cover the gap between the 2AM rollover and
+// Opening's own actual refresh, so it needs everything NOT YET reflected in
+// the currently-displayed (stale) Opening — which, once the calendar day
+// has already rolled over past the card's own date, is more than just
+// "today": using getBusinessToday() here silently dropped a shop's own
+// prior-day Settlement/TopUp that posted AFTER Opening's last refresh but
+// BEFORE the next rollover — confirmed against a real shop on 2026-07-17
+// (D-M1BD-ECHO029-NG: a same-day −109,940 Settlement wasn't deducted,
+// making the Estimated figure exactly 109,940 too high).
 async function fetchLiveSendMoneyShopFigures(): Promise<LiveShopFigures> {
-  const [openingRows, stlmRows] = await Promise.all([
+  const [openingRows, updatedTimeRows, stlmRows] = await Promise.all([
     fetchRange('Opening AG!L:O'),
+    fetchRange('Opening AG!I1:I10'),
     fetchRange('PS BD STLM + TOPUP'),
   ]);
 
@@ -479,7 +496,14 @@ async function fetchLiveSendMoneyShopFigures(): Promise<LiveShopFigures> {
     openingByShop.set(agentName.toUpperCase(), parseNumber(row[1]));
   });
 
-  const reportCutoffDate = getBusinessToday();
+  let reportCutoffDate: Date | null = null;
+  for (const row of updatedTimeRows) {
+    reportCutoffDate = parseCardCutoffDate(row[0] ?? '');
+    if (reportCutoffDate) break;
+  }
+  // Falls back to the calendar cutoff only if the card itself can't be
+  // parsed (missing/malformed) — better to under- than over-include.
+  if (!reportCutoffDate) reportCutoffDate = getBusinessToday();
 
   const topUpByShop = new Map<string, number>();
   const stlmByShop = new Map<string, number>();
@@ -515,12 +539,23 @@ async function fetchLiveSendMoneyShopFigures(): Promise<LiveShopFigures> {
 
 /**
  * Send Money's own counterpart to writeCashoutEstimatedOpening — same upload
- * shape (Account/Bank/Total DP/Total WD columns), same Assumed Balance
- * formula, same three-block layout (shop table / Wallet Totals / Import
- * Log), written into the SAME "Estimated Opening" tab Cashout already uses
- * (no new sheet), just shifted into Send Money's reserved column block
- * (M onward — see SENDMONEY_START_COL and the other SENDMONEY_* column
- * constants above).
+ * shape (Account/Bank/Total DP/Total WD columns), same three-block layout
+ * (shop table / Wallet Totals / Import Log), written into the SAME
+ * "Estimated Opening" tab Cashout already uses (no new sheet), just shifted
+ * into Send Money's reserved column block (M onward — see
+ * SENDMONEY_START_COL and the other SENDMONEY_* column constants above).
+ *
+ * Deliberately does NOT bake TopUp/Settlement into the stored per-shop
+ * value (unlike Cashout's own writeCashoutEstimatedOpening, still untouched)
+ * — only `Opening + uploaded Total DP − uploaded Total WD` is persisted.
+ * TopUp/Settlement are added fresh at READ time instead (see
+ * readSendMoneyEstimatedOpening), for every shop uniformly, not just the
+ * ones missing from this upload. Freezing them here previously caused the
+ * Estimated total to silently drift away from the real (live) Ending
+ * Balance the longer a single upload stayed in use — a same-day Settlement
+ * posted after the upload was never reflected — confirmed against real
+ * numbers on 2026-07-17 (uploaded shops were short by exactly the
+ * post-upload Settlement growth for those same shops).
  */
 export async function writeSendMoneyEstimatedOpening(
   headerRow: (string | number)[],
@@ -535,13 +570,11 @@ export async function writeSendMoneyEstimatedOpening(
 
   const shopTotals = aggregateByShop(headerRow, dataRows, extractSendMoneyShopName);
   const walletTotals = aggregateByWalletType(headerRow, dataRows);
-  const { openingByShop, topUpByShop, stlmByShop } = await fetchLiveSendMoneyShopFigures();
+  const { openingByShop } = await fetchLiveSendMoneyShopFigures();
 
   const assumedBalances = shopTotals.map((s) => {
     const opening = openingByShop.get(s.shopName) ?? 0;
-    const topUp = topUpByShop.get(s.shopName) ?? 0;
-    const stlm = stlmByShop.get(s.shopName) ?? 0;
-    const assumedBalance = opening + s.totalDP + topUp - s.totalWD - stlm;
+    const assumedBalance = opening + s.totalDP - s.totalWD;
     return { shopName: s.shopName, assumedBalance };
   });
 
@@ -661,18 +694,20 @@ export async function readCashoutEstimatedOpening(): Promise<{
  * reads from Send Money's own reserved column block (M onward) in the same
  * "Estimated Opening" tab instead of Cashout's (A onward).
  *
- * Also returns `balancesWithFallback`: the same uploaded balances, PLUS one
- * entry per shop from the live roster ("Opening AG" cols L-O) that the
- * upload didn't cover — appended after the uploaded entries (Map insertion
- * order), so a total built from this map isn't silently missing shops the
- * uploaded Excel didn't include. A missing shop's fallback value is
- * `Opening + TopUp − Settlement` using LIVE figures only (no uploaded Total
- * DP/WD to substitute, since that shop was never in the upload) — the same
- * shape as the Assumed Balance formula above with the uploaded DP/WD terms
- * zeroed out. `balances` itself (uploaded-only) is left unchanged for
+ * Also returns `balancesWithFallback`: for EVERY shop in the live roster
+ * ("Opening AG" cols L-O) — not just the ones missing from this upload —
+ * TopUp/Settlement (live, cutoff-filtered) are added fresh here at read
+ * time, on top of either that shop's uploaded base (`Opening + uploaded
+ * Total DP − uploaded Total WD`, from `balances`) or its live Opening alone
+ * if the shop wasn't in the upload. TopUp/Settlement are intentionally
+ * NEVER frozen at upload time (see writeSendMoneyEstimatedOpening) — a
+ * single upload may stay in use for hours, and same-day Settlement/TopUp
+ * keeps posting after it; recomputing fresh on every read is the only way
+ * the total keeps matching the real (live) Ending Balance instead of
+ * drifting further off the longer the upload has been in use. `balances`
+ * itself (uploaded-only, no TopUp/Settlement) is left unchanged for
  * existing per-shop consumers (e.g. app/sendmoney/balances/page.tsx) that
- * already fall back to their own live Opening Bal when a shop isn't in this
- * map.
+ * add their own live TopUp/Settlement independently.
  */
 export async function readSendMoneyEstimatedOpening(): Promise<{
   balances: Map<string, number>;
@@ -708,13 +743,14 @@ export async function readSendMoneyEstimatedOpening(): Promise<{
     walletTotals.set(wallet, { totalDP: parseNumber(row[1]), totalWD: parseNumber(row[2]) });
   });
 
-  const balancesWithFallback = new Map(balances);
+  const balancesWithFallback = new Map<string, number>();
   const { openingByShop, topUpByShop, stlmByShop } = await fetchLiveSendMoneyShopFigures();
   openingByShop.forEach((opening, shopName) => {
-    if (balancesWithFallback.has(shopName)) return;
+    const uploadedBase = balances.get(shopName);
     const topUp = topUpByShop.get(shopName) ?? 0;
     const stlm = stlmByShop.get(shopName) ?? 0;
-    balancesWithFallback.set(shopName, opening + topUp - stlm);
+    const base = uploadedBase ?? opening;
+    balancesWithFallback.set(shopName, base + topUp - stlm);
   });
 
   return { balances, balancesWithFallback, walletTotals, uploadedAt };

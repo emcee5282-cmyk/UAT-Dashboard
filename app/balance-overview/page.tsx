@@ -634,6 +634,10 @@ function buildCardData(
   // Balance comes from there instead of the "Dashboard Overview" sheet's own
   // (not-yet-updated-for-today) seed value.
   const opening = openingOverride ?? total?.opening ?? 0;
+  // Always the real figures, always included in Ending below — the user
+  // owns keeping this sheet's own Deposit/Withdrawal cells from overlapping
+  // with whatever's baked into an active Estimated Opening upload; the code
+  // doesn't assume or exclude anything here.
   const deposit = total?.totalDP ?? 0;
   const withdrawal = total?.totalWD ?? 0;
   // The sheet's own BD-Transfer IN / STLM columns are always seeded at 0 —
