@@ -788,7 +788,7 @@ function BalanceCard({ data }: { data: CardData }) {
         </h3>
 
         <div>
-          <FlowRow label="Opening Balance" value={fmt(data.opening)} />
+          <FlowRow label="Opening Balance" value={`${data.opening < 0 ? '−' : ''}${fmt(data.opening)}`} />
           <FlowRow label="Deposit" value={`+${fmt(data.deposit)}`} valueClass="text-emerald-600 dark:text-emerald-400" />
           <FlowRow label="Withdrawal" value={`−${fmt(data.withdrawal)}`} valueClass="text-rose-600 dark:text-rose-400" />
           <FlowRow label="Top Up" value={flowValueDisplay(data.bdTransferIn).text} valueClass={flowValueDisplay(data.bdTransferIn).colorClass} />
