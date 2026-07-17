@@ -1514,6 +1514,7 @@ export default function BalanceOverviewPage() {
       const openingText = await openingRes.text();
       const estimatedData: {
         balances: Record<string, number>;
+        balancesWithFallback: Record<string, number>;
         walletTotals: Record<string, { totalDP: number; totalWD: number }>;
         uploadedAt: string | null;
       } = await estimatedRes.json();
@@ -1557,7 +1558,7 @@ export default function BalanceOverviewPage() {
         estimatedUploadedAt !== null &&
         toBusinessDate(estimatedUploadedAt).getTime() === getBusinessToday().getTime();
       const cashoutOpeningOverride = estimatedOpeningValid
-        ? Object.values(estimatedData.balances ?? {}).reduce((sum, v) => sum + v, 0)
+        ? Object.values(estimatedData.balancesWithFallback ?? {}).reduce((sum, v) => sum + v, 0)
         : undefined;
 
       const cashoutRows = parseSheetBlock(cashoutText);
