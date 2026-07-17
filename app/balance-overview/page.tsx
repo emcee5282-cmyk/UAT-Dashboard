@@ -720,7 +720,7 @@ function WalletTile({ wallet }: { wallet: CardWallet }) {
       </p>
       <div className="mt-1.5 flex items-center justify-between border-t border-border pt-1.5">
         <span className="text-[11px] text-muted-foreground">Actual Balance</span>
-        <span className="text-[11px] font-semibold tabular-nums text-muted-foreground">{fmtAbbrev(wallet.actualBal)}</span>
+        <span className="text-[11px] font-semibold tabular-nums text-foreground">{fmtAbbrev(wallet.actualBal)}</span>
       </div>
     </div>
   );
@@ -789,8 +789,8 @@ function BalanceCard({ data }: { data: CardData }) {
 
         <div>
           <FlowRow label="Opening Balance" value={`${data.opening < 0 ? '−' : ''}${fmt(data.opening)}`} />
-          <FlowRow label="Deposit" value={`+${fmt(data.deposit)}`} valueClass={Math.abs(data.deposit) < 0.005 ? undefined : 'text-emerald-600 dark:text-emerald-400'} />
-          <FlowRow label="Withdrawal" value={`−${fmt(data.withdrawal)}`} valueClass={Math.abs(data.withdrawal) < 0.005 ? undefined : 'text-rose-600 dark:text-rose-400'} />
+          <FlowRow label="Deposit" value={Math.abs(data.deposit) < 0.005 ? fmt(data.deposit) : `+${fmt(data.deposit)}`} valueClass={Math.abs(data.deposit) < 0.005 ? undefined : 'text-emerald-600 dark:text-emerald-400'} />
+          <FlowRow label="Withdrawal" value={Math.abs(data.withdrawal) < 0.005 ? fmt(data.withdrawal) : `−${fmt(data.withdrawal)}`} valueClass={Math.abs(data.withdrawal) < 0.005 ? undefined : 'text-rose-600 dark:text-rose-400'} />
           <FlowRow label="Top Up" value={flowValueDisplay(data.bdTransferIn).text} valueClass={flowValueDisplay(data.bdTransferIn).colorClass} />
           <FlowRow label="Settlement" value={flowValueDisplay(data.stlmOut).text} valueClass={flowValueDisplay(data.stlmOut).colorClass} last />
         </div>
