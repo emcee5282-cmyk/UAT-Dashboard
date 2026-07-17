@@ -162,18 +162,34 @@ function parseCashGoDate(raw: string): Date | null {
 
 // /api/cashgo cols: [1]=date ("June 1"), [2]=Bkash quota, [3]=Nagad quota,
 // [4]=Bkash processed, [5]=Nagad processed.
-function parseTodayCashGo(text: string): { bk: number; ng: number; quotaBk: number; quotaNg: number } {
+//
+// `rangeStart` lets the caller widen this from "today only" to "rangeStart
+// through today" — used when Opening hasn't refreshed yet AND no valid
+// Estimated Balance covers the gap (see fetchData's own cashoutLiveCutoff),
+// so the CashGo Today strip keeps accumulating from the stale day forward
+// instead of resetting to 0 every time the calendar rolls over. Quota is
+// summed right along with processed, so the ratio stays meaningful across
+// more than one day. Matches via the SAME toDateString() comparison the
+// single-day case already used (not a getTime() range) — rangeStart and
+// `now` collapse to one entry when equal, so today-only behavior is
+// unchanged.
+function parseTodayCashGo(text: string, rangeStart: Date): { bk: number; ng: number; quotaBk: number; quotaNg: number } {
   const now = getBusinessToday();
+  const validDateStrings = new Set([now.toDateString(), rangeStart.toDateString()]);
+  const totals = { bk: 0, ng: 0, quotaBk: 0, quotaNg: 0 };
   const lines = text.trim().split('\n').slice(1);
   for (const line of lines) {
     if (!line.trim()) continue;
     const cols = line.split(',');
     const date = parseCashGoDate((cols[1] ?? '').replace(/"/g, '').trim());
-    if (date && date.toDateString() === now.toDateString()) {
-      return { bk: clean(cols[4]), ng: clean(cols[5]), quotaBk: clean(cols[2]), quotaNg: clean(cols[3]) };
+    if (date && validDateStrings.has(date.toDateString())) {
+      totals.bk += clean(cols[4]);
+      totals.ng += clean(cols[5]);
+      totals.quotaBk += clean(cols[2]);
+      totals.quotaNg += clean(cols[3]);
     }
   }
-  return { bk: 0, ng: 0, quotaBk: 0, quotaNg: 0 };
+  return totals;
 }
 
 // "AG BD STLM + TOPUP" / "PS BD STLM + TOPUP" dates are "M/D/YYYY" — same
@@ -190,8 +206,13 @@ function parseSlashDate(raw: string): Date | null {
 // rows; cols W-AA (idx 22-26) hold last month's archive, same field order
 // shifted +15 — both are unioned same as the Bundle Transfer Trend chart.
 // Amounts are stored negative; displayed as abs().
-function parseTodayBundle(text: string): { nagad: number; rocket: number; upay: number } {
+//
+// `rangeStart` — same widening as parseTodayCashGo's own (see its comment):
+// "rangeStart through today" instead of "today only" when Opening is stale
+// and no valid Estimated Balance covers the gap yet.
+function parseTodayBundle(text: string, rangeStart: Date): { nagad: number; rocket: number; upay: number } {
   const now = getBusinessToday();
+  const validDateStrings = new Set([now.toDateString(), rangeStart.toDateString()]);
   const totals = { nagad: 0, rocket: 0, upay: 0 };
   const addRow = (nameRaw: string, amountRaw: string, dateRaw: string, walletRaw: string, typeRaw: string) => {
     const type = (typeRaw ?? '').replace(/"/g, '').trim().toUpperCase();
@@ -201,7 +222,7 @@ function parseTodayBundle(text: string): { nagad: number; rocket: number; upay: 
     const amount = Math.abs(clean(amountRaw));
     if (!amount) return;
     const date = parseSlashDate((dateRaw ?? '').replace(/"/g, '').trim());
-    if (!date || date.toDateString() !== now.toDateString()) return;
+    if (!date || !validDateStrings.has(date.toDateString())) return;
     const wallet = (walletRaw ?? '').replace(/"/g, '').trim().toUpperCase();
     if (wallet === 'NAGAD') totals.nagad += amount;
     else if (wallet === 'ROCKET') totals.rocket += amount;
@@ -1525,21 +1546,6 @@ export default function BalanceOverviewPage() {
         uploadedAt: string | null;
       } = await estimatedSendMoneyRes.json();
 
-      const todayCashGo = parseTodayCashGo(cashGoText);
-      const todayBundle = parseTodayBundle(bundleText);
-
-      // Overall (not per-wallet) today's combined quota vs. processed —
-      // Bundle Transfer has no quota concept, so it's null there.
-      const cashGoQuotaTotal = todayCashGo.quotaBk + todayCashGo.quotaNg;
-      const cashGoQuota = cashGoQuotaTotal > 0 ? { processed: todayCashGo.bk + todayCashGo.ng, total: cashGoQuotaTotal } : null;
-
-      // Top Up/Settlement totals reset at the 2AM business-day rollover (see
-      // app/lib/businessDate.ts) — clock-based, not gated on whether
-      // Opening's own "Updated Time" card has been manually refreshed yet.
-      const cutoff = getBusinessToday();
-      const cashoutTopUpStlm = computeCashoutTopUpStlm(agstlmText, cutoff);
-      const sendMoneyTopUpStlm = computeSendMoneyTopUpStlm(bundleText, cutoff);
-
       // Cashout's Opening Balance card figure switches to the sum of
       // "Estimated Opening" (Assumed Balance) once BOTH hold — same rule as
       // the Balance tab (app/agentbal/page.tsx):
@@ -1561,6 +1567,49 @@ export default function BalanceOverviewPage() {
         ? Object.values(estimatedData.balancesWithFallback ?? {}).reduce((sum, v) => sum + v, 0)
         : undefined;
 
+      // Send Money's own Opening Balance card figure — same rule as
+      // Cashout's above, except the validity check is based on col I's
+      // "UPDATED TIME" card (Send Money's own) instead of col G's.
+      const sendMoneyCutoffDate = parseSendMoneyReportCutoffDate(openingText);
+      const estimatedSendMoneyUploadedAt = estimatedSendMoneyData.uploadedAt ? new Date(estimatedSendMoneyData.uploadedAt) : null;
+      const estimatedSendMoneyOpeningValid =
+        sendMoneyCutoffDate !== null &&
+        sendMoneyCutoffDate.getTime() < getBusinessToday().getTime() &&
+        estimatedSendMoneyUploadedAt !== null &&
+        toBusinessDate(estimatedSendMoneyUploadedAt).getTime() === getBusinessToday().getTime();
+      const sendMoneyOpeningOverride = estimatedSendMoneyOpeningValid
+        ? Object.values(estimatedSendMoneyData.balancesWithFallback ?? {}).reduce((sum, v) => sum + v, 0)
+        : undefined;
+
+      // Top Up/Settlement totals reset at the 2AM business-day rollover (see
+      // app/lib/businessDate.ts) — clock-based ("today"), UNLESS Opening is
+      // still stale (hasn't refreshed for today) AND no valid Estimated
+      // Balance covers that gap yet — then these widen to sum from
+      // Opening's own last-refresh day through today, so Settlement/TopUp
+      // posted "yesterday" (while waiting for either Opening or an upload)
+      // doesn't disappear once the calendar rolls over. Once a valid
+      // Estimated Balance exists, it already bakes that stale day in (see
+      // app/lib/estimatedOpening.ts), so this goes back to today-only to
+      // avoid counting it twice. Per explicit instruction, the CashGo/
+      // Bundle Transfer "Today" strip widens the same way.
+      const cutoff = getBusinessToday();
+      const cashoutLiveCutoff = (cashoutCutoffDate !== null && cashoutCutoffDate.getTime() < cutoff.getTime() && !estimatedOpeningValid)
+        ? cashoutCutoffDate
+        : cutoff;
+      const sendMoneyLiveCutoff = (sendMoneyCutoffDate !== null && sendMoneyCutoffDate.getTime() < cutoff.getTime() && !estimatedSendMoneyOpeningValid)
+        ? sendMoneyCutoffDate
+        : cutoff;
+      const cashoutTopUpStlm = computeCashoutTopUpStlm(agstlmText, cashoutLiveCutoff);
+      const sendMoneyTopUpStlm = computeSendMoneyTopUpStlm(bundleText, sendMoneyLiveCutoff);
+
+      const todayCashGo = parseTodayCashGo(cashGoText, cashoutLiveCutoff);
+      const todayBundle = parseTodayBundle(bundleText, sendMoneyLiveCutoff);
+
+      // Overall (not per-wallet) today's combined quota vs. processed —
+      // Bundle Transfer has no quota concept, so it's null there.
+      const cashGoQuotaTotal = todayCashGo.quotaBk + todayCashGo.quotaNg;
+      const cashGoQuota = cashGoQuotaTotal > 0 ? { processed: todayCashGo.bk + todayCashGo.ng, total: cashGoQuotaTotal } : null;
+
       const cashoutRows = parseSheetBlock(cashoutText);
 
       // Same validity gate as the Opening Balance override above, applied
@@ -1580,20 +1629,6 @@ export default function BalanceOverviewPage() {
             });
             return overrideMap;
           })()
-        : undefined;
-
-      // Send Money's own Opening Balance card figure — same rule as
-      // Cashout's above, except the validity check is based on col I's
-      // "UPDATED TIME" card (Send Money's own) instead of col G's.
-      const sendMoneyCutoffDate = parseSendMoneyReportCutoffDate(openingText);
-      const estimatedSendMoneyUploadedAt = estimatedSendMoneyData.uploadedAt ? new Date(estimatedSendMoneyData.uploadedAt) : null;
-      const estimatedSendMoneyOpeningValid =
-        sendMoneyCutoffDate !== null &&
-        sendMoneyCutoffDate.getTime() < getBusinessToday().getTime() &&
-        estimatedSendMoneyUploadedAt !== null &&
-        toBusinessDate(estimatedSendMoneyUploadedAt).getTime() === getBusinessToday().getTime();
-      const sendMoneyOpeningOverride = estimatedSendMoneyOpeningValid
-        ? Object.values(estimatedSendMoneyData.balancesWithFallback ?? {}).reduce((sum, v) => sum + v, 0)
         : undefined;
 
       const sendMoneyRows = parseSheetBlock(sendMoneyText);
