@@ -342,7 +342,7 @@ export async function readImportLog(
 ): Promise<ImportLogEntry[]> {
   let rows: string[][];
   try {
-    rows = await fetchRange(`${SHEET_TITLE}!${startCol}${IMPORT_LOG_FIRST_DATA_ROW}:${endCol}5000`);
+    rows = await fetchRange(`${SHEET_TITLE}!${startCol}${IMPORT_LOG_FIRST_DATA_ROW}:${endCol}20000`);
   } catch {
     return [];
   }
@@ -462,11 +462,11 @@ export async function writeCashoutEstimatedOpening(
   // own columns (H-K), which is meant to persist and grow across uploads.
   await sheetsApi.spreadsheets.values.clear({
     spreadsheetId,
-    range: `${SHEET_TITLE}!${CASHOUT_START_COL}1:C5000`,
+    range: `${SHEET_TITLE}!${CASHOUT_START_COL}1:C20000`,
   });
   await sheetsApi.spreadsheets.values.clear({
     spreadsheetId,
-    range: `${SHEET_TITLE}!${WALLET_TOTALS_START_COL}1:F5000`,
+    range: `${SHEET_TITLE}!${WALLET_TOTALS_START_COL}1:F20000`,
   });
 
   const rows: (string | number)[][] = [
@@ -627,11 +627,11 @@ export async function writeSendMoneyEstimatedOpening(
   // own columns (T-W), same rule as Cashout's own clear below.
   await sheetsApi.spreadsheets.values.clear({
     spreadsheetId,
-    range: `${SHEET_TITLE}!${SENDMONEY_START_COL}1:O5000`,
+    range: `${SHEET_TITLE}!${SENDMONEY_START_COL}1:O20000`,
   });
   await sheetsApi.spreadsheets.values.clear({
     spreadsheetId,
-    range: `${SHEET_TITLE}!${SENDMONEY_WALLET_TOTALS_START_COL}1:R5000`,
+    range: `${SHEET_TITLE}!${SENDMONEY_WALLET_TOTALS_START_COL}1:R20000`,
   });
 
   const rows: (string | number)[][] = [
@@ -716,7 +716,7 @@ export async function readCashoutEstimatedOpening(): Promise<{
   let walletRows: string[][];
   try {
     [rows, walletRows] = await Promise.all([
-      fetchRange(`${SHEET_TITLE}!${CASHOUT_START_COL}1:B5000`),
+      fetchRange(`${SHEET_TITLE}!${CASHOUT_START_COL}1:B20000`),
       fetchRange(`${SHEET_TITLE}!${WALLET_TOTALS_START_COL}1:F10`),
     ]);
   } catch {
@@ -788,7 +788,7 @@ export async function readSendMoneyEstimatedOpening(): Promise<{
   let walletRows: string[][];
   try {
     [rows, walletRows] = await Promise.all([
-      fetchRange(`${SHEET_TITLE}!${SENDMONEY_START_COL}1:N5000`),
+      fetchRange(`${SHEET_TITLE}!${SENDMONEY_START_COL}1:N20000`),
       fetchRange(`${SHEET_TITLE}!${SENDMONEY_WALLET_TOTALS_START_COL}1:R10`),
     ]);
   } catch {
