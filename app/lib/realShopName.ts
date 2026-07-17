@@ -46,6 +46,11 @@ export function extractRealShopName(raw: string | number | undefined | null): st
 
   if (/OLD/i.test(i)) return 'OLD';
 
+  // Placeholder rows for manual/off-system adjustments (e.g.
+  // "00000000001 - MANUAL-BK") — not a real shop account, same
+  // always-excluded treatment as "OLD" below.
+  if (/MANUAL/i.test(i)) return 'MANUAL';
+
   if (/YUJI/i.test(i)) {
     const m = i.match(YUJI_PATTERN);
     return m ? m[0].trim().toUpperCase() : '';

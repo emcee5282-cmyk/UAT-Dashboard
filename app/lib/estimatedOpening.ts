@@ -3,6 +3,7 @@ import { extractRealShopName, extractSendMoneyShopName } from './realShopName';
 import { fetchRange } from './googleSheets';
 import { BRAND_CODES } from './transferQueueCount';
 import { getBusinessToday, toManilaWallClock, fromManilaWallClockMs, parseCardCutoffDate, manilaMidnight } from './businessDate';
+import { isValidNumericCell } from './uploadValidation';
 
 // "Estimated Opening" — a dedicated sheet tab (in the same spreadsheet as
 // everything else) that holds a raw upload of "assumed balance" data used
@@ -246,7 +247,13 @@ function aggregateByShop(
   const totals = new Map<string, { totalDP: number; totalWD: number }>();
   for (const row of dataRows) {
     const shopName = extractShopName(row[accountCol]);
-    if (!shopName || shopName === 'OLD') continue;
+    if (!shopName || shopName === 'OLD' || shopName === 'MANUAL') continue;
+    // A garbage (non-numeric, non-blank) Total DP/WD cell skips the whole
+    // row instead of silently defaulting to 0 — matches the client-side
+    // upload preview's own validation (app/lib/uploadValidation.ts) so a
+    // row flagged there as an error is actually excluded here too, not
+    // quietly included with a wrong total.
+    if (!isValidNumericCell(row[dpCol]) || !isValidNumericCell(row[wdCol])) continue;
     const existing = totals.get(shopName) ?? { totalDP: 0, totalWD: 0 };
     existing.totalDP += parseNumber(row[dpCol]);
     existing.totalWD += parseNumber(row[wdCol]);

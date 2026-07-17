@@ -9,6 +9,7 @@ import ConnectionErrorState from '../components/ConnectionErrorState';
 import { classifyFetchError, type ClassifiedError, assertAllOk } from '../lib/errors';
 import { extractRealShopName } from '../lib/realShopName';
 import { fromManilaWallClockMs } from '../lib/businessDate';
+import { isValidNumericCell } from '../lib/uploadValidation';
 
 type Row = {
   agentName: string;
@@ -19,6 +20,19 @@ type Row = {
 };
 
 type ImportRecord = { fileName: string; shopCount: number; importedAt: string; importedBy: string };
+
+// One row skipped during the upload preview's own validation — mirrors
+// exactly what app/lib/estimatedOpening.ts's aggregateByShop skips
+// server-side (see its own isValidNumericCell check), so the preview never
+// promises a row was skipped when the actual import would've kept it.
+type UploadRowError = {
+  row: number;
+  shopCode: string;
+  shopName: string;
+  column: string;
+  value: string;
+  message: string;
+};
 
 // Inverse of the server's own "MM/DD/YYYY HH:MM AM/PM" timestamp format
 // (app/lib/estimatedOpening.ts's formatUploadTimestamp) — written in Manila
@@ -210,6 +224,8 @@ export default function Summary() {
   const [uploadParsed, setUploadParsed] = useState<{ headerRow: (string | number)[]; dataRows: (string | number)[][] } | null>(null);
   const [uploadDetectedShops, setUploadDetectedShops] = useState(0);
   const [uploadDetectedErrors, setUploadDetectedErrors] = useState(0);
+  const [uploadRowErrors, setUploadRowErrors] = useState<UploadRowError[]>([]);
+  const [uploadErrorsExpanded, setUploadErrorsExpanded] = useState(false);
   const [uploadStatus, setUploadStatus] = useState<'idle' | 'importing' | 'success' | 'error'>('idle');
   const [uploadProgress, setUploadProgress] = useState(0);
   const [uploadError, setUploadError] = useState<string | null>(null);
@@ -471,6 +487,8 @@ export default function Summary() {
     setUploadParsed(null);
     setUploadDetectedShops(0);
     setUploadDetectedErrors(0);
+    setUploadRowErrors([]);
+    setUploadErrorsExpanded(false);
     setUploadStatus('idle');
     setUploadProgress(0);
     setUploadError(null);
@@ -506,30 +524,70 @@ export default function Summary() {
       setUploadParsed({ headerRow, dataRows });
 
       // Preview counts — mirrors the server's own aggregateByShop grouping
-      // (same extractRealShopName, same "OLD" exclusion) so what's shown
-      // here matches what will actually get imported.
+      // (same extractRealShopName, same "OLD" exclusion, same numeric-cell
+      // check) so a row flagged as an error here is actually excluded at
+      // import time too, not silently included with a wrong total.
       const accountCol = headerRow.findIndex((h) => String(h ?? '').trim().toLowerCase() === 'account');
       if (accountCol === -1) {
         throw new Error('The file is missing an "Account" column.');
       }
-      const uniqueShops = new Set<string>();
-      let errorCount = 0;
-      dataRows.forEach((row) => {
-        const shopName = extractRealShopName(row[accountCol]);
+      const dpCol = headerRow.findIndex((h) => String(h ?? '').trim().toLowerCase() === 'total dp');
+      const wdCol = headerRow.findIndex((h) => String(h ?? '').trim().toLowerCase() === 'total wd');
+
+      const errorRowNumbers = new Set<number>();
+      const rowErrors: UploadRowError[] = [];
+      dataRows.forEach((row, i) => {
+        // +1 for 0-index, +1 for the header row — matches the row number
+        // as it appears in the spreadsheet itself.
+        const rowNumber = i + 2;
+        const rawAccount = row[accountCol];
+        const shopCode = String(rawAccount ?? '').trim() || '(blank)';
+        const shopName = extractRealShopName(rawAccount);
+
         if (!shopName) {
-          errorCount += 1;
+          errorRowNumbers.add(rowNumber);
+          rowErrors.push({
+            row: rowNumber, shopCode, shopName: '—', column: 'Account',
+            value: String(rawAccount ?? ''), message: 'Missing or invalid shop code',
+          });
           return;
         }
-        if (shopName === 'OLD') return;
-        uniqueShops.add(shopName);
+        if (shopName === 'OLD' || shopName === 'MANUAL') return;
+
+        if (dpCol !== -1 && !isValidNumericCell(row[dpCol])) {
+          errorRowNumbers.add(rowNumber);
+          rowErrors.push({
+            row: rowNumber, shopCode, shopName, column: 'Total DP',
+            value: String(row[dpCol] ?? ''), message: 'Invalid number format',
+          });
+        }
+        if (wdCol !== -1 && !isValidNumericCell(row[wdCol])) {
+          errorRowNumbers.add(rowNumber);
+          rowErrors.push({
+            row: rowNumber, shopCode, shopName, column: 'Total WD',
+            value: String(row[wdCol] ?? ''), message: 'Invalid number format',
+          });
+        }
       });
-      setUploadDetectedShops(uniqueShops.size);
-      setUploadDetectedErrors(errorCount);
+      setUploadDetectedShops(dataRows.length);
+      setUploadDetectedErrors(errorRowNumbers.size);
+      setUploadRowErrors(rowErrors);
     } catch (err) {
       setUploadStatus('error');
       setUploadError(err instanceof Error ? err.message : 'Could not read this file.');
     }
   }, []);
+
+  const downloadErrorReport = useCallback(() => {
+    const headers = ['Row', 'Shop Code', 'Shop Name', 'Column', 'Invalid Value', 'Error Message'];
+    const data = uploadRowErrors.map((e) => [e.row, e.shopCode, e.shopName, e.column, e.value, e.message]);
+    const worksheet = XLSX.utils.aoa_to_sheet([headers, ...data]);
+    worksheet['!cols'] = headers.map(() => ({ wch: 18 }));
+    const workbook = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(workbook, worksheet, 'Import Errors');
+    const baseName = uploadedFile?.name.replace(/\.[^.]+$/, '') ?? 'upload';
+    XLSX.writeFile(workbook, `${baseName}_errors.xlsx`);
+  }, [uploadRowErrors, uploadedFile]);
 
   const handleUploadDrop = useCallback((event: React.DragEvent<HTMLDivElement>) => {
     event.preventDefault();
@@ -1124,30 +1182,102 @@ export default function Summary() {
             {uploadedFile && uploadStatus !== 'importing' && !(uploadStatus === 'success' && importResult) && (
               <>
                 <p className="mt-4 text-[11px] font-semibold text-muted-foreground">Detected</p>
-                <div className="mt-2 grid grid-cols-2 gap-3">
-                  <div className="flex items-center gap-2.5 rounded-xl border border-border p-3">
-                    <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-indigo-50 text-indigo-600 dark:bg-indigo-500/15 dark:text-indigo-400">
-                      <Store size={16} />
+                <div className="mt-2 grid grid-cols-3 gap-2">
+                  <div className="flex items-center gap-2 rounded-xl border border-border p-2.5">
+                    <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-indigo-50 text-indigo-600 dark:bg-indigo-500/15 dark:text-indigo-400">
+                      <Store size={14} />
                     </div>
                     <div className="min-w-0">
-                      <p className="text-[16px] font-bold tabular-nums text-foreground">{uploadDetectedShops.toLocaleString()}</p>
-                      <p className="text-[11px] text-muted-foreground">Shops</p>
+                      <p className="text-[15px] font-bold tabular-nums text-foreground">{uploadDetectedShops.toLocaleString()}</p>
+                      <p className="text-[10px] text-muted-foreground">Shops</p>
                     </div>
                   </div>
-                  <div className="flex items-center gap-2.5 rounded-xl border border-border p-3">
-                    <div className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-lg ${
+                  <div className="flex items-center gap-2 rounded-xl border border-border p-2.5">
+                    <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-emerald-50 text-emerald-600 dark:bg-emerald-500/15 dark:text-emerald-400">
+                      <CheckCircle2 size={14} />
+                    </div>
+                    <div className="min-w-0">
+                      <p className="text-[15px] font-bold tabular-nums text-foreground">{(uploadDetectedShops - uploadDetectedErrors).toLocaleString()}</p>
+                      <p className="text-[10px] text-muted-foreground">Imported Successfully</p>
+                    </div>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => { if (uploadDetectedErrors > 0) setUploadErrorsExpanded((v) => !v); }}
+                    disabled={uploadDetectedErrors === 0}
+                    className={`flex items-center gap-2 rounded-xl border border-border p-2.5 text-left transition-colors ${
+                      uploadDetectedErrors > 0 ? 'cursor-pointer hover:bg-muted/50' : 'cursor-default'
+                    }`}
+                  >
+                    <div className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-lg ${
                       uploadDetectedErrors === 0
                         ? 'bg-emerald-50 text-emerald-600 dark:bg-emerald-500/15 dark:text-emerald-400'
-                        : 'bg-amber-50 text-amber-600 dark:bg-amber-500/15 dark:text-amber-400'
+                        : 'bg-rose-50 text-rose-600 dark:bg-rose-500/15 dark:text-rose-400'
                     }`}>
-                      {uploadDetectedErrors === 0 ? <CheckCircle2 size={16} /> : <AlertCircle size={16} />}
+                      {uploadDetectedErrors === 0 ? <CheckCircle2 size={14} /> : <AlertCircle size={14} />}
                     </div>
-                    <div className="min-w-0">
-                      <p className="text-[16px] font-bold tabular-nums text-foreground">{uploadDetectedErrors}</p>
-                      <p className="text-[11px] text-muted-foreground">Errors</p>
+                    <div className="min-w-0 flex-1">
+                      <p className="text-[15px] font-bold tabular-nums text-foreground">{uploadDetectedErrors}</p>
+                      <p className="text-[10px] text-muted-foreground">Errors</p>
+                    </div>
+                    {uploadDetectedErrors > 0 && (
+                      uploadErrorsExpanded
+                        ? <ChevronUp size={13} className="shrink-0 text-muted-foreground" />
+                        : <ChevronDown size={13} className="shrink-0 text-muted-foreground" />
+                    )}
+                  </button>
+                </div>
+
+                {uploadDetectedErrors > 0 && uploadErrorsExpanded && (
+                  <div className="mt-3 overflow-hidden rounded-xl border border-border">
+                    <div className="flex items-center justify-between gap-2 border-b border-border bg-muted/20 px-3 py-2">
+                      <p className="text-[11px] text-muted-foreground">
+                        The following rows were skipped during import because of validation errors.
+                      </p>
+                      <button
+                        type="button"
+                        onClick={downloadErrorReport}
+                        className="flex shrink-0 items-center gap-1 rounded-md border border-border px-2 py-1 text-[10px] font-medium text-foreground transition-colors hover:bg-muted"
+                      >
+                        <Download size={11} />
+                        Download Error Report (.xlsx)
+                      </button>
+                    </div>
+                    <div className="max-h-[320px] overflow-y-auto">
+                      <table className="w-full border-collapse text-[10px]">
+                        <thead className="sticky top-0 z-10 bg-white dark:bg-[#2a2a2d]">
+                          <tr className="border-b border-border">
+                            <th className="whitespace-nowrap px-2.5 py-1.5 text-left font-semibold text-muted-foreground">Row</th>
+                            <th className="whitespace-nowrap px-2.5 py-1.5 text-left font-semibold text-muted-foreground">Shop Code</th>
+                            <th className="whitespace-nowrap px-2.5 py-1.5 text-left font-semibold text-muted-foreground">Shop Name</th>
+                            <th className="whitespace-nowrap px-2.5 py-1.5 text-left font-semibold text-muted-foreground">Column</th>
+                            <th className="whitespace-nowrap px-2.5 py-1.5 text-left font-semibold text-muted-foreground">Invalid Value</th>
+                            <th className="whitespace-nowrap px-2.5 py-1.5 text-left font-semibold text-muted-foreground">Error Message</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {uploadRowErrors.map((e, i) => (
+                            <tr key={`${e.row}-${e.column}-${i}`} className="border-b border-border last:border-0">
+                              <td className="whitespace-nowrap px-2.5 py-1.5 tabular-nums text-foreground">{e.row}</td>
+                              <td className="whitespace-nowrap px-2.5 py-1.5 text-foreground">{e.shopCode}</td>
+                              <td className="whitespace-nowrap px-2.5 py-1.5 text-foreground">{e.shopName}</td>
+                              <td className="whitespace-nowrap px-2.5 py-1.5 text-muted-foreground">{e.column}</td>
+                              <td className="whitespace-nowrap px-2.5 py-1.5 text-rose-600 dark:text-rose-400">{e.value || '(blank)'}</td>
+                              <td className="whitespace-nowrap px-2.5 py-1.5 text-muted-foreground">{e.message}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
                     </div>
                   </div>
-                </div>
+                )}
+
+                {uploadParsed && uploadDetectedErrors === 0 && (
+                  <div className="mt-3 flex items-center gap-1.5 rounded-lg bg-emerald-50 px-3 py-2 text-[11px] font-medium text-emerald-700 dark:bg-emerald-500/10 dark:text-emerald-400">
+                    <CheckCircle2 size={13} className="shrink-0" />
+                    All data imported successfully. No validation errors found.
+                  </div>
+                )}
 
                 {uploadStatus === 'error' && uploadError && (
                   <div className="mt-3 flex items-center gap-1.5 rounded-lg bg-rose-50 px-3 py-2 text-[11px] font-medium text-rose-700 dark:bg-rose-500/10 dark:text-rose-400">
