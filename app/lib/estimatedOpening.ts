@@ -192,12 +192,13 @@ async function fetchLiveShopFigures(): Promise<LiveShopFigures> {
       topUpAgent && topUpAgent !== '-' && topUpAmount && topUpAmount !== '-' &&
       (!reportCutoffDate || (topUpDate && topUpDate >= reportCutoffDate))
     ) {
-      const amount = Math.abs(parseNumber(topUpAmount));
+      // Kept at its own natural sign (stored positive) — addition-only
+      // formula below, no manual sign handling. See writeCashoutEstimatedOpening.
+      const amount = parseNumber(topUpAmount);
       topUpByShop.set(topUpAgent, (topUpByShop.get(topUpAgent) ?? 0) + amount);
     }
 
-    // Settlement cols H-L (idx 7-11): idx7=agent, idx8=amount (stored
-    // negative — abs()'d before use), idx9=date
+    // Settlement cols H-L (idx 7-11): idx7=agent, idx8=amount, idx9=date
     const stlmAgent = stripBrandSuffix((row[7] ?? '').trim()).toUpperCase();
     const stlmAmount = (row[8] ?? '').trim();
     const stlmDate = reportCutoffDate ? parseStlmRowDate((row[9] ?? '').trim()) : null;
@@ -205,7 +206,9 @@ async function fetchLiveShopFigures(): Promise<LiveShopFigures> {
       stlmAgent && stlmAgent !== '-' && stlmAmount && stlmAmount !== '-' &&
       (!reportCutoffDate || (stlmDate && stlmDate >= reportCutoffDate))
     ) {
-      const amount = Math.abs(parseNumber(stlmAmount));
+      // Kept at its own natural sign (stored negative) — same addition-only
+      // reasoning as Top Up above.
+      const amount = parseNumber(stlmAmount);
       stlmByShop.set(stlmAgent, (stlmByShop.get(stlmAgent) ?? 0) + amount);
     }
   });
@@ -378,7 +381,13 @@ async function ensureSheetExists(sheetsApi: ReturnType<typeof google.sheets>, sp
  * (extractRealShopName + summed Total DP/Total WD), then combined with the
  * live Opening Balance into one per-shop base value:
  *
- *   Assumed Balance (stored) = Opening + Uploaded TotalDP − Uploaded TotalWD
+ *   Assumed Balance (stored) = Opening + Uploaded TotalDP + Uploaded TotalWD
+ *
+ * Addition only — every term is used at its own natural sign as it already
+ * appears in the source data (TotalWD stored negative, TotalDP stored
+ * positive), never abs()'d or manually re-signed. Same convention at READ
+ * time for TopUp/Settlement (see readCashoutEstimatedOpening) and Send
+ * Money's own counterpart below.
  *
  * Deliberately does NOT bake TopUp/Settlement into the stored value — same
  * fix as writeSendMoneyEstimatedOpening below, for the same reason: freezing
@@ -423,7 +432,7 @@ export async function writeCashoutEstimatedOpening(
 
   const assumedBalances = shopTotals.map((s) => {
     const opening = openingByShop.get(s.shopName) ?? 0;
-    const assumedBalance = opening + s.totalDP - s.totalWD;
+    const assumedBalance = opening + s.totalDP + s.totalWD;
     return { shopName: s.shopName, assumedBalance };
   });
 
@@ -533,12 +542,13 @@ async function fetchLiveSendMoneyShopFigures(): Promise<LiveShopFigures> {
       topUpAgent && topUpAgent !== '-' && topUpAmount && topUpAmount !== '-' &&
       (!reportCutoffDate || (topUpDate && topUpDate >= reportCutoffDate))
     ) {
-      const amount = Math.abs(parseNumber(topUpAmount));
+      // Kept at its own natural sign (stored positive) — addition-only
+      // formula, no manual sign handling. See writeSendMoneyEstimatedOpening.
+      const amount = parseNumber(topUpAmount);
       topUpByShop.set(topUpAgent, (topUpByShop.get(topUpAgent) ?? 0) + amount);
     }
 
-    // Settlement cols H-L (idx 7-11): idx7=agent, idx8=amount (stored
-    // negative — abs()'d before use), idx9=date.
+    // Settlement cols H-L (idx 7-11): idx7=agent, idx8=amount, idx9=date.
     const stlmAgent = (row[7] ?? '').trim().toUpperCase();
     const stlmAmount = (row[8] ?? '').trim();
     const stlmDate = reportCutoffDate ? parseStlmRowDate((row[9] ?? '').trim()) : null;
@@ -546,7 +556,9 @@ async function fetchLiveSendMoneyShopFigures(): Promise<LiveShopFigures> {
       stlmAgent && stlmAgent !== '-' && stlmAmount && stlmAmount !== '-' &&
       (!reportCutoffDate || (stlmDate && stlmDate >= reportCutoffDate))
     ) {
-      const amount = Math.abs(parseNumber(stlmAmount));
+      // Kept at its own natural sign (stored negative) — same addition-only
+      // reasoning as Top Up above.
+      const amount = parseNumber(stlmAmount);
       stlmByShop.set(stlmAgent, (stlmByShop.get(stlmAgent) ?? 0) + amount);
     }
   });
@@ -563,9 +575,10 @@ async function fetchLiveSendMoneyShopFigures(): Promise<LiveShopFigures> {
  * SENDMONEY_START_COL and the other SENDMONEY_* column constants above).
  *
  * Deliberately does NOT bake TopUp/Settlement into the stored per-shop
- * value (unlike Cashout's own writeCashoutEstimatedOpening, still untouched)
- * — only `Opening + uploaded Total DP − uploaded Total WD` is persisted.
- * TopUp/Settlement are added fresh at READ time instead (see
+ * value — only `Opening + uploaded Total DP + uploaded Total WD` is
+ * persisted (addition only, every term at its own natural sign as it
+ * already appears in the source data — see writeCashoutEstimatedOpening's
+ * own comment). TopUp/Settlement are added fresh at READ time instead (see
  * readSendMoneyEstimatedOpening), for every shop uniformly, not just the
  * ones missing from this upload. Freezing them here previously caused the
  * Estimated total to silently drift away from the real (live) Ending
@@ -591,7 +604,7 @@ export async function writeSendMoneyEstimatedOpening(
 
   const assumedBalances = shopTotals.map((s) => {
     const opening = openingByShop.get(s.shopName) ?? 0;
-    const assumedBalance = opening + s.totalDP - s.totalWD;
+    const assumedBalance = opening + s.totalDP + s.totalWD;
     return { shopName: s.shopName, assumedBalance };
   });
 
@@ -725,7 +738,7 @@ export async function readCashoutEstimatedOpening(): Promise<{
     const topUp = topUpByShop.get(shopName) ?? 0;
     const stlm = stlmByShop.get(shopName) ?? 0;
     const base = uploadedBase ?? opening;
-    balancesWithFallback.set(shopName, base + topUp - stlm);
+    balancesWithFallback.set(shopName, base + topUp + stlm);
   });
 
   return { balances, balancesWithFallback, walletTotals, uploadedAt };
@@ -740,8 +753,9 @@ export async function readCashoutEstimatedOpening(): Promise<{
  * ("Opening AG" cols L-O) — not just the ones missing from this upload —
  * TopUp/Settlement (live, cutoff-filtered) are added fresh here at read
  * time, on top of either that shop's uploaded base (`Opening + uploaded
- * Total DP − uploaded Total WD`, from `balances`) or its live Opening alone
- * if the shop wasn't in the upload. TopUp/Settlement are intentionally
+ * Total DP + uploaded Total WD`, from `balances`) or its live Opening alone
+ * if the shop wasn't in the upload. Addition only, every term at its own
+ * natural sign (see writeCashoutEstimatedOpening's own comment). TopUp/Settlement are intentionally
  * NEVER frozen at upload time (see writeSendMoneyEstimatedOpening) — a
  * single upload may stay in use for hours, and same-day Settlement/TopUp
  * keeps posting after it; recomputing fresh on every read is the only way
@@ -792,7 +806,7 @@ export async function readSendMoneyEstimatedOpening(): Promise<{
     const topUp = topUpByShop.get(shopName) ?? 0;
     const stlm = stlmByShop.get(shopName) ?? 0;
     const base = uploadedBase ?? opening;
-    balancesWithFallback.set(shopName, base + topUp - stlm);
+    balancesWithFallback.set(shopName, base + topUp + stlm);
   });
 
   return { balances, balancesWithFallback, walletTotals, uploadedAt };
