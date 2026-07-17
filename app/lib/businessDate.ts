@@ -32,8 +32,14 @@ export function fromManilaWallClockMs(manilaWallClockMs: number): Date {
 // — matches what `new Date(year, month, day)` already produces on a
 // machine whose OS clock is set to Asia/Manila (true for staff's own
 // browsers), so date-only comparisons elsewhere in the app that assume a
-// Manila-set client clock stay correct against this.
-function manilaMidnight(year: number, month: number, day: number): Date {
+// Manila-set client clock stay correct against this. Exported so callers
+// that need to build a Manila-anchored date from a plain Y/M/D (e.g. a
+// sheet's own "M/D/YYYY" transaction date, see estimatedOpening.ts's
+// parseStlmRowDate) can compare it against getBusinessToday()/
+// parseCardCutoffDate's own output on equal footing — a native
+// `new Date(y, m, d)` is anchored to the runtime's OWN timezone instead,
+// silently off by 8 hours from every Manila-anchored date in this module.
+export function manilaMidnight(year: number, month: number, day: number): Date {
   return fromManilaWallClockMs(Date.UTC(year, month, day));
 }
 

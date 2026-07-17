@@ -642,15 +642,15 @@ function buildCardData(
   const withdrawal = total?.totalWD ?? 0;
   // The sheet's own BD-Transfer IN / STLM columns are always seeded at 0 —
   // computeCashoutTopUpStlm/computeSendMoneyTopUpStlm above patch in live
-  // totals instead, same as Cashout/Send Money's own Overview pages already do.
-  // EXCEPT while the Assumed Balance override is active: the assumed Opening
-  // figure was itself computed as (live Opening + uploaded DP/WD + today's
-  // live Top Up/Settlement), so today's Top Up/Settlement are already baked
-  // into `opening` above — showing them again here would double-count them.
-  // Zeroed instead of live-patched until the real Opening Balance actually
-  // refreshes and this override stops applying on its own.
-  const bdTransferIn = openingOverride !== undefined ? 0 : topUpStlm.topUp;
-  const stlmOut = openingOverride !== undefined ? 0 : topUpStlm.stlm;
+  // totals instead, same as Cashout/Send Money's own Overview pages already
+  // do. Always live, never zeroed — even while the Assumed Balance override
+  // is active: the assumed Opening figure (see app/lib/estimatedOpening.ts's
+  // fetchLiveShopFigures/fetchLiveSendMoneyShopFigures) only bakes in the
+  // single stale calendar day Opening itself is behind on, deliberately
+  // EXCLUDING today's own Top Up/Settlement — those are tracked in exactly
+  // one place, here, live, per explicit instruction.
+  const bdTransferIn = topUpStlm.topUp;
+  const stlmOut = topUpStlm.stlm;
   // Both already signed (IN positive, OUT negative), so Adjustment's net
   // effect on Ending Balance is a straight sum, not a subtraction.
   const ending = opening + deposit - withdrawal + bdTransferIn + stlmOut;

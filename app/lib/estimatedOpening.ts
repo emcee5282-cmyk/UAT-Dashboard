@@ -2,7 +2,7 @@ import { google, Auth } from 'googleapis';
 import { extractRealShopName, extractSendMoneyShopName } from './realShopName';
 import { fetchRange } from './googleSheets';
 import { BRAND_CODES } from './transferQueueCount';
-import { getBusinessToday, toManilaWallClock, fromManilaWallClockMs, parseCardCutoffDate } from './businessDate';
+import { getBusinessToday, toManilaWallClock, fromManilaWallClockMs, parseCardCutoffDate, manilaMidnight } from './businessDate';
 
 // "Estimated Opening" — a dedicated sheet tab (in the same spreadsheet as
 // everything else) that holds a raw upload of "assumed balance" data used
@@ -122,13 +122,17 @@ function stripBrandSuffix(name: string): string {
   return name;
 }
 
-// "AG BD STLM + TOPUP" dates are formatted "M/D/YYYY".
+// "AG BD STLM + TOPUP" dates are formatted "M/D/YYYY" — a Manila calendar
+// date (business dates are always recorded in the business's own
+// timezone), so built via manilaMidnight rather than a native
+// `new Date(y, m, d)` (runtime-timezone-anchored) so it's directly
+// comparable against reportCutoffDate below, which is Manila-anchored too.
 function parseStlmRowDate(dateStr: string): Date | null {
   const parts = (dateStr ?? '').trim().split('/');
   if (parts.length !== 3) return null;
   const [m, d, y] = parts.map(Number);
   if (!m || !d || !y) return null;
-  return new Date(y, m - 1, d);
+  return manilaMidnight(y, m - 1, d);
 }
 
 type LiveShopFigures = {
@@ -146,11 +150,13 @@ type LiveShopFigures = {
 //
 // The TopUp/Settlement cutoff here is Cashout's own "Opening AG" col G
 // "Updated Time" card (already present in the unscoped `openingRows` fetch
-// below, no extra range needed) — same fix as
-// fetchLiveSendMoneyShopFigures's own cutoff, for the same reason: using
-// getBusinessToday()'s pure calendar cutoff here silently dropped a shop's
-// own prior-day Settlement/TopUp that posted AFTER Opening's last actual
-// refresh but BEFORE the next 2AM rollover.
+// below, no extra range needed) — same as fetchLiveSendMoneyShopFigures's
+// own cutoff. Matches ONLY that single calendar day (the day Opening is
+// stale for), not that day onward — today's own TopUp/Settlement is
+// deliberately excluded here and shown live instead via the Overview's own
+// Top Up/Settlement rows (app/balance-overview/page.tsx's bdTransferIn/
+// stlmOut, no longer zeroed while the override is active), so it isn't
+// baked into the Opening figure and double-tracked in two places.
 async function fetchLiveShopFigures(): Promise<LiveShopFigures> {
   const [openingRows, stlmRows] = await Promise.all([
     fetchRange('Opening AG'),
@@ -190,7 +196,7 @@ async function fetchLiveShopFigures(): Promise<LiveShopFigures> {
     const topUpDate = reportCutoffDate ? parseStlmRowDate((row[3] ?? '').trim()) : null;
     if (
       topUpAgent && topUpAgent !== '-' && topUpAmount && topUpAmount !== '-' &&
-      (!reportCutoffDate || (topUpDate && topUpDate >= reportCutoffDate))
+      (!reportCutoffDate || (topUpDate && topUpDate.getTime() === reportCutoffDate.getTime()))
     ) {
       // Kept at its own natural sign (stored positive) — addition-only
       // formula below, no manual sign handling. See writeCashoutEstimatedOpening.
@@ -204,7 +210,7 @@ async function fetchLiveShopFigures(): Promise<LiveShopFigures> {
     const stlmDate = reportCutoffDate ? parseStlmRowDate((row[9] ?? '').trim()) : null;
     if (
       stlmAgent && stlmAgent !== '-' && stlmAmount && stlmAmount !== '-' &&
-      (!reportCutoffDate || (stlmDate && stlmDate >= reportCutoffDate))
+      (!reportCutoffDate || (stlmDate && stlmDate.getTime() === reportCutoffDate.getTime()))
     ) {
       // Kept at its own natural sign (stored negative) — same addition-only
       // reasoning as Top Up above.
@@ -494,20 +500,15 @@ export async function writeCashoutEstimatedOpening(
 // suffix stripping (app/sendmoney/balances/page.tsx reads them raw).
 //
 // The TopUp/Settlement cutoff here is Send Money's own "Opening AG" col I
-// "Updated Time" card (e.g. "July 16 - 7:46 AM") — i.e. everything since
-// Opening was ACTUALLY last refreshed — NOT getBusinessToday()'s pure
-// calendar/2AM-rollover cutoff used elsewhere in the app for the general
-// Top Up/Settlement columns (Agent Balance, Balance page, etc., which are
-// intentionally calendar-based per that feature's own design). Estimated
-// Opening exists specifically to cover the gap between the 2AM rollover and
-// Opening's own actual refresh, so it needs everything NOT YET reflected in
-// the currently-displayed (stale) Opening — which, once the calendar day
-// has already rolled over past the card's own date, is more than just
-// "today": using getBusinessToday() here silently dropped a shop's own
-// prior-day Settlement/TopUp that posted AFTER Opening's last refresh but
-// BEFORE the next rollover — confirmed against a real shop on 2026-07-17
-// (D-M1BD-ECHO029-NG: a same-day −109,940 Settlement wasn't deducted,
-// making the Estimated figure exactly 109,940 too high).
+// "Updated Time" card (e.g. "July 16 - 7:46 AM") — NOT getBusinessToday()'s
+// pure calendar/2AM-rollover cutoff used elsewhere in the app for the
+// general Top Up/Settlement columns (Agent Balance, Balance page, etc.,
+// which are intentionally calendar-based per that feature's own design).
+// Matches ONLY that single calendar day (the day Opening is stale for) —
+// per explicit instruction, today's own TopUp/Settlement must NOT be baked
+// into the Opening figure; it's shown live instead via the Overview's own
+// Top Up/Settlement rows (bdTransferIn/stlmOut, no longer zeroed while the
+// override is active), so it's tracked in exactly one place, not two.
 async function fetchLiveSendMoneyShopFigures(): Promise<LiveShopFigures> {
   const [openingRows, updatedTimeRows, stlmRows] = await Promise.all([
     fetchRange('Opening AG!L:O'),
@@ -540,7 +541,7 @@ async function fetchLiveSendMoneyShopFigures(): Promise<LiveShopFigures> {
     const topUpDate = reportCutoffDate ? parseStlmRowDate((row[3] ?? '').trim()) : null;
     if (
       topUpAgent && topUpAgent !== '-' && topUpAmount && topUpAmount !== '-' &&
-      (!reportCutoffDate || (topUpDate && topUpDate >= reportCutoffDate))
+      (!reportCutoffDate || (topUpDate && topUpDate.getTime() === reportCutoffDate.getTime()))
     ) {
       // Kept at its own natural sign (stored positive) — addition-only
       // formula, no manual sign handling. See writeSendMoneyEstimatedOpening.
@@ -554,7 +555,7 @@ async function fetchLiveSendMoneyShopFigures(): Promise<LiveShopFigures> {
     const stlmDate = reportCutoffDate ? parseStlmRowDate((row[9] ?? '').trim()) : null;
     if (
       stlmAgent && stlmAgent !== '-' && stlmAmount && stlmAmount !== '-' &&
-      (!reportCutoffDate || (stlmDate && stlmDate >= reportCutoffDate))
+      (!reportCutoffDate || (stlmDate && stlmDate.getTime() === reportCutoffDate.getTime()))
     ) {
       // Kept at its own natural sign (stored negative) — same addition-only
       // reasoning as Top Up above.
