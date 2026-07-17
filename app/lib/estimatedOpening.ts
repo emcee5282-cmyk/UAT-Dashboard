@@ -387,13 +387,16 @@ async function ensureSheetExists(sheetsApi: ReturnType<typeof google.sheets>, sp
  * (extractRealShopName + summed Total DP/Total WD), then combined with the
  * live Opening Balance into one per-shop base value:
  *
- *   Assumed Balance (stored) = Opening + Uploaded TotalDP + Uploaded TotalWD
+ *   Assumed Balance (stored) = Opening + Uploaded TotalDP − Uploaded TotalWD
  *
- * Addition only — every term is used at its own natural sign as it already
- * appears in the source data (TotalWD stored negative, TotalDP stored
- * positive), never abs()'d or manually re-signed. Same convention at READ
- * time for TopUp/Settlement (see readCashoutEstimatedOpening) and Send
- * Money's own counterpart below.
+ * TotalWD is subtracted, not added — confirmed against a real upload
+ * (2026-07-17) that the file's own "Total WD" column is a positive
+ * magnitude (e.g. a BKASH wallet-type total of 168,998,260.70), not an
+ * already-negative signed value; adding it instead of subtracting roughly
+ * doubled its effect on the total. TopUp/Settlement (added at READ time
+ * below, see readCashoutEstimatedOpening) stay addition-only — those come
+ * from a different sheet ("AG BD STLM + TOPUP") that genuinely does store
+ * Settlement negative / TopUp positive.
  *
  * Deliberately does NOT bake TopUp/Settlement into the stored value — same
  * fix as writeSendMoneyEstimatedOpening below, for the same reason: freezing
@@ -438,7 +441,7 @@ export async function writeCashoutEstimatedOpening(
 
   const assumedBalances = shopTotals.map((s) => {
     const opening = openingByShop.get(s.shopName) ?? 0;
-    const assumedBalance = opening + s.totalDP + s.totalWD;
+    const assumedBalance = opening + s.totalDP - s.totalWD;
     return { shopName: s.shopName, assumedBalance };
   });
 
@@ -576,10 +579,9 @@ async function fetchLiveSendMoneyShopFigures(): Promise<LiveShopFigures> {
  * SENDMONEY_START_COL and the other SENDMONEY_* column constants above).
  *
  * Deliberately does NOT bake TopUp/Settlement into the stored per-shop
- * value — only `Opening + uploaded Total DP + uploaded Total WD` is
- * persisted (addition only, every term at its own natural sign as it
- * already appears in the source data — see writeCashoutEstimatedOpening's
- * own comment). TopUp/Settlement are added fresh at READ time instead (see
+ * value — only `Opening + uploaded Total DP − uploaded Total WD` is
+ * persisted (TotalWD subtracted, not added — see writeCashoutEstimatedOpening's
+ * own comment on why). TopUp/Settlement are added fresh at READ time instead (see
  * readSendMoneyEstimatedOpening), for every shop uniformly, not just the
  * ones missing from this upload. Freezing them here previously caused the
  * Estimated total to silently drift away from the real (live) Ending
@@ -605,7 +607,7 @@ export async function writeSendMoneyEstimatedOpening(
 
   const assumedBalances = shopTotals.map((s) => {
     const opening = openingByShop.get(s.shopName) ?? 0;
-    const assumedBalance = opening + s.totalDP + s.totalWD;
+    const assumedBalance = opening + s.totalDP - s.totalWD;
     return { shopName: s.shopName, assumedBalance };
   });
 
@@ -754,9 +756,10 @@ export async function readCashoutEstimatedOpening(): Promise<{
  * ("Opening AG" cols L-O) — not just the ones missing from this upload —
  * TopUp/Settlement (live, cutoff-filtered) are added fresh here at read
  * time, on top of either that shop's uploaded base (`Opening + uploaded
- * Total DP + uploaded Total WD`, from `balances`) or its live Opening alone
- * if the shop wasn't in the upload. Addition only, every term at its own
- * natural sign (see writeCashoutEstimatedOpening's own comment). TopUp/Settlement are intentionally
+ * Total DP − uploaded Total WD`, from `balances`) or its live Opening alone
+ * if the shop wasn't in the upload — TotalWD subtracted, TopUp/Settlement
+ * added (see writeCashoutEstimatedOpening's own comment on why they differ).
+ * TopUp/Settlement are intentionally
  * NEVER frozen at upload time (see writeSendMoneyEstimatedOpening) — a
  * single upload may stay in use for hours, and same-day Settlement/TopUp
  * keeps posting after it; recomputing fresh on every read is the only way
