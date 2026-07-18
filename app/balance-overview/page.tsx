@@ -8,7 +8,7 @@ import ThemeToggle from '../components/ThemeToggle';
 import ConnectionErrorState from '../components/ConnectionErrorState';
 import Toast, { type ToastState } from '../components/Toast';
 import { classifyFetchError, type ClassifiedError, assertAllOk } from '../lib/errors';
-import { getBusinessToday, toBusinessDate, parseCardCutoffDate } from '../lib/businessDate';
+import { getBusinessToday, toBusinessDate, parseCardCutoffDate, manilaMidnight, manilaFields } from '../lib/businessDate';
 
 function clean(val: string): number {
   return parseFloat((val ?? '0').replace(/"/g, '').replace(/,/g, '').trim()) || 0;
@@ -151,13 +151,23 @@ const MONTH_NAMES = [
 
 // "CashGo" sheet dates are formatted "June 1" (no year) — same parsing as
 // app/page.tsx's CashGo Trend, this page's Today strip source for CashOut.
+// Built via manilaMidnight, not a native `new Date(year, month, day)` —
+// that constructor is anchored to the RUNTIME's own local timezone, which
+// is Asia/Manila for a staff member's own browser but NOT for the
+// Telegram screenshot bot's headless Chromium (defaults to UTC on the
+// VPS) — confirmed as the actual cause of the Telegram capture showing
+// "yesterday" as Today: with a UTC-anchored construction, "July 18"
+// resolved to a different absolute instant than getBusinessToday()'s own
+// Manila-anchored "today", so the exact-day match silently missed and fell
+// through to matching "July 17" instead.
 function parseCashGoDate(raw: string): Date | null {
   const match = raw.trim().match(/^([A-Za-z]+)\s+(\d{1,2})$/);
   if (!match) return null;
   const monthIndex = MONTH_NAMES.indexOf(match[1].toLowerCase());
   if (monthIndex === -1) return null;
   const day = parseInt(match[2], 10);
-  return new Date(new Date().getFullYear(), monthIndex, day);
+  const { year } = manilaFields(new Date());
+  return manilaMidnight(year, monthIndex, day);
 }
 
 // /api/cashgo cols: [1]=date ("June 1"), [2]=Bkash quota, [3]=Nagad quota,
@@ -169,20 +179,23 @@ function parseCashGoDate(raw: string): Date | null {
 // so the CashGo Today strip keeps accumulating from the stale day forward
 // instead of resetting to 0 every time the calendar rolls over. Quota is
 // summed right along with processed, so the ratio stays meaningful across
-// more than one day. Matches via the SAME toDateString() comparison the
-// single-day case already used (not a getTime() range) — rangeStart and
-// `now` collapse to one entry when equal, so today-only behavior is
-// unchanged.
+// more than one day. Matched via getTime(), not toDateString() — the
+// latter renders using the RUNTIME's own local timezone even when the
+// underlying Date is already Manila-anchored (confirmed: this alone still
+// broke under the Telegram screenshot bot's UTC-default headless Chromium,
+// rendering a Manila-midnight instant as the previous day's date string).
+// rangeStart and `now` collapse to one entry when equal, so today-only
+// behavior is unchanged.
 function parseTodayCashGo(text: string, rangeStart: Date): { bk: number; ng: number; quotaBk: number; quotaNg: number } {
   const now = getBusinessToday();
-  const validDateStrings = new Set([now.toDateString(), rangeStart.toDateString()]);
+  const validTimes = new Set([now.getTime(), rangeStart.getTime()]);
   const totals = { bk: 0, ng: 0, quotaBk: 0, quotaNg: 0 };
   const lines = text.trim().split('\n').slice(1);
   for (const line of lines) {
     if (!line.trim()) continue;
     const cols = line.split(',');
     const date = parseCashGoDate((cols[1] ?? '').replace(/"/g, '').trim());
-    if (date && validDateStrings.has(date.toDateString())) {
+    if (date && validTimes.has(date.getTime())) {
       totals.bk += clean(cols[4]);
       totals.ng += clean(cols[5]);
       totals.quotaBk += clean(cols[2]);
@@ -193,13 +206,16 @@ function parseTodayCashGo(text: string, rangeStart: Date): { bk: number; ng: num
 }
 
 // "AG BD STLM + TOPUP" / "PS BD STLM + TOPUP" dates are "M/D/YYYY" — same
-// parsing as app/sendmoney/page.tsx's Bundle Transfer Trend.
+// parsing as app/sendmoney/page.tsx's Bundle Transfer Trend. Built via
+// manilaMidnight, not a native `new Date(y, m, d)` — see parseCashGoDate's
+// own comment on why (runtime-local-timezone-anchored construction breaks
+// under the Telegram screenshot bot's UTC-default headless Chromium).
 function parseSlashDate(raw: string): Date | null {
   const parts = (raw ?? '').trim().split('/');
   if (parts.length !== 3) return null;
   const [m, d, y] = parts.map(Number);
   if (!m || !d || !y) return null;
-  return new Date(y, m - 1, d);
+  return manilaMidnight(y, m - 1, d);
 }
 
 // /api/sendmoney/stlmtopup cols H-L (idx 7-11) hold this month's Settlement
@@ -209,10 +225,11 @@ function parseSlashDate(raw: string): Date | null {
 //
 // `rangeStart` — same widening as parseTodayCashGo's own (see its comment):
 // "rangeStart through today" instead of "today only" when Opening is stale
-// and no valid Estimated Balance covers the gap yet.
+// and no valid Estimated Balance covers the gap yet. Matched via getTime(),
+// not toDateString() — see parseTodayCashGo's own comment on why.
 function parseTodayBundle(text: string, rangeStart: Date): { nagad: number; rocket: number; upay: number } {
   const now = getBusinessToday();
-  const validDateStrings = new Set([now.toDateString(), rangeStart.toDateString()]);
+  const validTimes = new Set([now.getTime(), rangeStart.getTime()]);
   const totals = { nagad: 0, rocket: 0, upay: 0 };
   const addRow = (nameRaw: string, amountRaw: string, dateRaw: string, walletRaw: string, typeRaw: string) => {
     const type = (typeRaw ?? '').replace(/"/g, '').trim().toUpperCase();
@@ -222,7 +239,7 @@ function parseTodayBundle(text: string, rangeStart: Date): { nagad: number; rock
     const amount = Math.abs(clean(amountRaw));
     if (!amount) return;
     const date = parseSlashDate((dateRaw ?? '').replace(/"/g, '').trim());
-    if (!date || !validDateStrings.has(date.toDateString())) return;
+    if (!date || !validTimes.has(date.getTime())) return;
     const wallet = (walletRaw ?? '').replace(/"/g, '').trim().toUpperCase();
     if (wallet === 'NAGAD') totals.nagad += amount;
     else if (wallet === 'ROCKET') totals.rocket += amount;

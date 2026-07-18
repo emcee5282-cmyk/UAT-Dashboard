@@ -43,7 +43,14 @@ export function manilaMidnight(year: number, month: number, day: number): Date {
   return fromManilaWallClockMs(Date.UTC(year, month, day));
 }
 
-function manilaFields(date: Date): { year: number; month: number; day: number } {
+// Exported so callers that need "the current Manila calendar year" (e.g. a
+// sheet card date with no year printed on it) don't fall back to a native
+// `new Date().getFullYear()` — that reads the RUNTIME's own local year,
+// which silently differs from Manila's right around New Year's, and — more
+// commonly hit in practice — differs from Manila's own *day* boundary
+// year-round whenever the runtime's local timezone isn't Asia/Manila (e.g.
+// a headless-Chromium capture tool defaulting to UTC).
+export function manilaFields(date: Date): { year: number; month: number; day: number } {
   const wallClock = toManilaWallClock(date);
   return { year: wallClock.getUTCFullYear(), month: wallClock.getUTCMonth(), day: wallClock.getUTCDate() };
 }
