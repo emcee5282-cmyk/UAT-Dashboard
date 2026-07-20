@@ -3,12 +3,60 @@
 import { useEffect, useState, useCallback, useMemo } from 'react';
 import Image from 'next/image';
 import * as XLSX from 'xlsx';
-import { ArrowLeftRight, Wallet, Banknote, Building2, Download, Send, ChevronUp, ChevronDown, LayoutDashboard } from 'lucide-react';
-import FloatingHeader from './components/FloatingHeader';
-import ConnectionErrorState from './components/ConnectionErrorState';
-import Toast, { type ToastState } from './components/Toast';
-import { classifyFetchError, type ClassifiedError, assertAllOk } from './lib/errors';
-import { getBusinessToday, toBusinessDate, parseCardCutoffDate, manilaMidnight, manilaFields } from './lib/businessDate';
+import { RefreshCw, ArrowLeftRight, Wallet, Banknote, Building2, Download, Send, ChevronUp, ChevronDown, BarChart3, Moon, Sun } from 'lucide-react';
+import { useTheme } from '../../components/ThemeProvider';
+import ConnectionErrorState from '../../components/ConnectionErrorState';
+import Toast, { type ToastState } from '../../components/Toast';
+import { classifyFetchError, type ClassifiedError, assertAllOk } from '../../lib/errors';
+import { getBusinessToday, toBusinessDate, parseCardCutoffDate, manilaMidnight, manilaFields } from '../../lib/businessDate';
+
+// Centered tab nav replacing the old Cashout/Send Money segmented pill
+// toggle — header-only, doesn't filter/hide any content below (the page
+// still shows both cards as before). Active state is typography-only (font
+// weight + color) — no underline/pill/background — per explicit design
+// direction. Hover adds a soft color/brightness shift plus a slight scale,
+// never a bounce.
+type NavProduct = 'cashout' | 'sendmoney';
+
+function ProductNavTabs({ active, onChange }: { active: NavProduct; onChange: (p: NavProduct) => void }) {
+  // No scale/size change on hover — weight only steps up (medium -> semibold
+  // on hover -> bold once actually selected/clicked), so hovering previews
+  // the direction without jumping straight to the fully-active look.
+  const tabClass = (isActive: boolean) =>
+    `text-[13px] transition-colors duration-200 ease-out ${
+      isActive ? 'font-bold text-foreground' : 'font-medium text-muted-foreground hover:font-semibold hover:text-foreground/80'
+    }`;
+
+  return (
+    <div className="flex items-center gap-7">
+      <button type="button" onClick={() => onChange('cashout')} className={tabClass(active === 'cashout')}>
+        Cashout
+      </button>
+      <button type="button" onClick={() => onChange('sendmoney')} className={tabClass(active === 'sendmoney')}>
+        Send Money
+      </button>
+    </div>
+  );
+}
+
+// Demo-local theme toggle — same useTheme hook as the shared ThemeToggle,
+// but styled to match this header's uniform icon-box treatment (the shared
+// component's own bg-transparent look was the one inconsistent box among
+// the three header icons). Not a change to the real ThemeToggle.tsx.
+function DemoThemeToggle() {
+  const { theme, toggleTheme } = useTheme();
+  const isDark = theme === 'dark';
+  return (
+    <button
+      type="button"
+      onClick={toggleTheme}
+      aria-label={isDark ? 'Switch to light mode' : 'Switch to dark mode'}
+      className="flex h-8 w-8 items-center justify-center rounded-lg border border-border bg-muted/60 text-foreground hover:bg-muted"
+    >
+      {isDark ? <Sun size={13} strokeWidth={1.75} /> : <Moon size={13} strokeWidth={1.75} />}
+    </button>
+  );
+}
 
 function clean(val: string): number {
   return parseFloat((val ?? '0').replace(/"/g, '').replace(/,/g, '').trim()) || 0;
@@ -401,16 +449,6 @@ function stripSspLine1BrandSuffix(name: string): string {
   return name;
 }
 
-// Same priority as app/topup/page.tsx's own extractBrandSuffix: the Top Up
-// column here should attribute brand the same way the Top Up page itself
-// does — suffix on the shop name first (e.g. "KONAN001-M1" → M1), falling
-// back to the cross-reference lookup only when the shop name has no suffix.
-function extractSspLine1BrandSuffix(name: string): string | null {
-  const parts = name.split('-');
-  const last = parts[parts.length - 1]?.toUpperCase();
-  return parts.length >= 2 && SSP_LINE1_BRAND_PRIORITY.includes(last) ? last : null;
-}
-
 // Same source/cutoff as computeCashoutTopUpStlm, but grouped by resolved
 // Brand (M1/M2/K1/B1-B5/T1/J1) instead of summed into one grand total —
 // feeds the SSP Line 1 table's Top Up/Settlement columns. brandGroups maps
@@ -432,12 +470,11 @@ function computeCashoutBrandTopUpStlm(
   text.trim().split('\n').slice(1).forEach((line) => {
     if (!line.trim()) return;
     const cols = line.split(',');
-    const topUpAgentRaw = (cols[1] ?? '').replace(/"/g, '').trim();
-    const topUpAgent = stripSspLine1BrandSuffix(topUpAgentRaw);
+    const topUpAgent = stripSspLine1BrandSuffix((cols[1] ?? '').replace(/"/g, '').trim());
     const topUpAmount = clean(cols[2]);
     const topUpDate = cutoff ? parseSlashDate((cols[3] ?? '').replace(/"/g, '').trim()) : null;
     if (topUpAgent && topUpAgent !== '-' && topUpAmount && (!cutoff || (topUpDate && topUpDate >= cutoff))) {
-      const brand = extractSspLine1BrandSuffix(topUpAgentRaw) ?? resolveSspLine1Brand(brandGroups.get(topUpAgent) ?? [], topUpAgent);
+      const brand = resolveSspLine1Brand(brandGroups.get(topUpAgent) ?? [], topUpAgent);
       add(brand, 'topUp', topUpAmount);
     }
     const stlmAgent = stripSspLine1BrandSuffix((cols[7] ?? '').replace(/"/g, '').trim());
@@ -736,7 +773,7 @@ function FlowRow({ label, value, valueClass, last }: { label: string; value: str
   return (
     <div className={`flex items-center justify-between py-2.5 ${last ? '' : 'border-b border-border'}`}>
       <span className="text-[13px] text-muted-foreground">{label}</span>
-      <span className={`text-[13px] font-medium tabular-nums ${valueClass ?? 'text-foreground'}`}>{value}</span>
+      <span className={`text-[13px] font-semibold tabular-nums ${valueClass ?? 'text-foreground'}`}>{value}</span>
     </div>
   );
 }
@@ -769,17 +806,14 @@ function WalletTile({ wallet }: { wallet: CardWallet }) {
       </p>
       <div className="mt-1.5 flex items-center justify-between border-t border-border pt-1.5">
         <span className="text-[11px] text-muted-foreground">Actual Balance</span>
-        <span className="text-[11px] font-medium tabular-nums text-foreground">{fmtAbbrev(wallet.actualBal)}</span>
+        <span className="text-[11px] font-semibold tabular-nums text-foreground">{fmtAbbrev(wallet.actualBal)}</span>
       </div>
     </div>
   );
 }
 
 function TodayStrip({ label, wallets, quota }: { label: string; wallets: TodayWallet[]; quota: TodayQuota | null }) {
-  // A wallet stays visible once it has a posted quota, even at zero usage —
-  // only wallets with neither usage nor a quota (e.g. Bundle Transfer, which
-  // has no quota concept) are dropped from the chip row.
-  const active = wallets.filter((w) => w.value > 0 || (w.quota ?? 0) > 0).sort((a, b) => b.value - a.value);
+  const active = wallets.filter((w) => w.value > 0).sort((a, b) => b.value - a.value);
   const total = active.reduce((sum, w) => sum + w.value, 0);
   const quotaPct = quota && quota.total > 0 ? (quota.processed / quota.total) * 100 : null;
 
@@ -790,12 +824,12 @@ function TodayStrip({ label, wallets, quota }: { label: string; wallets: TodayWa
           <div className="flex h-6 w-6 shrink-0 items-center justify-center rounded-md" style={{ background: 'var(--product-accent)' }}>
             <ArrowLeftRight size={12} className="text-white" />
           </div>
-          <span className="truncate text-[13px] font-bold text-foreground">{label} · Today</span>
+          <span className="truncate text-[13px] font-semibold text-foreground">{label} · Today</span>
         </div>
         <span className="shrink-0 text-[18px] font-medium tabular-nums text-foreground">{fmtAbbrev(total)}</span>
       </div>
 
-      {(active.length > 0 || quotaPct !== null) && (
+      {active.length > 0 && (
         <>
           <div className="mt-2.5 h-[6px] w-full overflow-hidden rounded-full border border-foreground/70 bg-muted shadow-[0_0_0_1px_rgba(0,0,0,0.08)]">
             <div
@@ -808,7 +842,7 @@ function TodayStrip({ label, wallets, quota }: { label: string; wallets: TodayWa
               {active.map((w) => (
                 <span key={w.key} className="text-[12px] text-muted-foreground">
                   {w.label}{' '}
-                  <span className={`tabular-nums text-foreground ${w.key === 'ng' ? 'font-bold' : 'font-medium'}`}>
+                  <span className={`tabular-nums text-foreground ${w.key === 'ng' ? 'font-semibold' : 'font-medium'}`}>
                     {w.quota ? `${fmtAbbrevTrimmed(w.value)}/${fmtAbbrevTrimmed(w.quota)}` : fmtAbbrev(w.value)}
                   </span>
                 </span>
@@ -830,7 +864,7 @@ function BalanceCard({ data }: { data: CardData }) {
   return (
     <div data-product={data.product} className="overflow-hidden rounded-2xl border border-border bg-white shadow-sm dark:bg-[#2a2a2d]">
       <div className="p-5">
-        <h3 className="mb-4 inline-flex items-center gap-1.5 border-b-2 pb-1 text-[15px] font-bold text-foreground" style={{ borderColor: 'var(--product-accent)' }}>
+        <h3 className="mb-4 inline-flex items-center gap-1.5 border-b-2 pb-1 text-[15px] font-semibold text-foreground" style={{ borderColor: 'var(--product-accent)' }}>
           {data.product === 'cashout' ? (
             <Wallet size={14} style={{ color: 'var(--product-accent)' }} />
           ) : (
@@ -849,7 +883,7 @@ function BalanceCard({ data }: { data: CardData }) {
 
         <div className="mt-3 rounded-[10px] bg-muted/40 px-3.5 py-3">
           <div className="flex items-center justify-between">
-            <span className="text-[15px] font-medium text-foreground">Ending Balance</span>
+            <span className="text-[15px] font-semibold text-foreground">Ending Balance</span>
             <span className={`text-[17px] font-bold tabular-nums ${data.ending < 0 ? 'text-rose-600 dark:text-rose-400' : 'text-foreground'}`}>
               {data.ending < 0 ? '−' : ''}{fmt(data.ending)}
             </span>
@@ -866,7 +900,7 @@ function BalanceCard({ data }: { data: CardData }) {
 
         <div className="mb-3 mt-5 flex items-center gap-3">
           <div className="h-px flex-1 bg-border" />
-          <span className="shrink-0 text-[12px] font-medium uppercase tracking-[0.12em] text-muted-foreground">Wallet Breakdown</span>
+          <span className="shrink-0 text-[12px] font-semibold uppercase tracking-[0.12em] text-muted-foreground">Wallet Breakdown</span>
           <div className="h-px flex-1 bg-border" />
         </div>
 
@@ -1075,7 +1109,7 @@ function SspLine1Section({
         <table className="w-full min-w-[760px]">
           <thead>
             <tr className="border-b border-border bg-muted/10">
-              <th className="whitespace-nowrap px-4 py-3 text-left text-[12px] font-medium text-muted-foreground">
+              <th className="whitespace-nowrap px-4 py-3 text-left text-[12px] font-semibold text-muted-foreground">
                 <button
                   type="button"
                   onClick={() => handleHeaderClick('brand')}
@@ -1086,7 +1120,7 @@ function SspLine1Section({
                 </button>
               </th>
               {SSP_LINE1_COLUMNS.map((col) => (
-                <th key={col.key} className="whitespace-nowrap px-4 py-3 text-center text-[12px] font-medium text-muted-foreground">
+                <th key={col.key} className="whitespace-nowrap px-4 py-3 text-center text-[12px] font-semibold text-muted-foreground">
                   <button
                     type="button"
                     onClick={() => handleHeaderClick(col.key)}
@@ -1102,7 +1136,7 @@ function SspLine1Section({
           <tbody>
             {sortedRows.map((row) => (
               <tr key={row.brand} className="border-b border-border last:border-0 transition-colors hover:bg-muted/10">
-                <td className="whitespace-nowrap px-4 py-3 text-left text-[13px] font-bold text-foreground">{row.brand}</td>
+                <td className="whitespace-nowrap px-4 py-3 text-left text-[13px] font-semibold text-foreground">{row.brand}</td>
                 {SSP_LINE1_COLUMNS.map((col) => (
                   <CihCell key={col.key} value={row[col.key]} bold={col.key === 'total'} />
                 ))}
@@ -1132,7 +1166,7 @@ function SspLine1Section({
                   return (
                     <div key={col.key} className="min-w-0">
                       <p className="text-[11px] text-muted-foreground">{col.label}</p>
-                      <p className={`mt-0.5 text-[10.5px] font-medium tabular-nums ${display.className}`}>{display.text}</p>
+                      <p className={`mt-0.5 text-[10.5px] font-semibold tabular-nums ${display.className}`}>{display.text}</p>
                     </div>
                   );
                 })}
@@ -1299,7 +1333,7 @@ function BrandCashInhandSection({ rows, total }: { rows: BrandCashRow[]; total: 
         <table className="w-full min-w-[760px]">
           <thead>
             <tr className="border-b border-border bg-muted/10">
-              <th className="whitespace-nowrap px-4 py-3 text-left text-[12px] font-medium text-muted-foreground">
+              <th className="whitespace-nowrap px-4 py-3 text-left text-[12px] font-semibold text-muted-foreground">
                 <button
                   type="button"
                   onClick={() => handleHeaderClick('brand')}
@@ -1310,7 +1344,7 @@ function BrandCashInhandSection({ rows, total }: { rows: BrandCashRow[]; total: 
                 </button>
               </th>
               {BRAND_CASH_COLUMNS.map((col) => (
-                <th key={col.key} className="whitespace-nowrap px-4 py-3 text-center text-[12px] font-medium text-muted-foreground">
+                <th key={col.key} className="whitespace-nowrap px-4 py-3 text-center text-[12px] font-semibold text-muted-foreground">
                   <button
                     type="button"
                     onClick={() => handleHeaderClick(col.key)}
@@ -1326,7 +1360,7 @@ function BrandCashInhandSection({ rows, total }: { rows: BrandCashRow[]; total: 
           <tbody>
             {sortedRows.map((row) => (
               <tr key={row.brand} className="border-b border-border last:border-0 transition-colors hover:bg-muted/10">
-                <td className="whitespace-nowrap px-4 py-3 text-left text-[13px] font-bold text-foreground">{row.brand}</td>
+                <td className="whitespace-nowrap px-4 py-3 text-left text-[13px] font-semibold text-foreground">{row.brand}</td>
                 {BRAND_CASH_COLUMNS.map((col) =>
                   col.key === 'autopay' && AUTOPAY_UNSUPPORTED_BRANDS.includes(row.brand.toUpperCase()) ? (
                     <NotSupportedCell key={col.key} />
@@ -1373,9 +1407,9 @@ function BrandCashInhandSection({ rows, total }: { rows: BrandCashRow[]; total: 
                     <div key={col.key} className="min-w-0">
                       <p className="text-[11px] text-muted-foreground">{col.label}</p>
                       {notSupported ? (
-                        <p className="mt-0.5 text-[10.5px] font-medium italic text-muted-foreground">Not Supported</p>
+                        <p className="mt-0.5 text-[10.5px] font-semibold italic text-muted-foreground">Not Supported</p>
                       ) : (
-                        <p className={`mt-0.5 text-[10.5px] font-medium tabular-nums ${display.className}`}>{display.text}</p>
+                        <p className={`mt-0.5 text-[10.5px] font-semibold tabular-nums ${display.className}`}>{display.text}</p>
                       )}
                     </div>
                   );
@@ -1532,6 +1566,7 @@ export default function BalanceOverviewPage() {
   const [spinning, setSpinning] = useState(false);
   const [telegramSending, setTelegramSending] = useState(false);
   const [toast, setToast] = useState<ToastState>(null);
+  const [navTab, setNavTab] = useState<NavProduct>('cashout');
 
   const fetchData = useCallback(async () => {
     try {
@@ -1749,7 +1784,7 @@ export default function BalanceOverviewPage() {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          path: '/',
+          path: '/balance-overview',
           label: 'Brand Balance | CashOut & SendMoney',
           captures: ['[data-telegram-capture="cards"]', '[data-telegram-capture="brand"]'],
         }),
@@ -1768,23 +1803,44 @@ export default function BalanceOverviewPage() {
 
   return (
     <div className="min-h-screen bg-[#f5f5f7] text-[#1a1a1a] transition-colors duration-300 dark:bg-[#1c1c1e] dark:text-white">
-      <FloatingHeader
-        title="Balance Overview"
-        icon={LayoutDashboard}
-        onRefresh={fetchData}
-        refreshing={spinning}
-        actions={
-          <button
-            onClick={handleSendToTelegram}
-            disabled={telegramSending || loading}
-            aria-label="Send to Telegram"
-            title="Send to Telegram"
-            className="flex h-8 w-8 items-center justify-center rounded-lg border border-border bg-muted/60 text-foreground hover:bg-muted disabled:cursor-not-allowed disabled:opacity-40"
-          >
-            <Send size={13} className={telegramSending ? 'animate-spin' : ''} />
-          </button>
-        }
-      />
+      <div className="sticky top-4 z-30 mx-4 md:mx-8">
+        <header className="rounded-xl border border-border bg-white/95 shadow-lg backdrop-blur-sm dark:bg-[#0d1117]/95">
+          <div className="grid h-14 grid-cols-3 items-center gap-2 pl-14 pr-4 md:pl-5 md:pr-5">
+            <div className="flex min-w-0 items-center gap-2.5">
+              <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-indigo-500 text-white">
+                <BarChart3 size={14} />
+              </div>
+              <span className="truncate text-[14px] font-semibold tracking-[-0.01em] text-foreground">Balance</span>
+            </div>
+
+            <div className="flex justify-center">
+              <ProductNavTabs active={navTab} onChange={setNavTab} />
+            </div>
+
+            <div className="flex shrink-0 items-center justify-end gap-2">
+              <button
+                onClick={handleSendToTelegram}
+                disabled={telegramSending || loading}
+                aria-label="Send to Telegram"
+                title="Send to Telegram"
+                className="flex h-8 w-8 items-center justify-center rounded-lg border border-border bg-muted/60 text-foreground hover:bg-muted disabled:cursor-not-allowed disabled:opacity-40"
+              >
+                <Send size={13} className={telegramSending ? 'animate-spin' : ''} />
+              </button>
+              <DemoThemeToggle />
+              <button
+                onClick={fetchData}
+                disabled={spinning}
+                aria-label="Refresh"
+                title="Refresh"
+                className="flex h-8 w-8 items-center justify-center rounded-lg border border-border bg-muted/60 text-foreground hover:bg-muted disabled:opacity-50"
+              >
+                <RefreshCw size={13} className={spinning ? 'animate-spin' : ''} />
+              </button>
+            </div>
+          </div>
+        </header>
+      </div>
       <Toast toast={toast} onDismiss={() => setToast(null)} />
 
       <main className="space-y-6 px-4 py-6 md:px-8 md:py-8">

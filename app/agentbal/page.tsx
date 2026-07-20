@@ -2,9 +2,9 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { ChevronDown, ChevronUp, Download, Filter, RefreshCw, Search } from 'lucide-react';
+import { ChevronDown, ChevronUp, Download, Filter, Search, Wallet } from 'lucide-react';
 import * as XLSX from 'xlsx';
-import ThemeToggle from '../components/ThemeToggle';
+import FloatingHeader from '../components/FloatingHeader';
 import ConnectionErrorState from '../components/ConnectionErrorState';
 import { classifyFetchError, type ClassifiedError, assertAllOk } from '../lib/errors';
 import { rawVal } from '@/app/lib/format';
@@ -1062,50 +1062,24 @@ export default function AgentBalance() {
 
   return (
     <div className="h-screen w-full flex flex-col overflow-hidden bg-background font-[Inter,sans-serif] text-foreground transition-colors duration-300 dark:bg-[#1c1c1e]">
-      <header className="sticky top-0 z-30 shrink-0 border-b border-border bg-white/95 py-0 pl-14 pr-4 backdrop-blur-sm dark:bg-[#0d1117]/95 md:px-8">
-        <div className="flex h-12 items-center justify-between">
-          <div className="flex items-center gap-3">
-            <div className="h-4 w-[3px] rounded-full bg-indigo-500" />
-            {loading ? (
-              <div className="h-4 w-28 animate-pulse rounded-md bg-slate-200 dark:bg-slate-700" />
-            ) : (
-              <h1 className="text-[13px] font-semibold tracking-[-0.01em] text-foreground">SSP Cashout</h1>
-            )}
-          </div>
-          <div className="flex items-center gap-2">
-            {loading ? (
-              <>
-                <div className="hidden h-6 w-24 animate-pulse rounded-md bg-slate-200 dark:bg-slate-700 sm:block" />
-                <div className="h-7 w-16 animate-pulse rounded-lg bg-slate-200 dark:bg-slate-700" />
-                <div className="h-6 w-6 animate-pulse rounded-full bg-slate-200 dark:bg-slate-700" />
-              </>
-            ) : (
-              <>
-                <ThemeToggle />
-                <button
-                  onClick={fetchData}
-                  disabled={spinning || loading}
-                  aria-label="Refresh"
-                  title="Refresh"
-                  className="flex items-center gap-1.5 rounded-lg border border-border bg-muted/60 px-2.5 py-1.5 text-[11px] font-medium text-foreground transition-colors hover:bg-muted disabled:opacity-50"
-                >
-                  <RefreshCw size={11} className={spinning ? 'animate-spin' : ''} />
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setCardsExpanded((current) => !current)}
-                  title={cardsExpanded ? 'Hide summary cards' : 'Show summary cards'}
-                  className="flex items-center justify-center rounded-lg border border-border bg-muted/60 p-1.5 text-muted-foreground transition-colors hover:bg-muted"
-                >
-                  {cardsExpanded ? <ChevronUp size={12} /> : <ChevronDown size={12} />}
-                </button>
-              </>
-            )}
-          </div>
-        </div>
-      </header>
+      <FloatingHeader
+        title="Balance"
+        icon={Wallet}
+        onRefresh={fetchData}
+        refreshing={spinning || loading}
+        actions={
+          <button
+            type="button"
+            onClick={() => setCardsExpanded((current) => !current)}
+            title={cardsExpanded ? 'Hide summary cards' : 'Show summary cards'}
+            className="flex h-8 w-8 items-center justify-center rounded-lg border border-border bg-muted/60 text-muted-foreground transition-colors hover:bg-muted"
+          >
+            {cardsExpanded ? <ChevronUp size={13} /> : <ChevronDown size={13} />}
+          </button>
+        }
+      />
 
-      <main className="flex-1 flex flex-col overflow-hidden px-6 pt-4 pb-6">
+      <main className="flex-1 flex flex-col overflow-hidden px-6 pt-8 pb-6">
         {error && <ConnectionErrorState error={error} onRetry={fetchData} />}
 
         {!error && (

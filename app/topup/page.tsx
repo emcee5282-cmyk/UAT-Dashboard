@@ -2,18 +2,21 @@
 
 import { useEffect, useState, useCallback, useMemo, useRef } from 'react';
 import { createPortal } from 'react-dom';
-import { RefreshCw, Search, ChevronUp, ChevronDown, Filter, Download } from 'lucide-react';
+import { Search, ChevronUp, ChevronDown, Filter, Download, PlusCircle } from 'lucide-react';
 import * as XLSX from 'xlsx';
-import ThemeToggle from '../components/ThemeToggle';
+import FloatingHeader from '../components/FloatingHeader';
 import ConnectionErrorState from '../components/ConnectionErrorState';
 import { classifyFetchError, type ClassifiedError } from '../lib/errors';
 import { rawVal, fmtNum } from '@/app/lib/format';
 import { getBusinessToday } from '../lib/businessDate';
 
 // "AG BD STLM + TOPUP" no longer carries a brand/gateway column (removed from
-// the sheet), so brand is resolved by cross-referencing the bare agent code
-// against "SSP AG BalanceLimit" (same Group data and priority logic Cashout's
-// own Agent Balance page already uses), not by parsing the wallet name itself.
+// the sheet). Brand now comes first from the "-<brand>" suffix already
+// displayed on the shop/agent name itself (e.g. "KONAN001-M1" → M1) when
+// present; only when a row's shop name has no suffix (e.g. "YUJI024") does
+// it fall back to cross-referencing the bare agent code against "SSP AG
+// BalanceLimit" (same Group data and priority logic Cashout's own Agent
+// Balance page already uses).
 const BRAND_PRIORITY = ['M1', 'M2', 'B1', 'B2', 'B3', 'B4', 'B5', 'K1', 'J1', 'T1'];
 const SKIP_GROUPS = ['wallet with issue', 'disconnected', 'dc account'];
 
@@ -59,6 +62,16 @@ function stripBrandSuffix(name: string): string {
     return parts.slice(0, -1).join('-');
   }
   return name;
+}
+
+// Same suffix this strips off for the lookup key — but here it's the brand
+// source itself, read directly off the shop name as displayed. Returns null
+// when the shop name carries no suffix, so the caller can fall back to the
+// cross-reference lookup.
+function extractBrandSuffix(name: string): string | null {
+  const parts = name.split('-');
+  const last = parts[parts.length - 1]?.toUpperCase();
+  return parts.length >= 2 && BRAND_CODES.includes(last) ? last : null;
 }
 
 type TopUpRow = {
@@ -245,7 +258,7 @@ export default function TopUpPage() {
               date: rawVal(cols[3]),
               type: rawVal(cols[5]),
               leader: leaderMap[bareAgent.toUpperCase()] || '−',
-              brand: resolveBrand(brandGroups[bareAgent.toUpperCase()] ?? [], toAgent),
+              brand: extractBrandSuffix(toAgent) ?? resolveBrand(brandGroups[bareAgent.toUpperCase()] ?? [], toAgent),
             });
           }
         });
@@ -408,28 +421,9 @@ export default function TopUpPage() {
 
   return (
     <div className="h-screen w-full flex flex-col overflow-hidden bg-background font-[Inter,sans-serif] text-foreground transition-colors duration-300 dark:bg-[#1c1c1e]">
-      <header className="sticky top-0 z-30 border-b border-border bg-white/95 py-0 pl-14 pr-4 backdrop-blur-sm dark:bg-[#0d1117]/95 md:px-8">
-        <div className="flex h-12 items-center justify-between">
-          <div className="flex items-center gap-3">
-            <div className="h-4 w-[3px] rounded-full bg-indigo-500" />
-            <h1 className="text-[13px] font-semibold tracking-[-0.01em] text-foreground">Top Up</h1>
-          </div>
-          <div className="flex items-center gap-2">
-            <ThemeToggle />
-            <button
-              onClick={fetchData}
-              disabled={spinning || loading}
-              aria-label="Refresh"
-              title="Refresh"
-              className="flex items-center gap-1.5 rounded-lg border border-border bg-muted/60 px-2.5 py-1.5 text-[11px] font-medium text-foreground transition-colors hover:bg-muted disabled:opacity-50"
-            >
-              <RefreshCw size={11} className={spinning ? 'animate-spin' : ''} />
-            </button>
-          </div>
-        </div>
-      </header>
+      <FloatingHeader title="Top Up" icon={PlusCircle} onRefresh={fetchData} refreshing={spinning || loading} />
 
-      <main className="flex-1 flex flex-col overflow-hidden px-6 pt-4 pb-6">
+      <main className="flex-1 flex flex-col overflow-hidden px-6 pt-8 pb-6">
 
         {error && <ConnectionErrorState error={error} onRetry={fetchData} />}
 

@@ -221,7 +221,7 @@ export default function TrendChart({ title, seriesDefs, weekData, monthData }: T
           only the peak day labeled, dashed 30-day average line. */}
       <div className="h-[280px] select-none px-3 py-4 pt-6">
         <ResponsiveContainer width="100%" height="100%">
-          <BarChart data={chartData} margin={{ top: 20, right: 45, left: 0, bottom: 0 }}>
+          <BarChart data={chartData} margin={{ top: 20, right: 0, left: 0, bottom: 0 }}>
             <CartesianGrid vertical={false} stroke="var(--border)" strokeDasharray="4 4" />
             <XAxis dataKey="day" tick={<TrendXAxisTick />} axisLine={{ stroke: 'var(--border)' }} tickLine={false} interval={period === 'month' ? 'preserveStartEnd' : 0} />
             {period === 'month' && (

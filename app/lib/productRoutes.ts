@@ -8,7 +8,11 @@ import { sendMoneyRoutes } from './sendMoneyRoutes';
 
 export type Product = 'cashout' | 'sendmoney';
 
-export const CASHOUT_DASHBOARD = '/';
+// Dashboard and Overview swapped URLs — Overview is now the site's root
+// landing page ('/'), Dashboard (Cashout's own Cash Out Wallets page) moved
+// to '/balance-overview'. Only the routes changed; each page's own content
+// moved with it (see app/page.tsx and app/balance-overview/page.tsx).
+export const CASHOUT_DASHBOARD = '/balance-overview';
 export const SENDMONEY_DASHBOARD = sendMoneyRoutes[0].path; // '/sendmoney'
 
 type RoutePair = { cashout: string; sendmoney: string };
@@ -22,7 +26,8 @@ export const ROUTE_MAP: RoutePair[] = [
   { cashout: '/transfer-queue', sendmoney: '/sendmoney/transfer-queue' },
   // Balance Overview combines both products on one page — self-mapped so it
   // never redirects away when the Cashout/Send Money switcher is toggled.
-  { cashout: '/balance-overview', sendmoney: '/balance-overview' },
+  // Now lives at '/' (the site's landing page).
+  { cashout: '/', sendmoney: '/' },
 ];
 
 // A "shared" route resolves to the identical path for both products (only
@@ -31,6 +36,16 @@ export const ROUTE_MAP: RoutePair[] = [
 function isSharedRoute(pathname: string): boolean {
   const entry = ROUTE_MAP.find((pair) => pair.cashout === pathname || pair.sendmoney === pathname);
   return !!entry && entry.cashout === entry.sendmoney;
+}
+
+// Every page where Cashout and Send Money are genuinely different pages —
+// Dashboard, Balance, Opening, Settlement, Top Up, Transfer Queue — as
+// opposed to the shared Balance Overview page (same URL for both, already
+// distinguished via ?product=). Only these show the FloatingHeader's
+// Cashout/Send Money tabs; equivalent to "not a shared route".
+export function isProductSwitchRoute(pathname: string): boolean {
+  const entry = ROUTE_MAP.find((pair) => pair.cashout === pathname || pair.sendmoney === pathname);
+  return !!entry && entry.cashout !== entry.sendmoney;
 }
 
 // The URL is the single source of truth for the active product — never client

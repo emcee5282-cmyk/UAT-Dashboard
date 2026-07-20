@@ -2,9 +2,9 @@
 
 import { useEffect, useState, useCallback, useMemo, useRef } from 'react';
 import { createPortal } from 'react-dom';
-import { RefreshCw, Search, ChevronUp, ChevronDown, Filter, Download } from 'lucide-react';
+import { Search, ChevronUp, ChevronDown, Filter, Download, PlusCircle } from 'lucide-react';
 import * as XLSX from 'xlsx';
-import ThemeToggle from '@/app/components/ThemeToggle';
+import FloatingHeader from '@/app/components/FloatingHeader';
 import ConnectionErrorState from '@/app/components/ConnectionErrorState';
 import { classifyFetchError, type ClassifiedError } from '@/app/lib/errors';
 import { rawVal, fmtNum } from '@/app/lib/format';
@@ -358,31 +358,9 @@ export default function SendMoneyTopUpPage() {
 
   return (
     <div className="h-screen w-full flex flex-col overflow-hidden bg-background font-[Inter,sans-serif] text-foreground transition-colors duration-300 dark:bg-[#1c1c1e]">
-      <header className="sticky top-0 z-30 border-b border-border bg-white/95 py-0 pl-14 pr-4 backdrop-blur-sm dark:bg-[#0d1117]/95 md:px-8">
-        <div className="flex h-12 items-center justify-between">
-          <div className="flex items-center gap-3">
-            <div className="h-4 w-[3px] rounded-full bg-[color:var(--product-accent)]" />
-            <h1 className="text-[13px] font-semibold tracking-[-0.01em] text-foreground">Top Up</h1>
-            <span className="rounded-full bg-[color:var(--product-accent-soft)] px-2 py-0.5 text-[9px] font-semibold text-[color:var(--product-accent)]">
-              Send Money
-            </span>
-          </div>
-          <div className="flex items-center gap-2">
-            <ThemeToggle />
-            <button
-              onClick={fetchData}
-              disabled={spinning || loading}
-              aria-label="Refresh"
-              title="Refresh"
-              className="flex items-center gap-1.5 rounded-lg border border-border bg-muted/60 px-2.5 py-1.5 text-[11px] font-medium text-foreground transition-colors hover:bg-muted disabled:opacity-50"
-            >
-              <RefreshCw size={11} className={spinning ? 'animate-spin' : ''} />
-            </button>
-          </div>
-        </div>
-      </header>
+      <FloatingHeader title="Top Up" icon={PlusCircle} onRefresh={fetchData} refreshing={spinning || loading} />
 
-      <main className="flex-1 flex flex-col overflow-hidden px-6 pt-4 pb-6">
+      <main className="flex-1 flex flex-col overflow-hidden px-6 pt-8 pb-6">
 
         {error && <ConnectionErrorState error={error} onRetry={fetchData} />}
 

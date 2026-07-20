@@ -1,14 +1,13 @@
 'use client';
 
 import { useEffect, useState, useCallback } from 'react';
-import { RefreshCw, TrendingUp, TrendingDown, Wallet, Activity } from 'lucide-react';
+import { TrendingUp, TrendingDown, Wallet, Activity, Home } from 'lucide-react';
 import { Bar, BarChart, ResponsiveContainer, XAxis, YAxis, Tooltip, CartesianGrid, LabelList } from 'recharts';
-import ThemeToggle from '@/app/components/ThemeToggle';
+import FloatingHeader from '@/app/components/FloatingHeader';
 import { useTheme } from '@/app/components/ThemeProvider';
 import ConnectionErrorState from '@/app/components/ConnectionErrorState';
 import { classifyFetchError, type ClassifiedError, assertAllOk } from '@/app/lib/errors';
 import { rawVal } from '@/app/lib/format';
-import { getSendMoneyRoute } from '@/app/lib/sendMoneyRoutes';
 import { getBusinessToday } from '@/app/lib/businessDate';
 
 type BundlePoint = {
@@ -194,7 +193,6 @@ const walletColumns: { key: WalletColumnKey; label: string }[] = [
 ];
 
 export default function SendMoneyDashboardPage() {
-  const route = getSendMoneyRoute('/sendmoney');
   const { theme } = useTheme();
   const isDark = theme === 'dark';
   const [rows, setRows] = useState<Row[]>([]);
@@ -625,26 +623,7 @@ export default function SendMoneyDashboardPage() {
 
   return (
     <div className="min-h-screen bg-[#f5f5f7] text-[#1a1a1a] transition-colors duration-300 dark:bg-[#1c1c1e] dark:text-white">
-      <header className="sticky top-0 z-30 border-b border-border bg-white/95 py-0 pl-14 pr-4 backdrop-blur-sm dark:bg-[#0d1117]/95 md:px-8">
-        <div className="flex h-12 items-center justify-between gap-2">
-          <div className="flex min-w-0 items-center gap-3">
-            <div className="h-4 w-[3px] shrink-0 rounded-full bg-[color:var(--product-accent)]" />
-            <h1 className="truncate text-[13px] font-semibold tracking-[-0.01em] text-foreground">{route.title} Overview</h1>
-          </div>
-          <div className="flex shrink-0 items-center gap-2">
-            <ThemeToggle />
-            <button
-              onClick={fetchData}
-              disabled={spinning}
-              aria-label="Refresh"
-              title="Refresh"
-              className="flex items-center gap-1.5 rounded-lg border border-border bg-muted/60 px-2.5 py-1.5 text-[11px] font-medium text-foreground hover:bg-muted disabled:opacity-50"
-            >
-              <RefreshCw size={11} className={spinning ? 'animate-spin' : ''} />
-            </button>
-          </div>
-        </div>
-      </header>
+      <FloatingHeader title="Dashboard: SSP Line 2" icon={Home} onRefresh={fetchData} refreshing={spinning} />
 
       <main className="space-y-6 px-4 py-6 md:px-8 md:py-8">
         {loading && (
@@ -842,7 +821,7 @@ export default function SendMoneyDashboardPage() {
                     tooltip on hover. */}
                 <div className="h-[280px] select-none px-3 py-4 pt-6">
                   <ResponsiveContainer width="100%" height="100%">
-                    <BarChart data={bundleChartData} margin={{ top: 20, right: 20, left: 0, bottom: 0 }}>
+                    <BarChart data={bundleChartData} margin={{ top: 20, right: 0, left: 0, bottom: 0 }}>
                       <CartesianGrid vertical={false} stroke={isDark ? '#27272a' : '#e2e8f0'} strokeDasharray="4 4" />
                       <XAxis
                         dataKey="day"
