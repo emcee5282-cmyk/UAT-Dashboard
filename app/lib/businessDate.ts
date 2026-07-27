@@ -89,3 +89,50 @@ export function parseCardCutoffDate(cell: string): Date | null {
   const { year } = manilaFields(new Date());
   return manilaMidnight(year, monthDay.getMonth(), monthDay.getDate());
 }
+
+// A sheet transaction date formatted "M/D/YYYY" (Settlement/Top Up rows) —
+// true only for the current business date (see getBusinessToday() above),
+// not the literal calendar day. Confirmed byte-identical across app/stlm,
+// app/sendmoney/settlement, app/topup and app/sendmoney/topup before
+// extraction.
+// Wall-clock "11:32 AM (GMT+8)" display — Manila's clock face, not just its
+// day boundary (the rest of this file's concern). Uses Intl's own timeZone
+// support directly rather than the toManilaWallClock()/getUTC* trick above,
+// since that trick only re-exposes date FIELDS (Y/M/D) through UTC
+// accessors — it doesn't give back a correctly zoned hour/minute string on
+// its own, and Intl already solves that exactly.
+export function formatManilaClockTime(date: Date): string {
+  const time = date.toLocaleTimeString('en-US', {
+    timeZone: 'Asia/Manila',
+    hour: 'numeric',
+    minute: '2-digit',
+    hour12: true,
+  });
+  return `${time} (GMT+8)`;
+}
+
+export function isToday(dateStr: string): boolean {
+  const parts = (dateStr ?? '').trim().split('/');
+  if (parts.length !== 3) return false;
+  const [m, d, y] = parts.map(Number);
+  if (!m || !d || !y) return false;
+  const now = getBusinessToday();
+  return m === now.getMonth() + 1 && d === now.getDate() && y === now.getFullYear();
+}
+
+// Same "M/D/YYYY" sheet-date check as isToday(), one business day earlier —
+// used by Settlement's KPI summary row to compute a real "vs yesterday"
+// comparison from the same sheet (which carries several weeks of rows, not
+// just today's — isToday()/this function are what narrow it down, not a
+// separate fetch). Mirrors isToday()'s exact field-extraction convention
+// (`.getMonth()`/`.getDate()`/`.getFullYear()` on the business-date instant,
+// not manilaFields()) so the two stay consistent with each other on any
+// client, not just ones set to Asia/Manila.
+export function isYesterday(dateStr: string): boolean {
+  const parts = (dateStr ?? '').trim().split('/');
+  if (parts.length !== 3) return false;
+  const [m, d, y] = parts.map(Number);
+  if (!m || !d || !y) return false;
+  const yesterday = new Date(getBusinessToday().getTime() - 24 * 60 * 60 * 1000);
+  return m === yesterday.getMonth() + 1 && d === yesterday.getDate() && y === yesterday.getFullYear();
+}

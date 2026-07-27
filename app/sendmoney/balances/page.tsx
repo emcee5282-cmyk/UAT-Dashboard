@@ -2,14 +2,33 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { ChevronDown, ChevronUp, Download, Filter, Search, Wallet } from 'lucide-react';
+import { ChevronDown, ChevronUp, Columns3, Download, RefreshCw, Search, Wallet } from 'lucide-react';
 import * as XLSX from 'xlsx';
-import FloatingHeader from '@/app/components/FloatingHeader';
+import PageHeader from '@/app/components/PageHeader';
+import ProductSwitchTabs from '@/app/components/ProductSwitchTabs';
+import ThemeToggle from '@/app/components/ThemeToggle';
+import Toolbar from '@/app/components/Toolbar';
+import DataTable from '@/app/components/DataTable';
+import TableFooter from '@/app/components/TableFooter';
+import EmptyState from '@/app/components/EmptyState';
 import ConnectionErrorState from '@/app/components/ConnectionErrorState';
 import { classifyFetchError, type ClassifiedError, assertAllOk } from '@/app/lib/errors';
-import { rawVal } from '@/app/lib/format';
+import { rawVal, fmt, fmtAbbrev } from '@/app/lib/format';
+import { parseCsvLines } from '@/app/lib/csv';
 import { BRAND_CODES as CASHOUT_BRAND_CODES } from '@/app/lib/transferQueueCount';
 import { getBusinessToday, toBusinessDate, parseCardCutoffDate } from '@/app/lib/businessDate';
+import {
+  computeWalletStatus,
+  WALLET_STATUS_OPTIONS,
+  isLoggedIn,
+  computeCompanyBalance,
+  computeAgentWithdrawal,
+  computeSdpVsBalance,
+  resolveBrand,
+} from '@/app/lib/balanceEngine';
+import { TABLE_STICKY_HEADER_CLASS, TABLE_HEADER_CELL_CLASS, TOOLBAR_ROW_CLASS, TOOLBAR_LEFT_CLASS, TOOLBAR_RIGHT_CLASS } from '@/app/design-system/table';
+import { PAGE_MAIN_PADDING_CLASS, KPI_CARD_CLASS } from '@/app/design-system/spacing';
+import { getPreference, setPreference } from '@/app/lib/preferences';
 
 // "Opening AG" sheet col I — Send Money's own "UPDATED TIME" card (Cashout's
 // equivalent card lives in col G instead — the two products' cards sit
@@ -43,58 +62,6 @@ type MergedRow = OpeningRow & {
   walletType: string;
 };
 
-function parseCsvLines(text: string): string[][] {
-  const rows: string[][] = [];
-  let currentRow: string[] = [];
-  let currentField = '';
-  let inQuotes = false;
-
-  for (let i = 0; i < text.length; i += 1) {
-    const char = text[i];
-    const nextChar = text[i + 1];
-
-    if (char === '"') {
-      if (inQuotes && nextChar === '"') {
-        currentField += '"';
-        i += 1;
-      } else {
-        inQuotes = !inQuotes;
-      }
-      continue;
-    }
-
-    if (char === ',' && !inQuotes) {
-      currentRow.push(currentField);
-      currentField = '';
-      continue;
-    }
-
-    if ((char === '\n' || char === '\r') && !inQuotes) {
-      if (char === '\r' && nextChar === '\n') {
-        i += 1;
-      }
-      currentRow.push(currentField);
-      if (currentRow.some((cell) => cell.trim() !== '')) {
-        rows.push(currentRow);
-      }
-      currentRow = [];
-      currentField = '';
-      continue;
-    }
-
-    currentField += char;
-  }
-
-  if (currentField.length > 0 || currentRow.length > 0) {
-    currentRow.push(currentField);
-    if (currentRow.some((cell) => cell.trim() !== '')) {
-      rows.push(currentRow);
-    }
-  }
-
-  return rows;
-}
-
 function displayNum(val: string | number | null | undefined): string {
   if (val === null || val === undefined) return '−';
 
@@ -120,21 +87,6 @@ function numOrBlank(num: number): number | undefined {
   return Math.abs(num) < 0.01 ? undefined : num;
 }
 
-function fmt(num: number): string {
-  return Math.abs(num).toLocaleString('en-PH', {
-    minimumFractionDigits: 2,
-    maximumFractionDigits: 2,
-  });
-}
-
-function fmtAbbrev(num: number): string {
-  const abs = Math.abs(num);
-  if (abs >= 1e9) return `${(abs / 1e9).toFixed(2)}B`;
-  if (abs >= 1e6) return `${(abs / 1e6).toFixed(2)}M`;
-  if (abs >= 1e3) return `${(abs / 1e3).toFixed(2)}K`;
-  return abs.toFixed(2);
-}
-
 function parseNumber(val: string): number {
   const cleaned = (val ?? '').replace(/"/g, '').replace(/,/g, '').trim();
   if (cleaned === '-' || cleaned === '') return 0;
@@ -151,44 +103,6 @@ function parseSheetDate(dateStr: string): Date | null {
   if (!m || !d || !y) return null;
   return new Date(y, m - 1, d);
 }
-
-function normalizeWalletStatus(raw: string): string | null {
-  const trimmed = raw.trim();
-  if (trimmed === '') return null;
-
-  const lower = trimmed.toLowerCase();
-  const noSpaces = trimmed.replace(/\s+/g, '').toLowerCase();
-  if (noSpaces.includes('dp+wd')) return 'DP+WD';
-  if (lower.includes('dp only')) return 'DP Only';
-  if (lower.includes('wd only')) return 'WD Only';
-  if (lower.includes('top up')) return 'Top Up Acc.';
-  if (lower.includes('wallet with issue')) return 'Wallet With Issue';
-  if (lower.includes('x group') || lower.includes('disconnected')) return 'Disconnected';
-  if (lower.includes('check account problem')) return 'Account Problem';
-  return 'Disconnected';
-}
-
-function computeWalletStatus(statuses: string[]): string {
-  const normalized = statuses
-    .map((s) => normalizeWalletStatus(s))
-    .filter((s): s is string => s !== null);
-
-  if (normalized.length === 0) return 'Disconnected';
-
-  const has = (label: string) => normalized.includes(label);
-
-  if (has('DP+WD')) return 'DP + WD';
-  if (has('DP Only') && has('WD Only')) return 'DP + WD';
-  if (has('DP Only')) return 'DP Only';
-  if (has('WD Only')) return 'WD Only';
-  if (has('Top Up Acc.')) return 'Top Up Acc.';
-  if (has('Wallet With Issue')) return 'Wallet With Issue';
-  if (has('Account Problem')) return 'Account Problem';
-
-  return 'Disconnected';
-}
-
-const WALLET_STATUS_OPTIONS = ['DP + WD', 'DP Only', 'WD Only', 'Top Up Acc.', 'Wallet With Issue', 'Disconnected', 'Account Problem', 'No Record'];
 
 // Type comes straight from the wallet name's own suffix, not the Balance
 // Limit sheet's Bank field — every Send Money shop is solo (one wallet per
@@ -217,49 +131,9 @@ const WALLET_TYPE_FILTER_LABELS = [...WALLET_TYPE_FILTER_OPTIONS.map((opt) => op
 // carry over. Add names here if/when a Send Money exclusion policy exists.
 const EXCLUDED_SDP_LEADERS: string[] = [];
 
-function computeSdpVsBalance(leader: string, sdpRaw: string, sdpNum: number, companyBalance: number): number {
-  const normalizedLeader = leader.trim().toUpperCase();
-  if (EXCLUDED_SDP_LEADERS.includes(normalizedLeader)) return 0;
-
-  const sdpTrimmed = sdpRaw.trim().toUpperCase();
-  const value = sdpTrimmed === 'NO SDP' || sdpNum === 0 ? companyBalance : companyBalance - sdpNum;
-
-  if (value < 30000) return 0;
-  if (companyBalance <= 0) return 0;
-
-  return value;
-}
-
 // Send Money has its own brand ("SH") not present in Cashout's roster — see
 // app/lib/sendMoneyOpening.ts for the same pattern used on the Opening page.
 const BRAND_PRIORITY = ['M1', 'M2', 'B1', 'B2', 'B3', 'B4', 'B5', 'K1', 'J1', 'T1', 'SH'];
-const SKIP_GROUPS = ['wallet with issue', 'disconnected', 'dc account'];
-
-function computeBrand(groups: string[]): string {
-  const counts = new Map<string, number>();
-  groups.forEach((group) => {
-    const trimmed = (group ?? '').trim();
-    if (!trimmed || trimmed === '-') return;
-    if (SKIP_GROUPS.some((skip) => trimmed.toLowerCase().includes(skip))) return;
-    const code = trimmed.slice(0, 2).toUpperCase();
-    counts.set(code, (counts.get(code) ?? 0) + 1);
-  });
-
-  if (counts.size === 0) return '−';
-
-  const maxCount = Math.max(...counts.values());
-  const tied = Array.from(counts.keys()).filter((code) => counts.get(code) === maxCount);
-  const priorityTied = tied.filter((code) => BRAND_PRIORITY.includes(code));
-
-  if (priorityTied.length > 0) {
-    priorityTied.sort((a, b) => BRAND_PRIORITY.indexOf(a) - BRAND_PRIORITY.indexOf(b));
-    return priorityTied[0];
-  }
-
-  tied.sort((a, b) => a.localeCompare(b));
-  return tied[0];
-}
-
 const BRAND_CODES = [...CASHOUT_BRAND_CODES, 'SH'];
 
 // Human-readable overrides for brand codes whose 2-letter form isn't a
@@ -271,36 +145,63 @@ function displayBrand(code: string): string {
   return BRAND_DISPLAY_LABELS[code] ?? code;
 }
 
-function resolveBrand(groups: string[], agentName: string): string {
-  const brand = computeBrand(groups);
-  // Some Group values (e.g. "BUNDLE WALLET FOR WD") don't start with a real
-  // brand code at all, so a naive first-2-letters slice produces garbage
-  // (e.g. "BU"). Only trust computeBrand's result if it's an actual known
-  // brand code — otherwise fall back to matching a code inside the wallet
-  // name itself (e.g. "M1" in "D-M1BD-DELTA001D-NG"), same as the no-group case.
-  if (brand !== '−' && BRAND_CODES.includes(brand)) return brand;
-  return BRAND_CODES.find((code) => agentName.toUpperCase().includes(code)) ?? '−';
-}
+// Permanent column identifiers — same Enterprise Table V2 pattern as
+// app/stlm/page.tsx (the canonical reference); this page gets its own
+// COLUMN_IDS rather than sharing Settlement's.
+const COLUMN_IDS = {
+  BRAND: 'brand',
+  LEADER: 'leader',
+  WALLET_NAME: 'walletName',
+  WALLET_TYPE: 'walletType',
+  SDP: 'sdp',
+  OPENING: 'opening',
+  TOTAL_DP: 'totalDP',
+  TOTAL_WD: 'totalWD',
+  TOP_UP: 'topUp',
+  SETTLEMENT: 'settlement',
+  COMPANY_BALANCE: 'companyBalance',
+  BALANCE_INSIDE: 'balanceInside',
+  AGENT_WITHDRAWAL: 'agentWithdrawal',
+  SDP_VS_BALANCE: 'sdpVsBalance',
+  WALLET_STATUS: 'walletStatus',
+} as const;
 
-type ColumnKey = 'brand' | 'leader' | 'walletName' | 'walletType' | 'sdp' | 'opening' | 'totalDP' | 'totalWD' | 'topUp' | 'settlement' | 'companyBalance' | 'balanceInside' | 'agentWithdrawal' | 'sdpVsBalance' | 'walletStatus';
+type ColumnKey = typeof COLUMN_IDS[keyof typeof COLUMN_IDS];
 
-const columnDefs: { key: ColumnKey; label: string; sortable: boolean }[] = [
-  { key: 'brand', label: 'Brand', sortable: false },
-  { key: 'leader', label: 'Leader', sortable: false },
-  { key: 'walletName', label: 'Shop Name', sortable: true },
-  { key: 'walletType', label: 'Type', sortable: false },
-  { key: 'sdp', label: 'SDP', sortable: true },
-  { key: 'opening', label: 'Opening', sortable: true },
-  { key: 'totalDP', label: 'Total DP', sortable: true },
-  { key: 'totalWD', label: 'Total WD', sortable: true },
-  { key: 'topUp', label: 'Top Up', sortable: true },
-  { key: 'settlement', label: 'Settlement', sortable: true },
-  { key: 'companyBalance', label: 'Company Balance', sortable: true },
-  { key: 'balanceInside', label: 'Balance Inside', sortable: true },
-  { key: 'agentWithdrawal', label: 'Agent Withdrawal', sortable: true },
-  { key: 'sdpVsBalance', label: 'SDP VS Balance', sortable: true },
-  { key: 'walletStatus', label: 'Wallet Status', sortable: false },
+// Column model matches Settlement's ColumnDef shape (`key` kept instead of
+// Settlement's `id` since every existing reference on this page already
+// reads `col.key`). No protected Actions-style column exists here, so all
+// columns are hideable; DEFAULT_HIDDEN below seeds which start hidden.
+type ColumnDef = {
+  key: ColumnKey;
+  label: string;
+  visible: boolean;
+  sortable: boolean;
+  hideable: boolean;
+  align: 'left' | 'right' | 'center';
+};
+
+const DEFAULT_HIDDEN: ColumnKey[] = ['brand', 'sdp', 'settlement', 'topUp', 'sdpVsBalance'];
+
+const DEFAULT_COLUMNS: ColumnDef[] = [
+  { key: COLUMN_IDS.BRAND, label: 'Brand', visible: !DEFAULT_HIDDEN.includes(COLUMN_IDS.BRAND), sortable: false, hideable: true, align: 'center' },
+  { key: COLUMN_IDS.LEADER, label: 'Leader', visible: !DEFAULT_HIDDEN.includes(COLUMN_IDS.LEADER), sortable: false, hideable: true, align: 'center' },
+  { key: COLUMN_IDS.WALLET_NAME, label: 'Shop Name', visible: !DEFAULT_HIDDEN.includes(COLUMN_IDS.WALLET_NAME), sortable: true, hideable: true, align: 'center' },
+  { key: COLUMN_IDS.WALLET_TYPE, label: 'Type', visible: !DEFAULT_HIDDEN.includes(COLUMN_IDS.WALLET_TYPE), sortable: false, hideable: true, align: 'center' },
+  { key: COLUMN_IDS.SDP, label: 'SDP', visible: !DEFAULT_HIDDEN.includes(COLUMN_IDS.SDP), sortable: true, hideable: true, align: 'center' },
+  { key: COLUMN_IDS.OPENING, label: 'Opening', visible: !DEFAULT_HIDDEN.includes(COLUMN_IDS.OPENING), sortable: true, hideable: true, align: 'center' },
+  { key: COLUMN_IDS.TOTAL_DP, label: 'Total DP', visible: !DEFAULT_HIDDEN.includes(COLUMN_IDS.TOTAL_DP), sortable: true, hideable: true, align: 'center' },
+  { key: COLUMN_IDS.TOTAL_WD, label: 'Total WD', visible: !DEFAULT_HIDDEN.includes(COLUMN_IDS.TOTAL_WD), sortable: true, hideable: true, align: 'center' },
+  { key: COLUMN_IDS.TOP_UP, label: 'Top Up', visible: !DEFAULT_HIDDEN.includes(COLUMN_IDS.TOP_UP), sortable: true, hideable: true, align: 'center' },
+  { key: COLUMN_IDS.SETTLEMENT, label: 'Settlement', visible: !DEFAULT_HIDDEN.includes(COLUMN_IDS.SETTLEMENT), sortable: true, hideable: true, align: 'center' },
+  { key: COLUMN_IDS.COMPANY_BALANCE, label: 'Company Balance', visible: !DEFAULT_HIDDEN.includes(COLUMN_IDS.COMPANY_BALANCE), sortable: true, hideable: true, align: 'center' },
+  { key: COLUMN_IDS.BALANCE_INSIDE, label: 'Balance Inside', visible: !DEFAULT_HIDDEN.includes(COLUMN_IDS.BALANCE_INSIDE), sortable: true, hideable: true, align: 'center' },
+  { key: COLUMN_IDS.AGENT_WITHDRAWAL, label: 'Agent Withdrawal', visible: !DEFAULT_HIDDEN.includes(COLUMN_IDS.AGENT_WITHDRAWAL), sortable: true, hideable: true, align: 'center' },
+  { key: COLUMN_IDS.SDP_VS_BALANCE, label: 'SDP VS Balance', visible: !DEFAULT_HIDDEN.includes(COLUMN_IDS.SDP_VS_BALANCE), sortable: true, hideable: true, align: 'center' },
+  { key: COLUMN_IDS.WALLET_STATUS, label: 'Wallet Status', visible: !DEFAULT_HIDDEN.includes(COLUMN_IDS.WALLET_STATUS), sortable: false, hideable: true, align: 'center' },
 ];
+
+const COLUMN_VISIBILITY_STORAGE_KEY = 'sendMoneyBalancesColumnVisibility';
 
 const columnWidths: Record<ColumnKey, string> = {
   brand: '70px',
@@ -323,7 +224,6 @@ const columnWidths: Record<ColumnKey, string> = {
 const TABLE_MIN_WIDTH = '1680px';
 
 const STICKY_COLS: ColumnKey[] = [];
-const DEFAULT_HIDDEN: ColumnKey[] = ['brand', 'sdp', 'settlement', 'topUp', 'sdpVsBalance'];
 
 // Fixed display order for the mobile card's balances grid.
 const BALANCE_GRID_ORDER: ColumnKey[] = [
@@ -349,7 +249,7 @@ function SortIcon({ active, direction }: { active: boolean; direction: 'asc' | '
 }
 
 function headerCellClasses(_colKey: ColumnKey, _isSorted: boolean) {
-  return `text-center px-3 py-2 text-[10px] font-semibold uppercase tracking-[0.06em] whitespace-nowrap text-muted-foreground`;
+  return TABLE_HEADER_CELL_CLASS;
 }
 
 function walletStatusBadgeClasses(status: string): string {
@@ -458,8 +358,6 @@ export default function SendMoneyAgentBalance() {
   const [walletTypeFilter, setWalletTypeFilter] = useState<Record<string, boolean>>({});
   const [sortColumn, setSortColumn] = useState<ColumnKey>('companyBalance');
   const [sortDirection, setSortDirection] = useState<'asc' | 'desc'>('desc');
-  const [filterMenuOpen, setFilterMenuOpen] = useState(false);
-  const [filterMenuPos, setFilterMenuPos] = useState({ top: 0, left: 0 });
   const [brandMenuOpen, setBrandMenuOpen] = useState(false);
   const [brandMenuPos, setBrandMenuPos] = useState({ top: 0, left: 0 });
   const [leaderMenuOpen, setLeaderMenuOpen] = useState(false);
@@ -468,16 +366,22 @@ export default function SendMoneyAgentBalance() {
   const [walletTypeMenuPos, setWalletTypeMenuPos] = useState({ top: 0, left: 0 });
   const [walletStatusMenuOpen, setWalletStatusMenuOpen] = useState(false);
   const [walletStatusMenuPos, setWalletStatusMenuPos] = useState({ top: 0, left: 0 });
-  const [columnVisibility, setColumnVisibility] = useState<Record<ColumnKey, boolean>>(
-    () => Object.fromEntries(columnDefs.map((col) => [col.key, !DEFAULT_HIDDEN.includes(col.key)])) as Record<ColumnKey, boolean>
-  );
+
+  // Column Visibility (Enterprise Table V2) — same model/persistence as
+  // app/stlm/page.tsx: read saved preference once on mount (gated by
+  // `mounted`), written on every change thereafter.
+  const [columnDefs, setColumnDefs] = useState<ColumnDef[]>(DEFAULT_COLUMNS);
+  const [columnsMenuOpen, setColumnsMenuOpen] = useState(false);
+  const [columnsMenuPos, setColumnsMenuPos] = useState({ top: 0, left: 0 });
+  const [mounted, setMounted] = useState(false);
+  const columnsButtonRef = useRef<HTMLButtonElement>(null);
+  const columnsMenuRef = useRef<HTMLDivElement>(null);
+
   const [walletStatusFilter, setWalletStatusFilter] = useState<Record<string, boolean>>(
     () => Object.fromEntries(WALLET_STATUS_OPTIONS.map((status) => [status, true]))
   );
   const [page, setPage] = useState(1);
   const rowsPerPage = 50;
-  const filterButtonRef = useRef<HTMLButtonElement>(null);
-  const filterDropdownRef = useRef<HTMLDivElement>(null);
   const brandButtonRef = useRef<HTMLButtonElement>(null);
   const brandDropdownRef = useRef<HTMLDivElement>(null);
   const leaderButtonRef = useRef<HTMLButtonElement>(null);
@@ -610,7 +514,7 @@ export default function SendMoneyAgentBalance() {
           walletStatusValues.set(name, statuses);
         }
 
-        if (bal.login.trim().toLowerCase() === 'yes') {
+        if (isLoggedIn(bal.login)) {
           const balance = parseFloat(bal.balance.replace(/,/g, '')) || 0;
           balanceInsideTotals.set(name, (balanceInsideTotals.get(name) ?? 0) + balance);
         }
@@ -657,7 +561,7 @@ export default function SendMoneyAgentBalance() {
         const totalTopUp = topUpTotals.get(opening.agentName) ?? 0;
         const totalStlm = stlmTotals.get(opening.agentName) ?? 0;
         const balanceInside = balanceInsideTotals.get(opening.agentName) ?? 0;
-        const runningBalance = parseNumber(opening.openingBal) + totals.dp + totalTopUp - totals.wd - totalStlm;
+        const runningBalance = computeCompanyBalance(parseNumber(opening.openingBal), totals.dp, totalTopUp, totals.wd, totalStlm);
         const sdpNum = parseNumber(opening.sdp);
         const walletStatus = balWalletNames.has(opening.agentName)
           ? computeWalletStatus(walletStatusValues.get(opening.agentName) ?? [])
@@ -670,10 +574,10 @@ export default function SendMoneyAgentBalance() {
           totalStlm,
           balanceInside,
           runningBalance,
-          agentWithdrawal: runningBalance - balanceInside,
-          sdpVsBalance: computeSdpVsBalance(opening.leader, opening.sdp, sdpNum, runningBalance),
+          agentWithdrawal: computeAgentWithdrawal(runningBalance, balanceInside),
+          sdpVsBalance: computeSdpVsBalance(opening.leader, opening.sdp, sdpNum, runningBalance, EXCLUDED_SDP_LEADERS),
           walletStatus,
-          brand: resolveBrand(brandGroups.get(opening.agentName) ?? [], opening.agentName),
+          brand: resolveBrand(brandGroups.get(opening.agentName) ?? [], opening.agentName, { brandPriority: BRAND_PRIORITY, brandCodes: BRAND_CODES, validateComputedBrand: true }),
           walletType: computeWalletType(opening.agentName),
         };
       });
@@ -703,21 +607,52 @@ export default function SendMoneyAgentBalance() {
   }, [searchTerm, leaderFilter, brandFilter, walletStatusFilter, walletTypeFilter, sortColumn, sortDirection]);
 
   useEffect(() => {
-    if (!filterMenuOpen) return;
+    setMounted(true);
+    const saved = getPreference<Record<string, boolean> | null>(COLUMN_VISIBILITY_STORAGE_KEY, null);
+    if (!saved) return;
+    setColumnDefs((current) =>
+      current.map((col) => (col.key in saved ? { ...col, visible: saved[col.key] } : col))
+    );
+  }, []);
+
+  useEffect(() => {
+    if (!mounted) return;
+    const visibility = Object.fromEntries(columnDefs.map((col) => [col.key, col.visible])) as Record<ColumnKey, boolean>;
+    setPreference(COLUMN_VISIBILITY_STORAGE_KEY, visibility);
+  }, [columnDefs, mounted]);
+
+  useEffect(() => {
+    if (!columnsMenuOpen) return;
 
     const handlePointerDown = (event: MouseEvent) => {
       const target = event.target as Node;
       if (
-        filterButtonRef.current && !filterButtonRef.current.contains(target) &&
-        filterDropdownRef.current && !filterDropdownRef.current.contains(target)
+        columnsButtonRef.current && !columnsButtonRef.current.contains(target) &&
+        columnsMenuRef.current && !columnsMenuRef.current.contains(target)
       ) {
-        setFilterMenuOpen(false);
+        setColumnsMenuOpen(false);
+      }
+    };
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        setColumnsMenuOpen(false);
+        columnsButtonRef.current?.focus();
       }
     };
 
     document.addEventListener('mousedown', handlePointerDown);
-    return () => document.removeEventListener('mousedown', handlePointerDown);
-  }, [filterMenuOpen]);
+    document.addEventListener('keydown', handleKeyDown);
+    return () => {
+      document.removeEventListener('mousedown', handlePointerDown);
+      document.removeEventListener('keydown', handleKeyDown);
+    };
+  }, [columnsMenuOpen]);
+
+  useEffect(() => {
+    if (!columnsMenuOpen) return;
+    const firstControl = columnsMenuRef.current?.querySelector<HTMLElement>('input, button');
+    firstControl?.focus();
+  }, [columnsMenuOpen]);
 
   useEffect(() => {
     if (!brandMenuOpen) return;
@@ -787,10 +722,18 @@ export default function SendMoneyAgentBalance() {
     return () => document.removeEventListener('mousedown', handlePointerDown);
   }, [walletStatusMenuOpen]);
 
-  const visibleColumns = useMemo(() => columnDefs.filter((col) => columnVisibility[col.key]), [columnVisibility]);
-  const allColumnsChecked = columnDefs.every((col) => columnVisibility[col.key]);
-  const anyColumnHidden = columnDefs.some((col) => !columnVisibility[col.key]);
-  const hiddenColumnCount = columnDefs.filter((col) => !columnVisibility[col.key]).length;
+  const visibleColumns = useMemo(
+    () => (mounted ? columnDefs : []).filter((col) => col.visible),
+    [columnDefs, mounted]
+  );
+  const visibleHideableCount = useMemo(
+    () => columnDefs.filter((col) => col.hideable && col.visible).length,
+    [columnDefs]
+  );
+  const columnVisibility = useMemo(
+    () => Object.fromEntries(columnDefs.map((col) => [col.key, col.visible])) as Record<ColumnKey, boolean>,
+    [columnDefs]
+  );
 
   const stickyLeft = useMemo(() => {
     const result: Partial<Record<ColumnKey, number>> = {};
@@ -839,8 +782,6 @@ export default function SendMoneyAgentBalance() {
   const allWalletTypesChecked = walletTypeOptions.every((name) => isWalletTypeChecked(name));
   const anyWalletTypeUnchecked = walletTypeOptions.some((name) => !isWalletTypeChecked(name));
   const selectedWalletTypeCount = walletTypeOptions.filter((name) => isWalletTypeChecked(name)).length;
-
-  const anyFilterActive = anyColumnHidden;
 
   const searchedRows = useMemo(() => {
     const query = searchTerm.toLowerCase();
@@ -1058,24 +999,26 @@ export default function SendMoneyAgentBalance() {
 
   return (
     <div className="h-screen w-full flex flex-col overflow-hidden bg-background font-[Inter,sans-serif] text-foreground transition-colors duration-300 dark:bg-[#1c1c1e]">
-      <FloatingHeader
-        title="Balance"
+      <PageHeader
         icon={Wallet}
-        onRefresh={fetchData}
-        refreshing={spinning || loading}
+        title="Balance"
+        centerSlot={<ProductSwitchTabs />}
         actions={
-          <button
-            type="button"
-            onClick={() => setCardsExpanded((current) => !current)}
-            title={cardsExpanded ? 'Hide summary cards' : 'Show summary cards'}
-            className="flex h-8 w-8 items-center justify-center rounded-lg border border-border bg-muted/60 text-muted-foreground transition-colors hover:bg-muted"
-          >
-            {cardsExpanded ? <ChevronUp size={13} /> : <ChevronDown size={13} />}
-          </button>
+          <>
+            <button
+              type="button"
+              onClick={() => setCardsExpanded((current) => !current)}
+              title={cardsExpanded ? 'Hide summary cards' : 'Show summary cards'}
+              className="flex h-8 w-8 items-center justify-center rounded-lg border border-border bg-muted/60 text-muted-foreground transition-colors hover:bg-muted"
+            >
+              {cardsExpanded ? <ChevronUp size={13} /> : <ChevronDown size={13} />}
+            </button>
+            <ThemeToggle />
+          </>
         }
       />
 
-      <main className="flex-1 flex flex-col overflow-hidden px-6 pt-8 pb-6">
+      <main className={PAGE_MAIN_PADDING_CLASS}>
         {error && <ConnectionErrorState error={error} onRetry={fetchData} />}
 
         {!error && (
@@ -1083,7 +1026,7 @@ export default function SendMoneyAgentBalance() {
             <div className="flex gap-2 overflow-x-auto pb-3">
               {loading ? (
                 Array.from({ length: 6 }).map((_, i) => (
-                  <div key={i} className="rounded-xl border border-border bg-white dark:bg-[#2a2a2d] shadow-sm flex-1 min-w-[100px] p-2.5">
+                  <div key={i} className={KPI_CARD_CLASS}>
                     <div className="h-3 w-12 animate-pulse rounded-md bg-slate-200 dark:bg-slate-700" />
                     <div className="mt-1.5 h-6 w-16 animate-pulse rounded-md bg-slate-200 dark:bg-slate-700" />
                     <div className="mt-1 h-5 w-16 animate-pulse rounded-md bg-slate-200 dark:bg-slate-700" />
@@ -1091,7 +1034,7 @@ export default function SendMoneyAgentBalance() {
                 ))
               ) : (
                 summaryCards.map((card) => (
-                  <div key={card.label} className="rounded-xl border border-border bg-white dark:bg-[#2a2a2d] shadow-sm flex-1 min-w-[100px] p-2.5 hover:shadow-md">
+                  <div key={card.label} className={`${KPI_CARD_CLASS} hover:shadow-md`}>
                     <p className="text-[10px] font-semibold text-muted-foreground truncate">{card.label}</p>
                     <p className="mt-1 text-[15px] font-bold leading-tight text-foreground">{card.bigValue}</p>
                     <div className={`mt-0.5 text-[9px] font-medium ${
@@ -1114,9 +1057,9 @@ export default function SendMoneyAgentBalance() {
         )}
 
         {!error && (
-          <div className="flex-1 flex flex-col min-h-0 mt-3 bg-white rounded-xl border border-border overflow-hidden dark:bg-[#2a2a2d]">
-            <div className="shrink-0 px-3 py-2 border-b border-border bg-muted/20 flex flex-wrap items-center justify-between gap-2">
-              <div className="flex flex-wrap items-center gap-2">
+          <DataTable className="mt-3">
+            <Toolbar className={TOOLBAR_ROW_CLASS}>
+              <Toolbar.Left className={TOOLBAR_LEFT_CLASS}>
                 {loading ? (
                   <div className="h-5 w-28 animate-pulse rounded-md bg-slate-200 dark:bg-slate-700" />
                 ) : (
@@ -1140,95 +1083,18 @@ export default function SendMoneyAgentBalance() {
                     </>
                   )}
                 </div>
-                <div className="relative">
-                  {!loading && (
-                    <button
-                      type="button"
-                      ref={filterButtonRef}
-                      onClick={(event) => {
-                        event.stopPropagation();
-                        const rect = filterButtonRef.current?.getBoundingClientRect();
-                        if (rect) {
-                          const dropdownWidth = 224;
-                          const left = Math.min(rect.left, window.innerWidth - dropdownWidth - 8);
-                          setFilterMenuPos({ top: rect.bottom + 8, left: Math.max(8, left) });
-                        }
-                        setFilterMenuOpen((current) => !current);
-                      }}
-                      className={`flex items-center gap-1.5 px-3 py-1.5 text-[10px] font-medium border rounded-lg hover:bg-white transition-colors ${anyFilterActive ? 'border-[color:var(--product-accent)] text-[color:var(--product-accent)]' : 'border-border text-foreground'}`}
-                    >
-                      <Filter size={14} />
-                      Filter
-                      {anyColumnHidden && (
-                        <span className="flex h-4 min-w-[16px] items-center justify-center rounded-full bg-[color:var(--product-accent)] px-1 text-[9px] font-semibold leading-none text-white">
-                          {hiddenColumnCount}
-                        </span>
-                      )}
-                    </button>
-                  )}
-                {filterMenuOpen && typeof document !== 'undefined' && createPortal(
-                  <div
-                    ref={filterDropdownRef}
-                    style={{ position: 'fixed', top: filterMenuPos.top, left: filterMenuPos.left }}
-                    className="z-[9999] w-56 max-h-[70vh] overflow-y-auto rounded-xl border border-[#e5e5e7] bg-white p-2 shadow-xl dark:border-[#3a3a3d] dark:bg-[#2a2a2d]"
-                    onClick={(event) => event.stopPropagation()}
+              </Toolbar.Left>
+              <Toolbar.Right className={TOOLBAR_RIGHT_CLASS}>
+                {loading && <div className="h-7 w-7 animate-pulse rounded-lg bg-slate-200 dark:bg-slate-700" />}
+                {!loading && (
+                  <button
+                    type="button"
+                    onClick={fetchData}
+                    title="Refresh"
+                    className="rounded-lg border border-border bg-white p-1.5 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground dark:bg-transparent"
                   >
-                    <div className="px-2 py-1.5 text-[10px] font-semibold uppercase tracking-[0.24em] text-[#6b7280] dark:text-[#a0a0a0]">Columns</div>
-                    <label className="flex w-full items-center justify-start gap-2 whitespace-nowrap rounded-xl px-3 py-1.5 text-left text-[10px] text-[#6b7280] hover:bg-[#f5f5f7] dark:text-[#a0a0a0] dark:hover:bg-slate-800">
-                      <input
-                        type="checkbox"
-                        checked={allColumnsChecked}
-                        onChange={() => {
-                          const nextValue = !allColumnsChecked;
-                          setColumnVisibility(
-                            Object.fromEntries(columnDefs.map((col) => [col.key, nextValue])) as Record<ColumnKey, boolean>
-                          );
-                        }}
-                      />
-                      <span>Check All</span>
-                    </label>
-                    {columnDefs.map((col) => (
-                      <label key={col.key} className="flex w-full items-center justify-start gap-2 whitespace-nowrap rounded-xl px-3 py-1.5 text-left text-[10px] text-[#6b7280] hover:bg-[#f5f5f7] dark:text-[#a0a0a0] dark:hover:bg-slate-800">
-                        <input
-                          type="checkbox"
-                          checked={columnVisibility[col.key]}
-                          onChange={() => {
-                            setColumnVisibility((current) => ({ ...current, [col.key]: !current[col.key] }));
-                          }}
-                        />
-                        <span>{col.label}</span>
-                      </label>
-                    ))}
-                  </div>,
-                  document.body
-                )}
-              </div>
-              </div>
-              <div className="flex items-center gap-2">
-                {loading ? (
-                  <div className="h-6 w-32 animate-pulse rounded-md bg-slate-200 dark:bg-slate-700" />
-                ) : (
-                  <div className="flex items-center gap-1.5">
-                    <span className="text-[10px] text-muted-foreground tabular-nums">
-                      {currentPage} / {totalPages}
-                    </span>
-                    <button
-                      type="button"
-                      onClick={() => setPage((current) => Math.max(1, current - 1))}
-                      disabled={currentPage === 1}
-                      className="rounded-lg border border-border bg-white px-2.5 py-1.5 text-[10px] font-medium text-foreground transition-colors hover:bg-muted disabled:opacity-40 dark:bg-transparent"
-                    >
-                      Previous
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => setPage((current) => Math.min(totalPages, current + 1))}
-                      disabled={currentPage === totalPages}
-                      className="rounded-lg border border-border bg-white px-2.5 py-1.5 text-[10px] font-medium text-foreground transition-colors hover:bg-muted disabled:opacity-40 dark:bg-transparent"
-                    >
-                      Next
-                    </button>
-                  </div>
+                    <RefreshCw size={13} className={spinning ? 'animate-spin' : ''} />
+                  </button>
                 )}
                 {loading && <div className="h-7 w-20 animate-pulse rounded-lg bg-slate-200 dark:bg-slate-700" />}
                 {!loading && (
@@ -1241,8 +1107,96 @@ export default function SendMoneyAgentBalance() {
                     <Download size={13} />
                   </button>
                 )}
-              </div>
-            </div>
+                {loading && <div className="h-7 w-7 animate-pulse rounded-lg bg-slate-200 dark:bg-slate-700" />}
+                {!loading && (
+                  <div className="relative">
+                    <button
+                      type="button"
+                      ref={columnsButtonRef}
+                      onClick={(event) => {
+                        event.stopPropagation();
+                        const rect = columnsButtonRef.current?.getBoundingClientRect();
+                        if (rect) {
+                          const dropdownWidth = 224;
+                          const left = Math.max(8, Math.min(rect.right - dropdownWidth, window.innerWidth - dropdownWidth - 8));
+                          setColumnsMenuPos({ top: rect.bottom + 8, left });
+                        }
+                        setColumnsMenuOpen((current) => !current);
+                      }}
+                      aria-haspopup="true"
+                      aria-expanded={columnsMenuOpen}
+                      aria-controls="sendmoney-balances-columns-popover"
+                      aria-label="Columns"
+                      title="Columns"
+                      className="rounded-lg border border-border bg-white p-1.5 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground dark:bg-transparent"
+                    >
+                      <Columns3 size={13} />
+                    </button>
+                    {columnsMenuOpen && typeof document !== 'undefined' && createPortal(
+                      <div
+                        ref={columnsMenuRef}
+                        id="sendmoney-balances-columns-popover"
+                        role="dialog"
+                        aria-label="Column visibility"
+                        style={{ position: 'fixed', top: columnsMenuPos.top, left: columnsMenuPos.left }}
+                        className="z-[9999] w-56 max-h-[70vh] overflow-y-auto rounded-xl border border-[#e5e5e7] bg-white p-2 shadow-xl dark:border-[#3a3a3d] dark:bg-[#2a2a2d]"
+                        onClick={(event) => event.stopPropagation()}
+                        onKeyDown={(event) => {
+                          if (event.key === 'Escape') {
+                            event.stopPropagation();
+                            setColumnsMenuOpen(false);
+                            columnsButtonRef.current?.focus();
+                          }
+                        }}
+                      >
+                        <div className="px-2 py-1.5 text-[10px] font-semibold uppercase tracking-[0.24em] text-[#6b7280] dark:text-[#a0a0a0]">Columns</div>
+                        {columnDefs.filter((col) => col.hideable).map((col) => {
+                          const isLastVisible = col.visible && visibleHideableCount === 1;
+                          return (
+                            <label
+                              key={col.key}
+                              title={isLastVisible ? 'At least one column must stay visible' : undefined}
+                              className={`flex w-full items-center justify-start gap-2 whitespace-nowrap rounded-xl px-3 py-1.5 text-left text-[10px] ${
+                                isLastVisible
+                                  ? 'cursor-not-allowed text-[#b3b8c2] dark:text-[#5a5f66]'
+                                  : 'text-[#6b7280] hover:bg-[#f5f5f7] dark:text-[#a0a0a0] dark:hover:bg-slate-800'
+                              }`}
+                            >
+                              <input
+                                type="checkbox"
+                                checked={col.visible}
+                                disabled={isLastVisible}
+                                onChange={() => {
+                                  setColumnDefs((current) =>
+                                    current.map((c) => (c.key === col.key ? { ...c, visible: !c.visible } : c))
+                                  );
+                                }}
+                              />
+                              <span>{col.label}</span>
+                            </label>
+                          );
+                        })}
+                        <div className="mt-1 border-t border-[#F1F5F9] pt-1 dark:border-[#2f2f32]">
+                          {/* Hardcoded teal, not var(--product-accent): this popover
+                              portals to document.body, a sibling of the
+                              [data-product="sendmoney"] div the variable is scoped
+                              to (see globals.css), so the var resolves to nothing
+                              here — confirmed via computed-style check. */}
+                          <button
+                            type="button"
+                            onClick={() => setColumnDefs(DEFAULT_COLUMNS.map((col) => ({ ...col })))}
+                            className="flex w-full items-center justify-center rounded-lg px-2.5 py-1.5 text-[11px] font-medium text-[#0d9488] transition-colors hover:bg-[rgba(13,148,136,0.08)] dark:hover:bg-[rgba(45,212,191,0.12)]"
+                          >
+                            Restore Defaults
+                          </button>
+                        </div>
+                      </div>,
+                      document.body
+                    )}
+                  </div>
+                )}
+              </Toolbar.Right>
+            </Toolbar>
             <div className="hidden flex-1 min-h-0 overflow-y-auto overflow-x-auto sm:block">
               <table className="w-full table-fixed text-xs" style={{ minWidth: TABLE_MIN_WIDTH }}>
                 <colgroup>
@@ -1250,7 +1204,7 @@ export default function SendMoneyAgentBalance() {
                     <col key={col.key} style={{ width: columnWidths[col.key] }} />
                   ))}
                 </colgroup>
-                <thead className="sticky top-0 z-[50] bg-white dark:bg-[#252528] border-b border-border shadow-[0_1px_3px_rgba(0,0,0,0.06)] dark:shadow-[0_2px_4px_rgba(0,0,0,0.35)]">
+                <thead className={TABLE_STICKY_HEADER_CLASS}>
                   <tr>
                     {visibleColumns.map((col) => (
                       <th
@@ -1562,14 +1516,17 @@ export default function SendMoneyAgentBalance() {
                   )) : pagedRows.length > 0 ? pagedRows.map((row, i) => (
                     <tr
                       key={row.agentName || i}
-                      className="hover:bg-muted/10 transition-colors"
+                      className={`border-b border-border last:border-0 transition-colors hover:bg-muted/10 ${i % 2 === 1 ? 'bg-muted/5' : ''}`}
                     >
                       {visibleColumns.map((col) => renderCell(row, col.key))}
                     </tr>
                   )) : (
                     <tr>
-                      <td colSpan={Math.max(visibleColumns.length, 1)} className="px-3 py-8 text-center text-[9px] text-muted-foreground">
-                        No matching accounts found.
+                      <td colSpan={Math.max(visibleColumns.length, 1)}>
+                        <EmptyState
+                          title="No matching accounts found"
+                          description="Try adjusting your search or filters."
+                        />
                       </td>
                     </tr>
                   )}
@@ -1649,13 +1606,27 @@ export default function SendMoneyAgentBalance() {
                     );
                   })
                 ) : (
-                  <div className="px-3 py-8 text-center text-[11px] text-muted-foreground">
-                    No matching accounts found.
-                  </div>
+                  <EmptyState
+                    title="No matching accounts found"
+                    description="Try adjusting your search or filters."
+                  />
                 )}
               </div>
             </div>
-          </div>
+
+            {!loading && (
+              <TableFooter
+                recordCountText={
+                  sortedRows.length === 0
+                    ? 'Showing 0 of 0 Accounts'
+                    : `Showing ${startIndex + 1}–${Math.min(endIndex, sortedRows.length)} of ${sortedRows.length} Accounts`
+                }
+                currentPage={currentPage}
+                totalPages={totalPages}
+                onPageChange={setPage}
+              />
+            )}
+          </DataTable>
         )}
       </main>
     </div>

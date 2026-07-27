@@ -1,57 +1,6 @@
 import { rawVal } from '@/app/lib/format';
+import { parseCsvLines } from '@/app/lib/csv';
 import { getBusinessToday } from '@/app/lib/businessDate';
-
-function parseCsvLines(text: string): string[][] {
-  const rows: string[][] = [];
-  let currentRow: string[] = [];
-  let currentField = '';
-  let inQuotes = false;
-
-  for (let i = 0; i < text.length; i += 1) {
-    const char = text[i];
-    const nextChar = text[i + 1];
-
-    if (char === '"') {
-      if (inQuotes && nextChar === '"') {
-        currentField += '"';
-        i += 1;
-      } else {
-        inQuotes = !inQuotes;
-      }
-      continue;
-    }
-
-    if (char === ',' && !inQuotes) {
-      currentRow.push(currentField);
-      currentField = '';
-      continue;
-    }
-
-    if ((char === '\n' || char === '\r') && !inQuotes) {
-      if (char === '\r' && nextChar === '\n') {
-        i += 1;
-      }
-      currentRow.push(currentField);
-      if (currentRow.some((cell) => cell.trim() !== '')) {
-        rows.push(currentRow);
-      }
-      currentRow = [];
-      currentField = '';
-      continue;
-    }
-
-    currentField += char;
-  }
-
-  if (currentField.length > 0 || currentRow.length > 0) {
-    currentRow.push(currentField);
-    if (currentRow.some((cell) => cell.trim() !== '')) {
-      rows.push(currentRow);
-    }
-  }
-
-  return rows;
-}
 
 function parseNumber(val: string): number {
   const cleaned = (val ?? '').replace(/"/g, '').replace(/,/g, '').trim();

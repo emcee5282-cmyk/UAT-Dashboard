@@ -6,6 +6,12 @@
 @custom-variant dark (&:where(.dark, .dark *));
 
 :root {
+  /* Synced from Sidebar.tsx's own panelOpen state (3.5rem collapsed /
+     13rem expanded — matches its w-14/w-52 exactly) so the main content
+     area can offset itself without prop-drilling into a component that's
+     otherwise untouched. Default here is the collapsed width, since that's
+     the state before the panelOpen-restoring effect runs on mount. */
+  --sidebar-width: 3.5rem;
   --border: #e2e8f0;
   --muted: #f1f5f9;
   --muted-foreground: #64748b;
@@ -207,3 +213,142 @@ body {
   --radius-3xl: calc(var(--radius) * 2.2);
   --radius-4xl: calc(var(--radius) * 2.6);
 }
+
+/* Enterprise table system (app/components/DataTable.tsx and friends) —
+   global rather than styled-jsx-scoped, since these classes are applied by
+   helper functions/components living outside whatever file renders the
+   <style jsx> tag (styled-jsx only auto-scopes JSX literal in the same
+   component's own return). Settlement is the first consumer; kept
+   generically named (dt- prefix) for future pages adopting the same
+   system. */
+.dt-scroll {
+  scrollbar-width: thin;
+  scrollbar-color: #cbd5e1 transparent;
+  /* Reserves the scrollbar's width whether or not a scrollbar is actually
+     showing. Without this, the container's content width (and therefore
+     every table-fixed/flex-basis column, including the sticky header)
+     changes the moment content grows past the viewport and a scrollbar
+     first appears — e.g. going from 11 skeleton rows (fits, no scrollbar)
+     to 50 real rows (overflows, scrollbar appears) shifts every column by
+     the scrollbar's width. This keeps that width constant in both states. */
+  scrollbar-gutter: stable;
+}
+.dt-scroll::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+.dt-scroll::-webkit-scrollbar-track {
+  background: transparent;
+}
+.dt-scroll::-webkit-scrollbar-thumb {
+  background-color: #cbd5e1;
+  border-radius: 999px;
+}
+.dt-scroll::-webkit-scrollbar-thumb:hover {
+  background-color: #94a3b8;
+}
+
+.dt-skeleton {
+  position: relative;
+  overflow: hidden;
+  background-color: #F1F5F9;
+}
+.dt-skeleton::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  transform: translateX(-100%);
+  background: linear-gradient(90deg, transparent, #F8FAFC, transparent);
+  animation: dt-shimmer 1.8s ease-in-out infinite;
+}
+.dark .dt-skeleton {
+  background-color: #3a3a3d;
+}
+.dark .dt-skeleton::after {
+  background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.06), transparent);
+}
+@keyframes dt-shimmer {
+  100% {
+    transform: translateX(100%);
+  }
+}
+
+@keyframes dt-fade-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+.dt-fade-in {
+  animation: dt-fade-in 200ms ease-out;
+}
+/* Fade + slight upward slide — used for wizard step transitions (Bulk
+   Import) where a plain opacity fade feels too flat; kept as its own class
+   rather than changing dt-fade-in since other callers rely on opacity-only. */
+@keyframes dt-step-fade-in {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+.dt-step-fade-in {
+  animation: dt-step-fade-in 200ms ease-out;
+}
+/* Bulk selection action bar (Settlement toolbar) — slides down into place
+   under the toolbar on appear, retracts back up on dismiss. Its own pair
+   (not dt-step-fade-in/out) since it slides the opposite direction and
+   uses its own spec'd durations (180ms in / 150ms out). */
+@keyframes dt-bar-fade-in {
+  from {
+    opacity: 0;
+    transform: translateY(-8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+.dt-bar-fade-in {
+  animation: dt-bar-fade-in 180ms ease-out;
+}
+@keyframes dt-fade-out {
+  from {
+    opacity: 1;
+  }
+  to {
+    opacity: 0;
+  }
+}
+.dt-fade-out {
+  animation: dt-fade-out 120ms ease-in forwards;
+}
+
+/* Modal enter/exit — fade + subtle scale, same timing convention as
+   dt-fade-in/out above (200ms in / 120ms out). Used by RecordFormModal's
+   overlay (fade only) and card (fade + scale). */
+@keyframes dt-modal-overlay-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+@keyframes dt-modal-overlay-out {
+  from { opacity: 1; }
+  to { opacity: 0; }
+}
+@keyframes dt-modal-card-in {
+  from { opacity: 0; transform: scale(0.96); }
+  to { opacity: 1; transform: scale(1); }
+}
+@keyframes dt-modal-card-out {
+  from { opacity: 1; transform: scale(1); }
+  to { opacity: 0; transform: scale(0.96); }
+}
+.dt-modal-overlay-in { animation: dt-modal-overlay-in 200ms ease-out; }
+.dt-modal-overlay-out { animation: dt-modal-overlay-out 120ms ease-in forwards; }
+.dt-modal-card-in { animation: dt-modal-card-in 200ms ease-out; }
+.dt-modal-card-out { animation: dt-modal-card-out 120ms ease-in forwards; }

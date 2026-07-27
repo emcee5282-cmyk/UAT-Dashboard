@@ -5,6 +5,7 @@ import { usePathname, useRouter, useSearchParams } from 'next/navigation';
 import { RefreshCw, type LucideIcon } from 'lucide-react';
 import ThemeToggle from './ThemeToggle';
 import { getActiveProduct, getCounterpartPath, isProductSwitchRoute } from '../lib/productRoutes';
+import { FLOATING_HEADER_SHELL_CLASS } from '../design-system/shadows';
 
 type FloatingHeaderProps = {
   title: string;
@@ -47,7 +48,7 @@ export default function FloatingHeader({ title, icon: Icon, onRefresh, refreshin
 
   return (
     <div className="sticky top-4 z-30 mx-4 md:mx-8">
-      <header className="rounded-xl border border-border bg-white/95 shadow-lg backdrop-blur-sm dark:bg-[#0d1117]/95">
+      <header className={FLOATING_HEADER_SHELL_CLASS}>
         {/* Mobile: a plain flex row — title (truncating) on the left, actions
             on the right, no center tabs competing for space here at all.
             Desktop (md+): reverts to the original 3-column grid with tabs

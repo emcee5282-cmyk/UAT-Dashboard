@@ -2,66 +2,24 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { ChevronDown, ChevronUp, Download, Filter, Search, Shuffle } from 'lucide-react';
+import { ChevronDown, ChevronUp, Columns3, Download, RefreshCw, Search, Shuffle } from 'lucide-react';
 import * as XLSX from 'xlsx';
-import FloatingHeader from '@/app/components/FloatingHeader';
+import PageHeader from '@/app/components/PageHeader';
+import ProductSwitchTabs from '@/app/components/ProductSwitchTabs';
+import ThemeToggle from '@/app/components/ThemeToggle';
+import Toolbar from '@/app/components/Toolbar';
+import DataTable from '@/app/components/DataTable';
+import TableFooter from '@/app/components/TableFooter';
+import EmptyState from '@/app/components/EmptyState';
 import ConnectionErrorState from '@/app/components/ConnectionErrorState';
 import { classifyFetchError, type ClassifiedError, assertAllOk } from '@/app/lib/errors';
 import { rawVal } from '@/app/lib/format';
+import { parseCsvLines } from '@/app/lib/csv';
 import { BRAND_CODES as CASHOUT_BRAND_CODES } from '@/app/lib/transferQueueCount';
 import { getBusinessToday } from '@/app/lib/businessDate';
-
-function parseCsvLines(text: string): string[][] {
-  const rows: string[][] = [];
-  let currentRow: string[] = [];
-  let currentField = '';
-  let inQuotes = false;
-
-  for (let i = 0; i < text.length; i += 1) {
-    const char = text[i];
-    const nextChar = text[i + 1];
-
-    if (char === '"') {
-      if (inQuotes && nextChar === '"') {
-        currentField += '"';
-        i += 1;
-      } else {
-        inQuotes = !inQuotes;
-      }
-      continue;
-    }
-
-    if (char === ',' && !inQuotes) {
-      currentRow.push(currentField);
-      currentField = '';
-      continue;
-    }
-
-    if ((char === '\n' || char === '\r') && !inQuotes) {
-      if (char === '\r' && nextChar === '\n') {
-        i += 1;
-      }
-      currentRow.push(currentField);
-      if (currentRow.some((cell) => cell.trim() !== '')) {
-        rows.push(currentRow);
-      }
-      currentRow = [];
-      currentField = '';
-      continue;
-    }
-
-    currentField += char;
-  }
-
-  if (currentField.length > 0 || currentRow.length > 0) {
-    currentRow.push(currentField);
-    if (currentRow.some((cell) => cell.trim() !== '')) {
-      rows.push(currentRow);
-    }
-  }
-
-  return rows;
-}
+import { TABLE_STICKY_HEADER_CLASS, TABLE_HEADER_CELL_CLASS, TOOLBAR_ROW_CLASS, TOOLBAR_LEFT_CLASS, TOOLBAR_RIGHT_CLASS } from '@/app/design-system/table';
+import { PAGE_MAIN_PADDING_CLASS } from '@/app/design-system/spacing';
+import { getPreference, setPreference } from '@/app/lib/preferences';
 
 function displayNum(num: number): string {
   if (Math.abs(num) < 0.01) return '−';
@@ -221,19 +179,51 @@ type QueueRow = {
   remarks: string;
 };
 
-type ColumnKey = 'brand' | 'shopName' | 'companyBalance' | 'balanceInside' | 'discrepancy' | 'sdpVsBalance' | 'currentGroup' | 'correctGroup' | 'remarks';
+// Permanent column identifiers — same Enterprise Table V2 pattern as
+// app/stlm/page.tsx (the canonical reference); this page gets its own
+// COLUMN_IDS rather than sharing Settlement's.
+const COLUMN_IDS = {
+  BRAND: 'brand',
+  SHOP_NAME: 'shopName',
+  COMPANY_BALANCE: 'companyBalance',
+  BALANCE_INSIDE: 'balanceInside',
+  DISCREPANCY: 'discrepancy',
+  SDP_VS_BALANCE: 'sdpVsBalance',
+  CURRENT_GROUP: 'currentGroup',
+  CORRECT_GROUP: 'correctGroup',
+  REMARKS: 'remarks',
+} as const;
 
-const columnDefs: { key: ColumnKey; label: string }[] = [
-  { key: 'brand', label: 'Brand' },
-  { key: 'shopName', label: 'Agent' },
-  { key: 'companyBalance', label: 'Company Balance' },
-  { key: 'balanceInside', label: 'Balance Inside' },
-  { key: 'discrepancy', label: 'Discrepancy' },
-  { key: 'sdpVsBalance', label: 'SDP VS Balance' },
-  { key: 'currentGroup', label: 'Current Group' },
-  { key: 'correctGroup', label: 'Correct Group' },
-  { key: 'remarks', label: 'Remarks' },
+type ColumnKey = typeof COLUMN_IDS[keyof typeof COLUMN_IDS];
+
+// Column model matches Settlement's ColumnDef shape (`key` kept instead of
+// Settlement's `id` since every existing reference on this page already
+// reads `col.key`). No protected Actions-style column exists here, so all
+// columns are hideable. Brand/Correct Group render a filter-dropdown
+// trigger instead of a sort button (see the header JSX further down), so
+// they're marked not sortable.
+type ColumnDef = {
+  key: ColumnKey;
+  label: string;
+  visible: boolean;
+  sortable: boolean;
+  hideable: boolean;
+  align: 'left' | 'right' | 'center';
+};
+
+const DEFAULT_COLUMNS: ColumnDef[] = [
+  { key: COLUMN_IDS.BRAND, label: 'Brand', visible: true, sortable: false, hideable: true, align: 'center' },
+  { key: COLUMN_IDS.SHOP_NAME, label: 'Agent', visible: true, sortable: true, hideable: true, align: 'center' },
+  { key: COLUMN_IDS.COMPANY_BALANCE, label: 'Company Balance', visible: true, sortable: true, hideable: true, align: 'center' },
+  { key: COLUMN_IDS.BALANCE_INSIDE, label: 'Balance Inside', visible: true, sortable: true, hideable: true, align: 'center' },
+  { key: COLUMN_IDS.DISCREPANCY, label: 'Discrepancy', visible: true, sortable: true, hideable: true, align: 'center' },
+  { key: COLUMN_IDS.SDP_VS_BALANCE, label: 'SDP VS Balance', visible: true, sortable: true, hideable: true, align: 'center' },
+  { key: COLUMN_IDS.CURRENT_GROUP, label: 'Current Group', visible: true, sortable: true, hideable: true, align: 'center' },
+  { key: COLUMN_IDS.CORRECT_GROUP, label: 'Correct Group', visible: true, sortable: false, hideable: true, align: 'center' },
+  { key: COLUMN_IDS.REMARKS, label: 'Remarks', visible: true, sortable: true, hideable: true, align: 'center' },
 ];
+
+const COLUMN_VISIBILITY_STORAGE_KEY = 'sendMoneyTransferQueueColumnVisibility';
 
 const columnWidths: Record<ColumnKey, string> = {
   brand: '7%',
@@ -260,7 +250,7 @@ const rowSkeletonWidths: Record<ColumnKey, string[]> = {
 };
 
 function headerCellClasses(_colKey: ColumnKey, _active: boolean) {
-  return `group text-center px-3 py-2 text-[10px] font-semibold uppercase tracking-[0.06em] whitespace-nowrap text-muted-foreground`;
+  return `group ${TABLE_HEADER_CELL_CLASS}`;
 }
 
 function SortIcon({ active, direction }: { active: boolean; direction: 'asc' | 'desc' }) {
@@ -346,17 +336,20 @@ export default function SendMoneyTransferQueue() {
   const [brandMenuPos, setBrandMenuPos] = useState({ top: 0, left: 0 });
   const [correctGroupMenuOpen, setCorrectGroupMenuOpen] = useState(false);
   const [correctGroupMenuPos, setCorrectGroupMenuPos] = useState({ top: 0, left: 0 });
-  const [columnMenuOpen, setColumnMenuOpen] = useState(false);
-  const [columnMenuPos, setColumnMenuPos] = useState({ top: 0, left: 0 });
-  const [columnVisibility, setColumnVisibility] = useState<Record<ColumnKey, boolean>>(
-    () => Object.fromEntries(columnDefs.map((col) => [col.key, true])) as Record<ColumnKey, boolean>
-  );
+  // Column Visibility (Enterprise Table V2) — same model/persistence as
+  // app/stlm/page.tsx: read saved preference once on mount (gated by
+  // `mounted`), written on every change thereafter.
+  const [columnDefs, setColumnDefs] = useState<ColumnDef[]>(DEFAULT_COLUMNS);
+  const [columnsMenuOpen, setColumnsMenuOpen] = useState(false);
+  const [columnsMenuPos, setColumnsMenuPos] = useState({ top: 0, left: 0 });
+  const [mounted, setMounted] = useState(false);
+  const columnsButtonRef = useRef<HTMLButtonElement>(null);
+  const columnsMenuRef = useRef<HTMLDivElement>(null);
+
   const brandButtonRef = useRef<HTMLButtonElement>(null);
   const brandDropdownRef = useRef<HTMLDivElement>(null);
   const correctGroupButtonRef = useRef<HTMLButtonElement>(null);
   const correctGroupDropdownRef = useRef<HTMLDivElement>(null);
-  const columnButtonRef = useRef<HTMLButtonElement>(null);
-  const columnDropdownRef = useRef<HTMLDivElement>(null);
   const [page, setPage] = useState(1);
   const rowsPerPage = 50;
 
@@ -587,21 +580,52 @@ export default function SendMoneyTransferQueue() {
   }, [correctGroupMenuOpen]);
 
   useEffect(() => {
-    if (!columnMenuOpen) return;
+    setMounted(true);
+    const saved = getPreference<Record<string, boolean> | null>(COLUMN_VISIBILITY_STORAGE_KEY, null);
+    if (!saved) return;
+    setColumnDefs((current) =>
+      current.map((col) => (col.key in saved ? { ...col, visible: saved[col.key] } : col))
+    );
+  }, []);
+
+  useEffect(() => {
+    if (!mounted) return;
+    const visibility = Object.fromEntries(columnDefs.map((col) => [col.key, col.visible])) as Record<ColumnKey, boolean>;
+    setPreference(COLUMN_VISIBILITY_STORAGE_KEY, visibility);
+  }, [columnDefs, mounted]);
+
+  useEffect(() => {
+    if (!columnsMenuOpen) return;
 
     const handlePointerDown = (event: MouseEvent) => {
       const target = event.target as Node;
       if (
-        columnButtonRef.current && !columnButtonRef.current.contains(target) &&
-        columnDropdownRef.current && !columnDropdownRef.current.contains(target)
+        columnsButtonRef.current && !columnsButtonRef.current.contains(target) &&
+        columnsMenuRef.current && !columnsMenuRef.current.contains(target)
       ) {
-        setColumnMenuOpen(false);
+        setColumnsMenuOpen(false);
+      }
+    };
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        setColumnsMenuOpen(false);
+        columnsButtonRef.current?.focus();
       }
     };
 
     document.addEventListener('mousedown', handlePointerDown);
-    return () => document.removeEventListener('mousedown', handlePointerDown);
-  }, [columnMenuOpen]);
+    document.addEventListener('keydown', handleKeyDown);
+    return () => {
+      document.removeEventListener('mousedown', handlePointerDown);
+      document.removeEventListener('keydown', handleKeyDown);
+    };
+  }, [columnsMenuOpen]);
+
+  useEffect(() => {
+    if (!columnsMenuOpen) return;
+    const firstControl = columnsMenuRef.current?.querySelector<HTMLElement>('input, button');
+    firstControl?.focus();
+  }, [columnsMenuOpen]);
 
   const searchedRows = useMemo(() => {
     const query = searchTerm.toLowerCase();
@@ -688,9 +712,18 @@ export default function SendMoneyTransferQueue() {
   const startIndex = (currentPage - 1) * rowsPerPage;
   const pagedRows = sortedRows.slice(startIndex, startIndex + rowsPerPage);
 
-  const visibleColumns = useMemo(() => columnDefs.filter((col) => columnVisibility[col.key]), [columnVisibility]);
-  const allColumnsChecked = columnDefs.every((col) => columnVisibility[col.key]);
-  const anyColumnHidden = columnDefs.some((col) => !columnVisibility[col.key]);
+  const visibleColumns = useMemo(
+    () => (mounted ? columnDefs : []).filter((col) => col.visible),
+    [columnDefs, mounted]
+  );
+  const visibleHideableCount = useMemo(
+    () => columnDefs.filter((col) => col.hideable && col.visible).length,
+    [columnDefs]
+  );
+  const columnVisibility = useMemo(
+    () => Object.fromEntries(columnDefs.map((col) => [col.key, col.visible])) as Record<ColumnKey, boolean>,
+    [columnDefs]
+  );
 
   const handleExport = useCallback(() => {
     const getExportValue = (row: QueueRow, key: ColumnKey) => {
@@ -737,15 +770,20 @@ export default function SendMoneyTransferQueue() {
 
   return (
     <div className="h-screen w-full flex flex-col overflow-hidden bg-background font-[Inter,sans-serif] text-foreground transition-colors duration-300 dark:bg-[#1c1c1e]">
-      <FloatingHeader title="Transfer Queue" icon={Shuffle} onRefresh={fetchData} refreshing={spinning || loading} />
+      <PageHeader
+        icon={Shuffle}
+        title="Transfer Queue"
+        centerSlot={<ProductSwitchTabs />}
+        actions={<ThemeToggle />}
+      />
 
-      <main className="flex-1 flex flex-col overflow-hidden px-6 pt-8 pb-6">
+      <main className={PAGE_MAIN_PADDING_CLASS}>
         {error && <ConnectionErrorState error={error} onRetry={fetchData} />}
 
         {!error && (
-          <div className="flex-1 flex flex-col min-h-0 mt-3 bg-white rounded-xl border border-border overflow-hidden dark:bg-[#2a2a2d]">
-            <div className="shrink-0 px-3 py-2 border-b border-border bg-muted/20 flex flex-wrap items-center justify-between gap-2">
-              <div className="flex flex-wrap items-center gap-2">
+          <DataTable className="mt-3">
+            <Toolbar className={TOOLBAR_ROW_CLASS}>
+              <Toolbar.Left className={TOOLBAR_LEFT_CLASS}>
                 {loading ? (
                   <div className="h-5 w-28 animate-pulse rounded-md bg-slate-200 dark:bg-slate-700" />
                 ) : (
@@ -769,88 +807,18 @@ export default function SendMoneyTransferQueue() {
                     </>
                   )}
                 </div>
-                <div className="relative">
-                  {!loading && (
-                    <button
-                      type="button"
-                      ref={columnButtonRef}
-                      onClick={(event) => {
-                        event.stopPropagation();
-                        const rect = columnButtonRef.current?.getBoundingClientRect();
-                        if (rect) {
-                          const dropdownWidth = 224;
-                          const left = Math.min(rect.left, window.innerWidth - dropdownWidth - 8);
-                          setColumnMenuPos({ top: rect.bottom + 8, left: Math.max(8, left) });
-                        }
-                        setColumnMenuOpen((current) => !current);
-                      }}
-                      className={`flex items-center gap-1.5 px-3 py-1.5 text-[10px] font-medium border rounded-lg hover:bg-white transition-colors ${anyColumnHidden ? 'border-[color:var(--product-accent)]/40 text-[color:var(--product-accent)]' : 'border-border text-foreground'}`}
-                    >
-                      <Filter size={14} />
-                      Filter
-                    </button>
-                  )}
-                  {columnMenuOpen && typeof document !== 'undefined' && createPortal(
-                    <div
-                      ref={columnDropdownRef}
-                      style={{ position: 'fixed', top: columnMenuPos.top, left: columnMenuPos.left }}
-                      className="z-[9999] w-56 max-h-[70vh] overflow-y-auto rounded-xl border border-[#e5e5e7] bg-white p-2 shadow-xl dark:border-[#3a3a3d] dark:bg-[#2a2a2d]"
-                      onClick={(event) => event.stopPropagation()}
-                    >
-                      <div className="px-2 py-1.5 text-[10px] font-semibold uppercase tracking-[0.24em] text-[#6b7280] dark:text-[#a0a0a0]">Columns</div>
-                      <label className="flex w-full items-center justify-start gap-2 whitespace-nowrap rounded-xl px-3 py-1.5 text-left text-[10px] text-[#6b7280] hover:bg-[#f5f5f7] dark:text-[#a0a0a0] dark:hover:bg-slate-800">
-                        <input
-                          type="checkbox"
-                          checked={allColumnsChecked}
-                          onChange={() => {
-                            const nextValue = !allColumnsChecked;
-                            setColumnVisibility(
-                              Object.fromEntries(columnDefs.map((col) => [col.key, nextValue])) as Record<ColumnKey, boolean>
-                            );
-                          }}
-                        />
-                        <span>Check All</span>
-                      </label>
-                      {columnDefs.map((col) => (
-                        <label key={col.key} className="flex w-full items-center justify-start gap-2 whitespace-nowrap rounded-xl px-3 py-1.5 text-left text-[10px] text-[#6b7280] hover:bg-[#f5f5f7] dark:text-[#a0a0a0] dark:hover:bg-slate-800">
-                          <input
-                            type="checkbox"
-                            checked={columnVisibility[col.key]}
-                            onChange={() => {
-                              setColumnVisibility((current) => ({ ...current, [col.key]: !current[col.key] }));
-                            }}
-                          />
-                          <span>{col.label}</span>
-                        </label>
-                      ))}
-                    </div>,
-                    document.body
-                  )}
-                </div>
-              </div>
-              <div className="flex items-center gap-2">
-                {loading ? (
-                  <div className="h-6 w-32 animate-pulse rounded-md bg-slate-200 dark:bg-slate-700" />
-                ) : (
-                  <div className="flex items-center gap-1.5">
-                    <span className="tabular-nums text-[10px] text-muted-foreground">{currentPage} / {totalPages}</span>
-                    <button
-                      type="button"
-                      onClick={() => setPage((current) => Math.max(1, current - 1))}
-                      disabled={currentPage === 1}
-                      className="rounded-lg border border-border bg-white px-2.5 py-1.5 text-[10px] font-medium text-foreground transition-colors hover:bg-muted disabled:opacity-40 dark:bg-transparent"
-                    >
-                      Previous
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => setPage((current) => Math.min(totalPages, current + 1))}
-                      disabled={currentPage === totalPages}
-                      className="rounded-lg border border-border bg-white px-2.5 py-1.5 text-[10px] font-medium text-foreground transition-colors hover:bg-muted disabled:opacity-40 dark:bg-transparent"
-                    >
-                      Next
-                    </button>
-                  </div>
+              </Toolbar.Left>
+              <Toolbar.Right className={TOOLBAR_RIGHT_CLASS}>
+                {loading && <div className="h-7 w-7 animate-pulse rounded-lg bg-slate-200 dark:bg-slate-700" />}
+                {!loading && (
+                  <button
+                    type="button"
+                    onClick={fetchData}
+                    title="Refresh"
+                    className="rounded-lg border border-border bg-white p-1.5 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground dark:bg-transparent"
+                  >
+                    <RefreshCw size={13} className={spinning ? 'animate-spin' : ''} />
+                  </button>
                 )}
                 {loading && <div className="h-7 w-20 animate-pulse rounded-lg bg-slate-200 dark:bg-slate-700" />}
                 {!loading && (
@@ -863,16 +831,104 @@ export default function SendMoneyTransferQueue() {
                     <Download size={13} />
                   </button>
                 )}
-              </div>
-            </div>
-            <div className="hidden flex-1 min-h-0 overflow-y-auto overflow-x-scroll sm:block">
+                {loading && <div className="h-7 w-7 animate-pulse rounded-lg bg-slate-200 dark:bg-slate-700" />}
+                {!loading && (
+                  <div className="relative">
+                    <button
+                      type="button"
+                      ref={columnsButtonRef}
+                      onClick={(event) => {
+                        event.stopPropagation();
+                        const rect = columnsButtonRef.current?.getBoundingClientRect();
+                        if (rect) {
+                          const dropdownWidth = 224;
+                          const left = Math.max(8, Math.min(rect.right - dropdownWidth, window.innerWidth - dropdownWidth - 8));
+                          setColumnsMenuPos({ top: rect.bottom + 8, left });
+                        }
+                        setColumnsMenuOpen((current) => !current);
+                      }}
+                      aria-haspopup="true"
+                      aria-expanded={columnsMenuOpen}
+                      aria-controls="sendmoney-transfer-queue-columns-popover"
+                      aria-label="Columns"
+                      title="Columns"
+                      className="rounded-lg border border-border bg-white p-1.5 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground dark:bg-transparent"
+                    >
+                      <Columns3 size={13} />
+                    </button>
+                    {columnsMenuOpen && typeof document !== 'undefined' && createPortal(
+                      <div
+                        ref={columnsMenuRef}
+                        id="sendmoney-transfer-queue-columns-popover"
+                        role="dialog"
+                        aria-label="Column visibility"
+                        style={{ position: 'fixed', top: columnsMenuPos.top, left: columnsMenuPos.left }}
+                        className="z-[9999] w-56 max-h-[70vh] overflow-y-auto rounded-xl border border-[#e5e5e7] bg-white p-2 shadow-xl dark:border-[#3a3a3d] dark:bg-[#2a2a2d]"
+                        onClick={(event) => event.stopPropagation()}
+                        onKeyDown={(event) => {
+                          if (event.key === 'Escape') {
+                            event.stopPropagation();
+                            setColumnsMenuOpen(false);
+                            columnsButtonRef.current?.focus();
+                          }
+                        }}
+                      >
+                        <div className="px-2 py-1.5 text-[10px] font-semibold uppercase tracking-[0.24em] text-[#6b7280] dark:text-[#a0a0a0]">Columns</div>
+                        {columnDefs.filter((col) => col.hideable).map((col) => {
+                          const isLastVisible = col.visible && visibleHideableCount === 1;
+                          return (
+                            <label
+                              key={col.key}
+                              title={isLastVisible ? 'At least one column must stay visible' : undefined}
+                              className={`flex w-full items-center justify-start gap-2 whitespace-nowrap rounded-xl px-3 py-1.5 text-left text-[10px] ${
+                                isLastVisible
+                                  ? 'cursor-not-allowed text-[#b3b8c2] dark:text-[#5a5f66]'
+                                  : 'text-[#6b7280] hover:bg-[#f5f5f7] dark:text-[#a0a0a0] dark:hover:bg-slate-800'
+                              }`}
+                            >
+                              <input
+                                type="checkbox"
+                                checked={col.visible}
+                                disabled={isLastVisible}
+                                onChange={() => {
+                                  setColumnDefs((current) =>
+                                    current.map((c) => (c.key === col.key ? { ...c, visible: !c.visible } : c))
+                                  );
+                                }}
+                              />
+                              <span>{col.label}</span>
+                            </label>
+                          );
+                        })}
+                        <div className="mt-1 border-t border-[#F1F5F9] pt-1 dark:border-[#2f2f32]">
+                          {/* Hardcoded teal, not var(--product-accent): this popover
+                              portals to document.body, a sibling of the
+                              [data-product="sendmoney"] div the variable is scoped
+                              to (see globals.css), so the var resolves to nothing
+                              here — confirmed via computed-style check. */}
+                          <button
+                            type="button"
+                            onClick={() => setColumnDefs(DEFAULT_COLUMNS.map((col) => ({ ...col })))}
+                            className="flex w-full items-center justify-center rounded-lg px-2.5 py-1.5 text-[11px] font-medium text-[#0d9488] transition-colors hover:bg-[rgba(13,148,136,0.08)] dark:hover:bg-[rgba(45,212,191,0.12)]"
+                          >
+                            Restore Defaults
+                          </button>
+                        </div>
+                      </div>,
+                      document.body
+                    )}
+                  </div>
+                )}
+              </Toolbar.Right>
+            </Toolbar>
+            <div className="hidden flex-1 min-h-0 overflow-y-auto overflow-x-auto sm:block">
               <table className="w-full table-fixed text-xs">
                 <colgroup>
                   {visibleColumns.map((col) => (
                     <col key={col.key} style={{ width: columnWidths[col.key] }} />
                   ))}
                 </colgroup>
-                <thead className="sticky top-0 z-[50] bg-white dark:bg-[#252528] border-b border-border shadow-[0_1px_3px_rgba(0,0,0,0.06)] dark:shadow-[0_2px_4px_rgba(0,0,0,0.35)]">
+                <thead className={TABLE_STICKY_HEADER_CLASS}>
                   <tr>
                     {visibleColumns.map((col) => (
                       <th
@@ -1054,8 +1110,11 @@ export default function SendMoneyTransferQueue() {
                     </tr>
                   )) : (
                     <tr>
-                      <td colSpan={Math.max(visibleColumns.length, 1)} className="px-3 py-8 text-center text-[11px] text-muted-foreground">
-                        No accounts need transfer.
+                      <td colSpan={Math.max(visibleColumns.length, 1)}>
+                        <EmptyState
+                          title="No accounts need transfer"
+                          description="Queue is clear — nothing currently needs rebalancing."
+                        />
                       </td>
                     </tr>
                   )}
@@ -1140,13 +1199,27 @@ export default function SendMoneyTransferQueue() {
                     );
                   })
                 ) : (
-                  <div className="px-3 py-8 text-center text-[11px] text-muted-foreground">
-                    No accounts need transfer.
-                  </div>
+                  <EmptyState
+                    title="No accounts need transfer"
+                    description="Queue is clear — nothing currently needs rebalancing."
+                  />
                 )}
               </div>
             </div>
-          </div>
+
+            {!loading && (
+              <TableFooter
+                recordCountText={
+                  sortedRows.length === 0
+                    ? 'Showing 0 of 0 Accounts'
+                    : `Showing ${startIndex + 1}–${Math.min(startIndex + rowsPerPage, sortedRows.length)} of ${sortedRows.length} Accounts`
+                }
+                currentPage={currentPage}
+                totalPages={totalPages}
+                onPageChange={setPage}
+              />
+            )}
+          </DataTable>
         )}
       </main>
     </div>

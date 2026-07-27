@@ -7,7 +7,8 @@ import FloatingHeader from '@/app/components/FloatingHeader';
 import { useTheme } from '@/app/components/ThemeProvider';
 import ConnectionErrorState from '@/app/components/ConnectionErrorState';
 import { classifyFetchError, type ClassifiedError, assertAllOk } from '@/app/lib/errors';
-import { rawVal } from '@/app/lib/format';
+import { rawVal, clean, fmt, fmtAbbrev, fmtCell } from '@/app/lib/format';
+import { parseCsvLines } from '@/app/lib/csv';
 import { getBusinessToday } from '@/app/lib/businessDate';
 
 type BundlePoint = {
@@ -38,10 +39,6 @@ type AgentRow = {
   balanceInside: number;
 };
 
-function clean(val: string): number {
-  return parseFloat((val ?? '0').replace(/"/g, '').replace(/,/g, '').trim()) || 0;
-}
-
 // "PS BD STLM + TOPUP" sheet dates are formatted "M/D/YYYY".
 function parseStlmRowDate(dateStr: string): Date | null {
   const parts = (dateStr ?? '').trim().split('/');
@@ -49,82 +46,6 @@ function parseStlmRowDate(dateStr: string): Date | null {
   const [m, d, y] = parts.map(Number);
   if (!m || !d || !y) return null;
   return new Date(y, m - 1, d);
-}
-
-function parseCsvLines(text: string): string[][] {
-  const rows: string[][] = [];
-  let currentRow: string[] = [];
-  let currentField = '';
-  let inQuotes = false;
-
-  for (let i = 0; i < text.length; i += 1) {
-    const char = text[i];
-    const nextChar = text[i + 1];
-
-    if (char === '"') {
-      if (inQuotes && nextChar === '"') {
-        currentField += '"';
-        i += 1;
-      } else {
-        inQuotes = !inQuotes;
-      }
-      continue;
-    }
-
-    if (char === ',' && !inQuotes) {
-      currentRow.push(currentField);
-      currentField = '';
-      continue;
-    }
-
-    if ((char === '\n' || char === '\r') && !inQuotes) {
-      if (char === '\r' && nextChar === '\n') {
-        i += 1;
-      }
-      currentRow.push(currentField);
-      if (currentRow.some((cell) => cell.trim() !== '')) {
-        rows.push(currentRow);
-      }
-      currentRow = [];
-      currentField = '';
-      continue;
-    }
-
-    currentField += char;
-  }
-
-  if (currentField.length > 0 || currentRow.length > 0) {
-    currentRow.push(currentField);
-    if (currentRow.some((cell) => cell.trim() !== '')) {
-      rows.push(currentRow);
-    }
-  }
-
-  return rows;
-}
-
-function fmt(num: number): string {
-  return Math.abs(num).toLocaleString('en-PH', {
-    minimumFractionDigits: 2,
-    maximumFractionDigits: 2,
-  });
-}
-
-function fmtAbbrev(num: number): string {
-  const abs = Math.abs(num);
-  if (abs >= 1e9) return `${(abs / 1e9).toFixed(2)}B`;
-  if (abs >= 1e6) return `${(abs / 1e6).toFixed(2)}M`;
-  if (abs >= 1e3) return `${(abs / 1e3).toFixed(2)}K`;
-  return abs.toFixed(2);
-}
-
-function fmtCell(num: number, showSign = false): string {
-  if (Math.abs(num) < 0.01) return '—';
-  const formatted = Math.abs(num).toLocaleString('en-PH', {
-    minimumFractionDigits: 2,
-    maximumFractionDigits: 2,
-  });
-  return showSign && num < 0 ? `-${formatted}` : formatted;
 }
 
 // Send Money's wallet type is read off the wallet name's own suffix (e.g.

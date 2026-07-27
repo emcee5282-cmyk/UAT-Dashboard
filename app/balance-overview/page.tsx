@@ -1,12 +1,18 @@
 'use client';
 
-import { useEffect, useState, useCallback } from 'react';
-import { TrendingUp, TrendingDown, Wallet, Activity, Home } from 'lucide-react';
-import FloatingHeader from '../components/FloatingHeader';
+import { useEffect, useState, useCallback, useMemo } from 'react';
+import * as XLSX from 'xlsx';
+import { TrendingUp, TrendingDown, Wallet, Activity, Home, RefreshCw, Download, ChevronUp, ChevronDown } from 'lucide-react';
+import PageHeader from '../components/PageHeader';
+import ProductSwitchTabs from '../components/ProductSwitchTabs';
+import ThemeToggle from '../components/ThemeToggle';
+import EmptyState from '../components/EmptyState';
 import ConnectionErrorState from '../components/ConnectionErrorState';
 import TrendChart, { type TrendPoint, type TrendSeriesDef } from '../components/TrendChart';
 import { getBusinessToday } from '../lib/businessDate';
 import { classifyFetchError, type ClassifiedError, assertAllOk } from '../lib/errors';
+import { clean, fmt, fmtAbbrev, fmtCell } from '../lib/format';
+import { parseCsvLines } from '../lib/csv';
 
 const CASHGO_SERIES_DEFS: TrendSeriesDef[] = [
   { key: 'bk', label: 'Bkash' },
@@ -49,10 +55,6 @@ type AgentRow = {
 
 const RANK_LABELS = ['1st', '2nd', '3rd', '4th'];
 
-function clean(val: string): number {
-  return parseFloat((val ?? '0').replace(/"/g, '').replace(/,/g, '').trim()) || 0;
-}
-
 const BRAND_CODES = ['M1', 'M2', 'B1', 'B2', 'B3', 'B4', 'B5', 'K1', 'J1', 'T1'];
 
 // "To Agent" values on "AG BD STLM + TOPUP" sometimes carry a trailing
@@ -66,6 +68,33 @@ function stripBrandSuffix(name: string): string {
   return name;
 }
 
+// The brand source for the SSP Line 1 (Cashout) table's live Top Up/
+// Settlement columns — read directly off the shop name as displayed, e.g.
+// "KONAN001-M1" -> "M1" (trailing suffix, the common case). Returns null
+// for shops with no such suffix; verified against a real pivot table of the
+// underlying sheet that these should be excluded, NOT cross-referenced
+// against "SSP AG BalanceLimit" — that cross-reference (this table's
+// earlier, pre-restoration version) inflated some brands 50%+ and invented
+// figures for brands (K1/B1/B4) the pivot shows as having none at all.
+function extractBrandSuffix(name: string): string | null {
+  const parts = name.split('-');
+  const last = parts[parts.length - 1]?.toUpperCase();
+  return parts.length >= 2 && BRAND_CODES.includes(last) ? last : null;
+}
+
+// A handful of shops use Send Money's own wallet-naming convention instead
+// of the common trailing-suffix one above — brand right after the FIRST
+// hyphen, as exactly "<code>AG", not the last segment — e.g.
+// "T-B5AG-BURMA001-NG" or, with an extra mid-tier code segment,
+// "N-K1AG-J3-AVENT001-BK" / "N-M1AG-M4-DAGON002-BK". Segment count varies
+// (4 or 5 parts seen live); matched on segment 1 alone, not a fixed length,
+// after a length-restricted version was confirmed live to silently drop
+// real, current Settlement amounts entirely for every brand.
+function extractBrandFromAltFormat(name: string): string | null {
+  const segment = (name.split('-')[1] ?? '').toUpperCase();
+  return BRAND_CODES.find((code) => segment === `${code}AG`) ?? null;
+}
+
 // "AG BD STLM + TOPUP" dates are formatted "M/D/YYYY".
 function parseStlmRowDate(dateStr: string): Date | null {
   const parts = (dateStr ?? '').trim().split('/');
@@ -75,80 +104,487 @@ function parseStlmRowDate(dateStr: string): Date | null {
   return new Date(y, m - 1, d);
 }
 
-function parseCsvLines(text: string): string[][] {
-  const rows: string[][] = [];
-  let currentRow: string[] = [];
-  let currentField = '';
-  let inQuotes = false;
-
-  for (let i = 0; i < text.length; i += 1) {
-    const char = text[i];
-    const nextChar = text[i + 1];
-
-    if (char === '"') {
-      if (inQuotes && nextChar === '"') {
-        currentField += '"';
-        i += 1;
-      } else {
-        inQuotes = !inQuotes;
-      }
-      continue;
-    }
-
-    if (char === ',' && !inQuotes) {
-      currentRow.push(currentField);
-      currentField = '';
-      continue;
-    }
-
-    if ((char === '\n' || char === '\r') && !inQuotes) {
-      if (char === '\r' && nextChar === '\n') {
-        i += 1;
-      }
-      currentRow.push(currentField);
-      if (currentRow.some((cell) => cell.trim() !== '')) {
-        rows.push(currentRow);
-      }
-      currentRow = [];
-      currentField = '';
-      continue;
-    }
-
-    currentField += char;
-  }
-
-  if (currentField.length > 0 || currentRow.length > 0) {
-    currentRow.push(currentField);
-    if (currentRow.some((cell) => cell.trim() !== '')) {
-      rows.push(currentRow);
-    }
-  }
-
-  return rows;
+// "Brand Balance" sheet writes negative figures in accounting format, e.g.
+// "(1,137,336.19)", and a bare "-" for zero — neither parses correctly
+// through clean()'s plain parseFloat.
+function cleanSigned(val: string): number {
+  const raw = (val ?? '').replace(/"/g, '').trim();
+  if (!raw || raw === '-') return 0;
+  const negative = raw.startsWith('(') && raw.endsWith(')');
+  const inner = negative ? raw.slice(1, -1) : raw;
+  const num = parseFloat(inner.replace(/,/g, '')) || 0;
+  return negative ? -num : num;
 }
 
-function fmt(num: number): string {
-  return Math.abs(num).toLocaleString('en-PH', {
-    minimumFractionDigits: 2,
-    maximumFractionDigits: 2,
+// Send Money's own brand resolution — unlike Cashout's (which cross-
+// references "SSP AG BalanceLimit"'s Group column), Send Money's brand is
+// embedded directly in the wallet name itself, e.g. "D-B2BD-DELTA073-NG" ->
+// segment "B2BD" -> "B2" — same convention already used by
+// app/sendmoney/settlement/page.tsx. Includes 'SH' (Sharing), a brand
+// Cashout's own roster doesn't have.
+const SENDMONEY_BRAND_CODES = [...BRAND_CODES, 'SH'];
+
+function resolveSendMoneyBrandFromWalletName(walletName: string): string {
+  const segment = (walletName.split('-')[1] ?? '').toUpperCase();
+  const code = SENDMONEY_BRAND_CODES.find((c) => segment.startsWith(c));
+  return code ?? '−';
+}
+
+// Same source/cutoff as the page's own agent-level Top Up/Settlement totals
+// below, but grouped by the brand suffix embedded in the shop name itself
+// (e.g. "KONAN001-M1" -> "M1") instead of by agent — feeds the SSP Line 1
+// (Cashout) table's live Top Up/Settlement columns. Deliberately does NOT
+// fall back to cross-referencing "SSP AG BalanceLimit" for shops with no
+// suffix (unlike this page's per-agent topUpTotals/stlmTotals below,
+// app/topup/page.tsx, or app/agentbal/page.tsx) — verified against a real
+// pivot table of the underlying sheet: cross-referencing every unsuffixed
+// row inflated some brands 50%+ and invented figures for brands (K1/B1/B4)
+// the pivot shows as having none at all. Suffix-only matched the pivot
+// exactly for 5 of 7 brands present.
+function computeCashoutBrandTopUpStlm(text: string, cutoff: Date): Map<string, { topUp: number; stlm: number }> {
+  const totals = new Map<string, { topUp: number; stlm: number }>();
+  const add = (brand: string | null, key: 'topUp' | 'stlm', amount: number) => {
+    if (!brand) return;
+    const existing = totals.get(brand) ?? { topUp: 0, stlm: 0 };
+    existing[key] += amount;
+    totals.set(brand, existing);
+  };
+
+  text.trim().split('\n').slice(1).forEach((line) => {
+    if (!line.trim()) return;
+    const cols = line.split(',');
+    const topUpAgent = (cols[1] ?? '').replace(/"/g, '').trim();
+    const topUpAmount = clean(cols[2]);
+    const topUpDate = parseStlmRowDate((cols[3] ?? '').replace(/"/g, '').trim());
+    if (topUpAgent && topUpAgent !== '-' && topUpAmount && topUpDate && topUpDate >= cutoff) {
+      add(extractBrandSuffix(topUpAgent) ?? extractBrandFromAltFormat(topUpAgent), 'topUp', topUpAmount);
+    }
+    const stlmAgent = (cols[7] ?? '').replace(/"/g, '').trim();
+    const stlmAmount = Math.abs(clean(cols[8]));
+    const stlmDate = parseStlmRowDate((cols[9] ?? '').replace(/"/g, '').trim());
+    if (stlmAgent && stlmAgent !== '-' && stlmAmount && stlmDate && stlmDate >= cutoff) {
+      add(extractBrandSuffix(stlmAgent) ?? extractBrandFromAltFormat(stlmAgent), 'stlm', stlmAmount);
+    }
   });
+
+  return totals;
 }
 
-function fmtAbbrev(num: number): string {
-  const abs = Math.abs(num);
-  if (abs >= 1e9) return `${(abs / 1e9).toFixed(2)}B`;
-  if (abs >= 1e6) return `${(abs / 1e6).toFixed(2)}M`;
-  if (abs >= 1e3) return `${(abs / 1e3).toFixed(2)}K`;
-  return abs.toFixed(2);
-}
+// Same shape as computeCashoutBrandTopUpStlm, sourced from Send Money's own
+// "PS BD STLM + TOPUP" sheet — no cross-sheet Group lookup needed since the
+// wallet name itself carries the brand (resolveSendMoneyBrandFromWalletName).
+function computeSendMoneyBrandTopUpStlm(text: string, cutoff: Date): Map<string, { topUp: number; stlm: number }> {
+  const totals = new Map<string, { topUp: number; stlm: number }>();
+  const add = (brand: string, key: 'topUp' | 'stlm', amount: number) => {
+    if (brand === '−') return;
+    const existing = totals.get(brand) ?? { topUp: 0, stlm: 0 };
+    existing[key] += amount;
+    totals.set(brand, existing);
+  };
 
-function fmtCell(num: number, showSign = false): string {
-  if (Math.abs(num) < 0.01) return '—';
-  const formatted = Math.abs(num).toLocaleString('en-PH', {
-    minimumFractionDigits: 2,
-    maximumFractionDigits: 2,
+  text.trim().split('\n').slice(1).forEach((line) => {
+    if (!line.trim()) return;
+    const cols = line.split(',');
+    const topUpName = (cols[1] ?? '').replace(/"/g, '').trim();
+    const topUpAmount = clean(cols[2]);
+    const topUpDate = parseStlmRowDate((cols[3] ?? '').replace(/"/g, '').trim());
+    if (topUpName && topUpName !== '-' && topUpAmount && topUpDate && topUpDate >= cutoff) {
+      add(resolveSendMoneyBrandFromWalletName(topUpName), 'topUp', topUpAmount);
+    }
+    const stlmName = (cols[7] ?? '').replace(/"/g, '').trim();
+    const stlmAmount = Math.abs(clean(cols[8]));
+    const stlmDate = parseStlmRowDate((cols[9] ?? '').replace(/"/g, '').trim());
+    if (stlmName && stlmName !== '-' && stlmAmount && stlmDate && stlmDate >= cutoff) {
+      add(resolveSendMoneyBrandFromWalletName(stlmName), 'stlm', stlmAmount);
+    }
   });
-  return showSign && num < 0 ? `-${formatted}` : formatted;
+
+  return totals;
+}
+
+type SspLine1Row = {
+  brand: string;
+  opening: number;
+  deposit: number;
+  withdrawal: number;
+  topUp: number;
+  settlement: number;
+  total: number;
+};
+
+// "Brand Balance!B3:G13" (Cashout) / "Brand Balance!B16:G26" (Send Money):
+// row 0 is the header (Brand, Opening Balance, Deposit, Withdrawal,
+// Adjustment, Total), remaining rows are one per brand (M1/M2/K1/B1-B5/T1/
+// J1) — no footer row. Column D (Adjustment, index 4) is intentionally not
+// read — replaced by live per-brand Top Up/Settlement (see
+// computeCashoutBrandTopUpStlm/computeSendMoneyBrandTopUpStlm above), merged
+// in by the caller.
+function parseSspLine1(text: string): Omit<SspLine1Row, 'topUp' | 'settlement'>[] {
+  const toRow = (cols: string[]): Omit<SspLine1Row, 'topUp' | 'settlement'> => ({
+    brand: (cols[0] ?? '').replace(/"/g, '').trim(),
+    opening: cleanSigned(cols[1]),
+    deposit: cleanSigned(cols[2]),
+    withdrawal: cleanSigned(cols[3]),
+    total: cleanSigned(cols[5]),
+  });
+
+  return text.trim().split('\n').slice(1)
+    .filter((line) => line.trim() !== '')
+    .map((line) => toRow(line.split(',')));
+}
+
+const SSP_LINE1_COLUMNS: { key: keyof Omit<SspLine1Row, 'brand'>; label: string }[] = [
+  { key: 'opening', label: 'Opening Balance' },
+  { key: 'deposit', label: 'Deposit' },
+  { key: 'withdrawal', label: 'Withdrawal' },
+  { key: 'topUp', label: 'Top Up' },
+  { key: 'settlement', label: 'Settlement' },
+  { key: 'total', label: 'Total' },
+];
+
+// Zero reads as neutral (muted, no sign); everything else gets a "−" prefix
+// when negative, plain otherwise — no "+" prefix (unlike the Wallet
+// Summary's own flowValueDisplay), since these are balances, not deltas.
+function sspLine1ValueDisplay(value: number): { text: string; className: string } {
+  const zero = Math.abs(value) < 0.005;
+  const negative = value < 0;
+  return {
+    text: zero ? '−' : `${negative ? '−' : ''}${fmt(value)}`,
+    className: zero ? 'text-muted-foreground' : negative ? 'text-rose-600 dark:text-rose-400' : 'text-foreground',
+  };
+}
+
+function SspLine1ValueCell({ value, bold }: { value: number; bold?: boolean }) {
+  const display = sspLine1ValueDisplay(value);
+  return (
+    <td className={`whitespace-nowrap px-4 py-3 text-center text-[13px] tabular-nums ${bold ? 'font-bold' : 'font-medium'} ${display.className}`}>
+      {display.text}
+    </td>
+  );
+}
+
+type SspLine1SortKey = keyof SspLine1Row;
+
+// Chevron pair when idle, single filled chevron when this column is the
+// active sort — same visual convention as the sort arrows used elsewhere in
+// the app (e.g. app/agentbal/page.tsx's own SortIcon).
+function SspLine1SortIcon({ active, direction }: { active: boolean; direction: 'asc' | 'desc' }) {
+  if (!active) {
+    return (
+      <span className="flex flex-col items-center justify-center leading-none text-slate-400 opacity-40">
+        <ChevronUp size={10} className="-mb-0.5" />
+        <ChevronDown size={10} />
+      </span>
+    );
+  }
+  return direction === 'asc' ? (
+    <ChevronUp size={12} className="text-indigo-600 dark:text-indigo-400" />
+  ) : (
+    <ChevronDown size={12} className="text-indigo-600 dark:text-indigo-400" />
+  );
+}
+
+function SspLine1Section({
+  rows,
+  title,
+  subtitle,
+  exportFileName,
+  exportSheetName,
+}: {
+  rows: SspLine1Row[];
+  title: string;
+  subtitle: string;
+  exportFileName: string;
+  exportSheetName: string;
+}) {
+  // No default sort — first click on a column sorts highest-to-lowest
+  // (desc), second click toggles to lowest-to-highest (asc), third click
+  // returns to the unsorted default.
+  const [sortColumn, setSortColumn] = useState<SspLine1SortKey | null>(null);
+  const [sortDirection, setSortDirection] = useState<'asc' | 'desc'>('desc');
+
+  const handleHeaderClick = useCallback((key: SspLine1SortKey) => {
+    if (sortColumn !== key) {
+      setSortColumn(key);
+      setSortDirection('desc');
+    } else if (sortDirection === 'desc') {
+      setSortDirection('asc');
+    } else {
+      setSortColumn(null);
+      setSortDirection('desc');
+    }
+  }, [sortColumn, sortDirection]);
+
+  const sortedRows = useMemo(() => {
+    if (!sortColumn) return rows;
+    const list = [...rows];
+    list.sort((a, b) => {
+      if (sortColumn === 'brand') {
+        const comparison = a.brand.localeCompare(b.brand);
+        return sortDirection === 'asc' ? comparison : -comparison;
+      }
+      const comparison = a[sortColumn] - b[sortColumn];
+      return sortDirection === 'asc' ? comparison : -comparison;
+    });
+    return list;
+  }, [rows, sortColumn, sortDirection]);
+
+  // Column sums across every brand — always the full unsorted set (a footer
+  // total shouldn't reorder with the rows above it), pinned at the bottom
+  // regardless of sort state, same convention as the Wallet Summary table's
+  // own Total row.
+  const totals = useMemo(
+    () => SSP_LINE1_COLUMNS.reduce((acc, col) => {
+      acc[col.key] = rows.reduce((sum, row) => sum + row[col.key], 0);
+      return acc;
+    }, {} as Record<keyof Omit<SspLine1Row, 'brand'>, number>),
+    [rows]
+  );
+
+  const handleExport = useCallback(() => {
+    const headers = ['Brand', ...SSP_LINE1_COLUMNS.map((c) => c.label)];
+    const data = rows.map((row) => [row.brand, ...SSP_LINE1_COLUMNS.map((c) => row[c.key])]);
+
+    const worksheet = XLSX.utils.aoa_to_sheet([headers, ...data]);
+    worksheet['!cols'] = headers.map(() => ({ wch: 16 }));
+    const workbook = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(workbook, worksheet, exportSheetName);
+
+    const now = new Date();
+    const datePart = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
+    const timePart = `${String(now.getHours()).padStart(2, '0')}${String(now.getMinutes()).padStart(2, '0')}`;
+    XLSX.writeFile(workbook, `${exportFileName}_${datePart}_${timePart}.xlsx`);
+  }, [rows, exportFileName, exportSheetName]);
+
+  return (
+    <section className="overflow-hidden rounded-2xl border border-border bg-white shadow-sm dark:bg-[#2a2a2d]">
+      <div className="flex items-center justify-between gap-3 border-b border-border px-4 py-3">
+        <div className="flex min-w-0 items-center gap-3">
+          <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-indigo-50 text-indigo-600 dark:bg-indigo-500/10 dark:text-indigo-400">
+            <Wallet size={16} />
+          </div>
+          <div className="min-w-0">
+            <h2 className="truncate text-[15px] font-bold text-foreground">{title}</h2>
+            <p className="truncate text-[13px] text-muted-foreground">{subtitle}</p>
+          </div>
+        </div>
+        <button
+          type="button"
+          onClick={handleExport}
+          className="inline-flex shrink-0 items-center gap-1.5 rounded-lg bg-indigo-600 px-3 py-1.5 text-[14px] font-medium text-white hover:bg-indigo-700"
+        >
+          <Download size={13} />
+          Export
+        </button>
+      </div>
+
+      <div className="hidden overflow-x-auto sm:block">
+        <table className="w-full min-w-[760px]">
+          <thead>
+            <tr className="border-b border-border bg-muted/10">
+              <th className="whitespace-nowrap px-4 py-3 text-left text-[12px] font-semibold text-muted-foreground">
+                <button type="button" onClick={() => handleHeaderClick('brand')} className="flex items-center gap-1 hover:opacity-80">
+                  Brand
+                  <SspLine1SortIcon active={sortColumn === 'brand'} direction={sortDirection} />
+                </button>
+              </th>
+              {SSP_LINE1_COLUMNS.map((col) => (
+                <th key={col.key} className="whitespace-nowrap px-4 py-3 text-center text-[12px] font-semibold text-muted-foreground">
+                  <button type="button" onClick={() => handleHeaderClick(col.key)} className="flex w-full items-center justify-center gap-1 hover:opacity-80">
+                    {col.label}
+                    <SspLine1SortIcon active={sortColumn === col.key} direction={sortDirection} />
+                  </button>
+                </th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {sortedRows.length > 0 ? sortedRows.map((row) => (
+              <tr key={row.brand} className="border-b border-border last:border-0 transition-colors hover:bg-muted/10">
+                <td className="whitespace-nowrap px-4 py-3 text-left text-[13px] font-semibold text-foreground">{row.brand}</td>
+                {SSP_LINE1_COLUMNS.map((col) => (
+                  <SspLine1ValueCell key={col.key} value={row[col.key]} bold={col.key === 'total'} />
+                ))}
+              </tr>
+            )) : (
+              <tr>
+                <td colSpan={SSP_LINE1_COLUMNS.length + 1}>
+                  <EmptyState title="No brand data available" description="Brand balance data hasn't loaded for this period yet." />
+                </td>
+              </tr>
+            )}
+          </tbody>
+          {rows.length > 0 && (
+            <tfoot>
+              <tr className="border-t-2 border-border bg-muted/20">
+                <td className="whitespace-nowrap px-4 py-3 text-left text-[13px] font-bold text-foreground">Total</td>
+                {SSP_LINE1_COLUMNS.map((col) => (
+                  <SspLine1ValueCell key={col.key} value={totals[col.key]} bold />
+                ))}
+              </tr>
+            </tfoot>
+          )}
+        </table>
+      </div>
+
+      {/* Mobile: one card per brand — same "card list" pattern as the
+          Wallet Summary table's own mobile fallback. */}
+      <div className="flex flex-col gap-3 p-4 sm:hidden">
+        {sortedRows.length > 0 ? sortedRows.map((row) => {
+          const totalDisplay = sspLine1ValueDisplay(row.total);
+          return (
+            <div key={row.brand} className="rounded-xl border border-border bg-white p-4 dark:bg-[#2a2a2d]">
+              <div className="flex items-start justify-between gap-2">
+                <span className="text-[15px] font-bold text-foreground">{row.brand}</span>
+                <div className="text-right">
+                  <p className="text-[11px] text-muted-foreground">Total</p>
+                  <p className={`text-lg font-bold tabular-nums ${totalDisplay.className}`}>{totalDisplay.text}</p>
+                </div>
+              </div>
+              <div className="mt-3 grid grid-cols-2 gap-x-2 gap-y-3 border-t border-border pt-3">
+                {SSP_LINE1_COLUMNS.filter((col) => col.key !== 'total').map((col) => {
+                  const display = sspLine1ValueDisplay(row[col.key]);
+                  return (
+                    <div key={col.key} className="min-w-0">
+                      <p className="text-[11px] text-muted-foreground">{col.label}</p>
+                      <p className={`mt-0.5 text-[10.5px] font-semibold tabular-nums ${display.className}`}>{display.text}</p>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          );
+        }) : (
+          <EmptyState title="No brand data available" description="Brand balance data hasn't loaded for this period yet." />
+        )}
+        {rows.length > 0 && (() => {
+          const totalDisplay = sspLine1ValueDisplay(totals.total);
+          return (
+            <div className="rounded-xl border-2 border-border bg-muted/20 p-4">
+              <div className="flex items-start justify-between gap-2">
+                <span className="text-[15px] font-bold text-foreground">Total</span>
+                <div className="text-right">
+                  <p className="text-[11px] text-muted-foreground">Total</p>
+                  <p className={`text-lg font-bold tabular-nums ${totalDisplay.className}`}>{totalDisplay.text}</p>
+                </div>
+              </div>
+              <div className="mt-3 grid grid-cols-2 gap-x-2 gap-y-3 border-t border-border pt-3">
+                {SSP_LINE1_COLUMNS.filter((col) => col.key !== 'total').map((col) => {
+                  const display = sspLine1ValueDisplay(totals[col.key]);
+                  return (
+                    <div key={col.key} className="min-w-0">
+                      <p className="text-[11px] text-muted-foreground">{col.label}</p>
+                      <p className={`mt-0.5 text-[10.5px] font-bold tabular-nums ${display.className}`}>{display.text}</p>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          );
+        })()}
+      </div>
+    </section>
+  );
+}
+
+// Mirrors the real table's own markup/padding (10 brand rows + header, no
+// footer) instead of a handful of generic placeholder lines — a shorter
+// fake table would cause a visible size jump when the real table pops in.
+function SspLine1Skeleton() {
+  return (
+    <section className="overflow-hidden rounded-2xl border border-border bg-white shadow-sm dark:bg-[#2a2a2d]">
+      <div className="flex items-center justify-between gap-3 border-b border-border px-4 py-3">
+        <div className="flex min-w-0 items-center gap-3">
+          <div className="h-9 w-9 shrink-0 animate-pulse rounded-lg bg-slate-200 dark:bg-slate-700" />
+          <div>
+            <div className="h-[20px] w-48 animate-pulse rounded-md bg-slate-200 dark:bg-slate-700" />
+            <div className="mt-1.5 h-[16px] w-64 animate-pulse rounded-md bg-slate-200 dark:bg-slate-700" />
+          </div>
+        </div>
+        <div className="h-8 w-24 shrink-0 animate-pulse rounded-lg bg-slate-200 dark:bg-slate-700" />
+      </div>
+      <div className="hidden overflow-x-auto sm:block">
+        <table className="w-full min-w-[760px]">
+          <thead>
+            <tr className="border-b border-border bg-muted/10" style={{ height: '42.5px' }}>
+              <th className="px-4 py-3 text-left">
+                <div className="h-3 w-10 animate-pulse rounded-md bg-slate-300 dark:bg-slate-600" />
+              </th>
+              {SSP_LINE1_COLUMNS.map((col) => (
+                <th key={col.key} className="px-4 py-3">
+                  <div className="mx-auto h-3 w-14 animate-pulse rounded-md bg-slate-300 dark:bg-slate-600" />
+                </th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {Array.from({ length: 10 }).map((_, i) => (
+              <tr key={i} className="border-b border-border last:border-0" style={{ height: '44.5px' }}>
+                <td className="px-4 py-3">
+                  <div className="h-3 w-10 animate-pulse rounded-md bg-slate-200 dark:bg-slate-700" />
+                </td>
+                {SSP_LINE1_COLUMNS.map((col) => (
+                  <td key={col.key} className="px-4 py-3">
+                    <div className="mx-auto h-3 w-16 animate-pulse rounded-md bg-slate-100 dark:bg-slate-800" />
+                  </td>
+                ))}
+              </tr>
+            ))}
+          </tbody>
+          <tfoot>
+            <tr className="border-t-2 border-border bg-muted/20" style={{ height: '44.5px' }}>
+              <td className="px-4 py-3">
+                <div className="h-3 w-10 animate-pulse rounded-md bg-slate-300 dark:bg-slate-600" />
+              </td>
+              {SSP_LINE1_COLUMNS.map((col) => (
+                <td key={col.key} className="px-4 py-3">
+                  <div className="mx-auto h-3 w-16 animate-pulse rounded-md bg-slate-300 dark:bg-slate-600" />
+                </td>
+              ))}
+            </tr>
+          </tfoot>
+        </table>
+      </div>
+      <div className="flex flex-col gap-3 p-4 sm:hidden">
+        {Array.from({ length: 10 }).map((_, i) => (
+          <div key={i} className="rounded-xl border border-border bg-white p-4 dark:bg-[#2a2a2d]" style={{ height: '184px' }}>
+            <div className="flex items-start justify-between gap-2">
+              <div className="h-[18px] w-14 animate-pulse rounded-md bg-slate-200 dark:bg-slate-700" />
+              <div className="flex flex-col items-end gap-1.5">
+                <div className="h-3 w-16 animate-pulse rounded-md bg-slate-200 dark:bg-slate-700" />
+                <div className="h-[22px] w-24 animate-pulse rounded-md bg-slate-300 dark:bg-slate-600" />
+              </div>
+            </div>
+            <div className="mt-3 grid grid-cols-2 gap-x-2 gap-y-3 border-t border-border pt-3">
+              {Array.from({ length: 4 }).map((__, j) => (
+                <div key={j} className="min-w-0">
+                  <div className="h-2.5 w-16 animate-pulse rounded-md bg-slate-200 dark:bg-slate-700" />
+                  <div className="mt-1.5 h-3 w-14 animate-pulse rounded-md bg-slate-100 dark:bg-slate-800" />
+                </div>
+              ))}
+            </div>
+          </div>
+        ))}
+        <div className="rounded-xl border-2 border-border bg-muted/20 p-4" style={{ height: '186px' }}>
+          <div className="flex items-start justify-between gap-2">
+            <div className="h-[18px] w-20 animate-pulse rounded-md bg-slate-300 dark:bg-slate-600" />
+            <div className="flex flex-col items-end gap-1.5">
+              <div className="h-3 w-16 animate-pulse rounded-md bg-slate-300 dark:bg-slate-600" />
+              <div className="h-[22px] w-24 animate-pulse rounded-md bg-slate-400 dark:bg-slate-500" />
+            </div>
+          </div>
+          <div className="mt-3 grid grid-cols-2 gap-x-2 gap-y-3 border-t border-border pt-3">
+            {Array.from({ length: 4 }).map((__, j) => (
+              <div key={j} className="min-w-0">
+                <div className="h-2.5 w-16 animate-pulse rounded-md bg-slate-300 dark:bg-slate-600" />
+                <div className="mt-1.5 h-3 w-14 animate-pulse rounded-md bg-slate-300 dark:bg-slate-600" />
+              </div>
+            ))}
+          </div>
+        </div>
+      </div>
+    </section>
+  );
 }
 
 type WalletColumnKey = 'wallet' | 'totalDP' | 'totalWD' | 'bdTransferIn' | 'stlm' | 'actualBal' | 'runningBal';
@@ -173,6 +609,8 @@ export default function Dashboard() {
   const [agentRows, setAgentRows] = useState<AgentRow[]>([]);
   const [cashGoWeekData, setCashGoWeekData] = useState<TrendPoint[]>([]);
   const [cashGoMonthData, setCashGoMonthData] = useState<TrendPoint[]>([]);
+  const [sspLine1CashoutRows, setSspLine1CashoutRows] = useState<SspLine1Row[]>([]);
+  const [sspLine1SendMoneyRows, setSspLine1SendMoneyRows] = useState<SspLine1Row[]>([]);
 
   const fetchData = useCallback(async () => {
     try {
@@ -180,19 +618,25 @@ export default function Dashboard() {
       setLoading(true);
       setError(null);
       setRows([]);
-      const [res, openingRes, agentBalRes, stlmRes, cashGoRes] = await Promise.all([
+      const [res, openingRes, agentBalRes, stlmRes, cashGoRes, sendMoneyStlmRes, sspLine1Res, sspLine1SendMoneyRes] = await Promise.all([
         fetch(`/api/sheet?t=${Date.now()}`),
         fetch(`/api/opening?t=${Date.now()}`),
         fetch(`/api/agentbal?t=${Date.now()}`),
         fetch(`/api/agstlmtopup?t=${Date.now()}`),
         fetch(`/api/cashgo?t=${Date.now()}`),
+        fetch(`/api/sendmoney/stlmtopup?t=${Date.now()}`),
+        fetch(`/api/brand-ssp-line1?t=${Date.now()}`),
+        fetch(`/api/brand-ssp-line1-sendmoney?t=${Date.now()}`),
       ]);
-      await assertAllOk([res, openingRes, agentBalRes, stlmRes, cashGoRes]);
+      await assertAllOk([res, openingRes, agentBalRes, stlmRes, cashGoRes, sendMoneyStlmRes, sspLine1Res, sspLine1SendMoneyRes]);
       const text = await res.text();
       const openingText = await openingRes.text();
       const agentBalText = await agentBalRes.text();
       const stlmText = await stlmRes.text();
       const cashGoText = await cashGoRes.text();
+      const sendMoneyStlmText = await sendMoneyStlmRes.text();
+      const sspLine1Text = await sspLine1Res.text();
+      const sspLine1SendMoneyText = await sspLine1SendMoneyRes.text();
       const lines = text.trim().split('\n').slice(1);
       const parsed: Row[] = lines
         .filter((line) => line.trim() !== '')
@@ -382,6 +826,27 @@ export default function Dashboard() {
         toCashGoPoint(new Date(monthHistoryStart.getFullYear(), monthHistoryStart.getMonth(), monthHistoryStart.getDate() + i))
       );
 
+      // SSP Line 1 (Cashout) / SSP Line 2 (Send Money) — "Brand Balance"
+      // sheet's own Opening/Deposit/Withdrawal/Total per brand, with Top Up/
+      // Settlement replaced by live per-brand totals (same convention as the
+      // Wallet Summary table's own bdTransferIn/stlm patch above, just
+      // grouped by brand instead of by wallet).
+      const cashoutBrandTopUpStlm = computeCashoutBrandTopUpStlm(stlmText, reportCutoffDate);
+      setSspLine1CashoutRows(
+        parseSspLine1(sspLine1Text).map((row) => {
+          const brandTotals = cashoutBrandTopUpStlm.get(row.brand.toUpperCase()) ?? { topUp: 0, stlm: 0 };
+          return { ...row, topUp: brandTotals.topUp, settlement: -brandTotals.stlm };
+        })
+      );
+
+      const sendMoneyBrandTopUpStlm = computeSendMoneyBrandTopUpStlm(sendMoneyStlmText, reportCutoffDate);
+      setSspLine1SendMoneyRows(
+        parseSspLine1(sspLine1SendMoneyText).map((row) => {
+          const brandTotals = sendMoneyBrandTopUpStlm.get(row.brand.toUpperCase()) ?? { topUp: 0, stlm: 0 };
+          return { ...row, topUp: brandTotals.topUp, settlement: -brandTotals.stlm };
+        })
+      );
+
       setRows(parsed);
       setOpeningTotal(openingSum);
       setAgentRows(mergedAgentRows);
@@ -477,7 +942,25 @@ export default function Dashboard() {
 
   return (
     <div className="min-h-screen bg-[#f5f5f7] text-[#1a1a1a] transition-colors duration-300 dark:bg-[#1c1c1e] dark:text-white">
-      <FloatingHeader title="Dashboard: SSP Line 1" icon={Home} onRefresh={fetchData} refreshing={spinning} />
+      <PageHeader
+        icon={Home}
+        title="Dashboard: SSP Line 1"
+        centerSlot={<ProductSwitchTabs />}
+        actions={
+          <>
+            <ThemeToggle />
+            <button
+              onClick={fetchData}
+              disabled={spinning}
+              aria-label="Refresh"
+              title="Refresh"
+              className="flex h-8 w-8 items-center justify-center rounded-lg border border-border bg-muted/60 text-foreground hover:bg-muted disabled:opacity-50"
+            >
+              <RefreshCw size={13} className={spinning ? 'animate-spin' : ''} />
+            </button>
+          </>
+        }
+      />
 
       <main className="space-y-6 px-4 py-6 md:px-8 md:py-8">
         {loading && (
@@ -550,6 +1033,9 @@ export default function Dashboard() {
                     </table>
                   </div>
                 </section>
+
+                <SspLine1Skeleton />
+                <SspLine1Skeleton />
               </div>
 
               <aside className="flex flex-col gap-4 lg:absolute lg:inset-y-0 lg:right-0 lg:w-[310px]">
@@ -694,7 +1180,12 @@ export default function Dashboard() {
                           </tr>
                         )) : (
                           <tr>
-                            <td colSpan={7} className="px-4 py-8 text-center text-[11px] text-muted-foreground">No matching wallets found.</td>
+                            <td colSpan={7}>
+                              <EmptyState
+                                title="No wallet data available"
+                                description="Wallet summary data hasn't loaded for this period yet."
+                              />
+                            </td>
                           </tr>
                         )}
                       </tbody>
@@ -774,7 +1265,10 @@ export default function Dashboard() {
                         </div>
                       </div>
                     )) : (
-                      <div className="px-4 py-8 text-center text-[11px] text-muted-foreground">No matching wallets found.</div>
+                      <EmptyState
+                        title="No wallet data available"
+                        description="Wallet summary data hasn't loaded for this period yet."
+                      />
                     )}
                     {totalRow && (
                       <div className="rounded-xl border-2 border-border bg-muted/20 p-4">
@@ -816,6 +1310,22 @@ export default function Dashboard() {
                     )}
                   </div>
                 </section>
+
+                <SspLine1Section
+                  rows={sspLine1CashoutRows}
+                  title="SSP Line 1: Cashout"
+                  subtitle="Smart Solution Running Balance by Brand"
+                  exportFileName="SSP_LINE1_AGENT_CASHOUT"
+                  exportSheetName="SSP Line 1 Cashout"
+                />
+
+                <SspLine1Section
+                  rows={sspLine1SendMoneyRows}
+                  title="SSP Line 2: Send Money"
+                  subtitle="Smart Solution Running Balance by Brand"
+                  exportFileName="SSP_LINE1_SENDMONEY"
+                  exportSheetName="SSP Line 1 Send Money"
+                />
               </div>
 
               <aside className="flex flex-col gap-4 lg:absolute lg:inset-y-0 lg:right-0 lg:w-[310px]">
@@ -896,7 +1406,10 @@ export default function Dashboard() {
                         </div>
                       );
                     }) : (
-                      <p className="px-4 py-8 text-center text-[11px] text-muted-foreground">No agent data found.</p>
+                      <EmptyState
+                        title="No high-volume agents"
+                        description="No agents currently meet the high-volume criteria."
+                      />
                     )}
                   </div>
                 </section>

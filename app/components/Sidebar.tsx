@@ -1,8 +1,11 @@
 'use client';
 
 import Link from 'next/link';
+import Image from 'next/image';
 import { usePathname, useSearchParams } from 'next/navigation';
+import { useEffect, useState, type ComponentType } from 'react';
 import { getActiveProduct, getCounterpartPath } from '@/app/lib/productRoutes';
+import { fetchTransferQueueCount, fetchSendMoneyTransferQueueCount } from '@/app/lib/transferQueueCount';
 import {
   LayoutDashboard,
   Wallet,
@@ -19,22 +22,10 @@ import {
 } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { cn } from '@/lib/utils';
+import { SIDEBAR_SYNC_DURATION_CLASS } from '@/app/design-system/transitions';
 
-const GeoLogo = () => (
-  <svg viewBox="0 0 24 24" fill="none" className="h-[15px] w-[15px]">
-    {/* Bar 1 — shortest, 55% */}
-    <rect x="1" y="14" width="6" height="6" rx="0.5" fill="white" fillOpacity="0.55" />
-    {/* Bar 2 — mid, 80% */}
-    <rect x="9" y="9" width="6" height="11" rx="0.5" fill="white" fillOpacity="0.80" />
-    {/* Bar 3 — tallest, 100% */}
-    <rect x="17" y="4" width="6" height="16" rx="0.5" fill="white" />
-    {/* Trend line */}
-    <polyline points="4,14 12,9 20,4" stroke="#10b981" strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round" />
-    {/* Ring matching the tile bg so dot lifts off the white bar */}
-    <circle cx="20" cy="4" r="2" fill="var(--product-accent)" />
-    {/* Emerald dot */}
-    <circle cx="20" cy="4" r="1.4" fill="#10b981" />
-  </svg>
+const BrandLogo = () => (
+  <Image src="/icon.png" alt="" width={28} height={28} className="h-full w-full rounded-lg object-cover" />
 );
 
 // Hover tooltip shown ONLY while the dock is collapsed (once expanded, the
@@ -42,7 +33,11 @@ const GeoLogo = () => (
 // `group relative`.
 function DockTooltip({ label }: { label: string }) {
   return (
-    <span className="pointer-events-none absolute left-full top-1/2 z-10 ml-2 -translate-y-1/2 whitespace-nowrap rounded-md border border-border bg-white px-1.5 py-0.5 text-[10px] font-medium text-foreground opacity-0 shadow-md transition-opacity duration-150 group-hover:opacity-100 dark:bg-[#0d1117]">
+    // delay-0 at rest so leaving hover dismisses it immediately; the
+    // 250ms delay only applies going the other way (group-hover:delay-*),
+    // so a cursor just passing over the dock doesn't flash a tooltip for
+    // every row it crosses.
+    <span className="pointer-events-none absolute left-full top-1/2 z-10 ml-2 -translate-y-1/2 whitespace-nowrap rounded-md border border-border bg-white px-1.5 py-0.5 text-[10px] font-medium text-foreground opacity-0 shadow-md transition-opacity delay-0 duration-150 group-hover:opacity-100 group-hover:delay-[250ms] dark:bg-[#0d1117]">
       {label}
     </span>
   );
@@ -53,7 +48,7 @@ type IconType = ComponentType<{ size?: number; strokeWidth?: number; className?:
 // The core fix for "icons jump when the sidebar expands": every row renders
 // BOTH the icon and its label at all times — nothing is conditionally
 // mounted/unmounted based on `expanded`. The icon sits in its own
-// fixed-size (h-9 w-9) box that never moves; the label is appended right
+// fixed-size (h-7 w-7) box that never moves; the label is appended right
 // after it and is purely an opacity/translate fade — never a width/margin
 // change on the icon's own box. The outer dock container is what actually
 // animates (width + overflow-hidden), which is what clips the label out of
@@ -88,18 +83,31 @@ function DockRow({
   // near-square instead; the label's own max-w-0 (below) ensures it truly
   // contributes zero width at that point rather than just being invisible.
   const rowClassName = cn(
-    'flex h-8 items-center rounded-lg px-1.5 text-[11px] font-medium whitespace-nowrap transition-colors duration-300 ease-in-out',
+    'flex h-8 items-center rounded-lg px-1.5 text-[11px] font-medium whitespace-nowrap transition-colors duration-150 ease-in-out focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#2563EB]',
     expanded ? 'w-full' : 'w-fit',
-    disabled ? 'cursor-not-allowed text-muted-foreground' : 'hover:bg-muted'
+    // A flat `hover:bg-muted` reads as a button press, not a highlight —
+    // a low-opacity tint of the active row's own navy reads as "this row
+    // is selectable" without competing with the actual active state.
+    disabled ? 'cursor-not-allowed text-muted-foreground' : 'hover:bg-[#0f172a]/[0.05] dark:hover:bg-white/[0.06]'
   );
-  const style = active ? { background: '#0f172a', color: 'white' } : undefined;
+  // Softened from a flat #0f172a fill — same dark family, one step
+  // lighter, plus a barely-there inset highlight instead of a shadow so it
+  // reads as "selected" without looking like a heavy solid block.
+  const style = active
+    ? { background: '#1e293b', color: 'white', boxShadow: 'inset 0 0 0 1px rgba(255,255,255,0.06)' }
+    : undefined;
 
   const inner = (
     <>
       <span className="relative flex h-7 w-7 shrink-0 items-center justify-center">
         <Icon size={13} strokeWidth={1.75} />
         {!!badge && badge > 0 && (
-          <Badge className="absolute -right-0.5 -top-0.5 h-3.5 min-w-3.5 justify-center rounded-full px-1 text-[8px]">
+          // Overrides the default Badge's bg-primary fill — same softened
+          // slate as the active nav state, for one consistent "dark" tone
+          // across the sidebar instead of two different blacks. leading-
+          // none keeps the digit centered instead of drifting from the
+          // default line-height in a box this small.
+          <Badge className="absolute -right-0.5 -top-0.5 h-3.5 min-w-3.5 justify-center rounded-full bg-[#1e293b] px-1 text-[8px] leading-none text-white dark:bg-white/20">
             {badge > 99 ? '99+' : badge}
           </Badge>
         )}
@@ -117,7 +125,7 @@ function DockRow({
   return (
     <div className="group relative">
       {href ? (
-        <Link href={href} onClick={onClick} aria-label={label} className={rowClassName} style={style}>
+        <Link href={href} onClick={onClick} aria-label={label} aria-current={active ? 'page' : undefined} className={rowClassName} style={style}>
           {inner}
         </Link>
       ) : (
@@ -129,8 +137,6 @@ function DockRow({
     </div>
   );
 }
-import { useEffect, useState, type ComponentType } from 'react';
-import { fetchTransferQueueCount, fetchSendMoneyTransferQueueCount } from '@/app/lib/transferQueueCount';
 
 // Flat icon list for the desktop floating dock — same destinations as the
 // mobile drawer's nav above (Dashboard is the product's own root page, e.g.
@@ -169,7 +175,25 @@ export default function Sidebar() {
 
   useEffect(() => {
     setMounted(true);
+    if (localStorage.getItem('sidebarPanelOpen') === 'true') setPanelOpen(true);
   }, []);
+
+  // Persist the expanded/collapsed choice across reloads — gated on
+  // `mounted` so this can't fire during the initial render (before the
+  // read above has had a chance to apply) and clobber a saved "true" back
+  // to the default "false".
+  useEffect(() => {
+    if (!mounted) return;
+    localStorage.setItem('sidebarPanelOpen', String(panelOpen));
+  }, [panelOpen, mounted]);
+
+  // Mirrors panelOpen into a CSS variable (defined in globals.css) so
+  // AppShell's main content can offset itself to match — a plain value
+  // swap between the two known widths, not a measured/calculated one, so
+  // this doesn't need a resize listener or any layout math.
+  useEffect(() => {
+    document.documentElement.style.setProperty('--sidebar-width', panelOpen ? '13rem' : '3.5rem');
+  }, [panelOpen]);
 
   useEffect(() => {
     const load = () => {
@@ -213,7 +237,7 @@ export default function Sidebar() {
             className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg ring-1 ring-white/10"
             style={{ background: '#0f172a' }}
           >
-            <GeoLogo />
+            <BrandLogo />
           </div>
           <div className="overflow-hidden">
             <p className="whitespace-nowrap text-[11px] font-semibold leading-tight text-foreground">Operations</p>
@@ -287,29 +311,34 @@ export default function Sidebar() {
 
       {/* Desktop — ONE persistent container; only its width animates
           between collapsed and expanded. Icons never move: every row keeps
-          the exact same fixed-size icon box (h-9 w-9) at the exact same
-          left offset (px-[9px] on the row) in both states — only the
+          the exact same fixed-size icon box (h-7 w-7) at the exact same
+          left offset (px-1.5 on the row) in both states — only the
           label next to it fades/slides in, and only because the outer
           container is wide enough to reveal it (overflow-hidden clips it
           otherwise). Row order is fixed and identical regardless of state:
           Menu toggle, brand, Dashboard, Overview, product switch, Balance,
           Opening, Settlement, Top Up, Transfer Queue, Settings, avatar. */}
       <div
-        className={`fixed left-0 top-0 z-[60] hidden h-screen overflow-hidden border-r border-border bg-white shadow-md transition-[width] duration-300 ease-in-out dark:bg-[#0d1117] md:block ${
+        className={`fixed left-0 top-0 z-[60] hidden h-screen overflow-hidden border-r border-border bg-white shadow-[1px_0_3px_rgba(0,0,0,0.04)] transition-[width] ${SIDEBAR_SYNC_DURATION_CLASS} ease-in-out dark:bg-[#0d1117] md:block ${
           panelOpen ? 'w-52' : 'w-14'
         }`}
       >
-        <div className="flex h-full flex-col gap-1 p-1">
+        <div className="flex h-full flex-col gap-1.5 p-1">
           {/* Brand — decorative logo, not a link. The chevron at the end is
               the ONLY open/close control now (replaces the old separate
               Menu/X toggle row). Fixed row height so collapsing/expanding
-              never changes its own size. */}
-          <div className="relative mb-2 flex h-9 items-center gap-2 rounded-lg px-2">
+              never changes its own size — h-11 (was h-9) gives it +4px of
+              breathing room top and bottom without touching the 28px logo
+              or text sizes. */}
+          {/* px-1.5 — matches every nav row and the footer avatar exactly,
+              so the logo icon's left edge lines up with every icon below
+              it instead of sitting 2px further right (was px-2). */}
+          <div className="relative mb-2 flex h-11 items-center gap-2 rounded-lg px-1.5">
             <div
               className="relative flex h-7 w-7 shrink-0 items-center justify-center rounded-lg ring-1 ring-white/10"
               style={{ background: '#0f172a' }}
             >
-              <GeoLogo />
+              <BrandLogo />
             </div>
             <div
               className={`overflow-hidden transition-all duration-300 ease-in-out ${
@@ -381,15 +410,19 @@ export default function Sidebar() {
 
       {/* Chevron badge rendered OUTSIDE the sidebar's overflow-hidden box so it
           can overlap past the collapsed edge without the sidebar itself
-          changing width or clipping it. Position mirrors the brand button's
-          fixed location (icons never move regardless of panelOpen). */}
+          changing width or clipping it. top-[26px] mirrors the brand row's
+          own vertical center (4px outer padding + half of its h-11/44px
+          height) so it reads as part of that row instead of a floating
+          chip — the softer shadow does the same job, replacing the more
+          prominent shadow-sm with a shadow just strong enough to lift it
+          off the page. */}
       {!panelOpen && (
         <button
           type="button"
           onClick={() => setPanelOpen(true)}
           aria-label="Expand menu"
           title="Expand menu"
-          className="fixed left-12 top-[22px] z-[61] hidden h-4 w-4 -translate-y-1/2 cursor-pointer items-center justify-center rounded-full border border-border bg-white text-slate-900 shadow-sm md:flex dark:bg-[#0d1117] dark:text-white"
+          className="fixed left-12 top-[26px] z-[61] hidden h-4 w-4 -translate-y-1/2 cursor-pointer items-center justify-center rounded-full border border-border bg-white text-slate-900 shadow-[0_1px_2px_rgba(0,0,0,0.08)] md:flex dark:bg-[#0d1117] dark:text-white"
         >
           <ChevronRight size={10} />
         </button>

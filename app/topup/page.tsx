@@ -2,13 +2,22 @@
 
 import { useEffect, useState, useCallback, useMemo, useRef } from 'react';
 import { createPortal } from 'react-dom';
-import { Search, ChevronUp, ChevronDown, Filter, Download, PlusCircle } from 'lucide-react';
+import { Search, ChevronUp, ChevronDown, Columns3, Download, PlusCircle, RefreshCw } from 'lucide-react';
 import * as XLSX from 'xlsx';
-import FloatingHeader from '../components/FloatingHeader';
+import PageHeader from '../components/PageHeader';
+import ProductSwitchTabs from '../components/ProductSwitchTabs';
+import ThemeToggle from '../components/ThemeToggle';
+import Toolbar from '../components/Toolbar';
+import DataTable from '../components/DataTable';
+import TableFooter from '../components/TableFooter';
+import EmptyState from '../components/EmptyState';
 import ConnectionErrorState from '../components/ConnectionErrorState';
 import { classifyFetchError, type ClassifiedError } from '../lib/errors';
-import { rawVal, fmtNum } from '@/app/lib/format';
-import { getBusinessToday } from '../lib/businessDate';
+import { rawVal, fmtNum, parseAmount } from '@/app/lib/format';
+import { isToday } from '../lib/businessDate';
+import { TABLE_STICKY_HEADER_CLASS, TABLE_HEADER_CELL_CLASS, TOOLBAR_ROW_CLASS, TOOLBAR_LEFT_CLASS, TOOLBAR_RIGHT_CLASS } from '../design-system/table';
+import { PAGE_MAIN_PADDING_CLASS } from '../design-system/spacing';
+import { getPreference, setPreference } from '../lib/preferences';
 
 // "AG BD STLM + TOPUP" no longer carries a brand/gateway column (removed from
 // the sheet). Brand now comes first from the "-<brand>" suffix already
@@ -84,40 +93,51 @@ type TopUpRow = {
   brand: string;
 };
 
-function parseAmount(val: string): number {
-  const cleaned = (val ?? '').replace(/"/g, '').replace(/,/g, '').trim();
-  if (cleaned === '-' || cleaned === '') return 0;
-  return parseFloat(cleaned) || 0;
-}
 
-// "AG BD STLM + TOPUP" dates are formatted "M/D/YYYY" — only today's rows
-// should ever render on this page. "Today" is the 2AM-rollover business
-// date (getBusinessToday), not the literal calendar day — e.g. at 12:38 AM
-// this still resolves to yesterday.
-function isToday(dateStr: string): boolean {
-  const parts = (dateStr ?? '').trim().split('/');
-  if (parts.length !== 3) return false;
-  const [m, d, y] = parts.map(Number);
-  if (!m || !d || !y) return false;
-  const now = getBusinessToday();
-  return m === now.getMonth() + 1 && d === now.getDate() && y === now.getFullYear();
-}
+// Permanent column identifiers — same Enterprise Table V2 pattern as
+// app/stlm/page.tsx (the canonical reference); this page gets its own
+// COLUMN_IDS rather than sharing Settlement's.
+const COLUMN_IDS = {
+  BRAND: 'brand',
+  LEADER: 'leader',
+  AGENT_NAME: 'agentName',
+  WALLET: 'wallet',
+  AMOUNT: 'amount',
+  TYPE: 'type',
+  DATE: 'date',
+} as const;
 
-type SortColumn = '' | 'agentName' | 'wallet' | 'amount' | 'type' | 'date';
-type ColumnKey = 'brand' | 'leader' | SortColumn;
+type ColumnKey = typeof COLUMN_IDS[keyof typeof COLUMN_IDS];
+type SortColumn = '' | Exclude<ColumnKey, typeof COLUMN_IDS.BRAND | typeof COLUMN_IDS.LEADER>;
 
-const columns: { key: ColumnKey; label: string }[] = [
-  { key: 'brand', label: 'Brand' },
-  { key: 'leader', label: 'Leader' },
-  { key: 'agentName', label: 'Agent Name' },
-  { key: 'wallet', label: 'Wallet' },
-  { key: 'amount', label: 'Amount' },
-  { key: 'type', label: 'Type' },
-  { key: 'date', label: 'Date' },
+// Column model matches Settlement's ColumnDef shape (`key` kept instead of
+// Settlement's `id` since every existing reference on this page already
+// reads `col.key`). No protected Actions-style column exists here, so all
+// columns are hideable.
+type ColumnDef = {
+  key: ColumnKey;
+  label: string;
+  visible: boolean;
+  sortable: boolean;
+  hideable: boolean;
+  align: 'left' | 'right' | 'center';
+};
+
+const DEFAULT_COLUMNS: ColumnDef[] = [
+  { key: COLUMN_IDS.BRAND, label: 'Brand', visible: true, sortable: false, hideable: true, align: 'center' },
+  { key: COLUMN_IDS.LEADER, label: 'Leader', visible: true, sortable: false, hideable: true, align: 'center' },
+  { key: COLUMN_IDS.AGENT_NAME, label: 'Agent Name', visible: true, sortable: true, hideable: true, align: 'center' },
+  { key: COLUMN_IDS.WALLET, label: 'Wallet', visible: true, sortable: true, hideable: true, align: 'center' },
+  { key: COLUMN_IDS.AMOUNT, label: 'Amount', visible: true, sortable: true, hideable: true, align: 'center' },
+  { key: COLUMN_IDS.TYPE, label: 'Type', visible: true, sortable: true, hideable: true, align: 'center' },
+  { key: COLUMN_IDS.DATE, label: 'Date', visible: true, sortable: true, hideable: true, align: 'center' },
 ];
 
+const COLUMN_VISIBILITY_STORAGE_KEY = 'topUpColumnVisibility';
+
+const columns: { key: ColumnKey; label: string }[] = DEFAULT_COLUMNS.map((col) => ({ key: col.key, label: col.label }));
+
 const columnWidths: Record<ColumnKey, string> = {
-  '': '0%',
   brand: '10%',
   leader: '12%',
   agentName: '18%',
@@ -128,7 +148,7 @@ const columnWidths: Record<ColumnKey, string> = {
 };
 
 function headerCellClasses(_active: boolean) {
-  return `group text-center px-3 py-2 text-[10px] font-semibold uppercase tracking-[0.06em] whitespace-nowrap text-muted-foreground`;
+  return `group ${TABLE_HEADER_CELL_CLASS}`;
 }
 
 function SortIcon({ active, direction }: { active: boolean; direction: 'asc' | 'desc' }) {
@@ -180,17 +200,20 @@ export default function TopUpPage() {
   const [brandFilter, setBrandFilter] = useState<Record<string, boolean>>({});
   const [brandMenuOpen, setBrandMenuOpen] = useState(false);
   const [brandMenuPos, setBrandMenuPos] = useState({ top: 0, left: 0 });
-  const [filterMenuOpen, setFilterMenuOpen] = useState(false);
-  const [filterMenuPos, setFilterMenuPos] = useState({ top: 0, left: 0 });
-  const [columnVisibility, setColumnVisibility] = useState<Record<ColumnKey, boolean>>(
-    () => Object.fromEntries(columns.map((col) => [col.key, true])) as Record<ColumnKey, boolean>
-  );
+  // Column Visibility (Enterprise Table V2) — same model/persistence as
+  // app/stlm/page.tsx: read saved preference once on mount (gated by
+  // `mounted`), written on every change thereafter.
+  const [columnDefs, setColumnDefs] = useState<ColumnDef[]>(DEFAULT_COLUMNS);
+  const [columnsMenuOpen, setColumnsMenuOpen] = useState(false);
+  const [columnsMenuPos, setColumnsMenuPos] = useState({ top: 0, left: 0 });
+  const [mounted, setMounted] = useState(false);
+  const columnsButtonRef = useRef<HTMLButtonElement>(null);
+  const columnsMenuRef = useRef<HTMLDivElement>(null);
+
   const [page, setPage] = useState(1);
   const rowsPerPage = 50;
   const brandButtonRef = useRef<HTMLButtonElement>(null);
   const brandDropdownRef = useRef<HTMLDivElement>(null);
-  const filterButtonRef = useRef<HTMLButtonElement>(null);
-  const filterDropdownRef = useRef<HTMLDivElement>(null);
 
   const fetchData = useCallback(async () => {
     try {
@@ -244,6 +267,29 @@ export default function TopUpPage() {
       const lines = text.trim().split('\n').slice(1);
       const topUp: TopUpRow[] = [];
 
+      // One canonical brand per shop, not per row — if ANY of a shop's Top
+      // Up rows carries an explicit "-<brand>" suffix, that's authoritative
+      // for every one of its rows (a shop's brand doesn't change
+      // transaction to transaction); only shops that NEVER carry a suffix
+      // anywhere fall back to the cross-reference. Resolving this per-shop
+      // first (instead of independently per row, each with its own
+      // suffix-or-fallback check) is what keeps a shop's brand consistent —
+      // e.g. "CALAMARI008" was showing as both B3 (one row's own suffix)
+      // and M1 (another row with no suffix, cross-reference-resolved) on
+      // this same page before this fix.
+      const agentBrandOverride: Record<string, string> = {};
+      lines
+        .filter(line => line.trim() !== '')
+        .forEach(line => {
+          const cols = line.split(',');
+          const toAgent = rawVal(cols[1]);
+          if (!toAgent || toAgent === '-') return;
+          const suffixBrand = extractBrandSuffix(toAgent);
+          if (suffixBrand) {
+            agentBrandOverride[stripBrandSuffix(toAgent).toUpperCase()] = suffixBrand;
+          }
+        });
+
       lines
         .filter(line => line.trim() !== '')
         .forEach(line => {
@@ -251,14 +297,15 @@ export default function TopUpPage() {
           const toAgent = rawVal(cols[1]);
           if (toAgent && toAgent !== '-') {
             const bareAgent = stripBrandSuffix(toAgent);
+            const bareAgentKey = bareAgent.toUpperCase();
             topUp.push({
               agentName: bareAgent,
               wallet: rawVal(cols[4]),
               amount: rawVal(cols[2]),
               date: rawVal(cols[3]),
               type: rawVal(cols[5]),
-              leader: leaderMap[bareAgent.toUpperCase()] || '−',
-              brand: extractBrandSuffix(toAgent) ?? resolveBrand(brandGroups[bareAgent.toUpperCase()] ?? [], toAgent),
+              leader: leaderMap[bareAgentKey] || '−',
+              brand: agentBrandOverride[bareAgentKey] ?? resolveBrand(brandGroups[bareAgentKey] ?? [], toAgent),
             });
           }
         });
@@ -298,26 +345,65 @@ export default function TopUpPage() {
   }, [brandMenuOpen]);
 
   useEffect(() => {
-    if (!filterMenuOpen) return;
+    setMounted(true);
+    const saved = getPreference<Record<string, boolean> | null>(COLUMN_VISIBILITY_STORAGE_KEY, null);
+    if (!saved) return;
+    setColumnDefs((current) =>
+      current.map((col) => (col.key in saved ? { ...col, visible: saved[col.key] } : col))
+    );
+  }, []);
+
+  useEffect(() => {
+    if (!mounted) return;
+    const visibility = Object.fromEntries(columnDefs.map((col) => [col.key, col.visible])) as Record<ColumnKey, boolean>;
+    setPreference(COLUMN_VISIBILITY_STORAGE_KEY, visibility);
+  }, [columnDefs, mounted]);
+
+  useEffect(() => {
+    if (!columnsMenuOpen) return;
 
     const handlePointerDown = (event: MouseEvent) => {
       const target = event.target as Node;
       if (
-        filterButtonRef.current && !filterButtonRef.current.contains(target) &&
-        filterDropdownRef.current && !filterDropdownRef.current.contains(target)
+        columnsButtonRef.current && !columnsButtonRef.current.contains(target) &&
+        columnsMenuRef.current && !columnsMenuRef.current.contains(target)
       ) {
-        setFilterMenuOpen(false);
+        setColumnsMenuOpen(false);
+      }
+    };
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        setColumnsMenuOpen(false);
+        columnsButtonRef.current?.focus();
       }
     };
 
     document.addEventListener('mousedown', handlePointerDown);
-    return () => document.removeEventListener('mousedown', handlePointerDown);
-  }, [filterMenuOpen]);
+    document.addEventListener('keydown', handleKeyDown);
+    return () => {
+      document.removeEventListener('mousedown', handlePointerDown);
+      document.removeEventListener('keydown', handleKeyDown);
+    };
+  }, [columnsMenuOpen]);
 
-  const visibleColumns = useMemo(() => columns.filter((col) => columnVisibility[col.key]), [columnVisibility]);
-  const allColumnsChecked = columns.every((col) => columnVisibility[col.key]);
-  const anyColumnHidden = columns.some((col) => !columnVisibility[col.key]);
-  const anyFilterActive = anyColumnHidden;
+  useEffect(() => {
+    if (!columnsMenuOpen) return;
+    const firstControl = columnsMenuRef.current?.querySelector<HTMLElement>('input, button');
+    firstControl?.focus();
+  }, [columnsMenuOpen]);
+
+  const visibleColumns = useMemo(
+    () => (mounted ? columnDefs : []).filter((col) => col.visible),
+    [columnDefs, mounted]
+  );
+  const visibleHideableCount = useMemo(
+    () => columnDefs.filter((col) => col.hideable && col.visible).length,
+    [columnDefs]
+  );
+  const columnVisibility = useMemo(
+    () => Object.fromEntries(columnDefs.map((col) => [col.key, col.visible])) as Record<ColumnKey, boolean>,
+    [columnDefs]
+  );
 
   const brandOptions = useMemo(() => {
     return Array.from(new Set(topUpRows.map((row) => row.brand).filter(Boolean))).sort((a, b) => a.localeCompare(b));
@@ -421,26 +507,29 @@ export default function TopUpPage() {
 
   return (
     <div className="h-screen w-full flex flex-col overflow-hidden bg-background font-[Inter,sans-serif] text-foreground transition-colors duration-300 dark:bg-[#1c1c1e]">
-      <FloatingHeader title="Top Up" icon={PlusCircle} onRefresh={fetchData} refreshing={spinning || loading} />
+      <PageHeader
+        icon={PlusCircle}
+        title="Top Up"
+        centerSlot={<ProductSwitchTabs />}
+        actions={<ThemeToggle />}
+      />
 
-      <main className="flex-1 flex flex-col overflow-hidden px-6 pt-8 pb-6">
+      <main className={PAGE_MAIN_PADDING_CLASS}>
 
         {error && <ConnectionErrorState error={error} onRetry={fetchData} />}
 
         {!error && (
-          <div className="mb-1 flex h-5 items-center">
-            {loading ? (
-              <div className="h-3.5 w-24 rounded-md bg-slate-200 dark:bg-slate-700 animate-pulse" />
-            ) : (
-              <span className="text-[11px] font-semibold text-foreground">Total Records: <span className="text-indigo-600">{sortedRows.length.toLocaleString('en-PH')}</span></span>
-            )}
-          </div>
-        )}
-
-        {!error && (
-          <div className="flex-1 flex flex-col min-h-0 bg-white rounded-xl border border-border overflow-hidden dark:bg-[#2a2a2d]">
-            <div className="shrink-0 px-3 py-1 min-h-[40px] border-b border-border bg-muted/20 flex flex-wrap items-center justify-between gap-2">
-              <div className="flex flex-wrap items-center gap-2">
+          <DataTable className="mt-3">
+            <Toolbar className={TOOLBAR_ROW_CLASS}>
+              <Toolbar.Left className={TOOLBAR_LEFT_CLASS}>
+                {loading ? (
+                  <div className="h-5 w-28 animate-pulse rounded-md bg-slate-200 dark:bg-slate-700" />
+                ) : (
+                  <div className="flex items-center gap-1.5 rounded-md bg-indigo-50 px-2.5 py-1 dark:bg-indigo-500/15">
+                    <span className="text-[10px] font-medium text-indigo-600 dark:text-indigo-400">Records</span>
+                    <span className="text-[11px] font-bold tabular-nums text-indigo-700 dark:text-indigo-300">{sortedRows.length.toLocaleString('en-PH')}</span>
+                  </div>
+                )}
                 <div className="flex w-full min-w-[140px] flex-1 items-center gap-2 rounded-lg border border-border bg-white px-3 py-1.5 dark:bg-[#2a2a2d] sm:w-52 sm:flex-none">
                   {loading ? (
                     <div className="h-3 w-32 animate-pulse rounded-md bg-slate-200 dark:bg-slate-700" />
@@ -456,87 +545,18 @@ export default function TopUpPage() {
                     </>
                   )}
                 </div>
-                <div className="relative">
-                  {!loading && (
-                    <button
-                      type="button"
-                      ref={filterButtonRef}
-                      onClick={(event) => {
-                        event.stopPropagation();
-                        const rect = filterButtonRef.current?.getBoundingClientRect();
-                        if (rect) {
-                          const dropdownWidth = 224;
-                          const left = Math.min(rect.left, window.innerWidth - dropdownWidth - 8);
-                          setFilterMenuPos({ top: rect.bottom + 8, left: Math.max(8, left) });
-                        }
-                        setFilterMenuOpen((current) => !current);
-                      }}
-                      className={`flex items-center gap-1.5 px-3 py-1.5 text-[10px] font-medium border rounded-lg hover:bg-white transition-colors ${anyFilterActive ? 'border-indigo-200 text-indigo-700 dark:border-indigo-900/50 dark:text-indigo-300' : 'border-border text-foreground'}`}
-                    >
-                      <Filter size={14} />
-                      Filter
-                    </button>
-                  )}
-                  {filterMenuOpen && (
-                    <div
-                      ref={filterDropdownRef}
-                      style={{ position: 'fixed', top: filterMenuPos.top, left: filterMenuPos.left }}
-                      className="z-[9999] w-56 max-h-[70vh] overflow-y-auto rounded-xl border border-[#e5e5e7] bg-white p-2 shadow-xl dark:border-[#3a3a3d] dark:bg-[#2a2a2d]"
-                      onClick={(event) => event.stopPropagation()}
-                    >
-                      <div className="px-2 py-1.5 text-[10px] font-semibold uppercase tracking-[0.24em] text-[#6b7280] dark:text-[#a0a0a0]">Columns</div>
-                      <label className="flex w-full items-center justify-start gap-2 whitespace-nowrap rounded-xl px-3 py-1.5 text-left text-[10px] text-[#6b7280] hover:bg-[#f5f5f7] dark:text-[#a0a0a0] dark:hover:bg-slate-800">
-                        <input
-                          type="checkbox"
-                          checked={allColumnsChecked}
-                          onChange={() => {
-                            const nextValue = !allColumnsChecked;
-                            setColumnVisibility(
-                              Object.fromEntries(columns.map((col) => [col.key, nextValue])) as Record<ColumnKey, boolean>
-                            );
-                          }}
-                        />
-                        <span>Check All</span>
-                      </label>
-                      {columns.map((col) => (
-                        <label key={col.key} className="flex w-full items-center justify-start gap-2 whitespace-nowrap rounded-xl px-3 py-1.5 text-left text-[10px] text-[#6b7280] hover:bg-[#f5f5f7] dark:text-[#a0a0a0] dark:hover:bg-slate-800">
-                          <input
-                            type="checkbox"
-                            checked={columnVisibility[col.key]}
-                            onChange={() => {
-                              setColumnVisibility((current) => ({ ...current, [col.key]: !current[col.key] }));
-                            }}
-                          />
-                          <span>{col.label}</span>
-                        </label>
-                      ))}
-                    </div>
-                  )}
-                </div>
-              </div>
-              <div className="flex items-center gap-2">
-                {loading ? (
-                  <div className="h-6 w-32 animate-pulse rounded-md bg-slate-200 dark:bg-slate-700" />
-                ) : (
-                  <div className="flex items-center gap-1.5">
-                    <span className="tabular-nums text-[10px] text-muted-foreground">{currentPage} / {totalPages}</span>
-                    <button
-                      type="button"
-                      onClick={() => setPage((current) => Math.max(1, current - 1))}
-                      disabled={currentPage === 1}
-                      className="rounded-lg border border-border bg-white px-2.5 py-1.5 text-[10px] font-medium text-foreground transition-colors hover:bg-muted disabled:opacity-40 dark:bg-transparent"
-                    >
-                      Previous
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => setPage((current) => Math.min(totalPages, current + 1))}
-                      disabled={currentPage === totalPages}
-                      className="rounded-lg border border-border bg-white px-2.5 py-1.5 text-[10px] font-medium text-foreground transition-colors hover:bg-muted disabled:opacity-40 dark:bg-transparent"
-                    >
-                      Next
-                    </button>
-                  </div>
+              </Toolbar.Left>
+              <Toolbar.Right className={TOOLBAR_RIGHT_CLASS}>
+                {loading && <div className="h-7 w-7 animate-pulse rounded-lg bg-slate-200 dark:bg-slate-700" />}
+                {!loading && (
+                  <button
+                    type="button"
+                    onClick={fetchData}
+                    title="Refresh"
+                    className="rounded-lg border border-border bg-white p-1.5 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground dark:bg-transparent"
+                  >
+                    <RefreshCw size={13} className={spinning ? 'animate-spin' : ''} />
+                  </button>
                 )}
                 {loading && <div className="h-7 w-20 animate-pulse rounded-lg bg-slate-200 dark:bg-slate-700" />}
                 {!loading && (
@@ -549,8 +569,91 @@ export default function TopUpPage() {
                     <Download size={13} />
                   </button>
                 )}
-              </div>
-            </div>
+                {loading && <div className="h-7 w-7 animate-pulse rounded-lg bg-slate-200 dark:bg-slate-700" />}
+                {!loading && (
+                  <div className="relative">
+                    <button
+                      type="button"
+                      ref={columnsButtonRef}
+                      onClick={(event) => {
+                        event.stopPropagation();
+                        const rect = columnsButtonRef.current?.getBoundingClientRect();
+                        if (rect) {
+                          const dropdownWidth = 224;
+                          const left = Math.max(8, Math.min(rect.right - dropdownWidth, window.innerWidth - dropdownWidth - 8));
+                          setColumnsMenuPos({ top: rect.bottom + 8, left });
+                        }
+                        setColumnsMenuOpen((current) => !current);
+                      }}
+                      aria-haspopup="true"
+                      aria-expanded={columnsMenuOpen}
+                      aria-controls="topup-columns-popover"
+                      aria-label="Columns"
+                      title="Columns"
+                      className="rounded-lg border border-border bg-white p-1.5 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground dark:bg-transparent"
+                    >
+                      <Columns3 size={13} />
+                    </button>
+                    {columnsMenuOpen && typeof document !== 'undefined' && createPortal(
+                      <div
+                        ref={columnsMenuRef}
+                        id="topup-columns-popover"
+                        role="dialog"
+                        aria-label="Column visibility"
+                        style={{ position: 'fixed', top: columnsMenuPos.top, left: columnsMenuPos.left }}
+                        className="z-[9999] w-56 max-h-[70vh] overflow-y-auto rounded-xl border border-[#e5e5e7] bg-white p-2 shadow-xl dark:border-[#3a3a3d] dark:bg-[#2a2a2d]"
+                        onClick={(event) => event.stopPropagation()}
+                        onKeyDown={(event) => {
+                          if (event.key === 'Escape') {
+                            event.stopPropagation();
+                            setColumnsMenuOpen(false);
+                            columnsButtonRef.current?.focus();
+                          }
+                        }}
+                      >
+                        <div className="px-2 py-1.5 text-[10px] font-semibold uppercase tracking-[0.24em] text-[#6b7280] dark:text-[#a0a0a0]">Columns</div>
+                        {columnDefs.filter((col) => col.hideable).map((col) => {
+                          const isLastVisible = col.visible && visibleHideableCount === 1;
+                          return (
+                            <label
+                              key={col.key}
+                              title={isLastVisible ? 'At least one column must stay visible' : undefined}
+                              className={`flex w-full items-center justify-start gap-2 whitespace-nowrap rounded-xl px-3 py-1.5 text-left text-[10px] ${
+                                isLastVisible
+                                  ? 'cursor-not-allowed text-[#b3b8c2] dark:text-[#5a5f66]'
+                                  : 'text-[#6b7280] hover:bg-[#f5f5f7] dark:text-[#a0a0a0] dark:hover:bg-slate-800'
+                              }`}
+                            >
+                              <input
+                                type="checkbox"
+                                checked={col.visible}
+                                disabled={isLastVisible}
+                                onChange={() => {
+                                  setColumnDefs((current) =>
+                                    current.map((c) => (c.key === col.key ? { ...c, visible: !c.visible } : c))
+                                  );
+                                }}
+                              />
+                              <span>{col.label}</span>
+                            </label>
+                          );
+                        })}
+                        <div className="mt-1 border-t border-[#F1F5F9] pt-1 dark:border-[#2f2f32]">
+                          <button
+                            type="button"
+                            onClick={() => setColumnDefs(DEFAULT_COLUMNS.map((col) => ({ ...col })))}
+                            className="flex w-full items-center justify-center rounded-lg px-2.5 py-1.5 text-[11px] font-medium text-indigo-600 transition-colors hover:bg-indigo-50 dark:text-indigo-400 dark:hover:bg-white/5"
+                          >
+                            Restore Defaults
+                          </button>
+                        </div>
+                      </div>,
+                      document.body
+                    )}
+                  </div>
+                )}
+              </Toolbar.Right>
+            </Toolbar>
             <div className="hidden flex-1 min-h-0 overflow-y-auto overflow-x-auto sm:block">
               <table className="w-full table-fixed text-sm">
                 <colgroup>
@@ -558,7 +661,7 @@ export default function TopUpPage() {
                     <col key={col.key} style={{ width: columnWidths[col.key] }} />
                   ))}
                 </colgroup>
-                <thead className="sticky top-0 z-[50] bg-white dark:bg-[#252528] border-b border-border shadow-[0_1px_3px_rgba(0,0,0,0.06)] dark:shadow-[0_2px_4px_rgba(0,0,0,0.35)]">
+                <thead className={TABLE_STICKY_HEADER_CLASS}>
                   <tr>
                     {visibleColumns.map((col) => (
                       <th
@@ -667,7 +770,16 @@ export default function TopUpPage() {
                     <tr key={i} className={`border-b border-border last:border-0 transition-colors hover:bg-muted/10 ${i % 2 === 1 ? 'bg-muted/5' : ''}`}>
                       {visibleColumns.map((col) => renderCell(row, col.key))}
                     </tr>
-                  )) : <tr><td colSpan={visibleColumns.length} className="px-3 py-8 text-center text-[11px] text-muted-foreground">No matching records found.</td></tr>}
+                  )) : (
+                    <tr>
+                      <td colSpan={Math.max(visibleColumns.length, 1)}>
+                        <EmptyState
+                          title="No matching records found"
+                          description="Try adjusting your search or filters."
+                        />
+                      </td>
+                    </tr>
+                  )}
                 </tbody>
               </table>
             </div>
@@ -700,13 +812,27 @@ export default function TopUpPage() {
                     </div>
                   ))
                 ) : (
-                  <div className="px-3 py-8 text-center text-[11px] text-muted-foreground">
-                    No matching records found.
-                  </div>
+                  <EmptyState
+                    title="No matching records found"
+                    description="Try adjusting your search or filters."
+                  />
                 )}
               </div>
             </div>
-          </div>
+
+            {!loading && (
+              <TableFooter
+                recordCountText={
+                  sortedRows.length === 0
+                    ? 'Showing 0 of 0 Records'
+                    : `Showing ${startIndex + 1}–${Math.min(endIndex, sortedRows.length)} of ${sortedRows.length} Records`
+                }
+                currentPage={currentPage}
+                totalPages={totalPages}
+                onPageChange={setPage}
+              />
+            )}
+          </DataTable>
         )}
       </main>
     </div>

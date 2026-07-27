@@ -3,8 +3,9 @@
 import { useEffect, useState, useCallback, useMemo } from 'react';
 import Image from 'next/image';
 import * as XLSX from 'xlsx';
-import { ArrowLeftRight, Wallet, Banknote, Building2, Download, Send, ChevronUp, ChevronDown, LayoutDashboard } from 'lucide-react';
-import FloatingHeader from './components/FloatingHeader';
+import { ArrowLeftRight, Wallet, Banknote, Building2, Download, Send, ChevronUp, ChevronDown, LayoutDashboard, RefreshCw } from 'lucide-react';
+import PageHeader from './components/PageHeader';
+import ThemeToggle from './components/ThemeToggle';
 import ConnectionErrorState from './components/ConnectionErrorState';
 import Toast, { type ToastState } from './components/Toast';
 import { classifyFetchError, type ClassifiedError, assertAllOk } from './lib/errors';
@@ -350,80 +351,45 @@ function computeCashoutWalletTopUpStlm(text: string, cutoff: Date | null): Map<s
   return totals;
 }
 
-// Brand resolution — same logic as app/agentbal/page.tsx's own
-// computeBrand/resolveBrand (duplicated page-locally per this codebase's
-// convention, not shared): a shop's brand is the majority "Group" value
-// (from "SSP AG BalanceLimit"'s own Group column) across its wallet rows,
-// ties broken by BRAND_PRIORITY, falling back to a brand code embedded in
-// the agent name itself if no group data exists at all.
+// Brand for the SSP Line 1 table's live Top Up/Settlement columns — read
+// directly off the shop name as displayed, e.g. "KONAN001-M1" -> "M1"
+// (trailing suffix, the common case), or "T-B5AG-BURMA001-NG" / the 5-part
+// "N-K1AG-J3-AVENT001-BK" -> "K1" (a handful of shops use Send Money's own
+// wallet-naming convention instead, brand right after the FIRST hyphen as
+// exactly "<code>AG" — segment count varies, matched on segment 1 alone,
+// not a fixed length). Deliberately does NOT cross-reference "SSP AG
+// BalanceLimit" for shops with neither pattern — verified against a real
+// pivot table of the underlying sheet: cross-referencing every unmatched
+// row inflated some brands 50%+ and invented figures for brands the pivot
+// shows as having none at all. Resolving per-transaction like this (not a
+// majority-vote cross-reference) also fixed a real, reported bug: the same
+// shop was previously showing up under two different brands across its own
+// separate Top Up rows, whenever only some of those rows carried an
+// explicit suffix and others fell through to the cross-reference.
 const SSP_LINE1_BRAND_PRIORITY = ['M1', 'M2', 'B1', 'B2', 'B3', 'B4', 'B5', 'K1', 'J1', 'T1'];
-const SSP_LINE1_SKIP_GROUPS = ['wallet with issue', 'disconnected', 'dc account'];
 
-function computeSspLine1Brand(groups: string[]): string {
-  const counts = new Map<string, number>();
-  groups.forEach((group) => {
-    const trimmed = (group ?? '').trim();
-    if (!trimmed || trimmed === '-') return;
-    if (SSP_LINE1_SKIP_GROUPS.some((skip) => trimmed.toLowerCase().includes(skip))) return;
-    const code = trimmed.slice(0, 2).toUpperCase();
-    counts.set(code, (counts.get(code) ?? 0) + 1);
-  });
-
-  if (counts.size === 0) return '−';
-
-  const maxCount = Math.max(...counts.values());
-  const tied = Array.from(counts.keys()).filter((code) => counts.get(code) === maxCount);
-  const priorityTied = tied.filter((code) => SSP_LINE1_BRAND_PRIORITY.includes(code));
-
-  if (priorityTied.length > 0) {
-    priorityTied.sort((a, b) => SSP_LINE1_BRAND_PRIORITY.indexOf(a) - SSP_LINE1_BRAND_PRIORITY.indexOf(b));
-    return priorityTied[0];
-  }
-
-  tied.sort((a, b) => a.localeCompare(b));
-  return tied[0];
-}
-
-function resolveSspLine1Brand(groups: string[], agentName: string): string {
-  const brand = computeSspLine1Brand(groups);
-  if (brand !== '−') return brand;
-  return SSP_LINE1_BRAND_PRIORITY.find((code) => agentName.toUpperCase().includes(code)) ?? '−';
-}
-
-// "To Agent" values on "AG BD STLM + TOPUP" sometimes carry a trailing
-// "-<brand>" suffix (e.g. "KONAN001-M1"), sometimes not — strip it so the
-// bare code matches "SSP AG BalanceLimit"'s own wallet-name keys.
-function stripSspLine1BrandSuffix(name: string): string {
-  const parts = name.split('-');
-  if (parts.length >= 2 && SSP_LINE1_BRAND_PRIORITY.includes(parts[parts.length - 1].toUpperCase())) {
-    return parts.slice(0, -1).join('-');
-  }
-  return name;
-}
-
-// Same priority as app/topup/page.tsx's own extractBrandSuffix: the Top Up
-// column here should attribute brand the same way the Top Up page itself
-// does — suffix on the shop name first (e.g. "KONAN001-M1" → M1), falling
-// back to the cross-reference lookup only when the shop name has no suffix.
 function extractSspLine1BrandSuffix(name: string): string | null {
   const parts = name.split('-');
   const last = parts[parts.length - 1]?.toUpperCase();
   return parts.length >= 2 && SSP_LINE1_BRAND_PRIORITY.includes(last) ? last : null;
 }
 
+function extractSspLine1BrandAltFormat(name: string): string | null {
+  const segment = (name.split('-')[1] ?? '').toUpperCase();
+  return SSP_LINE1_BRAND_PRIORITY.find((code) => segment === `${code}AG`) ?? null;
+}
+
+function resolveSspLine1Brand(name: string): string | null {
+  return extractSspLine1BrandSuffix(name) ?? extractSspLine1BrandAltFormat(name);
+}
+
 // Same source/cutoff as computeCashoutTopUpStlm, but grouped by resolved
 // Brand (M1/M2/K1/B1-B5/T1/J1) instead of summed into one grand total —
-// feeds the SSP Line 1 table's Top Up/Settlement columns. brandGroups maps
-// a bare shop/wallet name (from "SSP AG BalanceLimit") to its own list of
-// raw Group values, same map shape app/agentbal/page.tsx already builds.
-function computeCashoutBrandTopUpStlm(
-  text: string,
-  cutoff: Date | null,
-  brandGroups: Map<string, string[]>
-): Map<string, { topUp: number; stlm: number }> {
+// feeds the SSP Line 1 table's Top Up/Settlement columns.
+function computeCashoutBrandTopUpStlm(text: string, cutoff: Date | null): Map<string, { topUp: number; stlm: number }> {
   const totals = new Map<string, { topUp: number; stlm: number }>();
-  const add = (brand: string, key: 'topUp' | 'stlm', amount: number) => {
-    if (brand === '−') return;
+  const add = (brand: string | null, key: 'topUp' | 'stlm', amount: number) => {
+    if (!brand) return;
     const existing = totals.get(brand) ?? { topUp: 0, stlm: 0 };
     existing[key] += amount;
     totals.set(brand, existing);
@@ -432,20 +398,17 @@ function computeCashoutBrandTopUpStlm(
   text.trim().split('\n').slice(1).forEach((line) => {
     if (!line.trim()) return;
     const cols = line.split(',');
-    const topUpAgentRaw = (cols[1] ?? '').replace(/"/g, '').trim();
-    const topUpAgent = stripSspLine1BrandSuffix(topUpAgentRaw);
+    const topUpAgent = (cols[1] ?? '').replace(/"/g, '').trim();
     const topUpAmount = clean(cols[2]);
     const topUpDate = cutoff ? parseSlashDate((cols[3] ?? '').replace(/"/g, '').trim()) : null;
     if (topUpAgent && topUpAgent !== '-' && topUpAmount && (!cutoff || (topUpDate && topUpDate >= cutoff))) {
-      const brand = extractSspLine1BrandSuffix(topUpAgentRaw) ?? resolveSspLine1Brand(brandGroups.get(topUpAgent) ?? [], topUpAgent);
-      add(brand, 'topUp', topUpAmount);
+      add(resolveSspLine1Brand(topUpAgent), 'topUp', topUpAmount);
     }
-    const stlmAgent = stripSspLine1BrandSuffix((cols[7] ?? '').replace(/"/g, '').trim());
+    const stlmAgent = (cols[7] ?? '').replace(/"/g, '').trim();
     const stlmAmount = Math.abs(clean(cols[8]));
     const stlmDate = cutoff ? parseSlashDate((cols[9] ?? '').replace(/"/g, '').trim()) : null;
     if (stlmAgent && stlmAgent !== '-' && stlmAmount && (!cutoff || (stlmDate && stlmDate >= cutoff))) {
-      const brand = resolveSspLine1Brand(brandGroups.get(stlmAgent) ?? [], stlmAgent);
-      add(brand, 'stlm', stlmAmount);
+      add(resolveSspLine1Brand(stlmAgent), 'stlm', stlmAmount);
     }
   });
 
@@ -1034,6 +997,18 @@ function SspLine1Section({
     return list;
   }, [rows, sortColumn, sortDirection]);
 
+  // Column sums across every brand — always the full unsorted set (a footer
+  // total shouldn't reorder with the rows above it), pinned at the bottom
+  // regardless of sort state, same convention as the Wallet Summary table's
+  // own Total row.
+  const totals = useMemo(
+    () => SSP_LINE1_COLUMNS.reduce((acc, col) => {
+      acc[col.key] = rows.reduce((sum, row) => sum + row[col.key], 0);
+      return acc;
+    }, {} as Record<keyof Omit<SspLine1Row, 'brand'>, number>),
+    [rows]
+  );
+
   const handleExport = useCallback(() => {
     const headers = ['Brand', ...SSP_LINE1_COLUMNS.map((c) => c.label)];
     const data = rows.map((row) => [row.brand, ...SSP_LINE1_COLUMNS.map((c) => row[c.key])]);
@@ -1109,6 +1084,16 @@ function SspLine1Section({
               </tr>
             ))}
           </tbody>
+          {rows.length > 0 && (
+            <tfoot>
+              <tr className="border-t-2 border-border bg-muted/20">
+                <td className="whitespace-nowrap px-4 py-3 text-left text-[13px] font-bold text-foreground">Total</td>
+                {SSP_LINE1_COLUMNS.map((col) => (
+                  <CihCell key={col.key} value={totals[col.key]} bold />
+                ))}
+              </tr>
+            </tfoot>
+          )}
         </table>
       </div>
 
@@ -1140,6 +1125,31 @@ function SspLine1Section({
             </div>
           );
         })}
+        {rows.length > 0 && (() => {
+          const totalDisplay = cihValueDisplay(totals.total);
+          return (
+            <div className="rounded-xl border-2 border-border bg-muted/20 p-4">
+              <div className="flex items-start justify-between gap-2">
+                <span className="text-[15px] font-bold text-foreground">Total</span>
+                <div className="text-right">
+                  <p className="text-[11px] text-muted-foreground">Total</p>
+                  <p className={`text-lg font-bold tabular-nums ${totalDisplay.className}`}>{totalDisplay.text}</p>
+                </div>
+              </div>
+              <div className="mt-3 grid grid-cols-2 gap-x-2 gap-y-3 border-t border-border pt-3">
+                {SSP_LINE1_COLUMNS.filter((col) => col.key !== 'total').map((col) => {
+                  const display = cihValueDisplay(totals[col.key]);
+                  return (
+                    <div key={col.key} className="min-w-0">
+                      <p className="text-[11px] text-muted-foreground">{col.label}</p>
+                      <p className={`mt-0.5 text-[10.5px] font-bold tabular-nums ${display.className}`}>{display.text}</p>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          );
+        })()}
       </div>
     </section>
   );
@@ -1190,6 +1200,18 @@ function SspLine1Skeleton() {
               </tr>
             ))}
           </tbody>
+          <tfoot>
+            <tr className="border-t-2 border-border bg-muted/20" style={{ height: '44.5px' }}>
+              <td className="px-4 py-3">
+                <div className="h-3 w-10 animate-pulse rounded-md bg-slate-300 dark:bg-slate-600" />
+              </td>
+              {SSP_LINE1_COLUMNS.map((col) => (
+                <td key={col.key} className="px-4 py-3">
+                  <div className="mx-auto h-3 w-16 animate-pulse rounded-md bg-slate-300 dark:bg-slate-600" />
+                </td>
+              ))}
+            </tr>
+          </tfoot>
         </table>
       </div>
 
@@ -1213,6 +1235,23 @@ function SspLine1Skeleton() {
             </div>
           </div>
         ))}
+        <div className="rounded-xl border-2 border-border bg-muted/20 p-4" style={{ height: '186px' }}>
+          <div className="flex items-start justify-between gap-2">
+            <div className="h-[18px] w-20 animate-pulse rounded-md bg-slate-300 dark:bg-slate-600" />
+            <div className="flex flex-col items-end gap-1.5">
+              <div className="h-3 w-16 animate-pulse rounded-md bg-slate-300 dark:bg-slate-600" />
+              <div className="h-[22px] w-24 animate-pulse rounded-md bg-slate-400 dark:bg-slate-500" />
+            </div>
+          </div>
+          <div className="mt-3 grid grid-cols-2 gap-x-2 gap-y-3 border-t border-border pt-3">
+            {Array.from({ length: 4 }).map((__, j) => (
+              <div key={j} className="min-w-0">
+                <div className="h-2.5 w-16 animate-pulse rounded-md bg-slate-300 dark:bg-slate-600" />
+                <div className="mt-1.5 h-3 w-14 animate-pulse rounded-md bg-slate-300 dark:bg-slate-600" />
+              </div>
+            ))}
+          </div>
+        </div>
       </div>
     </section>
   );
@@ -1539,7 +1578,7 @@ export default function BalanceOverviewPage() {
       setLoading(true);
       setError(null);
 
-      const [cashoutRes, sendMoneyRes, cashGoRes, bundleRes, sspLine1Res, sspLine1SendMoneyRes, brandCashRes, agstlmRes, balRes, openingRes, estimatedRes, estimatedSendMoneyRes] = await Promise.all([
+      const [cashoutRes, sendMoneyRes, cashGoRes, bundleRes, sspLine1Res, sspLine1SendMoneyRes, brandCashRes, agstlmRes, openingRes, estimatedRes, estimatedSendMoneyRes] = await Promise.all([
         fetch(`/api/sheet?t=${Date.now()}`),
         fetch(`/api/sendmoney/sheet?t=${Date.now()}`),
         fetch(`/api/cashgo?t=${Date.now()}`),
@@ -1548,12 +1587,11 @@ export default function BalanceOverviewPage() {
         fetch(`/api/brand-ssp-line1-sendmoney?t=${Date.now()}`),
         fetch(`/api/brand-cash-inhand?t=${Date.now()}`),
         fetch(`/api/agstlmtopup?t=${Date.now()}`),
-        fetch(`/api/balance-limit?t=${Date.now()}`),
         fetch(`/api/opening?t=${Date.now()}`),
         fetch(`/api/opening/estimated-balance?t=${Date.now()}`),
         fetch(`/api/sendmoney/opening/estimated-balance?t=${Date.now()}`),
       ]);
-      await assertAllOk([cashoutRes, sendMoneyRes, cashGoRes, bundleRes, sspLine1Res, sspLine1SendMoneyRes, brandCashRes, agstlmRes, balRes, openingRes, estimatedRes, estimatedSendMoneyRes]);
+      await assertAllOk([cashoutRes, sendMoneyRes, cashGoRes, bundleRes, sspLine1Res, sspLine1SendMoneyRes, brandCashRes, agstlmRes, openingRes, estimatedRes, estimatedSendMoneyRes]);
       const cashoutText = await cashoutRes.text();
       const sendMoneyText = await sendMoneyRes.text();
       const cashGoText = await cashGoRes.text();
@@ -1562,7 +1600,6 @@ export default function BalanceOverviewPage() {
       const sspLine1SendMoneyText = await sspLine1SendMoneyRes.text();
       const brandCashText = await brandCashRes.text();
       const agstlmText = await agstlmRes.text();
-      const balData: string[][] = await balRes.json();
       const openingText = await openingRes.text();
       const estimatedData: {
         balances: Record<string, number>;
@@ -1692,18 +1729,7 @@ export default function BalanceOverviewPage() {
         { key: 'upay', label: 'UPay', value: todayBundle.upay },
       ], null, sendMoneyTopUpStlm, sendMoneyOpeningOverride, sendMoneyWalletRunningBalOverride));
 
-      // "SSP AG BalanceLimit" -> wallet name (col 1) + its own Group (col 6),
-      // same shape app/agentbal/page.tsx builds for its own brand resolution.
-      const sspLine1BrandGroups = new Map<string, string[]>();
-      balData.slice(1).forEach((row) => {
-        const walletName = (row[1] ?? '').trim();
-        const group = (row[6] ?? '').trim();
-        if (!walletName || walletName === '-' || !group || group === '-') return;
-        const groups = sspLine1BrandGroups.get(walletName) ?? [];
-        groups.push(group);
-        sspLine1BrandGroups.set(walletName, groups);
-      });
-      const sspLine1BrandTopUpStlm = computeCashoutBrandTopUpStlm(agstlmText, cutoff, sspLine1BrandGroups);
+      const sspLine1BrandTopUpStlm = computeCashoutBrandTopUpStlm(agstlmText, cutoff);
 
       setSspLine1Rows(
         parseSspLine1(sspLine1Text).map((row) => {
@@ -1768,21 +1794,37 @@ export default function BalanceOverviewPage() {
 
   return (
     <div className="min-h-screen bg-[#f5f5f7] text-[#1a1a1a] transition-colors duration-300 dark:bg-[#1c1c1e] dark:text-white">
-      <FloatingHeader
-        title="Balance Overview"
+      <PageHeader
         icon={LayoutDashboard}
-        onRefresh={fetchData}
-        refreshing={spinning}
+        title="Balance Overview"
         actions={
-          <button
-            onClick={handleSendToTelegram}
-            disabled={telegramSending || loading}
-            aria-label="Send to Telegram"
-            title="Send to Telegram"
-            className="flex h-8 w-8 items-center justify-center rounded-lg border border-border bg-muted/60 text-foreground hover:bg-muted disabled:cursor-not-allowed disabled:opacity-40"
-          >
-            <Send size={13} className={telegramSending ? 'animate-spin' : ''} />
-          </button>
+          <>
+            <button
+              onClick={handleSendToTelegram}
+              disabled={telegramSending || loading}
+              aria-label="Send to Telegram"
+              title="Send to Telegram"
+              className="flex h-8 w-8 items-center justify-center rounded-lg border border-border bg-muted/60 text-foreground hover:bg-muted disabled:cursor-not-allowed disabled:opacity-40"
+            >
+              <Send size={13} className={telegramSending ? 'animate-spin' : ''} />
+            </button>
+            <ThemeToggle />
+            {/* Refresh stays in the header here — this is an analytics page
+                with no page-level Toolbar to relocate it into (each section
+                below has its own Export-only mini-header, not a search/
+                filter/refresh bar), so the usual "Refresh belongs in
+                Toolbar" rule doesn't have anywhere to apply. Documented
+                exception, not an oversight. */}
+            <button
+              onClick={fetchData}
+              disabled={spinning}
+              aria-label="Refresh"
+              title="Refresh"
+              className="flex h-8 w-8 items-center justify-center rounded-lg border border-border bg-muted/60 text-foreground hover:bg-muted disabled:opacity-50"
+            >
+              <RefreshCw size={13} className={spinning ? 'animate-spin' : ''} />
+            </button>
+          </>
         }
       />
       <Toast toast={toast} onDismiss={() => setToast(null)} />
