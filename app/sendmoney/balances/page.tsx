@@ -421,6 +421,26 @@ export default function SendMoneyAgentBalance() {
   const walletStatusButtonRef = useRef<HTMLButtonElement>(null);
   const walletStatusDropdownRef = useRef<HTMLDivElement>(null);
   const scrollRef = useRef<number>(0);
+  const [atScrollStart, setAtScrollStart] = useState(true);
+  const [atScrollEnd, setAtScrollEnd] = useState(true);
+  const tableScrollRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const el = tableScrollRef.current;
+    if (!el) return;
+    const handleScroll = () => {
+      setAtScrollStart(el.scrollLeft <= 1);
+      setAtScrollEnd(el.scrollLeft >= el.scrollWidth - el.offsetWidth - 1);
+    };
+    handleScroll();
+    el.addEventListener('scroll', handleScroll, { passive: true });
+    const resizeObserver = new ResizeObserver(handleScroll);
+    resizeObserver.observe(el);
+    return () => {
+      el.removeEventListener('scroll', handleScroll);
+      resizeObserver.disconnect();
+    };
+  }, []);
 
   const fetchData = useCallback(async () => {
     scrollRef.current = window.scrollY;
@@ -1227,7 +1247,8 @@ export default function SendMoneyAgentBalance() {
                 )}
               </Toolbar.Right>
             </Toolbar>
-            <div className="hidden flex-1 min-h-0 overflow-y-auto overflow-x-auto sm:block">
+            <div className="relative hidden flex-1 min-h-0 sm:block">
+            <div ref={tableScrollRef} className="h-full overflow-y-auto overflow-x-auto">
               <table className="w-full table-fixed text-xs" style={{ minWidth: TABLE_MIN_WIDTH }}>
                 <colgroup>
                   {visibleColumns.map((col) => (
@@ -1562,6 +1583,13 @@ export default function SendMoneyAgentBalance() {
                   )}
                 </tbody>
               </table>
+            </div>
+            {!atScrollStart && (
+              <div className="pointer-events-none absolute inset-y-0 left-0 z-[55] w-6 bg-gradient-to-r from-white to-transparent dark:from-[#2a2a2d]" />
+            )}
+            {!atScrollEnd && (
+              <div className="pointer-events-none absolute inset-y-0 right-0 z-[55] w-6 bg-gradient-to-l from-white to-transparent dark:from-[#2a2a2d]" />
+            )}
             </div>
 
             <div className="flex-1 min-h-0 overflow-y-auto sm:hidden">

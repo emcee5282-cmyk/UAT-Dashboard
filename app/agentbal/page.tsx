@@ -474,13 +474,28 @@ export default function AgentBalance() {
   const tableScrollRef = useRef<HTMLDivElement>(null);
   const [isScrolled, setIsScrolled] = useState(false);
   const [selectedRows, setSelectedRows] = useState<Set<string>>(new Set());
+  // Small left/right edge-fade cues on the horizontally-scrollable table,
+  // so text at the boundary doesn't look abruptly cut off — shown only
+  // while there's actually more content to scroll to in that direction.
+  const [atScrollStart, setAtScrollStart] = useState(true);
+  const [atScrollEnd, setAtScrollEnd] = useState(true);
 
   useEffect(() => {
     const el = tableScrollRef.current;
     if (!el) return;
-    const handleScroll = () => setIsScrolled(el.scrollTop > 0);
+    const handleScroll = () => {
+      setIsScrolled(el.scrollTop > 0);
+      setAtScrollStart(el.scrollLeft <= 1);
+      setAtScrollEnd(el.scrollLeft >= el.scrollWidth - el.offsetWidth - 1);
+    };
+    handleScroll();
     el.addEventListener('scroll', handleScroll, { passive: true });
-    return () => el.removeEventListener('scroll', handleScroll);
+    const resizeObserver = new ResizeObserver(handleScroll);
+    resizeObserver.observe(el);
+    return () => {
+      el.removeEventListener('scroll', handleScroll);
+      resizeObserver.disconnect();
+    };
   }, []);
 
   const toggleRowSelection = useCallback((agentName: string) => {
@@ -1278,7 +1293,8 @@ export default function AgentBalance() {
                 )}
               </Toolbar.Right>
             </Toolbar>
-            <div ref={tableScrollRef} className="dt-scroll hidden relative flex-1 min-h-0 overflow-y-auto overflow-x-auto sm:block">
+            <div className="relative hidden flex-1 min-h-0 sm:block">
+              <div ref={tableScrollRef} className="dt-scroll h-full overflow-y-auto overflow-x-auto">
               <table className="w-full text-xs">
                 <thead className={`sticky top-0 z-[50] bg-[#FAFBFC] dark:bg-[#1C1F26] border-b border-[#E2E8F0] dark:border-[#3a3a3d] transition-shadow duration-150 ease-out ${
                   isScrolled ? 'shadow-[0_2px_4px_rgba(15,23,42,0.1)] dark:shadow-[0_2px_4px_rgba(0,0,0,0.35)]' : ''
@@ -1643,6 +1659,13 @@ export default function AgentBalance() {
                   )}
                 </tbody>
               </table>
+              </div>
+              {!atScrollStart && (
+                <div className="pointer-events-none absolute inset-y-0 left-0 z-[55] w-6 bg-gradient-to-r from-white to-transparent dark:from-[#2a2a2d]" />
+              )}
+              {!atScrollEnd && (
+                <div className="pointer-events-none absolute inset-y-0 right-0 z-[55] w-6 bg-gradient-to-l from-white to-transparent dark:from-[#2a2a2d]" />
+              )}
             </div>
 
             <div className="flex-1 min-h-0 overflow-y-auto sm:hidden">

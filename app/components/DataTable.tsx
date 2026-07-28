@@ -44,6 +44,8 @@ function DataTableScrollArea({
   onScrolledChange?: (isScrolled: boolean) => void;
 }) {
   const [isScrolled, setIsScrolled] = useState(false);
+  const [atScrollStart, setAtScrollStart] = useState(true);
+  const [atScrollEnd, setAtScrollEnd] = useState(true);
   const ref = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -53,16 +55,32 @@ function DataTableScrollArea({
       const next = el.scrollTop > 0;
       setIsScrolled(next);
       onScrolledChange?.(next);
+      setAtScrollStart(el.scrollLeft <= 1);
+      setAtScrollEnd(el.scrollLeft >= el.scrollWidth - el.offsetWidth - 1);
     };
+    handleScroll();
     el.addEventListener('scroll', handleScroll, { passive: true });
-    return () => el.removeEventListener('scroll', handleScroll);
+    const resizeObserver = new ResizeObserver(handleScroll);
+    resizeObserver.observe(el);
+    return () => {
+      el.removeEventListener('scroll', handleScroll);
+      resizeObserver.disconnect();
+    };
   }, [onScrolledChange]);
 
   return (
-    <div ref={ref} className={`dt-scroll relative flex-1 min-h-0 overflow-y-auto overflow-x-auto ${className}`}>
-      <div className="w-full text-sm" role="table">
-        {children(isScrolled)}
+    <div className={`relative flex-1 min-h-0 ${className}`}>
+      <div ref={ref} className="dt-scroll h-full overflow-y-auto overflow-x-auto">
+        <div className="w-full text-sm" role="table">
+          {children(isScrolled)}
+        </div>
       </div>
+      {!atScrollStart && (
+        <div className="pointer-events-none absolute inset-y-0 left-0 z-[55] w-6 bg-gradient-to-r from-white to-transparent dark:from-[#2a2a2d]" />
+      )}
+      {!atScrollEnd && (
+        <div className="pointer-events-none absolute inset-y-0 right-0 z-[55] w-6 bg-gradient-to-l from-white to-transparent dark:from-[#2a2a2d]" />
+      )}
     </div>
   );
 }

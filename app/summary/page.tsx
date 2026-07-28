@@ -391,13 +391,28 @@ export default function Summary() {
 
   const [isScrolled, setIsScrolled] = useState(false);
   const tableScrollRef = useRef<HTMLDivElement>(null);
+  // Small left/right edge-fade cues on the horizontally-scrollable table,
+  // so text at the boundary doesn't look abruptly cut off — shown only
+  // while there's actually more content to scroll to in that direction.
+  const [atScrollStart, setAtScrollStart] = useState(true);
+  const [atScrollEnd, setAtScrollEnd] = useState(true);
 
   useEffect(() => {
     const el = tableScrollRef.current;
     if (!el) return;
-    const handleScroll = () => setIsScrolled(el.scrollTop > 0);
+    const handleScroll = () => {
+      setIsScrolled(el.scrollTop > 0);
+      setAtScrollStart(el.scrollLeft <= 1);
+      setAtScrollEnd(el.scrollLeft >= el.scrollWidth - el.offsetWidth - 1);
+    };
+    handleScroll();
     el.addEventListener('scroll', handleScroll, { passive: true });
-    return () => el.removeEventListener('scroll', handleScroll);
+    const resizeObserver = new ResizeObserver(handleScroll);
+    resizeObserver.observe(el);
+    return () => {
+      el.removeEventListener('scroll', handleScroll);
+      resizeObserver.disconnect();
+    };
   }, []);
 
   const fetchData = useCallback(async () => {
@@ -922,7 +937,8 @@ export default function Summary() {
               </Toolbar.Right>
             </Toolbar>
             <div className="hidden h-1.5 shrink-0 sm:block" />
-            <div ref={tableScrollRef} className="dt-scroll hidden relative flex-1 min-h-0 overflow-y-auto overflow-x-auto sm:block">
+            <div className="relative hidden flex-1 min-h-0 sm:block">
+              <div ref={tableScrollRef} className="dt-scroll h-full overflow-y-auto overflow-x-auto">
               <table className="w-full table-fixed text-sm" style={{ minWidth: TABLE_MIN_WIDTH_PX }}>
                 <colgroup>
                   <col style={{ width: '44px' }} />
@@ -1031,6 +1047,13 @@ export default function Summary() {
                   )}
                 </tbody>
               </table>
+              </div>
+              {!atScrollStart && (
+                <div className="pointer-events-none absolute inset-y-0 left-0 z-[55] w-6 bg-gradient-to-r from-white to-transparent dark:from-[#2a2a2d]" />
+              )}
+              {!atScrollEnd && (
+                <div className="pointer-events-none absolute inset-y-0 right-0 z-[55] w-6 bg-gradient-to-l from-white to-transparent dark:from-[#2a2a2d]" />
+              )}
             </div>
 
             <div className="flex-1 min-h-0 overflow-y-auto sm:hidden">
