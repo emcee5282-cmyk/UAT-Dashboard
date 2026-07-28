@@ -245,6 +245,12 @@ const SKELETON_WIDTH: Record<ColumnKey, string> = {
 const GHOST_BUTTON =
   'inline-flex h-9 items-center gap-1.5 rounded-[8px] border border-[#E2E8F0] px-3 text-[13px] font-medium text-[#475569] transition-colors duration-150 ease-out hover:bg-[#F8FAFC] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#2563EB] dark:border-[#3a3a3d] dark:text-[#9CA3AF] dark:hover:bg-white/5';
 
+// Same as GHOST_BUTTON but without its own border/radius — used for buttons
+// grouped inside one shared bordered pill (Refresh/Export/Columns) instead
+// of standing alone.
+const GHOST_BUTTON_SEGMENT =
+  'inline-flex h-9 items-center gap-1.5 px-3 text-[13px] font-medium text-[#475569] transition-colors duration-150 ease-out hover:bg-[#F8FAFC] focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-[#2563EB] dark:text-[#9CA3AF] dark:hover:bg-white/5';
+
 const PAGE_SIZE_OPTIONS = [50, 100, 250, 500];
 
 // Fixed display order for the mobile card's balances grid.
@@ -364,7 +370,7 @@ function mobileCardFieldValue(row: MergedRow, key: ColumnKey): { value: string; 
 
 function renderCell(row: MergedRow, key: ColumnKey) {
 
-  const base = `whitespace-nowrap px-4 py-[14px] text-${COLUMN_ALIGN[key]} text-[13px] font-normal`;
+  const base = `whitespace-nowrap px-4 py-[12px] text-${COLUMN_ALIGN[key]} text-[13px] font-normal`;
 
   switch (key) {
     case 'brand':
@@ -920,15 +926,19 @@ export default function AgentBalance() {
         label: 'Actual Balance',
         icon: Wallet,
         accent: 'text-blue-600 dark:text-blue-400',
+        iconBg: 'bg-blue-50 dark:bg-blue-500/10',
         bigValue: fmtAbbrev(totalBalanceInside),
         helperText: 'Current available balance',
+        trend: undefined as 'up' | 'down' | undefined,
       },
       {
         label: 'Running Balance',
         icon: TrendingUp,
         accent: 'text-emerald-600 dark:text-emerald-400',
+        iconBg: 'bg-emerald-50 dark:bg-emerald-500/10',
         bigValue: fmtAbbrev(totalRunningBalance),
         helperText: `${runningVsOpening >= 0 ? '+' : '-'}${fmtAbbrev(Math.abs(runningVsOpening))} vs Opening`,
+        trend: (runningVsOpening >= 0 ? 'up' : 'down') as 'up' | 'down' | undefined,
       },
     ];
   }, [filteredRows]);
@@ -1079,29 +1089,42 @@ export default function AgentBalance() {
         {error && <ConnectionErrorState error={error} onRetry={fetchData} />}
 
         {!error && (
-          <div className={`shrink-0 overflow-hidden transition-all duration-300 ease-in-out ${cardsExpanded ? 'h-[185px] opacity-100 mb-2' : 'h-0 opacity-0 mb-0'}`}>
-            <div className="flex flex-col gap-2 pb-3">
+          <div className={`shrink-0 overflow-hidden transition-all duration-300 ease-in-out ${cardsExpanded ? 'h-[167px] opacity-100 mb-2' : 'h-0 opacity-0 mb-0'}`}>
+            <div className="flex flex-col gap-3 pb-3">
               <div className="flex gap-2">
                 {loading ? (
                   Array.from({ length: 2 }).map((_, i) => (
-                    <div key={i} className="flex-[1.5] min-w-[220px] rounded-xl border border-border bg-white p-4 dark:bg-[#2a2a2d]">
-                      <div className="h-3 w-20 animate-pulse rounded-md bg-slate-200 dark:bg-slate-700" />
-                      <div className="mt-2 h-6 w-24 animate-pulse rounded-md bg-slate-200 dark:bg-slate-700" />
-                      <div className="mt-1.5 h-3 w-28 animate-pulse rounded-md bg-slate-200 dark:bg-slate-700" />
+                    <div key={i} className="flex-[1.5] min-w-[220px] rounded-xl border border-border bg-white p-2.5 dark:bg-[#2a2a2d]">
+                      <div className="flex items-center gap-3">
+                        <div className="h-8 w-8 shrink-0 animate-pulse rounded-full bg-slate-200 dark:bg-slate-700" />
+                        <div className="min-w-0 flex-1">
+                          <div className="h-3 w-20 animate-pulse rounded-md bg-slate-200 dark:bg-slate-700" />
+                          <div className="mt-1.5 h-6 w-24 animate-pulse rounded-md bg-slate-200 dark:bg-slate-700" />
+                          <div className="mt-1 h-3 w-28 animate-pulse rounded-md bg-slate-200 dark:bg-slate-700" />
+                        </div>
+                      </div>
                     </div>
                   ))
                 ) : (
                   primaryKpis.map((kpi) => (
                     <div
                       key={kpi.label}
-                      className="flex-[1.5] min-w-[220px] rounded-xl border border-border bg-white p-4 transition-[transform,box-shadow,border-color] duration-150 ease-out hover:-translate-y-px hover:border-foreground/20 hover:shadow-sm dark:bg-[#2a2a2d]"
+                      className="flex-[1.5] min-w-[220px] rounded-xl border border-border bg-white p-2.5 transition-[transform,box-shadow,border-color] duration-150 ease-out hover:-translate-y-px hover:border-foreground/20 hover:shadow-sm dark:bg-[#2a2a2d]"
                     >
-                      <div className="flex items-center gap-1.5">
-                        <kpi.icon size={14} className={`shrink-0 ${kpi.accent}`} />
-                        <p className="text-[11px] font-medium text-muted-foreground truncate">{kpi.label}</p>
+                      <div className="flex items-center gap-3">
+                        <div className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-full ${kpi.iconBg}`}>
+                          <kpi.icon size={16} className={kpi.accent} />
+                        </div>
+                        <div className="min-w-0 flex-1">
+                          <p className="text-[11px] font-medium leading-snug text-muted-foreground truncate">{kpi.label}</p>
+                          <p className="text-[21px] font-bold leading-tight text-foreground">{kpi.bigValue}</p>
+                          <p className="mt-0.5 flex items-center gap-1 text-[11px] leading-snug text-muted-foreground truncate">
+                            {kpi.trend === 'up' && <span className="text-emerald-600 dark:text-emerald-400">▲</span>}
+                            {kpi.trend === 'down' && <span className="text-rose-600 dark:text-rose-400">▼</span>}
+                            {kpi.helperText}
+                          </p>
+                        </div>
                       </div>
-                      <p className="mt-1.5 text-[21px] font-bold leading-tight text-foreground">{kpi.bigValue}</p>
-                      <p className="mt-1 text-[11px] text-muted-foreground">{kpi.helperText}</p>
                     </div>
                   ))
                 )}
@@ -1141,12 +1164,13 @@ export default function AgentBalance() {
                 {loading ? (
                   <div className="h-5 w-28 animate-pulse rounded-md bg-slate-200 dark:bg-slate-700" />
                 ) : (
-                  <div className="flex items-center whitespace-nowrap rounded-full bg-indigo-50 px-3 py-1.5 dark:bg-indigo-500/15">
+                  <div className="flex items-center gap-1 whitespace-nowrap rounded-full bg-indigo-50 px-3 py-1.5 dark:bg-indigo-500/15">
+                    <span className="text-[11px] font-medium text-indigo-500 dark:text-indigo-400">Showing</span>
                     <span className="text-[11px] font-bold tabular-nums text-indigo-700 dark:text-indigo-300">{sortedRows.length.toLocaleString('en-PH')}</span>
-                    <span className="ml-1 text-[11px] font-medium text-indigo-600 dark:text-indigo-400">Accounts</span>
+                    <span className="text-[11px] font-medium text-indigo-600 dark:text-indigo-400">Accounts</span>
                   </div>
                 )}
-                <div className="flex h-10 w-full min-w-[200px] items-center gap-2 rounded-[10px] border border-[#E5E7EB] bg-white px-[14px] transition-colors focus-within:border-[#2563EB] focus-within:ring-2 focus-within:ring-[#2563EB]/20 dark:border-[#3a3a3d] dark:bg-[#2a2a2d] sm:w-[380px]">
+                <div className="flex h-10 w-full min-w-[200px] items-center gap-2 rounded-[10px] border border-[#E5E7EB] bg-white px-[14px] transition-colors focus-within:border-[#2563EB] focus-within:ring-2 focus-within:ring-[#2563EB]/20 dark:border-[#3a3a3d] dark:bg-[#2a2a2d] sm:w-[400px]">
                   {loading ? (
                     <div className="h-3 w-32 animate-pulse rounded-md bg-slate-200 dark:bg-slate-700" />
                   ) : (
@@ -1175,43 +1199,40 @@ export default function AgentBalance() {
                     {cardsExpanded ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
                   </button>
                 )}
-                {loading && <div className="h-9 w-9 animate-pulse rounded-lg bg-slate-200 dark:bg-slate-700" />}
+                {loading && <div className="h-9 w-28 animate-pulse rounded-lg bg-slate-200 dark:bg-slate-700" />}
                 {!loading && (
-                  <button type="button" onClick={fetchData} aria-label="Refresh" title="Refresh" className={GHOST_BUTTON}>
-                    <RefreshCw size={14} className={spinning ? 'animate-spin' : ''} />
-                  </button>
-                )}
-                {loading && <div className="h-9 w-9 animate-pulse rounded-lg bg-slate-200 dark:bg-slate-700" />}
-                {!loading && (
-                  <button type="button" onClick={handleExport} aria-label="Export to Excel" title="Export to Excel" className={GHOST_BUTTON}>
-                    <Download size={14} />
-                  </button>
-                )}
-                {loading && <div className="h-9 w-9 animate-pulse rounded-lg bg-slate-200 dark:bg-slate-700" />}
-                {!loading && (
-                  <div className="relative">
-                    <button
-                      type="button"
-                      ref={columnsButtonRef}
-                      onClick={(event) => {
-                        event.stopPropagation();
-                        const rect = columnsButtonRef.current?.getBoundingClientRect();
-                        if (rect) {
-                          const dropdownWidth = 224;
-                          const left = Math.max(8, Math.min(rect.right - dropdownWidth, window.innerWidth - dropdownWidth - 8));
-                          setColumnsMenuPos({ top: rect.bottom + 8, left });
-                        }
-                        setColumnsMenuOpen((current) => !current);
-                      }}
-                      aria-haspopup="true"
-                      aria-expanded={columnsMenuOpen}
-                      aria-controls="agentbal-columns-popover"
-                      aria-label="Columns"
-                      title="Columns"
-                      className={GHOST_BUTTON}
-                    >
-                      <Columns3 size={14} />
+                  <div className="inline-flex items-center rounded-[8px] border border-[#E2E8F0] dark:border-[#3a3a3d] overflow-hidden">
+                    <button type="button" onClick={fetchData} aria-label="Refresh" title="Refresh" className={GHOST_BUTTON_SEGMENT}>
+                      <RefreshCw size={14} className={spinning ? 'animate-spin' : ''} />
                     </button>
+                    <div className="h-5 w-px bg-[#E2E8F0] dark:bg-[#3a3a3d]" />
+                    <button type="button" onClick={handleExport} aria-label="Export to Excel" title="Export to Excel" className={GHOST_BUTTON_SEGMENT}>
+                      <Download size={14} />
+                    </button>
+                    <div className="h-5 w-px bg-[#E2E8F0] dark:bg-[#3a3a3d]" />
+                    <div className="relative">
+                      <button
+                        type="button"
+                        ref={columnsButtonRef}
+                        onClick={(event) => {
+                          event.stopPropagation();
+                          const rect = columnsButtonRef.current?.getBoundingClientRect();
+                          if (rect) {
+                            const dropdownWidth = 224;
+                            const left = Math.max(8, Math.min(rect.right - dropdownWidth, window.innerWidth - dropdownWidth - 8));
+                            setColumnsMenuPos({ top: rect.bottom + 8, left });
+                          }
+                          setColumnsMenuOpen((current) => !current);
+                        }}
+                        aria-haspopup="true"
+                        aria-expanded={columnsMenuOpen}
+                        aria-controls="agentbal-columns-popover"
+                        aria-label="Columns"
+                        title="Columns"
+                        className={GHOST_BUTTON_SEGMENT}
+                      >
+                        <Columns3 size={14} />
+                      </button>
                     {columnsMenuOpen && typeof document !== 'undefined' && createPortal(
                       <div
                         ref={columnsMenuRef}
@@ -1268,6 +1289,7 @@ export default function AgentBalance() {
                       </div>,
                       document.body
                     )}
+                    </div>
                   </div>
                 )}
               </Toolbar.Right>
@@ -1583,7 +1605,7 @@ export default function AgentBalance() {
                   {loading ? Array.from({ length: 18 }).map((_, i) => (
                     <tr key={i}>
                       {visibleColumns.map((col) => (
-                        <td key={col.key} className="px-4 py-[14px]">
+                        <td key={col.key} className="px-4 py-[12px]">
                           {col.key === 'brand' ? (
                             <div className="h-[26px] w-12 animate-pulse rounded-md bg-slate-200 dark:bg-slate-700" />
                           ) : col.key === 'walletStatus' ? (
