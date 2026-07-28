@@ -492,9 +492,26 @@ function BrandBadge({ children, brand }: { children: React.ReactNode; brand: str
 
 // Wallet: a subtler pill — #F8FAFC bg, 1px #E5E7EB border, 999px radius,
 // 24px tall, 4px/8px padding, 12px/500.
-function WalletBadge({ children }: { children: React.ReactNode }) {
+// Per-wallet tint map — each wallet's own real brand color (Nagad orange,
+// Rocket purple, Bkash pink, Upay red), same light-bg/border/text pattern as
+// BrandBadge's tint map. Unknown values fall back to the same neutral slate
+// this badge used exclusively before.
+const WALLET_BADGE_TINTS: Record<string, string> = {
+  NAGAD: 'bg-orange-50 text-orange-700 border-orange-200 dark:bg-orange-500/10 dark:text-orange-400 dark:border-orange-900/50',
+  ROCKET: 'bg-purple-50 text-purple-700 border-purple-200 dark:bg-purple-500/10 dark:text-purple-400 dark:border-purple-900/50',
+  BKASH: 'bg-pink-50 text-pink-700 border-pink-200 dark:bg-pink-500/10 dark:text-pink-400 dark:border-pink-900/50',
+  UPAY: 'bg-red-50 text-red-700 border-red-200 dark:bg-red-500/10 dark:text-red-400 dark:border-red-900/50',
+};
+
+function walletBadgeClasses(wallet: string): string {
+  return WALLET_BADGE_TINTS[wallet.toUpperCase()] ?? 'bg-slate-100 text-slate-600 border-slate-200 dark:bg-slate-500/10 dark:text-slate-400 dark:border-slate-700';
+}
+
+// `wallet` carries the raw value for the color lookup — `children` is the
+// (possibly search-highlighted, proper-cased) display content.
+function WalletBadge({ children, wallet }: { children: React.ReactNode; wallet: string }) {
   return (
-    <span className="inline-flex h-[24px] items-center rounded-[999px] border border-[#E5E7EB] bg-[#F8FAFC] px-2 py-1 text-[12px] font-medium text-[#475569] dark:border-[#3a3a3d] dark:bg-white/5 dark:text-[#9CA3AF]">
+    <span className={`inline-flex h-[24px] items-center rounded-[999px] border px-2 py-1 text-[12px] font-medium transition-[filter] duration-150 hover:brightness-95 dark:hover:brightness-110 ${walletBadgeClasses(wallet)}`}>
       {children}
     </span>
   );
@@ -740,7 +757,7 @@ function renderCell(row: StlmRow, col: ColumnDef, style: CSSProperties, onEdit: 
       return <div key={key} role="cell" style={style} title={agentNameText} className={base}>{highlightMatch(agentNameText, searchTerm)}</div>;
     }
     case COLUMN_IDS.WALLET:
-      return <div key={key} role="cell" style={style} className={base}><WalletBadge>{highlightMatch(toProperCase(row.wallet), searchTerm)}</WalletBadge></div>;
+      return <div key={key} role="cell" style={style} className={base}><WalletBadge wallet={row.wallet}>{highlightMatch(toProperCase(row.wallet), searchTerm)}</WalletBadge></div>;
     case COLUMN_IDS.AMOUNT:
       // Numbers get their own smaller size (12px) per spec, overriding the
       // table body's 13px base — !important since both are arbitrary

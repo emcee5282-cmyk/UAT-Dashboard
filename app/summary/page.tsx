@@ -733,7 +733,7 @@ export default function Summary() {
         onRefresh={fetchData}
       />
       <div className={`w-full border-t border-border bg-[#f4f6fb] px-4 py-3 transition-shadow duration-150 ease-out dark:bg-[#1c1c1e] md:px-6 ${isScrolled ? TABLE_STICKY_HEADER_SHADOW_CLASS : ''}`}>
-        <div className="flex gap-2">
+        <div className="flex gap-2 pr-2">
           {loading ? (
             Array.from({ length: 4 }).map((_, i) => (
               <div key={i} className="h-[80.5px] flex-1 min-w-[200px] rounded-xl border border-border bg-white p-2.5 dark:bg-[#2a2a2d]">
