@@ -4,7 +4,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import {
   ChevronDown, ChevronUp, Columns3, Download, RefreshCw, Search, Wallet,
-  TrendingUp, ArrowDownToLine, ArrowUpFromLine, Gauge, PlusCircle, ArrowLeftRight,
+  TrendingUp, ArrowDownToLine, ArrowUpFromLine, Gauge,
 } from 'lucide-react';
 import * as XLSX from 'xlsx';
 import SettlementHeader from '../components/SettlementHeader';
@@ -934,15 +934,11 @@ export default function AgentBalance() {
     const totalDP = filteredRows.reduce((sum, row) => sum + row.agentTotalDP, 0);
     const totalWD = filteredRows.reduce((sum, row) => sum + row.agentTotalWD, 0);
     const totalSdp = filteredRows.reduce((sum, row) => sum + parseNumber(row.sdp), 0);
-    const totalTopUp = filteredRows.reduce((sum, row) => sum + row.totalTopUp, 0);
-    const totalSettlement = filteredRows.reduce((sum, row) => sum + row.totalStlm, 0);
 
     return [
       { label: 'Total DP', icon: ArrowDownToLine, accent: 'text-emerald-600 dark:text-emerald-400', value: fmtAbbrev(totalDP) },
       { label: 'Total WD', icon: ArrowUpFromLine, accent: 'text-rose-600 dark:text-rose-400', value: fmtAbbrev(totalWD) },
       { label: 'SDP', icon: Gauge, accent: 'text-slate-500 dark:text-slate-400', value: fmtAbbrev(totalSdp) },
-      { label: 'Total Top Up', icon: PlusCircle, accent: 'text-purple-600 dark:text-purple-400', value: fmtAbbrev(totalTopUp) },
-      { label: 'Total Settlement', icon: ArrowLeftRight, accent: 'text-orange-500 dark:text-orange-400', value: fmtAbbrev(totalSettlement) },
     ];
   }, [filteredRows]);
 
@@ -1075,8 +1071,10 @@ export default function AgentBalance() {
       <main className="flex-1 flex flex-col overflow-hidden px-6 pb-6 pt-3">
         {error && <ConnectionErrorState error={error} onRetry={fetchData} />}
 
+        {!error && <div className="shrink-0 border-t border-border" />}
+
         {!error && (
-          <div className={`shrink-0 overflow-hidden transition-all duration-300 ease-in-out ${cardsExpanded ? 'h-[167px] opacity-100 mb-2' : 'h-0 opacity-0 mb-0'}`}>
+          <div className={`shrink-0 overflow-hidden transition-all duration-300 ease-in-out ${cardsExpanded ? 'h-[167px] opacity-100 mt-3 mb-2' : 'h-0 opacity-0 mt-0 mb-0'}`}>
             <div className="flex flex-col gap-3 pb-3">
               <div className="flex gap-2">
                 {loading ? (
@@ -1117,28 +1115,36 @@ export default function AgentBalance() {
                 )}
               </div>
 
-              <div className="flex gap-2 overflow-x-auto">
-                {loading ? (
-                  Array.from({ length: 5 }).map((_, i) => (
-                    <div key={i} className="flex-1 min-w-[110px] rounded-xl border border-border bg-white p-2.5 dark:bg-[#2a2a2d]">
-                      <div className="h-2.5 w-12 animate-pulse rounded-md bg-slate-200 dark:bg-slate-700" />
-                      <div className="mt-1.5 h-4 w-16 animate-pulse rounded-md bg-slate-200 dark:bg-slate-700" />
-                    </div>
-                  ))
-                ) : (
-                  secondaryKpis.map((kpi) => (
-                    <div
-                      key={kpi.label}
-                      className="flex-1 min-w-[110px] rounded-xl border border-border bg-white p-2.5 transition-[transform,box-shadow,border-color] duration-150 ease-out hover:-translate-y-px hover:border-foreground/20 hover:shadow-sm dark:bg-[#2a2a2d]"
-                    >
-                      <div className="flex items-center gap-1.5">
-                        <kpi.icon size={12} className={`shrink-0 ${kpi.accent}`} />
-                        <p className="text-[10.5px] font-medium text-muted-foreground truncate">{kpi.label}</p>
+              <div className="flex gap-2">
+                {/* Constrained to Actual Balance's own column width (flex-[1.5]
+                    of 3 total, matching the primary row's ratio) instead of
+                    spanning the full row — the empty flex-[1.5] spacer below
+                    keeps it aligned under Actual Balance only, not Running
+                    Balance. */}
+                <div className="flex flex-[1.5] gap-2 min-w-[220px]">
+                  {loading ? (
+                    Array.from({ length: 3 }).map((_, i) => (
+                      <div key={i} className="flex-1 min-w-[110px] rounded-xl border border-border bg-white p-2.5 dark:bg-[#2a2a2d]">
+                        <div className="h-2.5 w-12 animate-pulse rounded-md bg-slate-200 dark:bg-slate-700" />
+                        <div className="mt-1.5 h-4 w-16 animate-pulse rounded-md bg-slate-200 dark:bg-slate-700" />
                       </div>
-                      <p className="mt-1 text-[16px] font-bold leading-tight text-foreground">{kpi.value}</p>
-                    </div>
-                  ))
-                )}
+                    ))
+                  ) : (
+                    secondaryKpis.map((kpi) => (
+                      <div
+                        key={kpi.label}
+                        className="flex-1 min-w-[110px] rounded-xl border border-border bg-white p-2.5 transition-[transform,box-shadow,border-color] duration-150 ease-out hover:-translate-y-px hover:border-foreground/20 hover:shadow-sm dark:bg-[#2a2a2d]"
+                      >
+                        <div className="flex items-center gap-1.5">
+                          <kpi.icon size={12} className={`shrink-0 ${kpi.accent}`} />
+                          <p className="text-[10.5px] font-medium text-muted-foreground truncate">{kpi.label}</p>
+                        </div>
+                        <p className="mt-1 text-[16px] font-bold leading-tight text-foreground">{kpi.value}</p>
+                      </div>
+                    ))
+                  )}
+                </div>
+                <div className="flex-[1.5]" />
               </div>
             </div>
           </div>
