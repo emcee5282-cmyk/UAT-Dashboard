@@ -398,7 +398,7 @@ function renderCell(row: MergedRow, key: ColumnKey) {
     case 'leader':
       return <td key={key} className={base}>{row.leader}</td>;
     case 'walletName':
-      return <td key={key} className={`${base} font-semibold`}>{row.agentName}</td>;
+      return <td key={key} className={base}>{row.agentName}</td>;
     case 'walletType':
       return <td key={key} className={base}>{row.walletType}</td>;
     case 'sdp':
@@ -423,7 +423,7 @@ function renderCell(row: MergedRow, key: ColumnKey) {
       return <td key={key} className={base}><WalletStatusBadge status={row.walletStatus} /></td>;
     case 'companyBalance':
     default:
-      return <td key={key} className={`${base} tabular-nums font-semibold`}>{displayNum(row.runningBalance)}</td>;
+      return <td key={key} className={`${base} tabular-nums`}>{displayNum(row.runningBalance)}</td>;
   }
 }
 
