@@ -1123,16 +1123,16 @@ export default function AgentBalance() {
 
         {!error && (
           <div className={`shrink-0 overflow-hidden transition-all duration-300 ease-in-out ${cardsExpanded ? 'h-[101px] opacity-100 mt-3 mb-2' : 'h-0 opacity-0 mt-0 mb-0'}`}>
-            <div className="flex gap-2 pb-3 pt-2">
+            <div className="flex gap-2 pb-3 pt-2 pr-2">
               {loading ? (
                 Array.from({ length: 5 }).map((_, i) => (
                   <div key={i} className="flex-1 min-w-[200px] rounded-xl border border-border bg-white p-2.5 dark:bg-[#2a2a2d]">
                     <div className="flex items-center gap-3">
-                      <div className="h-8 w-8 shrink-0 animate-pulse rounded-full bg-slate-200 dark:bg-slate-700" />
+                      <div className="h-8 w-8 shrink-0 dt-skeleton rounded-full" />
                       <div className="min-w-0 flex-1">
-                        <div className="h-3 w-20 animate-pulse rounded-md bg-slate-200 dark:bg-slate-700" />
-                        <div className="mt-1.5 h-6 w-24 animate-pulse rounded-md bg-slate-200 dark:bg-slate-700" />
-                        <div className="mt-1 h-3 w-28 animate-pulse rounded-md bg-slate-200 dark:bg-slate-700" />
+                        <div className="h-3 w-20 dt-skeleton rounded-md" />
+                        <div className="mt-1.5 h-6 w-24 dt-skeleton rounded-md" />
+                        <div className="mt-1 h-3 w-28 dt-skeleton rounded-md" />
                       </div>
                     </div>
                   </div>
@@ -1170,7 +1170,7 @@ export default function AgentBalance() {
               <Toolbar.Left>
                 <div className="flex h-10 w-full min-w-[200px] items-center gap-2 rounded-[10px] border border-[#E5E7EB] bg-white px-[14px] transition-colors focus-within:border-[#2563EB] focus-within:ring-2 focus-within:ring-[#2563EB]/20 dark:border-[#3a3a3d] dark:bg-[#2a2a2d] sm:w-[400px]">
                   {loading ? (
-                    <div className="h-3 w-32 animate-pulse rounded-md bg-slate-200 dark:bg-slate-700" />
+                    <div className="h-3 w-32 dt-skeleton rounded-md" />
                   ) : (
                     <>
                       <Search size={14} className="shrink-0 text-muted-foreground" />
@@ -1185,7 +1185,7 @@ export default function AgentBalance() {
                 </div>
               </Toolbar.Left>
               <Toolbar.Right>
-                {loading && <div className="h-9 w-9 animate-pulse rounded-lg bg-slate-200 dark:bg-slate-700" />}
+                {loading && <div className="h-9 w-9 dt-skeleton rounded-lg" />}
                 {!loading && (
                   <button
                     type="button"
@@ -1197,7 +1197,7 @@ export default function AgentBalance() {
                     {cardsExpanded ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
                   </button>
                 )}
-                {loading && <div className="h-9 w-28 animate-pulse rounded-lg bg-slate-200 dark:bg-slate-700" />}
+                {loading && <div className="h-9 w-28 dt-skeleton rounded-lg" />}
                 {!loading && (
                   <div className="inline-flex items-center rounded-[8px] border border-[#E2E8F0] dark:border-[#3a3a3d] overflow-hidden">
                     <button type="button" onClick={fetchData} aria-label="Refresh" title="Refresh" className={GHOST_BUTTON_SEGMENT}>
@@ -1303,7 +1303,7 @@ export default function AgentBalance() {
                         key={col.key}
                         className={headerCellClasses(col.key, sortColumn === col.key)}>
                         {loading ? (
-                          <div className="h-[18px] w-14 animate-pulse rounded-md bg-slate-200 dark:bg-slate-700" />
+                          <div className="h-[18px] w-14 dt-skeleton rounded-md" />
                         ) : col.key === 'brand' ? (
                           <div className="relative flex items-center justify-start gap-1">
                             <span className="normal-case font-semibold text-foreground">{col.label}</span>
@@ -1616,11 +1616,11 @@ export default function AgentBalance() {
                       {visibleColumns.map((col) => (
                         <td key={col.key} className="px-4 py-[12px]">
                           {col.key === 'brand' ? (
-                            <div className="h-[26px] w-12 animate-pulse rounded-md bg-slate-200 dark:bg-slate-700" />
+                            <div className="h-[26px] w-12 dt-skeleton rounded-md" />
                           ) : col.key === 'walletStatus' ? (
-                            <div className="h-5 w-20 animate-pulse rounded-md bg-slate-200 dark:bg-slate-700" />
+                            <div className="h-5 w-20 dt-skeleton rounded-md" />
                           ) : (
-                            <div className={`h-2.5 ${SKELETON_WIDTH[col.key]} animate-pulse rounded-md bg-slate-200 dark:bg-slate-700`} />
+                            <div className={`h-2.5 ${SKELETON_WIDTH[col.key]} dt-skeleton rounded-md`} />
                           )}
                         </td>
                       ))}
@@ -1664,9 +1664,9 @@ export default function AgentBalance() {
                 {loading ? (
                   Array.from({ length: 8 }).map((_, i) => (
                     <div key={i} className="rounded-xl border border-border bg-white p-3.5 dark:bg-[#2a2a2d]">
-                      <div className="h-4 w-2/3 animate-pulse rounded-md bg-slate-200 dark:bg-slate-700" />
-                      <div className="mt-2 h-3 w-1/3 animate-pulse rounded-md bg-slate-200 dark:bg-slate-700" />
-                      <div className="mt-3 h-6 w-1/2 animate-pulse rounded-md bg-slate-200 dark:bg-slate-700" />
+                      <div className="h-4 w-2/3 dt-skeleton rounded-md" />
+                      <div className="mt-2 h-3 w-1/3 dt-skeleton rounded-md" />
+                      <div className="mt-3 h-6 w-1/2 dt-skeleton rounded-md" />
                     </div>
                   ))
                 ) : pagedRows.length > 0 ? (
