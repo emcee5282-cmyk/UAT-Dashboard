@@ -74,6 +74,15 @@ function numOrBlank(num: number): number | undefined {
   return Math.abs(num) < 0.01 ? undefined : num;
 }
 
+// Sign-based coloring for columns that can legitimately swing positive/
+// negative/zero (Company Balance, Balance Inside, Agent Withdrawal, SDP VS
+// Balance) — category-color columns (Top Up teal, Settlement orange, Total
+// DP/WD's fixed emerald/rose) don't use this.
+function signColor(value: number, displayValue: string): string {
+  if (displayValue === '−') return 'text-muted-foreground';
+  return value < 0 ? 'text-rose-600 dark:text-rose-400' : 'text-emerald-600 dark:text-emerald-400';
+}
+
 function parseNumber(val: string): number {
   const cleaned = (val ?? '').replace(/"/g, '').replace(/,/g, '').trim();
   if (cleaned === '-' || cleaned === '') return 0;
@@ -192,20 +201,46 @@ const DEFAULT_COLUMNS: ColumnDef[] = [
   { key: COLUMN_IDS.LEADER, label: 'Leader', visible: !DEFAULT_HIDDEN.includes(COLUMN_IDS.LEADER), sortable: false, hideable: true, align: 'left' },
   { key: COLUMN_IDS.WALLET_NAME, label: 'Shop Name', visible: !DEFAULT_HIDDEN.includes(COLUMN_IDS.WALLET_NAME), sortable: true, hideable: true, align: 'left' },
   { key: COLUMN_IDS.WALLET_TYPE, label: 'Type', visible: !DEFAULT_HIDDEN.includes(COLUMN_IDS.WALLET_TYPE), sortable: false, hideable: true, align: 'left' },
-  { key: COLUMN_IDS.SDP, label: 'SDP', visible: !DEFAULT_HIDDEN.includes(COLUMN_IDS.SDP), sortable: true, hideable: true, align: 'left' },
-  { key: COLUMN_IDS.OPENING, label: 'Opening', visible: !DEFAULT_HIDDEN.includes(COLUMN_IDS.OPENING), sortable: true, hideable: true, align: 'left' },
-  { key: COLUMN_IDS.TOTAL_DP, label: 'Total DP', visible: !DEFAULT_HIDDEN.includes(COLUMN_IDS.TOTAL_DP), sortable: true, hideable: true, align: 'left' },
-  { key: COLUMN_IDS.TOTAL_WD, label: 'Total WD', visible: !DEFAULT_HIDDEN.includes(COLUMN_IDS.TOTAL_WD), sortable: true, hideable: true, align: 'left' },
-  { key: COLUMN_IDS.TOP_UP, label: 'Top Up', visible: !DEFAULT_HIDDEN.includes(COLUMN_IDS.TOP_UP), sortable: true, hideable: true, align: 'left' },
-  { key: COLUMN_IDS.SETTLEMENT, label: 'Settlement', visible: !DEFAULT_HIDDEN.includes(COLUMN_IDS.SETTLEMENT), sortable: true, hideable: true, align: 'left' },
-  { key: COLUMN_IDS.COMPANY_BALANCE, label: 'Company Balance', visible: !DEFAULT_HIDDEN.includes(COLUMN_IDS.COMPANY_BALANCE), sortable: true, hideable: true, align: 'left' },
-  { key: COLUMN_IDS.BALANCE_INSIDE, label: 'Balance Inside', visible: !DEFAULT_HIDDEN.includes(COLUMN_IDS.BALANCE_INSIDE), sortable: true, hideable: true, align: 'left' },
-  { key: COLUMN_IDS.AGENT_WITHDRAWAL, label: 'Agent Withdrawal', visible: !DEFAULT_HIDDEN.includes(COLUMN_IDS.AGENT_WITHDRAWAL), sortable: true, hideable: true, align: 'left' },
-  { key: COLUMN_IDS.SDP_VS_BALANCE, label: 'SDP VS Balance', visible: !DEFAULT_HIDDEN.includes(COLUMN_IDS.SDP_VS_BALANCE), sortable: true, hideable: true, align: 'left' },
+  { key: COLUMN_IDS.SDP, label: 'SDP', visible: !DEFAULT_HIDDEN.includes(COLUMN_IDS.SDP), sortable: true, hideable: true, align: 'right' },
+  { key: COLUMN_IDS.OPENING, label: 'Opening', visible: !DEFAULT_HIDDEN.includes(COLUMN_IDS.OPENING), sortable: true, hideable: true, align: 'right' },
+  { key: COLUMN_IDS.TOTAL_DP, label: 'Total DP', visible: !DEFAULT_HIDDEN.includes(COLUMN_IDS.TOTAL_DP), sortable: true, hideable: true, align: 'right' },
+  { key: COLUMN_IDS.TOTAL_WD, label: 'Total WD', visible: !DEFAULT_HIDDEN.includes(COLUMN_IDS.TOTAL_WD), sortable: true, hideable: true, align: 'right' },
+  { key: COLUMN_IDS.TOP_UP, label: 'Top Up', visible: !DEFAULT_HIDDEN.includes(COLUMN_IDS.TOP_UP), sortable: true, hideable: true, align: 'right' },
+  { key: COLUMN_IDS.SETTLEMENT, label: 'Settlement', visible: !DEFAULT_HIDDEN.includes(COLUMN_IDS.SETTLEMENT), sortable: true, hideable: true, align: 'right' },
+  { key: COLUMN_IDS.COMPANY_BALANCE, label: 'Company Balance', visible: !DEFAULT_HIDDEN.includes(COLUMN_IDS.COMPANY_BALANCE), sortable: true, hideable: true, align: 'right' },
+  { key: COLUMN_IDS.BALANCE_INSIDE, label: 'Balance Inside', visible: !DEFAULT_HIDDEN.includes(COLUMN_IDS.BALANCE_INSIDE), sortable: true, hideable: true, align: 'right' },
+  { key: COLUMN_IDS.AGENT_WITHDRAWAL, label: 'Agent Withdrawal', visible: !DEFAULT_HIDDEN.includes(COLUMN_IDS.AGENT_WITHDRAWAL), sortable: true, hideable: true, align: 'right' },
+  { key: COLUMN_IDS.SDP_VS_BALANCE, label: 'SDP VS Balance', visible: !DEFAULT_HIDDEN.includes(COLUMN_IDS.SDP_VS_BALANCE), sortable: true, hideable: true, align: 'right' },
   { key: COLUMN_IDS.WALLET_STATUS, label: 'Wallet Status', visible: !DEFAULT_HIDDEN.includes(COLUMN_IDS.WALLET_STATUS), sortable: false, hideable: true, align: 'left' },
 ];
 
 const COLUMN_VISIBILITY_STORAGE_KEY = 'agentBalanceColumnVisibility';
+
+const COLUMN_ALIGN: Record<ColumnKey, 'left' | 'right' | 'center'> = Object.fromEntries(
+  DEFAULT_COLUMNS.map((col) => [col.key, col.align])
+) as Record<ColumnKey, 'left' | 'right' | 'center'>;
+
+// Loading-skeleton bar widths per column — varied instead of one uniform
+// width, so the skeleton reads as "natural" content rather than a repeated
+// bar. brand/walletStatus render their own pill-shaped skeleton instead
+// (see the loading branch in the table body) since those are badges.
+const SKELETON_WIDTH: Record<ColumnKey, string> = {
+  brand: 'w-12',
+  leader: 'w-16',
+  walletName: 'w-24',
+  walletType: 'w-14',
+  sdp: 'w-16',
+  opening: 'w-20',
+  totalDP: 'w-14',
+  totalWD: 'w-14',
+  topUp: 'w-16',
+  settlement: 'w-16',
+  companyBalance: 'w-24',
+  balanceInside: 'w-20',
+  agentWithdrawal: 'w-20',
+  sdpVsBalance: 'w-14',
+  walletStatus: 'w-20',
+};
 
 const GHOST_BUTTON =
   'inline-flex h-9 items-center gap-1.5 rounded-[8px] border border-[#E2E8F0] px-3 text-[13px] font-medium text-[#475569] transition-colors duration-150 ease-out hover:bg-[#F8FAFC] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#2563EB] dark:border-[#3a3a3d] dark:text-[#9CA3AF] dark:hover:bg-white/5';
@@ -235,8 +270,8 @@ function SortIcon({ active, direction }: { active: boolean; direction: 'asc' | '
   );
 }
 
-function headerCellClasses(_colKey: ColumnKey, _isSorted: boolean) {
-  return 'group overflow-hidden whitespace-nowrap px-4 text-left text-[14px] font-semibold text-[#475569] dark:text-[#9CA3AF]';
+function headerCellClasses(colKey: ColumnKey, _isSorted: boolean) {
+  return `group overflow-hidden whitespace-nowrap px-4 text-${COLUMN_ALIGN[colKey]} text-[13px] font-semibold text-[#475569] dark:text-[#9CA3AF]`;
 }
 
 function walletStatusBadgeClasses(status: string): string {
@@ -254,6 +289,44 @@ function walletStatusBadgeClasses(status: string): string {
     default:
       return 'bg-slate-100 text-slate-600 border-slate-200 dark:bg-slate-500/10 dark:text-slate-400 dark:border-slate-700';
   }
+}
+
+function WalletStatusBadge({ status }: { status: string }) {
+  return (
+    <span className={`inline-flex items-center gap-1.5 rounded-md border px-2 py-0.5 text-[11px] font-medium transition-[filter] duration-150 hover:brightness-95 dark:hover:brightness-110 ${walletStatusBadgeClasses(status)}`}>
+      <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-current" />
+      {status}
+    </span>
+  );
+}
+
+// Per-code tint map for the Brand badge — reuses the same light-bg/border/
+// text token pattern as walletStatusBadgeClasses, just keyed by BRAND_CODES
+// instead of wallet status. Anything outside the known codes (e.g. '−')
+// falls back to the same neutral slate default.
+const BRAND_BADGE_TINTS: Record<string, string> = {
+  M1: 'bg-blue-50 text-blue-700 border-blue-200 dark:bg-blue-500/10 dark:text-blue-400 dark:border-blue-900/50',
+  M2: 'bg-cyan-50 text-cyan-700 border-cyan-200 dark:bg-cyan-500/10 dark:text-cyan-400 dark:border-cyan-900/50',
+  B1: 'bg-purple-50 text-purple-700 border-purple-200 dark:bg-purple-500/10 dark:text-purple-400 dark:border-purple-900/50',
+  B2: 'bg-violet-50 text-violet-700 border-violet-200 dark:bg-violet-500/10 dark:text-violet-400 dark:border-violet-900/50',
+  B3: 'bg-fuchsia-50 text-fuchsia-700 border-fuchsia-200 dark:bg-fuchsia-500/10 dark:text-fuchsia-400 dark:border-fuchsia-900/50',
+  B4: 'bg-indigo-50 text-indigo-700 border-indigo-200 dark:bg-indigo-500/10 dark:text-indigo-400 dark:border-indigo-900/50',
+  B5: 'bg-sky-50 text-sky-700 border-sky-200 dark:bg-sky-500/10 dark:text-sky-400 dark:border-sky-900/50',
+  K1: 'bg-orange-50 text-orange-700 border-orange-200 dark:bg-orange-500/10 dark:text-orange-400 dark:border-orange-900/50',
+  J1: 'bg-amber-50 text-amber-700 border-amber-200 dark:bg-amber-500/10 dark:text-amber-400 dark:border-amber-900/50',
+  T1: 'bg-teal-50 text-teal-700 border-teal-200 dark:bg-teal-500/10 dark:text-teal-400 dark:border-teal-900/50',
+};
+
+function brandBadgeClasses(brand: string): string {
+  return BRAND_BADGE_TINTS[brand] ?? 'bg-slate-100 text-slate-600 border-slate-200 dark:bg-slate-500/10 dark:text-slate-400 dark:border-slate-700';
+}
+
+function BrandBadge({ children }: { children: string }) {
+  return (
+    <span className={`inline-flex h-[26px] items-center rounded-md border px-2.5 text-[11px] font-semibold transition-[filter] duration-150 hover:brightness-95 dark:hover:brightness-110 ${brandBadgeClasses(children)}`}>
+      {children}
+    </span>
+  );
 }
 
 // Mobile card grid fields — mirrors renderCell's data + colors, minus the
@@ -291,11 +364,11 @@ function mobileCardFieldValue(row: MergedRow, key: ColumnKey): { value: string; 
 
 function renderCell(row: MergedRow, key: ColumnKey) {
 
-  const base = 'whitespace-nowrap px-4 py-[14px] text-left text-[13px] font-normal';
+  const base = `whitespace-nowrap px-4 py-[14px] text-${COLUMN_ALIGN[key]} text-[13px] font-normal`;
 
   switch (key) {
     case 'brand':
-      return <td key={key} className={`${base} font-semibold text-foreground`}>{row.brand}</td>;
+      return <td key={key} className={base}><BrandBadge>{row.brand}</BrandBadge></td>;
     case 'leader':
       return <td key={key} className={`${base} text-muted-foreground`}>{row.leader}</td>;
     case 'walletName':
@@ -314,19 +387,24 @@ function renderCell(row: MergedRow, key: ColumnKey) {
       return <td key={key} className={`${base} tabular-nums text-teal-600 dark:text-teal-400`}>{displayNum(row.totalTopUp)}</td>;
     case 'settlement':
       return <td key={key} className={`${base} tabular-nums text-orange-500 dark:text-orange-400`}>{displayNum(row.totalStlm)}</td>;
-    case 'balanceInside':
-      return <td key={key} className={`${base} tabular-nums text-foreground`}>{displayNum(String(row.balanceInside ?? 0))}</td>;
-    case 'agentWithdrawal':
-      return <td key={key} className={`${base} tabular-nums text-foreground`}>{displayNum(String(row.agentWithdrawal))}</td>;
-    case 'sdpVsBalance':
-      return <td key={key} className={`${base} tabular-nums text-foreground`}>{row.sdpVsBalance > 0 ? displayNum(String(Math.abs(row.sdpVsBalance))) : '−'}</td>;
+    case 'balanceInside': {
+      const v = displayNum(String(row.balanceInside ?? 0));
+      return <td key={key} className={`${base} tabular-nums ${signColor(row.balanceInside, v)}`}>{v}</td>;
+    }
+    case 'agentWithdrawal': {
+      const v = displayNum(String(row.agentWithdrawal));
+      return <td key={key} className={`${base} tabular-nums ${signColor(row.agentWithdrawal, v)}`}>{v}</td>;
+    }
+    case 'sdpVsBalance': {
+      const v = row.sdpVsBalance > 0 ? displayNum(String(Math.abs(row.sdpVsBalance))) : '−';
+      return <td key={key} className={`${base} tabular-nums ${signColor(row.sdpVsBalance, v)}`}>{v}</td>;
+    }
     case 'walletStatus':
-      return <td key={key} className={`${base} text-foreground`}>{row.walletStatus}</td>;
+      return <td key={key} className={base}><WalletStatusBadge status={row.walletStatus} /></td>;
     case 'companyBalance':
     default: {
       const v = displayNum(row.runningBalance);
-      const color = v !== '−' && row.runningBalance < 0 ? 'text-rose-600 dark:text-rose-400' : 'text-foreground';
-      return <td key={key} className={`${base} tabular-nums font-bold ${color}`}>{v}</td>;
+      return <td key={key} className={`${base} tabular-nums font-bold ${signColor(row.runningBalance, v)}`}>{v}</td>;
     }
   }
 }
@@ -403,6 +481,14 @@ export default function AgentBalance() {
   const handlePageSizeChange = useCallback((size: number) => {
     setRowsPerPage(size);
     setPage(1);
+  }, []);
+
+  const clearAllFilters = useCallback(() => {
+    setSearchTerm('');
+    setLeaderFilter({});
+    setBrandFilter({});
+    setWalletTypeFilter({});
+    setWalletStatusFilter(Object.fromEntries(WALLET_STATUS_OPTIONS.map((status) => [status, true])));
   }, []);
 
   const fetchData = useCallback(async () => {
@@ -1188,7 +1274,7 @@ export default function AgentBalance() {
             </Toolbar>
             <div ref={tableScrollRef} className="dt-scroll hidden relative flex-1 min-h-0 overflow-y-auto overflow-x-auto sm:block">
               <table className="text-xs">
-                <thead className={`sticky top-0 z-[50] bg-[#FAFAFB] dark:bg-[#252528] border-b border-[#E2E8F0] dark:border-[#3a3a3d] transition-shadow duration-150 ease-out ${
+                <thead className={`sticky top-0 z-[50] bg-[#FAFBFC] dark:bg-[#1C1F26] border-b border-[#E2E8F0] dark:border-[#3a3a3d] transition-shadow duration-150 ease-out ${
                   isScrolled ? 'shadow-[0_2px_4px_rgba(15,23,42,0.1)] dark:shadow-[0_2px_4px_rgba(0,0,0,0.35)]' : ''
                 }`}>
                   <tr className="h-[48px]">
@@ -1477,10 +1563,14 @@ export default function AgentBalance() {
                                 setSortDirection('asc');
                               }
                             }}
-                            className="flex w-full items-center justify-start gap-1 transition hover:opacity-80"
+                            className={`group/sort flex w-full items-center gap-1 transition hover:opacity-80 ${
+                              col.align === 'right' ? 'justify-end' : col.align === 'center' ? 'justify-center' : 'justify-start'
+                            }`}
                           >
                             <span>{col.label}</span>
-                            <SortIcon active={sortColumn === col.key} direction={sortDirection} />
+                            <span className={sortColumn === col.key ? '' : 'opacity-60 transition-opacity duration-150 group-hover/sort:opacity-100'}>
+                              <SortIcon active={sortColumn === col.key} direction={sortDirection} />
+                            </span>
                           </button>
                         ) : (
                           col.label
@@ -1494,7 +1584,13 @@ export default function AgentBalance() {
                     <tr key={i}>
                       {visibleColumns.map((col) => (
                         <td key={col.key} className="px-4 py-[14px]">
-                          <div className="h-2.5 w-3/4 animate-pulse rounded-md bg-slate-200 dark:bg-slate-700" />
+                          {col.key === 'brand' ? (
+                            <div className="h-[26px] w-12 animate-pulse rounded-md bg-slate-200 dark:bg-slate-700" />
+                          ) : col.key === 'walletStatus' ? (
+                            <div className="h-5 w-20 animate-pulse rounded-md bg-slate-200 dark:bg-slate-700" />
+                          ) : (
+                            <div className={`h-2.5 ${SKELETON_WIDTH[col.key]} animate-pulse rounded-md bg-slate-200 dark:bg-slate-700`} />
+                          )}
                         </td>
                       ))}
                     </tr>
@@ -1504,10 +1600,10 @@ export default function AgentBalance() {
                       <tr
                         key={row.agentName || i}
                         onClick={() => toggleRowSelection(row.agentName)}
-                        className={`cursor-pointer border-b border-border last:border-0 transition-colors duration-150 ease-out ${
+                        className={`border-b border-border last:border-0 transition-colors duration-150 ease-out ${
                           isSelected
-                            ? 'bg-[color:var(--product-accent-soft)] shadow-[inset_2.5px_0_0_var(--product-accent)]'
-                            : `hover:bg-muted/10 ${i % 2 === 1 ? 'bg-muted/5' : ''}`
+                            ? 'bg-[color:var(--product-accent-soft)] shadow-[inset_4px_0_0_var(--product-accent)]'
+                            : `hover:bg-slate-50 dark:hover:bg-slate-800 ${i % 2 === 1 ? 'bg-[#FCFCFD] dark:bg-white/[0.02]' : ''}`
                         }`}
                       >
                         {visibleColumns.map((col) => renderCell(row, col.key))}
@@ -1519,6 +1615,11 @@ export default function AgentBalance() {
                         <EmptyState
                           title="No matching accounts found"
                           description="Try adjusting your search or filters."
+                          action={
+                            <button type="button" onClick={clearAllFilters} className={GHOST_BUTTON}>
+                              Clear Filters
+                            </button>
+                          }
                         />
                       </td>
                     </tr>
@@ -1602,6 +1703,11 @@ export default function AgentBalance() {
                   <EmptyState
                     title="No matching accounts found"
                     description="Try adjusting your search or filters."
+                    action={
+                      <button type="button" onClick={clearAllFilters} className={GHOST_BUTTON}>
+                        Clear Filters
+                      </button>
+                    }
                   />
                 )}
               </div>
