@@ -6,12 +6,12 @@
 @custom-variant dark (&:where(.dark, .dark *));
 
 :root {
-  /* Synced from Sidebar.tsx's own panelOpen state (3.5rem collapsed /
-     13rem expanded — matches its w-14/w-52 exactly) so the main content
+  /* Synced from Sidebar.tsx's own panelOpen state (72px collapsed / 250px
+     expanded — matches its w-[72px]/w-[250px] exactly) so the main content
      area can offset itself without prop-drilling into a component that's
      otherwise untouched. Default here is the collapsed width, since that's
      the state before the panelOpen-restoring effect runs on mount. */
-  --sidebar-width: 3.5rem;
+  --sidebar-width: 72px;
   --border: #e2e8f0;
   --muted: #f1f5f9;
   --muted-foreground: #64748b;

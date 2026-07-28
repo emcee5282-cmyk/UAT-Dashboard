@@ -25,7 +25,7 @@ import { cn } from '@/lib/utils';
 import { SIDEBAR_SYNC_DURATION_CLASS } from '@/app/design-system/transitions';
 
 const BrandLogo = () => (
-  <Image src="/icon.png" alt="" width={28} height={28} className="h-full w-full rounded-lg object-cover" />
+  <Image src="/icon.png" alt="" width={36} height={36} className="h-full w-full rounded-lg object-cover" />
 );
 
 // Hover tooltip shown ONLY while the dock is collapsed (once expanded, the
@@ -83,38 +83,37 @@ function DockRow({
   // near-square instead; the label's own max-w-0 (below) ensures it truly
   // contributes zero width at that point rather than just being invisible.
   const rowClassName = cn(
-    'flex h-8 items-center rounded-lg px-1.5 text-[11px] font-medium whitespace-nowrap transition-colors duration-150 ease-in-out focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#2563EB]',
+    'flex h-10 items-center rounded-lg px-2.5 text-[11px] font-medium whitespace-nowrap transition-[transform,background-color,box-shadow] duration-200 ease-out focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#2563EB]',
     expanded ? 'w-full' : 'w-fit',
-    // A flat `hover:bg-muted` reads as a button press, not a highlight —
-    // a low-opacity tint of the active row's own navy reads as "this row
-    // is selectable" without competing with the actual active state.
-    disabled ? 'cursor-not-allowed text-muted-foreground' : 'hover:bg-[#0f172a]/[0.05] dark:hover:bg-white/[0.06]'
+    disabled && 'cursor-not-allowed text-muted-foreground',
+    // A flat `hover:bg-muted` reads as a button press, not a highlight — a
+    // low-opacity tint plus a 2px nudge reads as "this row is selectable"
+    // without competing with the actual active state.
+    !disabled && !active && 'hover:translate-x-[2px] hover:bg-[#0f172a]/[0.05] dark:hover:bg-white/[0.06]',
+    // Soft product-tinted fill (flips indigo/teal with the active product
+    // via --product-accent) replaces the old solid navy block — paired with
+    // the left accent bar below instead of a full rectangle.
+    active && 'bg-[var(--product-accent-soft)] font-semibold text-[var(--product-accent)] shadow-[0_1px_3px_rgba(15,23,42,0.08)]'
   );
-  // Softened from a flat #0f172a fill — same dark family, one step
-  // lighter, plus a barely-there inset highlight instead of a shadow so it
-  // reads as "selected" without looking like a heavy solid block.
-  const style = active
-    ? { background: '#1e293b', color: 'white', boxShadow: 'inset 0 0 0 1px rgba(255,255,255,0.06)' }
-    : undefined;
 
   const inner = (
     <>
-      <span className="relative flex h-7 w-7 shrink-0 items-center justify-center">
-        <Icon size={13} strokeWidth={1.75} />
+      <span className="relative flex h-8 w-8 shrink-0 items-center justify-center">
+        <Icon size={16} strokeWidth={1.75} />
         {!!badge && badge > 0 && (
           // Overrides the default Badge's bg-primary fill — same softened
-          // slate as the active nav state, for one consistent "dark" tone
+          // slate as the inactive nav tone, for one consistent "dark" tone
           // across the sidebar instead of two different blacks. leading-
           // none keeps the digit centered instead of drifting from the
           // default line-height in a box this small.
-          <Badge className="absolute -right-0.5 -top-0.5 h-3.5 min-w-3.5 justify-center rounded-full bg-[#1e293b] px-1 text-[8px] leading-none text-white dark:bg-white/20">
+          <Badge className="absolute -right-1 -top-1 h-3.5 min-w-3.5 justify-center rounded-full bg-[#1e293b] px-1 text-[8px] leading-none text-white dark:bg-white/20">
             {badge > 99 ? '99+' : badge}
           </Badge>
         )}
       </span>
       <span
         className={`overflow-hidden transition-all duration-300 ease-in-out ${
-          expanded ? 'ml-2 max-w-[140px] translate-x-0 opacity-100' : 'ml-0 max-w-0 -translate-x-1 opacity-0'
+          expanded ? 'ml-2 max-w-[170px] translate-x-0 opacity-100' : 'ml-0 max-w-0 -translate-x-1 opacity-0'
         }`}
       >
         {label}
@@ -124,12 +123,18 @@ function DockRow({
 
   return (
     <div className="group relative">
+      {active && (
+        <span
+          className="pointer-events-none absolute left-0 top-1/2 z-10 h-5 w-[2.5px] -translate-y-1/2 rounded-full"
+          style={{ background: 'var(--product-accent)' }}
+        />
+      )}
       {href ? (
-        <Link href={href} onClick={onClick} aria-label={label} aria-current={active ? 'page' : undefined} className={rowClassName} style={style}>
+        <Link href={href} onClick={onClick} aria-label={label} aria-current={active ? 'page' : undefined} className={rowClassName}>
           {inner}
         </Link>
       ) : (
-        <button type="button" onClick={onClick} disabled={disabled} aria-label={label} className={rowClassName} style={style}>
+        <button type="button" onClick={onClick} disabled={disabled} aria-label={label} className={rowClassName}>
           {inner}
         </button>
       )}
@@ -138,17 +143,33 @@ function DockRow({
   );
 }
 
-// Flat icon list for the desktop floating dock — same destinations as the
-// mobile drawer's nav above (Dashboard is the product's own root page, e.g.
-// Cash Out Wallets / Send Money's equivalent; Overview is the shared,
-// product-agnostic page, handled separately below), just without the
-// "Agent" grouping label (no room for a submenu accordion in an icon-only
-// dock).
-const DOCK_ITEMS = [
+// Uppercase, muted group label shown above each nav group while expanded;
+// while collapsed there's no room for text, so a thin divider stands in as
+// the grouping signal instead. `first` skips the divider/extra top spacing
+// for the group right under the header, which already has its own divider.
+function NavSection({ label, expanded, first }: { label: string; expanded: boolean; first?: boolean }) {
+  if (expanded) {
+    return (
+      <p className={`px-2.5 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground/60 ${first ? 'pb-1 pt-1' : 'pb-1 pt-3'}`}>
+        {label}
+      </p>
+    );
+  }
+  return first ? null : <div className="mx-2.5 my-1 border-t border-border/70" />;
+}
+
+// Same destinations as before (Dashboard is the product's own root page,
+// e.g. Cash Out Wallets / Send Money's equivalent; Overview is the shared,
+// product-agnostic page, handled separately below), just grouped under
+// section labels now instead of one flat list.
+const OPERATIONS_ITEMS = [
   { href: '/agentbal', label: 'Balance', icon: Wallet },
   { href: '/summary', label: 'Opening', icon: BookOpen },
   { href: '/stlm', label: 'Settlement', icon: ArrowLeftRight },
   { href: '/topup', label: 'Top Up', icon: PlusCircle },
+];
+
+const MONITORING_ITEMS = [
   { href: '/transfer-queue', label: 'Transfer Queue', icon: Shuffle, isTransferQueue: true },
 ];
 
@@ -192,7 +213,7 @@ export default function Sidebar() {
   // swap between the two known widths, not a measured/calculated one, so
   // this doesn't need a resize listener or any layout math.
   useEffect(() => {
-    document.documentElement.style.setProperty('--sidebar-width', panelOpen ? '13rem' : '3.5rem');
+    document.documentElement.style.setProperty('--sidebar-width', panelOpen ? '250px' : '72px');
   }, [panelOpen]);
 
   useEffect(() => {
@@ -231,35 +252,37 @@ export default function Sidebar() {
         <div className="fixed inset-0 z-40 bg-foreground/20 md:hidden" onClick={() => setMobileOpen(false)} />
       )}
 
-      <aside className={`fixed left-0 top-0 z-50 flex h-full w-60 flex-col border-r border-border bg-white text-foreground transition-transform duration-300 dark:bg-[#0d1117] md:hidden ${mobileOpen ? 'translate-x-0' : '-translate-x-full'}`}>
-        <div className="flex h-[49px] shrink-0 items-center gap-3 border-b border-border px-4">
+      <aside className={`fixed left-0 top-0 z-50 flex h-full w-[250px] flex-col border-r border-border bg-white text-foreground transition-transform duration-300 dark:bg-[#0d1117] md:hidden ${mobileOpen ? 'translate-x-0' : '-translate-x-full'}`}>
+        <div className="flex h-[60px] shrink-0 items-center gap-3 border-b border-border px-4">
           <div
-            className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg ring-1 ring-white/10"
+            className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg ring-1 ring-white/10"
             style={{ background: '#0f172a' }}
           >
             <BrandLogo />
           </div>
           <div className="overflow-hidden">
-            <p className="whitespace-nowrap text-[11px] font-semibold leading-tight text-foreground">Operations</p>
-            <p className="whitespace-nowrap text-[8px] leading-snug text-muted-foreground/70">Real-time Dashboard</p>
+            <p className="whitespace-nowrap text-[12px] font-semibold leading-tight text-foreground">Operations</p>
+            <p className="whitespace-nowrap text-[9px] leading-snug text-muted-foreground/70">Operations Dashboard</p>
           </div>
           <button onClick={() => setMobileOpen(false)} className="ml-auto text-muted-foreground hover:text-foreground">
             <X size={15} />
           </button>
         </div>
 
-        <div className="flex-1 space-y-3 overflow-y-auto overflow-x-hidden px-2 py-3">
+        <div className="flex-1 space-y-1 overflow-y-auto overflow-x-hidden px-2 py-3">
           {!mounted ? (
             <div className="space-y-1.5 px-2">
               {Array.from({ length: 5 }).map((_, i) => (
-                <div key={i} className="skeleton h-8 rounded-lg" />
+                <div key={i} className="skeleton h-10 rounded-lg" />
               ))}
             </div>
           ) : (
             <>
-              {/* Same flat row list as the desktop expanded panel (DockRow,
-                  expanded=true) — no accordion/grouping box. Kept in sync by
-                  reusing the exact component instead of a parallel markup. */}
+              {/* Same grouped row list as the desktop expanded panel
+                  (DockRow, expanded=true) — kept in sync by reusing the
+                  exact NavSection/DockRow components instead of a parallel
+                  markup. */}
+              <NavSection label="OVERVIEW" expanded first />
               <DockRow
                 href={overviewHref}
                 icon={LayoutDashboard}
@@ -278,7 +301,23 @@ export default function Sidebar() {
                 tooltip={false}
                 onClick={() => setMobileOpen(false)}
               />
-              {DOCK_ITEMS.map((item) => (
+
+              <NavSection label="OPERATIONS" expanded />
+              {OPERATIONS_ITEMS.map((item) => (
+                <DockRow
+                  key={item.href}
+                  href={resolveHref(item.href)}
+                  icon={item.icon}
+                  label={item.label}
+                  active={pathname === resolveHref(item.href)}
+                  expanded
+                  tooltip={false}
+                  onClick={() => setMobileOpen(false)}
+                />
+              ))}
+
+              <NavSection label="MONITORING" expanded />
+              {MONITORING_ITEMS.map((item) => (
                 <DockRow
                   key={item.href}
                   href={resolveHref(item.href)}
@@ -291,6 +330,8 @@ export default function Sidebar() {
                   onClick={() => setMobileOpen(false)}
                 />
               ))}
+
+              <NavSection label="SETTINGS" expanded />
               <DockRow icon={Settings} label="Settings · Soon" expanded tooltip={false} disabled />
             </>
           )}
@@ -298,12 +339,17 @@ export default function Sidebar() {
 
         <div className="shrink-0 border-t border-border px-3 py-3">
           <div className="flex items-center gap-3 rounded-lg px-2 py-1.5">
-            <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-slate-100 text-[10px] font-bold text-slate-900 dark:bg-white/10 dark:text-white">
+            <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-slate-100 text-[11px] font-bold text-slate-900 dark:bg-white/10 dark:text-white">
               OP
             </div>
             <div className="min-w-0 overflow-hidden whitespace-nowrap">
               <p className="truncate text-[12px] font-semibold text-foreground">Operations Admin</p>
+              <p className="truncate text-[10px] text-muted-foreground">Administrator</p>
               <p className="truncate text-[10px] text-muted-foreground">admin@operations.com</p>
+              <div className="mt-1 flex items-center gap-1">
+                <span className="h-1.5 w-1.5 rounded-full bg-emerald-500" />
+                <span className="text-[9px] font-medium text-emerald-600 dark:text-emerald-400">Online</span>
+              </div>
             </div>
           </div>
         </div>
@@ -311,56 +357,60 @@ export default function Sidebar() {
 
       {/* Desktop — ONE persistent container; only its width animates
           between collapsed and expanded. Icons never move: every row keeps
-          the exact same fixed-size icon box (h-7 w-7) at the exact same
-          left offset (px-1.5 on the row) in both states — only the
+          the exact same fixed-size icon box (h-8 w-8) at the exact same
+          left offset (px-2.5 on the row) in both states — only the
           label next to it fades/slides in, and only because the outer
           container is wide enough to reveal it (overflow-hidden clips it
           otherwise). Row order is fixed and identical regardless of state:
-          Menu toggle, brand, Dashboard, Overview, product switch, Balance,
-          Opening, Settlement, Top Up, Transfer Queue, Settings, avatar. */}
+          Menu toggle, brand, Dashboard, Overview, Balance, Opening,
+          Settlement, Top Up, Transfer Queue, Settings, avatar — grouped
+          under OVERVIEW / OPERATIONS / MONITORING / SETTINGS labels. */}
       <div
         className={`fixed left-0 top-0 z-[60] hidden h-screen overflow-hidden border-r border-border bg-white shadow-[1px_0_3px_rgba(0,0,0,0.04)] transition-[width] ${SIDEBAR_SYNC_DURATION_CLASS} ease-in-out dark:bg-[#0d1117] md:block ${
-          panelOpen ? 'w-52' : 'w-14'
+          panelOpen ? 'w-[250px]' : 'w-[72px]'
         }`}
       >
-        <div className="flex h-full flex-col gap-1.5 p-1">
+        <div className="flex h-full flex-col gap-2 p-2">
           {/* Brand — decorative logo, not a link. The chevron at the end is
               the ONLY open/close control now (replaces the old separate
               Menu/X toggle row). Fixed row height so collapsing/expanding
-              never changes its own size — h-11 (was h-9) gives it +4px of
-              breathing room top and bottom without touching the 28px logo
-              or text sizes. */}
-          {/* px-1.5 — matches every nav row and the footer avatar exactly,
+              never changes its own size. Divider below (border-b on the
+              wrapper) separates it from the nav, per design-system spacing
+              rules. */}
+          {/* px-2.5 — matches every nav row and the footer avatar exactly,
               so the logo icon's left edge lines up with every icon below
-              it instead of sitting 2px further right (was px-2). */}
-          <div className="relative mb-2 flex h-11 items-center gap-2 rounded-lg px-1.5">
-            <div
-              className="relative flex h-7 w-7 shrink-0 items-center justify-center rounded-lg ring-1 ring-white/10"
-              style={{ background: '#0f172a' }}
-            >
-              <BrandLogo />
-            </div>
-            <div
-              className={`overflow-hidden transition-all duration-300 ease-in-out ${
-                panelOpen ? 'max-w-[120px] translate-x-0 opacity-100' : 'max-w-0 -translate-x-1 opacity-0'
-              }`}
-            >
-              <p className="whitespace-nowrap text-[11px] font-semibold leading-tight text-foreground">Operations</p>
-              <p className="whitespace-nowrap text-[8px] leading-snug text-muted-foreground/70">Real-time Dashboard</p>
-            </div>
-            {panelOpen && (
-              <button
-                type="button"
-                onClick={() => setPanelOpen(false)}
-                aria-label="Collapse menu"
-                title="Collapse menu"
-                className="absolute right-1 top-1/2 flex h-5 w-5 shrink-0 -translate-y-1/2 items-center justify-center rounded-md text-muted-foreground hover:bg-muted hover:text-foreground"
+              it. */}
+          <div className="mb-1 border-b border-border pb-3">
+            <div className="relative flex h-14 items-center gap-2.5 rounded-lg px-2.5">
+              <div
+                className="relative flex h-9 w-9 shrink-0 items-center justify-center rounded-lg ring-1 ring-white/10"
+                style={{ background: '#0f172a' }}
               >
-                <ChevronLeft size={13} />
-              </button>
-            )}
+                <BrandLogo />
+              </div>
+              <div
+                className={`overflow-hidden transition-all duration-300 ease-in-out ${
+                  panelOpen ? 'max-w-[140px] translate-x-0 opacity-100' : 'max-w-0 -translate-x-1 opacity-0'
+                }`}
+              >
+                <p className="whitespace-nowrap text-[12px] font-semibold leading-tight text-foreground">Operations</p>
+                <p className="whitespace-nowrap text-[9px] leading-snug text-muted-foreground/70">Operations Dashboard</p>
+              </div>
+              {panelOpen && (
+                <button
+                  type="button"
+                  onClick={() => setPanelOpen(false)}
+                  aria-label="Collapse menu"
+                  title="Collapse menu"
+                  className="absolute right-1 top-1/2 flex h-5 w-5 shrink-0 -translate-y-1/2 items-center justify-center rounded-md text-muted-foreground hover:bg-muted hover:text-foreground"
+                >
+                  <ChevronLeft size={13} />
+                </button>
+              )}
+            </div>
           </div>
 
+          <NavSection label="OVERVIEW" expanded={panelOpen} first />
           <DockRow href={overviewHref} icon={LayoutDashboard} label="Dashboard" active={overviewActive} expanded={panelOpen} />
 
           {mounted && (() => {
@@ -376,33 +426,54 @@ export default function Sidebar() {
             );
           })()}
 
-          {mounted && DOCK_ITEMS.map((item) => (
-            <DockRow
-              key={item.href}
-              href={resolveHref(item.href)}
-              icon={item.icon}
-              label={item.label}
-              active={pathname === resolveHref(item.href)}
-              expanded={panelOpen}
-              badge={item.isTransferQueue ? displayCount : null}
-            />
-          ))}
+          {mounted && (
+            <>
+              <NavSection label="OPERATIONS" expanded={panelOpen} />
+              {OPERATIONS_ITEMS.map((item) => (
+                <DockRow
+                  key={item.href}
+                  href={resolveHref(item.href)}
+                  icon={item.icon}
+                  label={item.label}
+                  active={pathname === resolveHref(item.href)}
+                  expanded={panelOpen}
+                />
+              ))}
 
+              <NavSection label="MONITORING" expanded={panelOpen} />
+              {MONITORING_ITEMS.map((item) => (
+                <DockRow
+                  key={item.href}
+                  href={resolveHref(item.href)}
+                  icon={item.icon}
+                  label={item.label}
+                  active={pathname === resolveHref(item.href)}
+                  expanded={panelOpen}
+                  badge={item.isTransferQueue ? displayCount : null}
+                />
+              ))}
+            </>
+          )}
+
+          <NavSection label="SETTINGS" expanded={panelOpen} />
           <DockRow icon={Settings} label="Settings · Soon" expanded={panelOpen} disabled />
 
-          <div className="relative mt-auto flex items-center gap-2 rounded-lg border-t border-border px-1.5 pb-1 pt-3">
-            <div className="flex h-7 w-7 shrink-0 items-center justify-center">
-              <div className="flex h-5 w-5 shrink-0 items-center justify-center rounded-lg bg-slate-100 text-[7px] font-bold text-slate-900 dark:bg-white/10 dark:text-white">
-                OP
-              </div>
+          <div className="relative mt-auto flex items-center gap-2.5 rounded-lg border-t border-border px-2.5 pb-1 pt-3">
+            <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-slate-100 text-[9px] font-bold text-slate-900 dark:bg-white/10 dark:text-white">
+              OP
             </div>
             <div
               className={`min-w-0 transition-all duration-300 ease-in-out ${
                 panelOpen ? 'translate-x-0 opacity-100' : '-translate-x-1 opacity-0'
               }`}
             >
-              <p className="whitespace-nowrap text-[10px] font-semibold text-foreground">Operations Admin</p>
-              <p className="whitespace-nowrap text-[8px] text-muted-foreground">admin@operations.com</p>
+              <p className="truncate text-[10px] font-semibold text-foreground">Operations Admin</p>
+              <p className="truncate text-[8px] text-muted-foreground">Administrator</p>
+              <p className="truncate text-[8px] text-muted-foreground">admin@operations.com</p>
+              <div className="mt-1 flex items-center gap-1">
+                <span className="h-1.5 w-1.5 rounded-full bg-emerald-500" />
+                <span className="text-[8px] font-medium text-emerald-600 dark:text-emerald-400">Online</span>
+              </div>
             </div>
           </div>
         </div>
@@ -410,19 +481,18 @@ export default function Sidebar() {
 
       {/* Chevron badge rendered OUTSIDE the sidebar's overflow-hidden box so it
           can overlap past the collapsed edge without the sidebar itself
-          changing width or clipping it. top-[26px] mirrors the brand row's
-          own vertical center (4px outer padding + half of its h-11/44px
+          changing width or clipping it. top-[36px] mirrors the brand row's
+          own vertical center (8px outer padding + half of its h-14/56px
           height) so it reads as part of that row instead of a floating
-          chip — the softer shadow does the same job, replacing the more
-          prominent shadow-sm with a shadow just strong enough to lift it
-          off the page. */}
+          chip. left-[64px] sits at the collapsed 72px rail's edge minus
+          half the button's own width, so it straddles the edge. */}
       {!panelOpen && (
         <button
           type="button"
           onClick={() => setPanelOpen(true)}
           aria-label="Expand menu"
           title="Expand menu"
-          className="fixed left-12 top-[26px] z-[61] hidden h-4 w-4 -translate-y-1/2 cursor-pointer items-center justify-center rounded-full border border-border bg-white text-slate-900 shadow-[0_1px_2px_rgba(0,0,0,0.08)] md:flex dark:bg-[#0d1117] dark:text-white"
+          className="fixed left-[64px] top-[36px] z-[61] hidden h-4 w-4 -translate-y-1/2 cursor-pointer items-center justify-center rounded-full border border-border bg-white text-slate-900 shadow-[0_1px_2px_rgba(0,0,0,0.08)] md:flex dark:bg-[#0d1117] dark:text-white"
         >
           <ChevronRight size={10} />
         </button>
