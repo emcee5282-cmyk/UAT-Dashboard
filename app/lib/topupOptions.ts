@@ -5,11 +5,10 @@ import { SETTLEMENT_BRAND_OPTIONS, CASHOUT_WALLET_OPTIONS, SENDMONEY_WALLET_OPTI
 // change to either list only has to happen once, in settlementOptions.ts.
 export { SETTLEMENT_BRAND_OPTIONS, CASHOUT_WALLET_OPTIONS, SENDMONEY_WALLET_OPTIONS };
 
-// Unlike Settlement's free-text Remarks, Top Up's Type column is a fixed
-// literal per product+page — never observed as anything else in real sheet
-// data (see CLAUDE.md's "AG BD STLM + TOPUP"/"PS BD STLM + TOPUP" notes).
-// The two products use the *opposite* label from their own Settlement block,
-// which already uses the other one — not a typo, a real convention mismatch
-// between the two sheets.
-export const TOPUP_TYPE_CASHOUT = 'BUNDLE TRANSFER';
-export const TOPUP_TYPE_SENDMONEY = 'INTERNAL TRANSFER';
+// Every recognized "money coming in" type, shared by both products (same
+// set for Cashout and Send Money's own Bulk Import/Add-Edit Type field —
+// per explicit instruction, not product-specific like the old single-
+// literal-per-product model this replaced). Formal-cased; nothing here is
+// an abbreviation so nothing stays all-caps (contrast Settlement's own
+// remarks suggestions, which keep SPC/SDP/STLM/MC caps).
+export const TOPUP_TYPE_OPTIONS = ['Bundle Transfer In', 'Internal Transfer In', 'Top Up'];

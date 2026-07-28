@@ -608,7 +608,11 @@ export default function SendMoneySettlementPage() {
       // stand-in.
       if (openingRes.ok) {
         const openingText = await openingRes.text();
-        const openingNames = Array.from(new Set(parseSendMoneyOpeningCsv(openingText).map((row) => row.agentName))).sort((a, b) => a.localeCompare(b));
+        // Uppercased before dedup — the real table always displays Agent
+        // Name via .toUpperCase(), so the roster feeding Add/Edit's
+        // combobox and Bulk Import's validation should match that same
+        // canonical casing regardless of how the sheet itself has it stored.
+        const openingNames = Array.from(new Set(parseSendMoneyOpeningCsv(openingText).map((row) => row.agentName.toUpperCase()))).sort((a, b) => a.localeCompare(b));
         setOpeningAgentNames(openingNames);
       }
 
@@ -1329,7 +1333,9 @@ export default function SendMoneySettlementPage() {
         fields={settlementRecordFields}
         initialValues={editingRow ? {
           brand: matchOptionCaseInsensitive(editingRow.brand, SETTLEMENT_BRAND_OPTIONS),
-          agentName: editingRow.agentName,
+          // Uppercase — Agent Name's canonical form is full caps, regardless
+          // of how the sheet itself has it stored.
+          agentName: editingRow.agentName.toUpperCase(),
           wallet: matchOptionCaseInsensitive(editingRow.wallet, SENDMONEY_WALLET_OPTIONS),
           amount: String(parseAmount(editingRow.amount)),
           remarks: editingRow.remarks,

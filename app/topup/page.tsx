@@ -29,7 +29,7 @@ import Toolbar from '../components/Toolbar';
 import EmptyState from '../components/EmptyState';
 import DataTable from '../components/DataTable';
 import RecordFormModal, { type RecordFormField } from '../components/RecordFormModal';
-import { SETTLEMENT_BRAND_OPTIONS, CASHOUT_WALLET_OPTIONS, TOPUP_TYPE_CASHOUT } from '../lib/topupOptions';
+import { SETTLEMENT_BRAND_OPTIONS, CASHOUT_WALLET_OPTIONS, TOPUP_TYPE_OPTIONS } from '../lib/topupOptions';
 import AddRecordDropdown from '../components/AddRecordDropdown';
 import BulkImportModal from '../components/BulkImportModal';
 import BulkEditModal, { type BulkEditUpdates } from '../components/BulkEditModal';
@@ -501,7 +501,9 @@ function renderCell(row: TopUpRow, col: ColumnDef, style: CSSProperties, onEdit:
     case COLUMN_IDS.AMOUNT:
       return <div key={key} role="cell" style={style} className={`${base} !text-[12px] font-semibold tabular-nums`}>{highlightMatch(displayNum(row.amount), searchTerm)}</div>;
     case COLUMN_IDS.TYPE: {
-      const typeText = row.type && row.type !== '-' ? row.type : '−';
+      // Formal-cased for display — the sheet's own raw value is ALL CAPS
+      // ("BUNDLE TRANSFER"), same treatment as Wallet's toProperCase above.
+      const typeText = row.type && row.type !== '-' ? toProperCase(row.type) : '−';
       return <div key={key} role="cell" style={style} title={typeText} className={base}>{highlightMatch(typeText, searchTerm)}</div>;
     }
     case COLUMN_IDS.DATE: {
@@ -653,7 +655,11 @@ export default function TopUpPage() {
           const cols = line.split(',');
           const name = rawVal(cols[0]);
           const leader = rawVal(cols[3]);
-          if (name && name !== '-' && name !== 'OLD') openingNames.add(name);
+          // Uppercased before adding — the real table always displays Agent
+          // Name via .toUpperCase(), so the roster feeding Add/Edit's
+          // combobox and Bulk Import's validation should match that same
+          // canonical casing regardless of how the sheet itself has it stored.
+          if (name && name !== '-' && name !== 'OLD') openingNames.add(name.toUpperCase());
           if (name && leader) leaderMap[name.toUpperCase()] = leader;
         });
       }
@@ -870,7 +876,7 @@ export default function TopUpPage() {
     { key: 'agentName', label: 'Agent Name', kind: 'combobox', options: openingAgentNames, required: true },
     { key: 'wallet', label: 'Wallet', kind: 'combobox', options: CASHOUT_WALLET_OPTIONS, required: true },
     { key: 'amount', label: 'Amount', kind: 'amount', required: true },
-    { key: 'type', label: 'Type', kind: 'combobox', options: [TOPUP_TYPE_CASHOUT], required: true },
+    { key: 'type', label: 'Type', kind: 'combobox', options: TOPUP_TYPE_OPTIONS, required: true },
     { key: 'date', label: 'Date', kind: 'date', required: true },
   ], [openingAgentNames]);
 
@@ -1260,7 +1266,7 @@ export default function TopUpPage() {
                       </div>
 
                       <div className="mt-2.5 flex items-baseline justify-between border-t border-border pt-2.5">
-                        <span className="text-[11px] font-normal text-muted-foreground">{row.type}</span>
+                        <span className="text-[11px] font-normal text-muted-foreground">{row.type && row.type !== '-' ? toProperCase(row.type) : '−'}</span>
                         <span className="text-lg font-bold tabular-nums text-foreground">{displayNum(row.amount)}</span>
                       </div>
                     </div>
@@ -1299,7 +1305,10 @@ export default function TopUpPage() {
         fields={topupRecordFields}
         initialValues={editingRow ? {
           brand: editingRow.brand,
-          agentName: toProperCase(editingRow.agentName),
+          // Uppercase, not toProperCase — Agent Name's canonical form is
+          // full caps (matches the live table's own .toUpperCase()
+          // display), unlike Wallet below which really is Title Case.
+          agentName: editingRow.agentName.toUpperCase(),
           wallet: toProperCase(editingRow.wallet),
           amount: String(parseAmount(editingRow.amount)),
           type: editingRow.type,
@@ -1327,7 +1336,7 @@ export default function TopUpPage() {
         brandOptions={SETTLEMENT_BRAND_OPTIONS}
         walletOptions={CASHOUT_WALLET_OPTIONS}
         agentRoster={openingAgentNames}
-        typeOptions={[TOPUP_TYPE_CASHOUT]}
+        typeOptions={TOPUP_TYPE_OPTIONS}
       />
 
       <BulkEditModal

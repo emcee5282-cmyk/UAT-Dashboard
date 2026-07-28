@@ -13,13 +13,13 @@ import {
 // engine, same field-checker functions reused for Brand/Agent Name/Wallet/
 // Amount/Date. Only Type differs: Settlement's Remarks is free text (a
 // mismatch is a soft warning via checkRemarksField), but Top Up's Type is a
-// closed, single-value set per product — a mismatch here is a hard error,
-// like Wallet/Brand, not a warning.
+// closed set (see TOPUP_TYPE_OPTIONS, shared by both products) — a mismatch
+// here is a hard error, like Wallet/Brand, not a warning.
 export type TopUpValidationConfig = {
   brandOptions: string[];
   walletOptions: string[];
   agentRoster: string[];
-  typeOptions: string[]; // always a single fixed value per product page
+  typeOptions: string[];
 };
 
 export function checkTypeField(value: string, config: Pick<TopUpValidationConfig, 'typeOptions'>): FieldCheckResult {

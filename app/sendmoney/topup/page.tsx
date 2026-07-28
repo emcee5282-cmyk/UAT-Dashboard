@@ -20,7 +20,7 @@ import { rawVal, displayNum, parseAmount } from '@/app/lib/format';
 import { BRAND_CODES as CASHOUT_BRAND_CODES } from '@/app/lib/transferQueueCount';
 import { isToday, isYesterday } from '@/app/lib/businessDate';
 import { getPreference, setPreference } from '@/app/lib/preferences';
-import { SETTLEMENT_BRAND_OPTIONS, SENDMONEY_WALLET_OPTIONS, TOPUP_TYPE_SENDMONEY } from '@/app/lib/topupOptions';
+import { SETTLEMENT_BRAND_OPTIONS, SENDMONEY_WALLET_OPTIONS, TOPUP_TYPE_OPTIONS } from '@/app/lib/topupOptions';
 
 function matchOptionCaseInsensitive(value: string, options: string[]): string {
   return options.find((option) => option.toLowerCase() === value.toLowerCase()) ?? value;
@@ -182,6 +182,16 @@ const TABLE_MIN_WIDTH_PX = 1024;
 
 function headerCellClasses(align: 'left' | 'right' | 'center', paddingCls: string = 'px-4') {
   return `group ${paddingCls} text-[14px] leading-[20px] font-semibold text-[#475569] dark:text-[#9CA3AF] whitespace-nowrap text-${align}`;
+}
+
+// Copied verbatim from Cashout Top Up's own toProperCase — the sheet's raw
+// Type value is ALL CAPS ("INTERNAL TRANSFER"), formal-cased for display.
+function toProperCase(str: string): string {
+  return str
+    .toLowerCase()
+    .split(/([\s-]+)/)
+    .map((part) => (/^[\s-]+$/.test(part) ? part : part.charAt(0).toUpperCase() + part.slice(1)))
+    .join('');
 }
 
 function BrandBadge({ children }: { children: React.ReactNode }) {
@@ -404,7 +414,7 @@ function renderCell(row: TopUpRow, key: ColumnKey, onEdit: (row: TopUpRow) => vo
     case 'amount':
       return <td key={key} className={`${base} !text-[12px] font-semibold tabular-nums`}>{highlightMatch(displayNum(row.amount), searchTerm)}</td>;
     case 'type': {
-      const typeText = row.type && row.type !== '-' ? row.type : '−';
+      const typeText = row.type && row.type !== '-' ? toProperCase(row.type) : '−';
       return <td key={key} title={typeText} className={base}>{highlightMatch(typeText, searchTerm)}</td>;
     }
     case 'date':
@@ -486,7 +496,11 @@ export default function SendMoneyTopUpPage() {
           const cols = line.split(',');
           const name = rawVal(cols[11]);
           const leader = rawVal(cols[14]);
-          if (name && name !== '-' && name !== 'OLD') openingNames.add(name);
+          // Uppercased before adding — the real table always displays Agent
+          // Name via .toUpperCase(), so the roster feeding Add/Edit's
+          // combobox and Bulk Import's validation should match that same
+          // canonical casing regardless of how the sheet itself has it stored.
+          if (name && name !== '-' && name !== 'OLD') openingNames.add(name.toUpperCase());
           if (name && leader) leaderMap[name.toUpperCase()] = leader;
         });
       }
@@ -719,7 +733,7 @@ export default function SendMoneyTopUpPage() {
     { key: 'agentName', label: 'Agent Name', kind: 'combobox', options: openingAgentNames, required: true },
     { key: 'wallet', label: 'Wallet', kind: 'combobox', options: SENDMONEY_WALLET_OPTIONS, required: true },
     { key: 'amount', label: 'Amount', kind: 'amount', required: true },
-    { key: 'type', label: 'Type', kind: 'combobox', options: [TOPUP_TYPE_SENDMONEY], required: true },
+    { key: 'type', label: 'Type', kind: 'combobox', options: TOPUP_TYPE_OPTIONS, required: true },
     { key: 'date', label: 'Date', kind: 'date', required: true },
   ], [openingAgentNames]);
 
@@ -1098,7 +1112,7 @@ export default function SendMoneyTopUpPage() {
                       </div>
 
                       <div className="mt-2.5 flex items-baseline justify-between border-t border-border pt-2.5">
-                        <span className="text-[11px] font-normal text-muted-foreground">{row.type}</span>
+                        <span className="text-[11px] font-normal text-muted-foreground">{row.type && row.type !== '-' ? toProperCase(row.type) : '−'}</span>
                         <span className="text-lg font-bold tabular-nums text-foreground">{displayNum(row.amount)}</span>
                       </div>
                     </div>
@@ -1137,7 +1151,9 @@ export default function SendMoneyTopUpPage() {
         fields={topupRecordFields}
         initialValues={editingRow ? {
           brand: matchOptionCaseInsensitive(editingRow.brand, SETTLEMENT_BRAND_OPTIONS),
-          agentName: editingRow.agentName,
+          // Uppercase — Agent Name's canonical form is full caps, regardless
+          // of how the sheet itself has it stored.
+          agentName: editingRow.agentName.toUpperCase(),
           wallet: matchOptionCaseInsensitive(editingRow.wallet, SENDMONEY_WALLET_OPTIONS),
           amount: String(parseAmount(editingRow.amount)),
           type: editingRow.type,
@@ -1168,7 +1184,7 @@ export default function SendMoneyTopUpPage() {
         brandOptions={SETTLEMENT_BRAND_OPTIONS}
         walletOptions={SENDMONEY_WALLET_OPTIONS}
         agentRoster={openingAgentNames}
-        typeOptions={[TOPUP_TYPE_SENDMONEY]}
+        typeOptions={TOPUP_TYPE_OPTIONS}
       />
 
       <BulkEditModal

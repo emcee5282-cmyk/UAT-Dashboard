@@ -562,9 +562,10 @@ export default function BulkImportModal({
     [entries]
   );
 
-  // One row per RECORD (not per issue) — "Row 8 / 2 Validation Issues"
-  // instead of two separate table rows. A row stays visible here even
-  // after its issues are fixed as long as it's still Skipped, so Restore
+  // One row per RECORD (not per issue) — "Row 8 / Wallet, Type" (the actual
+  // field names, not a bare count) instead of two separate table rows. A
+  // row stays visible here even after its issues are fixed as long as it's
+  // still Skipped, so Restore
   // remains reachable.
   const reviewRowGroups = useMemo(() => {
     const issuesByRow = new Map<number, ValidationEntry[]>();
@@ -1194,7 +1195,7 @@ export default function BulkImportModal({
                                 </td>
                                 <td className="whitespace-nowrap px-2.5 py-1.5 text-muted-foreground">
                                   {group.issues.length > 0
-                                    ? `${group.issues.length} Validation Issue${group.issues.length === 1 ? '' : 's'}`
+                                    ? group.issues.map((issue) => issue.field).join(', ')
                                     : 'No remaining issues'}
                                 </td>
                                 <td className="whitespace-nowrap px-2.5 py-1.5">

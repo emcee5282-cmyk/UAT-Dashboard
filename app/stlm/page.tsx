@@ -908,7 +908,12 @@ export default function StlmPage() {
       const openingNames = new Set<string>();
       openingText.trim().split('\n').slice(1).forEach(line => {
         const name = rawVal(line.split(',')[0]);
-        if (name && name !== '-' && name !== 'OLD') openingNames.add(name);
+        // Uppercased before adding — the real table always displays Agent
+        // Name via .toUpperCase() (see renderCell below), so the roster
+        // feeding Add/Edit's combobox and Bulk Import's validation should
+        // match that same canonical casing regardless of how the sheet
+        // itself has it stored.
+        if (name && name !== '-' && name !== 'OLD') openingNames.add(name.toUpperCase());
       });
       setOpeningAgentNames(Array.from(openingNames).sort((a, b) => a.localeCompare(b)));
 
@@ -1622,7 +1627,10 @@ export default function StlmPage() {
         fields={settlementRecordFields}
         initialValues={editingRow ? {
           brand: editingRow.brand,
-          agentName: toProperCase(editingRow.agentName),
+          // Uppercase, not toProperCase — Agent Name's canonical form is
+          // full caps (matches the live table's own .toUpperCase()
+          // display), unlike Wallet below which really is Title Case.
+          agentName: editingRow.agentName.toUpperCase(),
           wallet: toProperCase(editingRow.wallet),
           amount: String(parseAmount(editingRow.amount)),
           remarks: editingRow.remarks,
