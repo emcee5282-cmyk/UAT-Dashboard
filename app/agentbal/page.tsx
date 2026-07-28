@@ -1295,7 +1295,7 @@ export default function AgentBalance() {
               </Toolbar.Right>
             </Toolbar>
             <div ref={tableScrollRef} className="dt-scroll hidden relative flex-1 min-h-0 overflow-y-auto overflow-x-auto sm:block">
-              <table className="text-xs">
+              <table className="w-full text-xs">
                 <thead className={`sticky top-0 z-[50] bg-[#FAFBFC] dark:bg-[#1C1F26] border-b border-[#E2E8F0] dark:border-[#3a3a3d] transition-shadow duration-150 ease-out ${
                   isScrolled ? 'shadow-[0_2px_4px_rgba(15,23,42,0.1)] dark:shadow-[0_2px_4px_rgba(0,0,0,0.35)]' : ''
                 }`}>
@@ -1589,10 +1589,21 @@ export default function AgentBalance() {
                               col.align === 'right' ? 'justify-end' : col.align === 'center' ? 'justify-center' : 'justify-start'
                             }`}
                           >
-                            <span>{col.label}</span>
-                            <span className={sortColumn === col.key ? '' : 'opacity-60 transition-opacity duration-150 group-hover/sort:opacity-100'}>
-                              <SortIcon active={sortColumn === col.key} direction={sortDirection} />
-                            </span>
+                            {col.align === 'right' ? (
+                              <>
+                                <span className={sortColumn === col.key ? '' : 'opacity-60 transition-opacity duration-150 group-hover/sort:opacity-100'}>
+                                  <SortIcon active={sortColumn === col.key} direction={sortDirection} />
+                                </span>
+                                <span>{col.label}</span>
+                              </>
+                            ) : (
+                              <>
+                                <span>{col.label}</span>
+                                <span className={sortColumn === col.key ? '' : 'opacity-60 transition-opacity duration-150 group-hover/sort:opacity-100'}>
+                                  <SortIcon active={sortColumn === col.key} direction={sortDirection} />
+                                </span>
+                              </>
+                            )}
                           </button>
                         ) : (
                           col.label
