@@ -1148,15 +1148,6 @@ export default function AgentBalance() {
           <DataTable className="mt-2">
             <Toolbar>
               <Toolbar.Left>
-                {loading ? (
-                  <div className="h-5 w-28 animate-pulse rounded-md bg-slate-200 dark:bg-slate-700" />
-                ) : (
-                  <div className="flex items-center gap-1 whitespace-nowrap rounded-full bg-indigo-50 px-3 py-1.5 dark:bg-indigo-500/15">
-                    <span className="text-[11px] font-medium text-indigo-500 dark:text-indigo-400">Showing</span>
-                    <span className="text-[11px] font-bold tabular-nums text-indigo-700 dark:text-indigo-300">{sortedRows.length.toLocaleString('en-PH')}</span>
-                    <span className="text-[11px] font-medium text-indigo-600 dark:text-indigo-400">Accounts</span>
-                  </div>
-                )}
                 <div className="flex h-10 w-full min-w-[200px] items-center gap-2 rounded-[10px] border border-[#E5E7EB] bg-white px-[14px] transition-colors focus-within:border-[#2563EB] focus-within:ring-2 focus-within:ring-[#2563EB]/20 dark:border-[#3a3a3d] dark:bg-[#2a2a2d] sm:w-[400px]">
                   {loading ? (
                     <div className="h-3 w-32 animate-pulse rounded-md bg-slate-200 dark:bg-slate-700" />
