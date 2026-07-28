@@ -16,6 +16,7 @@ import EmptyState from '../components/EmptyState';
 import { classifyFetchError, type ClassifiedError, assertAllOk } from '../lib/errors';
 import { rawVal, fmt, fmtAbbrev } from '@/app/lib/format';
 import { parseCsvLines } from '../lib/csv';
+import { TABLE_STICKY_HEADER_SHADOW_CLASS } from '../design-system/shadows';
 import { getBusinessToday, toBusinessDate, parseCardCutoffDate } from '../lib/businessDate';
 import {
   computeWalletStatus,
@@ -431,7 +432,6 @@ export default function AgentBalance() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<ClassifiedError | null>(null);
   const [spinning, setSpinning] = useState(false);
-  const [cardsExpanded, setCardsExpanded] = useState(true);
   const [searchTerm, setSearchTerm] = useState('');
   const [leaderFilter, setLeaderFilter] = useState<Record<string, boolean>>({});
   const [brandFilter, setBrandFilter] = useState<Record<string, boolean>>({});
@@ -1116,56 +1116,54 @@ export default function AgentBalance() {
         onRefresh={fetchData}
       />
 
-      <main className="flex-1 flex flex-col overflow-hidden px-6 pb-6 pt-3">
+      {!error && (
+        <div className={`w-full border-t border-border bg-[#f4f6fb] px-4 py-3 transition-shadow duration-150 ease-out dark:bg-[#1c1c1e] md:px-6 ${isScrolled ? TABLE_STICKY_HEADER_SHADOW_CLASS : ''}`}>
+          <div className="flex gap-2">
+            {loading ? (
+              Array.from({ length: 5 }).map((_, i) => (
+                <div key={i} className="flex-1 min-w-[200px] rounded-xl border border-border bg-white p-2.5 dark:bg-[#2a2a2d]">
+                  <div className="flex items-center gap-3">
+                    <div className="h-8 w-8 shrink-0 dt-skeleton rounded-full" />
+                    <div className="min-w-0 flex-1">
+                      <div className="h-3 w-20 dt-skeleton rounded-md" />
+                      <div className="mt-1.5 h-6 w-24 dt-skeleton rounded-md" />
+                      <div className="mt-1 h-3 w-28 dt-skeleton rounded-md" />
+                    </div>
+                  </div>
+                </div>
+              ))
+            ) : (
+              kpis.map((kpi) => (
+                <div
+                  key={kpi.label}
+                  className="flex-1 min-w-[200px] rounded-xl border border-border bg-white p-2.5 transition-[transform,box-shadow,border-color] duration-150 ease-out hover:-translate-y-px hover:border-foreground/20 hover:shadow-sm dark:bg-[#2a2a2d]"
+                >
+                  <div className="flex items-center gap-3">
+                    <div className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-full ${kpi.iconBg}`}>
+                      <kpi.icon size={16} className={kpi.accent} />
+                    </div>
+                    <div className="min-w-0 flex-1">
+                      <p className="text-[11px] font-medium leading-snug text-muted-foreground truncate">{kpi.label}</p>
+                      <FadeValue value={kpi.bigValue} className={`font-bold leading-tight text-foreground ${kpi.subtitle ? 'text-[21px]' : 'text-[28px]'}`} />
+                      <p className="mt-0.5 flex items-center gap-1 text-[11px] leading-snug text-muted-foreground truncate">
+                        {kpi.trend === 'up' && <span className="text-emerald-600 dark:text-emerald-400">▲</span>}
+                        {kpi.trend === 'down' && <span className="text-rose-600 dark:text-rose-400">▼</span>}
+                        {kpi.subtitle}
+                      </p>
+                    </div>
+                  </div>
+                </div>
+              ))
+            )}
+          </div>
+        </div>
+      )}
+
+      <main className="flex-1 flex flex-col overflow-hidden px-6 pb-6 pt-1">
         {error && <ConnectionErrorState error={error} onRetry={fetchData} />}
 
-        {!error && <div className="shrink-0 border-t border-border" />}
-
         {!error && (
-          <div className={`shrink-0 overflow-hidden transition-all duration-300 ease-in-out ${cardsExpanded ? 'h-[101px] opacity-100 mt-3 mb-2' : 'h-0 opacity-0 mt-0 mb-0'}`}>
-            <div className="flex gap-2 pb-3 pt-2 pr-2">
-              {loading ? (
-                Array.from({ length: 5 }).map((_, i) => (
-                  <div key={i} className="flex-1 min-w-[200px] rounded-xl border border-border bg-white p-2.5 dark:bg-[#2a2a2d]">
-                    <div className="flex items-center gap-3">
-                      <div className="h-8 w-8 shrink-0 dt-skeleton rounded-full" />
-                      <div className="min-w-0 flex-1">
-                        <div className="h-3 w-20 dt-skeleton rounded-md" />
-                        <div className="mt-1.5 h-6 w-24 dt-skeleton rounded-md" />
-                        <div className="mt-1 h-3 w-28 dt-skeleton rounded-md" />
-                      </div>
-                    </div>
-                  </div>
-                ))
-              ) : (
-                kpis.map((kpi) => (
-                  <div
-                    key={kpi.label}
-                    className="flex-1 min-w-[200px] rounded-xl border border-border bg-white p-2.5 transition-[transform,box-shadow,border-color] duration-150 ease-out hover:-translate-y-px hover:border-foreground/20 hover:shadow-sm dark:bg-[#2a2a2d]"
-                  >
-                    <div className="flex items-center gap-3">
-                      <div className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-full ${kpi.iconBg}`}>
-                        <kpi.icon size={16} className={kpi.accent} />
-                      </div>
-                      <div className="min-w-0 flex-1">
-                        <p className="text-[11px] font-medium leading-snug text-muted-foreground truncate">{kpi.label}</p>
-                        <FadeValue value={kpi.bigValue} className={`font-bold leading-tight text-foreground ${kpi.subtitle ? 'text-[21px]' : 'text-[28px]'}`} />
-                        <p className="mt-0.5 flex items-center gap-1 text-[11px] leading-snug text-muted-foreground truncate">
-                          {kpi.trend === 'up' && <span className="text-emerald-600 dark:text-emerald-400">▲</span>}
-                          {kpi.trend === 'down' && <span className="text-rose-600 dark:text-rose-400">▼</span>}
-                          {kpi.subtitle}
-                        </p>
-                      </div>
-                    </div>
-                  </div>
-                ))
-              )}
-            </div>
-          </div>
-        )}
-
-        {!error && (
-          <DataTable className="mt-2">
+          <DataTable>
             <Toolbar>
               <Toolbar.Left>
                 <div className="flex h-10 w-full min-w-[200px] items-center gap-2 rounded-[10px] border border-[#E5E7EB] bg-white px-[14px] transition-colors focus-within:border-[#2563EB] focus-within:ring-2 focus-within:ring-[#2563EB]/20 dark:border-[#3a3a3d] dark:bg-[#2a2a2d] sm:w-[400px]">
@@ -1185,18 +1183,6 @@ export default function AgentBalance() {
                 </div>
               </Toolbar.Left>
               <Toolbar.Right>
-                {loading && <div className="h-9 w-9 dt-skeleton rounded-lg" />}
-                {!loading && (
-                  <button
-                    type="button"
-                    onClick={() => setCardsExpanded((current) => !current)}
-                    aria-label={cardsExpanded ? 'Hide summary cards' : 'Show summary cards'}
-                    title={cardsExpanded ? 'Hide summary cards' : 'Show summary cards'}
-                    className={GHOST_BUTTON}
-                  >
-                    {cardsExpanded ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
-                  </button>
-                )}
                 {loading && <div className="h-9 w-28 dt-skeleton rounded-lg" />}
                 {!loading && (
                   <div className="inline-flex items-center rounded-[8px] border border-[#E2E8F0] dark:border-[#3a3a3d] overflow-hidden">
