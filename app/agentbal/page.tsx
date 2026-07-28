@@ -1202,7 +1202,7 @@ export default function AgentBalance() {
                 <thead className={`sticky top-0 z-[50] bg-[#FAFAFB] dark:bg-[#252528] border-b border-[#E2E8F0] dark:border-[#3a3a3d] transition-shadow duration-150 ease-out ${
                   isScrolled ? 'shadow-[0_2px_4px_rgba(15,23,42,0.1)] dark:shadow-[0_2px_4px_rgba(0,0,0,0.35)]' : ''
                 }`}>
-                  <tr>
+                  <tr className="h-[48px]">
                     {visibleColumns.map((col) => (
                       <th
                         key={col.key}
