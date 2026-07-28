@@ -4,7 +4,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import {
   ChevronDown, ChevronUp, Columns3, Download, RefreshCw, Search, Wallet,
-  TrendingUp, ArrowDownToLine, ArrowUpFromLine, Gauge,
+  TrendingUp, ArrowDownToLine, ArrowUpFromLine, Shield,
 } from 'lucide-react';
 import * as XLSX from 'xlsx';
 import SettlementHeader from '../components/SettlementHeader';
@@ -14,7 +14,7 @@ import Toolbar from '../components/Toolbar';
 import TableFooter from '../components/TableFooter';
 import EmptyState from '../components/EmptyState';
 import { classifyFetchError, type ClassifiedError, assertAllOk } from '../lib/errors';
-import { rawVal, fmtAbbrev } from '@/app/lib/format';
+import { rawVal, fmt, fmtAbbrev } from '@/app/lib/format';
 import { parseCsvLines } from '../lib/csv';
 import { getBusinessToday, toBusinessDate, parseCardCutoffDate } from '../lib/businessDate';
 import {
@@ -902,7 +902,16 @@ export default function AgentBalance() {
     return list;
   }, [leaderFilter, leaderOptions, brandFilter, brandOptions, walletStatusFilter, walletTypeFilter, walletTypeOptions, searchedRows]);
 
-  const primaryKpis = useMemo(() => {
+  // Unified 5-card KPI row — Total DP, Total WD, SDP, Actual Balance, Running
+  // Balance all rendered at equal size in one row (per explicit instruction,
+  // replacing the earlier "2 hero + 3 secondary" split). Total DP/WD/SDP show
+  // the full precise figure as their subtitle (matching Actual Balance's own
+  // subtitle-line treatment); Actual/Running Balance keep their descriptive
+  // text. Only Running Balance carries a trend arrow.
+  const kpis = useMemo(() => {
+    const totalDP = filteredRows.reduce((sum, row) => sum + row.agentTotalDP, 0);
+    const totalWD = filteredRows.reduce((sum, row) => sum + row.agentTotalWD, 0);
+    const totalSdp = filteredRows.reduce((sum, row) => sum + parseNumber(row.sdp), 0);
     const totalBalanceInside = filteredRows.reduce((sum, row) => sum + row.balanceInside, 0);
     const totalRunningBalance = filteredRows.reduce((sum, row) => sum + row.runningBalance, 0);
     const totalOpening = filteredRows.reduce((sum, row) => sum + parseNumber(row.openingBal), 0);
@@ -910,12 +919,39 @@ export default function AgentBalance() {
 
     return [
       {
+        label: 'Total DP',
+        icon: ArrowDownToLine,
+        accent: 'text-emerald-600 dark:text-emerald-400',
+        iconBg: 'bg-emerald-50 dark:bg-emerald-500/10',
+        bigValue: fmtAbbrev(totalDP),
+        subtitle: fmt(totalDP),
+        trend: undefined as 'up' | 'down' | undefined,
+      },
+      {
+        label: 'Total WD',
+        icon: ArrowUpFromLine,
+        accent: 'text-rose-600 dark:text-rose-400',
+        iconBg: 'bg-rose-50 dark:bg-rose-500/10',
+        bigValue: fmtAbbrev(totalWD),
+        subtitle: fmt(totalWD),
+        trend: undefined as 'up' | 'down' | undefined,
+      },
+      {
+        label: 'SDP',
+        icon: Shield,
+        accent: 'text-slate-500 dark:text-slate-400',
+        iconBg: 'bg-slate-100 dark:bg-slate-500/10',
+        bigValue: fmtAbbrev(totalSdp),
+        subtitle: fmt(totalSdp),
+        trend: undefined as 'up' | 'down' | undefined,
+      },
+      {
         label: 'Actual Balance',
         icon: Wallet,
         accent: 'text-blue-600 dark:text-blue-400',
         iconBg: 'bg-blue-50 dark:bg-blue-500/10',
         bigValue: fmtAbbrev(totalBalanceInside),
-        helperText: 'Current available balance',
+        subtitle: 'Current available balance',
         trend: undefined as 'up' | 'down' | undefined,
       },
       {
@@ -924,21 +960,9 @@ export default function AgentBalance() {
         accent: 'text-emerald-600 dark:text-emerald-400',
         iconBg: 'bg-emerald-50 dark:bg-emerald-500/10',
         bigValue: fmtAbbrev(totalRunningBalance),
-        helperText: `${runningVsOpening >= 0 ? '+' : '-'}${fmtAbbrev(Math.abs(runningVsOpening))} vs Opening`,
+        subtitle: `${runningVsOpening >= 0 ? '+' : '-'}${fmtAbbrev(Math.abs(runningVsOpening))} vs Opening`,
         trend: (runningVsOpening >= 0 ? 'up' : 'down') as 'up' | 'down' | undefined,
       },
-    ];
-  }, [filteredRows]);
-
-  const secondaryKpis = useMemo(() => {
-    const totalDP = filteredRows.reduce((sum, row) => sum + row.agentTotalDP, 0);
-    const totalWD = filteredRows.reduce((sum, row) => sum + row.agentTotalWD, 0);
-    const totalSdp = filteredRows.reduce((sum, row) => sum + parseNumber(row.sdp), 0);
-
-    return [
-      { label: 'Total DP', icon: ArrowDownToLine, accent: 'text-emerald-600 dark:text-emerald-400', value: fmtAbbrev(totalDP) },
-      { label: 'Total WD', icon: ArrowUpFromLine, accent: 'text-rose-600 dark:text-rose-400', value: fmtAbbrev(totalWD) },
-      { label: 'SDP', icon: Gauge, accent: 'text-slate-500 dark:text-slate-400', value: fmtAbbrev(totalSdp) },
     ];
   }, [filteredRows]);
 
@@ -1074,78 +1098,44 @@ export default function AgentBalance() {
         {!error && <div className="shrink-0 border-t border-border" />}
 
         {!error && (
-          <div className={`shrink-0 overflow-hidden transition-all duration-300 ease-in-out ${cardsExpanded ? 'h-[167px] opacity-100 mt-3 mb-2' : 'h-0 opacity-0 mt-0 mb-0'}`}>
-            <div className="flex flex-col gap-3 pb-3">
-              <div className="flex gap-2">
-                {loading ? (
-                  Array.from({ length: 2 }).map((_, i) => (
-                    <div key={i} className="flex-[1.5] min-w-[220px] rounded-xl border border-border bg-white p-2.5 dark:bg-[#2a2a2d]">
-                      <div className="flex items-center gap-3">
-                        <div className="h-8 w-8 shrink-0 animate-pulse rounded-full bg-slate-200 dark:bg-slate-700" />
-                        <div className="min-w-0 flex-1">
-                          <div className="h-3 w-20 animate-pulse rounded-md bg-slate-200 dark:bg-slate-700" />
-                          <div className="mt-1.5 h-6 w-24 animate-pulse rounded-md bg-slate-200 dark:bg-slate-700" />
-                          <div className="mt-1 h-3 w-28 animate-pulse rounded-md bg-slate-200 dark:bg-slate-700" />
-                        </div>
+          <div className={`shrink-0 overflow-hidden transition-all duration-300 ease-in-out ${cardsExpanded ? 'h-[105px] opacity-100 mt-3 mb-2' : 'h-0 opacity-0 mt-0 mb-0'}`}>
+            <div className="flex gap-2 pb-3">
+              {loading ? (
+                Array.from({ length: 5 }).map((_, i) => (
+                  <div key={i} className="flex-1 min-w-[200px] rounded-xl border border-border bg-white p-2.5 dark:bg-[#2a2a2d]">
+                    <div className="flex items-center gap-3">
+                      <div className="h-8 w-8 shrink-0 animate-pulse rounded-full bg-slate-200 dark:bg-slate-700" />
+                      <div className="min-w-0 flex-1">
+                        <div className="h-3 w-20 animate-pulse rounded-md bg-slate-200 dark:bg-slate-700" />
+                        <div className="mt-1.5 h-6 w-24 animate-pulse rounded-md bg-slate-200 dark:bg-slate-700" />
+                        <div className="mt-1 h-3 w-28 animate-pulse rounded-md bg-slate-200 dark:bg-slate-700" />
                       </div>
                     </div>
-                  ))
-                ) : (
-                  primaryKpis.map((kpi) => (
-                    <div
-                      key={kpi.label}
-                      className="flex-[1.5] min-w-[220px] rounded-xl border border-border bg-white p-2.5 transition-[transform,box-shadow,border-color] duration-150 ease-out hover:-translate-y-px hover:border-foreground/20 hover:shadow-sm dark:bg-[#2a2a2d]"
-                    >
-                      <div className="flex items-center gap-3">
-                        <div className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-full ${kpi.iconBg}`}>
-                          <kpi.icon size={16} className={kpi.accent} />
-                        </div>
-                        <div className="min-w-0 flex-1">
-                          <p className="text-[11px] font-medium leading-snug text-muted-foreground truncate">{kpi.label}</p>
-                          <p className="text-[21px] font-bold leading-tight text-foreground">{kpi.bigValue}</p>
-                          <p className="mt-0.5 flex items-center gap-1 text-[11px] leading-snug text-muted-foreground truncate">
-                            {kpi.trend === 'up' && <span className="text-emerald-600 dark:text-emerald-400">▲</span>}
-                            {kpi.trend === 'down' && <span className="text-rose-600 dark:text-rose-400">▼</span>}
-                            {kpi.helperText}
-                          </p>
-                        </div>
+                  </div>
+                ))
+              ) : (
+                kpis.map((kpi) => (
+                  <div
+                    key={kpi.label}
+                    className="flex-1 min-w-[200px] rounded-xl border border-border bg-white p-2.5 transition-[transform,box-shadow,border-color] duration-150 ease-out hover:-translate-y-px hover:border-foreground/20 hover:shadow-sm dark:bg-[#2a2a2d]"
+                  >
+                    <div className="flex items-center gap-3">
+                      <div className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-full ${kpi.iconBg}`}>
+                        <kpi.icon size={16} className={kpi.accent} />
+                      </div>
+                      <div className="min-w-0 flex-1">
+                        <p className="text-[11px] font-medium leading-snug text-muted-foreground truncate">{kpi.label}</p>
+                        <p className="text-[21px] font-bold leading-tight text-foreground">{kpi.bigValue}</p>
+                        <p className="mt-0.5 flex items-center gap-1 text-[11px] leading-snug text-muted-foreground truncate">
+                          {kpi.trend === 'up' && <span className="text-emerald-600 dark:text-emerald-400">▲</span>}
+                          {kpi.trend === 'down' && <span className="text-rose-600 dark:text-rose-400">▼</span>}
+                          {kpi.subtitle}
+                        </p>
                       </div>
                     </div>
-                  ))
-                )}
-              </div>
-
-              <div className="flex gap-2">
-                {/* Constrained to Actual Balance's own column width (flex-[1.5]
-                    of 3 total, matching the primary row's ratio) instead of
-                    spanning the full row — the empty flex-[1.5] spacer below
-                    keeps it aligned under Actual Balance only, not Running
-                    Balance. */}
-                <div className="flex flex-[1.5] gap-2 min-w-[220px]">
-                  {loading ? (
-                    Array.from({ length: 3 }).map((_, i) => (
-                      <div key={i} className="flex-1 min-w-[110px] rounded-xl border border-border bg-white p-2.5 dark:bg-[#2a2a2d]">
-                        <div className="h-2.5 w-12 animate-pulse rounded-md bg-slate-200 dark:bg-slate-700" />
-                        <div className="mt-1.5 h-4 w-16 animate-pulse rounded-md bg-slate-200 dark:bg-slate-700" />
-                      </div>
-                    ))
-                  ) : (
-                    secondaryKpis.map((kpi) => (
-                      <div
-                        key={kpi.label}
-                        className="flex-1 min-w-[110px] rounded-xl border border-border bg-white p-2.5 transition-[transform,box-shadow,border-color] duration-150 ease-out hover:-translate-y-px hover:border-foreground/20 hover:shadow-sm dark:bg-[#2a2a2d]"
-                      >
-                        <div className="flex items-center gap-1.5">
-                          <kpi.icon size={12} className={`shrink-0 ${kpi.accent}`} />
-                          <p className="text-[10.5px] font-medium text-muted-foreground truncate">{kpi.label}</p>
-                        </div>
-                        <p className="mt-1 text-[16px] font-bold leading-tight text-foreground">{kpi.value}</p>
-                      </div>
-                    ))
-                  )}
-                </div>
-                <div className="flex-[1.5]" />
-              </div>
+                  </div>
+                ))
+              )}
             </div>
           </div>
         )}
