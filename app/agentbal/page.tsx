@@ -326,6 +326,30 @@ function BrandBadge({ children }: { children: string }) {
   );
 }
 
+// Re-triggers a short opacity+translateY fade whenever `value` changes (e.g.
+// after Refresh resolves with new numbers) — same pattern as
+// SettlementSummary's own FadeValue, duplicated here since this page's KPI
+// cards are bespoke, not built on that shared component.
+function FadeValue({ value, className }: { value: string; className: string }) {
+  const [visible, setVisible] = useState(false);
+
+  useEffect(() => {
+    setVisible(false);
+    const raf = requestAnimationFrame(() => setVisible(true));
+    return () => cancelAnimationFrame(raf);
+  }, [value]);
+
+  return (
+    <p
+      className={`${className} transition-[opacity,transform] duration-200 ease-out ${
+        visible ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-[5px]'
+      }`}
+    >
+      {value}
+    </p>
+  );
+}
+
 // Mobile card grid fields — mirrors renderCell's data + colors, minus the
 // columns (walletName, walletStatus, companyBalance) shown in the card header/hero.
 function mobileCardFieldValue(row: MergedRow, key: ColumnKey): { value: string; className: string } {
@@ -1125,7 +1149,7 @@ export default function AgentBalance() {
                       </div>
                       <div className="min-w-0 flex-1">
                         <p className="text-[11px] font-medium leading-snug text-muted-foreground truncate">{kpi.label}</p>
-                        <p className="text-[21px] font-bold leading-tight text-foreground">{kpi.bigValue}</p>
+                        <FadeValue value={kpi.bigValue} className={`font-bold leading-tight text-foreground ${kpi.subtitle ? 'text-[21px]' : 'text-[28px]'}`} />
                         <p className="mt-0.5 flex items-center gap-1 text-[11px] leading-snug text-muted-foreground truncate">
                           {kpi.trend === 'up' && <span className="text-emerald-600 dark:text-emerald-400">▲</span>}
                           {kpi.trend === 'down' && <span className="text-rose-600 dark:text-rose-400">▼</span>}

@@ -308,6 +308,30 @@ function WalletBadge({ children }: { children: React.ReactNode }) {
   );
 }
 
+// Re-triggers a short opacity+translateY fade whenever `value` changes (e.g.
+// after Refresh resolves with new numbers) — same pattern as
+// SettlementSummary's own FadeValue, duplicated here since this page's KPI
+// cards are now bespoke, not built on that shared component.
+function FadeValue({ value, className }: { value: string; className: string }) {
+  const [visible, setVisible] = useState(false);
+
+  useEffect(() => {
+    setVisible(false);
+    const raf = requestAnimationFrame(() => setVisible(true));
+    return () => cancelAnimationFrame(raf);
+  }, [value]);
+
+  return (
+    <p
+      className={`${className} transition-[opacity,transform] duration-200 ease-out ${
+        visible ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-[5px]'
+      }`}
+    >
+      {value}
+    </p>
+  );
+}
+
 // Row actions menu (⋮) — copied verbatim from Settlement's RowActionsCell.
 // Edit opens the (UI-only, prototype) RecordFormModal; View Details/Delete
 // stay disabled placeholders, matching Settlement's own current state.
@@ -1015,7 +1039,7 @@ export default function TopUpPage() {
                   </div>
                   <div className="min-w-0 flex-1">
                     <p className="text-[11px] font-medium leading-snug text-muted-foreground truncate">{kpi.label}</p>
-                    <p className="text-[21px] font-bold leading-tight text-foreground">{kpi.bigValue}</p>
+                    <FadeValue value={kpi.bigValue} className={`font-bold leading-tight text-foreground ${kpi.subtitle ? 'text-[21px]' : 'text-[28px]'}`} />
                     {kpi.subtitle && (
                       <p className="mt-0.5 text-[11px] leading-snug text-muted-foreground truncate">{kpi.subtitle}</p>
                     )}
