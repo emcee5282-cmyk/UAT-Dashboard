@@ -954,12 +954,12 @@ export default function SendMoneySettlementPage() {
         isRefreshing={spinning}
         onRefresh={fetchData}
       />
-      <SettlementSummary items={kpiItems} isScrolled={isScrolled} />
+      <SettlementSummary items={kpiItems} isScrolled={isScrolled} loading={loading} />
 
       {/* pt-4 (16px) instead of the uniform p-6's 24px top — explicit
           breathing room between SettlementSummary and the toolbar below,
           tuned to spec (12-16px) rather than left at the larger default. */}
-      <main className="flex-1 flex flex-col overflow-hidden px-6 pb-6 pt-4">
+      <main className="flex-1 flex flex-col overflow-hidden px-6 pb-6 pt-1">
 
         {error && <ConnectionErrorState error={error} onRetry={fetchData} />}
 
@@ -1315,6 +1315,7 @@ export default function SendMoneySettlementPage() {
                 pageSizeOptions={PAGE_SIZE_OPTIONS}
                 onPageSizeChange={handlePageSizeChange}
                 totalRecords={sortedRows.length}
+                variant="premium"
               />
             )}
           </DataTable>

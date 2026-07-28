@@ -4,19 +4,56 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import {
   Upload, X, FileSpreadsheet, Download, CheckCircle2, AlertCircle, ChevronLeft, ChevronDown, ChevronUp, Pencil, Check, SkipForward, RotateCcw,
+  Store, User, Clock, FileText,
 } from 'lucide-react';
 import * as XLSX from 'xlsx';
 import { downloadTemplate, type TemplateModule } from '../lib/templates';
 import { displayNum, parseAmount } from '../lib/format';
-import { parseWorkbookFile, mapSettlementRows, type SettlementImportRow } from '../lib/xlsxParser';
+import { parseWorkbookFile, mapSettlementRows, mapTopUpRows, mapOpeningRows, type SettlementImportRow, type TopUpImportRow, type OpeningImportRow } from '../lib/xlsxParser';
 import {
   validateSettlementRows, checkBrandField, checkAgentNameField, checkWalletField, checkAmountField, checkDateField,
   type ValidationEntry, type ValidationConfig,
 } from '../lib/settlementValidation';
-import { detectDuplicatesWithinFile, mockExistingRecordCheck } from '../lib/duplicateDetector';
-import { calculateImportSummary, type ImportSummary } from '../lib/importSummary';
+import { validateTopUpRows, checkTypeField, type TopUpValidationConfig } from '../lib/topupValidation';
+import { validateOpeningRows, checkOptionalAmountField, type OpeningValidationConfig } from '../lib/openingValidation';
+import { detectDuplicatesWithinFile, detectDuplicateAgentNames, mockExistingRecordCheck } from '../lib/duplicateDetector';
+import { calculateImportSummary, calculateOpeningImportSummary, type ImportSummary } from '../lib/importSummary';
 import { mockImportRecords } from '../lib/importService';
+import { parseEstimateRows, formatImportTimestamp, type EstimateImportRecord, type EstimateRowError } from '../lib/estimateUpload';
 import RecordFormModal, { type RecordFormField } from './RecordFormModal';
+import EstimateLastImportRow from './EstimateLastImportRow';
+
+// A single wizard implementation serves Settlement's row shape
+// (brand/agentName/wallet/amount/remarks/date), Top Up's
+// (brand/agentName/wallet/amount/type/date), and Opening Balance's
+// (agentName/leader/openingBalance/sdp — no brand/wallet/date at all,
+// branched on `moduleKind`. Every field is optional here since each
+// concrete parse (mapSettlementRows/mapTopUpRows/mapOpeningRows) only ever
+// populates the subset its own module actually has; the moduleKind-aware
+// helpers below cast back to the concrete type wherever a function needs a
+// real guarantee (validate/summary calls). Every step-rendering/error-
+// table/report piece below only reads row/agentName or goes through those
+// helpers — nothing about the wizard UI itself changes per module.
+type ImportRow = {
+  row: number;
+  agentName: string;
+  brand?: string;
+  wallet?: string;
+  amount?: string;
+  date?: string;
+  remarks?: string;
+  type?: string;
+  leader?: string;
+  openingBalance?: string;
+  sdp?: string;
+};
+
+const TEMPLATE_LABEL: Record<TemplateModule, string> = {
+  settlement: 'Settlement',
+  topup: 'Top Up',
+  openingCashout: 'Opening Balance (Cashout)',
+  openingSendMoney: 'Opening Balance (Send Money)',
+};
 
 // Multi-step import wizard — UI/UX/validation-flow only, per explicit spec:
 // nothing here writes to a database. The four business-logic modules
@@ -95,7 +132,33 @@ type BulkImportModalProps = {
   brandOptions: string[];
   walletOptions: string[];
   agentRoster: string[];
-  remarksSuggestions: string[];
+  // Settlement's free-text Remarks suggestions (a mismatch is a soft
+  // warning) — omit when moduleKind is 'topup'.
+  remarksSuggestions?: string[];
+  // Top Up's fixed, single-value Type option (a mismatch is a hard error,
+  // unlike Remarks) — omit when moduleKind is 'settlement' (the default).
+  typeOptions?: string[];
+  // Discriminates which parse/validate/field-schema branch this instance
+  // uses. Defaults to 'settlement' — every existing Settlement call site
+  // omits this prop, so its behavior is byte-identical to before Top Up (and
+  // now Opening Balance) reused this component.
+  moduleKind?: 'settlement' | 'topup' | 'opening';
+  // Opening Balance only — shows an "Estimate Opening Balance" checkbox on
+  // the Upload step that swaps the whole wizard onto the real
+  // Assumed-Balance pipeline (see estimateApiBasePath below) instead of the
+  // mock roster import. Omitted by every Settlement/Top Up call site and by
+  // default, so their behavior is untouched.
+  allowEstimateMode?: boolean;
+  // Appends /estimated-balance (GET, Last Import) and
+  // /upload-estimated-balance (POST, real import) — same contract the old
+  // standalone UploadExcelModal used. Required when allowEstimateMode is true.
+  estimateApiBasePath?: string;
+  estimateExtractShopName?: (raw: string | number) => string;
+  estimateSkipShopNames?: string[];
+  // Called after a successful REAL Estimate import (not the mock path) so
+  // the caller can refetch its own table data — mirrors UploadExcelModal's
+  // own onImported contract.
+  onImported?: () => void;
 };
 
 export default function BulkImportModal({
@@ -108,14 +171,21 @@ export default function BulkImportModal({
   brandOptions,
   walletOptions,
   agentRoster,
-  remarksSuggestions,
+  remarksSuggestions = [],
+  typeOptions = [],
+  moduleKind = 'settlement',
+  allowEstimateMode = false,
+  estimateApiBasePath,
+  estimateExtractShopName,
+  estimateSkipShopNames = [],
+  onImported,
 }: BulkImportModalProps) {
   const [step, setStep] = useState<Step>('upload');
   const [dragActive, setDragActive] = useState(false);
   const [file, setFile] = useState<File | null>(null);
   const [scanError, setScanError] = useState<string | null>(null);
   const [scanMessageIndex, setScanMessageIndex] = useState(0);
-  const [rows, setRows] = useState<SettlementImportRow[]>([]);
+  const [rows, setRows] = useState<ImportRow[]>([]);
   const [entries, setEntries] = useState<ValidationEntry[]>([]);
   const [summary, setSummary] = useState<ImportSummary | null>(null);
   // The colored summary card's error table starts collapsed — only the
@@ -139,39 +209,121 @@ export default function BulkImportModal({
   const [rendered, setRendered] = useState(isOpen);
   const [closing, setClosing] = useState(false);
 
-  const validationConfig: ValidationConfig = useMemo(() => ({
+  // Estimate Mode (Opening Balance only) — a completely separate client-side
+  // pipeline from the mock rows/entries/summary state above: raw wallet-level
+  // rows (Account/Bank/Total DP/Total WD), no roster/agentName validation, a
+  // REAL network write instead of mockImportRecords. Kept in its own state
+  // block rather than folded into the generic rows/summary shape above since
+  // its data doesn't fit that per-agent-record model at all.
+  const [estimateMode, setEstimateMode] = useState(false);
+  const [estimateParsed, setEstimateParsed] = useState<{ headerRow: (string | number)[]; dataRows: (string | number)[][] } | null>(null);
+  const [estimateDetectedShops, setEstimateDetectedShops] = useState(0);
+  const [estimateDetectedErrors, setEstimateDetectedErrors] = useState(0);
+  const [estimateRowErrors, setEstimateRowErrors] = useState<EstimateRowError[]>([]);
+  const [estimateErrorsExpanded, setEstimateErrorsExpanded] = useState(false);
+  const [estimateImportProgress, setEstimateImportProgress] = useState(0);
+  const [estimateImportError, setEstimateImportError] = useState<string | null>(null);
+  const [estimateImportResult, setEstimateImportResult] = useState<EstimateImportRecord | null>(null);
+  const [lastImport, setLastImport] = useState<EstimateImportRecord | null>(null);
+  const estimateProgressTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  // Fetched as soon as the modal opens (not gated behind ticking the
+  // checkbox) so Last Import is ready the instant Estimate Mode is checked —
+  // same as the old standalone UploadExcelModal's own effect.
+  useEffect(() => {
+    if (!isOpen || !allowEstimateMode || !estimateApiBasePath) return;
+    fetch(`${estimateApiBasePath}/estimated-balance?t=${Date.now()}`)
+      .then((res) => (res.ok ? res.json() : null))
+      .then((data: { lastImport: EstimateImportRecord | null } | null) => {
+        if (data?.lastImport) setLastImport(data.lastImport);
+      })
+      .catch(() => {
+        // Couldn't reach the server — just skip showing Last Import rather
+        // than blocking the modal from opening.
+      });
+  }, [isOpen, allowEstimateMode, estimateApiBasePath]);
+
+  const validationConfig: ValidationConfig & TopUpValidationConfig & OpeningValidationConfig = useMemo(() => ({
     brandOptions,
     walletOptions,
     agentRoster,
     remarksSuggestions,
-  }), [brandOptions, walletOptions, agentRoster, remarksSuggestions]);
+    typeOptions,
+  }), [brandOptions, walletOptions, agentRoster, remarksSuggestions, typeOptions]);
 
   // Shared by the initial scan AND every post-edit re-check — a single
   // source of truth for "given these rows, what issues do they have."
-  const runValidation = useCallback((inputRows: SettlementImportRow[]): ValidationEntry[] => [
-    ...validateSettlementRows(inputRows, validationConfig),
-    ...detectDuplicatesWithinFile(inputRows),
-    ...mockExistingRecordCheck(inputRows),
-  ], [validationConfig]);
+  // Branches on moduleKind since Settlement/Top Up/Opening each have their
+  // own typed validator (Remarks is a soft warning, Type a hard error,
+  // Opening Balance/SDP allow blank) — the duplicate/existing-record checks
+  // below are already generic over every row shape (see
+  // duplicateDetector.ts); Opening uses its own agentName-only dedup key
+  // instead of Settlement/Top Up's brand+wallet+amount+date signature,
+  // since a roster snapshot has none of those.
+  const runValidation = useCallback((inputRows: ImportRow[]): ValidationEntry[] => {
+    if (moduleKind === 'opening') {
+      return [
+        ...validateOpeningRows(inputRows as OpeningImportRow[], validationConfig),
+        ...detectDuplicateAgentNames(inputRows),
+        ...mockExistingRecordCheck(inputRows),
+      ];
+    }
+    return [
+      ...(moduleKind === 'topup'
+        ? validateTopUpRows(inputRows as TopUpImportRow[], validationConfig)
+        : validateSettlementRows(inputRows as SettlementImportRow[], validationConfig)),
+      ...detectDuplicatesWithinFile(inputRows as SettlementImportRow[]),
+      ...mockExistingRecordCheck(inputRows),
+    ];
+  }, [validationConfig, moduleKind]);
 
-  // Same field set as the Settlement pages' own New/Edit Record modal
-  // (brand/agentName/wallet/amount/remarks/date), fed by this modal's own
-  // brandOptions/walletOptions/agentRoster/remarksSuggestions props so a
-  // fix made here is held to the exact same rules as the rest of the app.
-  const settlementRecordFields: RecordFormField[] = useMemo(() => [
-    { key: 'brand', label: 'Brand', kind: 'combobox', options: brandOptions, required: true },
-    { key: 'agentName', label: 'Agent Name', kind: 'combobox', options: agentRoster, required: true },
-    { key: 'wallet', label: 'Wallet', kind: 'combobox', options: walletOptions, required: true },
-    { key: 'amount', label: 'Amount', kind: 'amount', required: true },
-    { key: 'remarks', label: 'Remarks', kind: 'combobox', options: remarksSuggestions, allowCustom: true },
-    { key: 'date', label: 'Date', kind: 'date', required: true },
-  ], [brandOptions, agentRoster, walletOptions, remarksSuggestions]);
+  // What counts as "the row's headline amount" for the Total Amount stat
+  // card / Complete screen — Opening Balance for the 'opening' module,
+  // Amount for everyone else.
+  const getRowAmount = useCallback((row: ImportRow): string => (
+    moduleKind === 'opening' ? (row.openingBalance ?? '') : (row.amount ?? '')
+  ), [moduleKind]);
 
-  // Live, per-field business-rule check — the exact same functions
-  // validateSettlementRows uses for the bulk scan, reused here so the Edit
-  // Row dialog shows the REAL reason a field is invalid (and its "Available
-  // X" list) instead of a generic message, and re-evaluates on every
-  // keystroke so a fix clears the warning immediately.
+  const calculateSummary = useCallback((inputRows: ImportRow[], inputEntries: ValidationEntry[]): ImportSummary => (
+    moduleKind === 'opening'
+      ? calculateOpeningImportSummary(inputRows as OpeningImportRow[], inputEntries)
+      : calculateImportSummary(inputRows as SettlementImportRow[], inputEntries)
+  ), [moduleKind]);
+
+  // Same field set as each module's own New/Edit Record modal, fed by this
+  // modal's own props so a fix made here is held to the exact same rules as
+  // the rest of the app. Settlement's Remarks is free text with suggestions
+  // (allowCustom); Top Up's Type is a closed single-value set (no
+  // allowCustom — matching the fixed literal every real Top Up row has).
+  // Opening Balance has a genuinely different, shorter field set — no
+  // Brand/Wallet/Date, matching the real official templates exactly (Leader
+  // is free text, Opening Balance/SDP are both optional on both products).
+  const importRecordFields: RecordFormField[] = useMemo(() => {
+    if (moduleKind === 'opening') {
+      return [
+        { key: 'agentName', label: 'Agent Name', kind: 'combobox', options: agentRoster, required: true },
+        { key: 'leader', label: 'Leader', kind: 'text' },
+        { key: 'openingBalance', label: 'Opening Balance', kind: 'amount' },
+        { key: 'sdp', label: 'SDP', kind: 'amount' },
+      ];
+    }
+    const base: RecordFormField[] = [
+      { key: 'brand', label: 'Brand', kind: 'combobox', options: brandOptions, required: true },
+      { key: 'agentName', label: 'Agent Name', kind: 'combobox', options: agentRoster, required: true },
+      { key: 'wallet', label: 'Wallet', kind: 'combobox', options: walletOptions, required: true },
+      { key: 'amount', label: 'Amount', kind: 'amount', required: true },
+    ];
+    const sixthField: RecordFormField = moduleKind === 'topup'
+      ? { key: 'type', label: 'Type', kind: 'combobox', options: typeOptions, required: true }
+      : { key: 'remarks', label: 'Remarks', kind: 'combobox', options: remarksSuggestions, allowCustom: true };
+    return [...base, sixthField, { key: 'date', label: 'Date', kind: 'date', required: true }];
+  }, [brandOptions, agentRoster, walletOptions, remarksSuggestions, typeOptions, moduleKind]);
+
+  // Live, per-field business-rule check — the exact same functions the bulk
+  // scan uses, reused here so the Edit Row dialog shows the REAL reason a
+  // field is invalid (and its "Available X" list) instead of a generic
+  // message, and re-evaluates on every keystroke so a fix clears the
+  // warning immediately.
   const getFieldHint = useCallback((key: string, value: string) => {
     switch (key) {
       case 'brand': return checkBrandField(value, validationConfig);
@@ -179,6 +331,9 @@ export default function BulkImportModal({
       case 'wallet': return checkWalletField(value, validationConfig);
       case 'amount': return checkAmountField(value);
       case 'date': return checkDateField(value);
+      case 'type': return checkTypeField(value, validationConfig);
+      case 'openingBalance': return checkOptionalAmountField(value);
+      case 'sdp': return checkOptionalAmountField(value);
       default: return null;
     }
   }, [validationConfig]);
@@ -193,29 +348,57 @@ export default function BulkImportModal({
 
   const editingRow = useMemo(() => rows.find((row) => row.row === editingRowNumber) ?? null, [rows, editingRowNumber]);
 
-  const editingInitialValues: Record<string, string> = useMemo(() => {
-    if (!editingRow) return { brand: '', agentName: '', wallet: '', amount: '', remarks: '', date: '' };
+  const editingInitialValues: Record<string, string> = useMemo((): Record<string, string> => {
+    if (moduleKind === 'opening') {
+      if (!editingRow) return { agentName: '', leader: '', openingBalance: '', sdp: '' };
+      return {
+        agentName: toProperCase(editingRow.agentName),
+        leader: editingRow.leader ?? '',
+        openingBalance: editingRow.openingBalance ? String(parseAmount(editingRow.openingBalance)) : '',
+        sdp: editingRow.sdp ? String(parseAmount(editingRow.sdp)) : '',
+      };
+    }
+    const sixthKey = moduleKind === 'topup' ? 'type' : 'remarks';
+    if (!editingRow) return { brand: '', agentName: '', wallet: '', amount: '', [sixthKey]: '', date: '' };
     return {
-      brand: editingRow.brand.toUpperCase(),
+      brand: (editingRow.brand ?? '').toUpperCase(),
       agentName: toProperCase(editingRow.agentName),
-      wallet: toProperCase(editingRow.wallet),
+      wallet: toProperCase(editingRow.wallet ?? ''),
       amount: editingRow.amount ? String(parseAmount(editingRow.amount)) : '',
-      remarks: editingRow.remarks,
-      date: formatDateForEdit(editingRow.date),
+      [sixthKey]: moduleKind === 'topup' ? (editingRow.type ?? '') : (editingRow.remarks ?? ''),
+      date: formatDateForEdit(editingRow.date ?? ''),
     };
-  }, [editingRow]);
+  }, [editingRow, moduleKind]);
 
   const handleRowEditSave = useCallback((values: Record<string, string>) => {
     setRows((currentRows) => {
-      const updatedRows = currentRows.map((row) => row.row === editingRowNumber
-        ? { ...row, brand: values.brand ?? '', agentName: values.agentName ?? '', wallet: values.wallet ?? '', amount: values.amount ?? '', remarks: values.remarks ?? '', date: values.date ?? '' }
-        : row);
+      const updatedRows = currentRows.map((row) => {
+        if (row.row !== editingRowNumber) return row;
+        if (moduleKind === 'opening') {
+          return {
+            ...row,
+            agentName: values.agentName ?? '',
+            leader: values.leader ?? '',
+            openingBalance: values.openingBalance ?? '',
+            sdp: values.sdp ?? '',
+          };
+        }
+        return {
+          ...row,
+          brand: values.brand ?? '',
+          agentName: values.agentName ?? '',
+          wallet: values.wallet ?? '',
+          amount: values.amount ?? '',
+          date: values.date ?? '',
+          ...(moduleKind === 'topup' ? { type: values.type ?? '' } : { remarks: values.remarks ?? '' }),
+        };
+      });
       const newEntries = runValidation(updatedRows);
       setEntries(newEntries);
-      setSummary(calculateImportSummary(updatedRows, newEntries));
+      setSummary(calculateSummary(updatedRows, newEntries));
       return updatedRows;
     });
-  }, [editingRowNumber, runValidation]);
+  }, [editingRowNumber, runValidation, calculateSummary, moduleKind]);
 
   // Resets the WIZARD's own progress back to step one — used by "Back",
   // "Import Another File", and once the modal has fully closed. Does NOT
@@ -235,6 +418,19 @@ export default function BulkImportModal({
     setImportDone(0);
     setImportCompletedAt(null);
     cancelImportRef.current();
+    setEstimateMode(false);
+    setEstimateParsed(null);
+    setEstimateDetectedShops(0);
+    setEstimateDetectedErrors(0);
+    setEstimateRowErrors([]);
+    setEstimateErrorsExpanded(false);
+    setEstimateImportProgress(0);
+    setEstimateImportError(null);
+    setEstimateImportResult(null);
+    if (estimateProgressTimerRef.current) {
+      clearInterval(estimateProgressTimerRef.current);
+      estimateProgressTimerRef.current = null;
+    }
   }, []);
 
   const requestClose = useCallback(() => {
@@ -268,12 +464,56 @@ export default function BulkImportModal({
     setScanError(null);
 
     (async () => {
-      let parsedRows: SettlementImportRow[] = [];
+      // Estimate Mode's raw wallet-level file has nothing to do with the
+      // agent-roster row shape below — parsed and validated entirely
+      // separately (see parseEstimateRows), landing straight on 'validation'
+      // with its own state instead of rows/entries/summary.
+      if (estimateMode) {
+        let failure: string | null = null;
+        let parsedHeaderRow: (string | number)[] = [];
+        let parsedDataRows: (string | number)[][] = [];
+        let result: { detectedShops: number; detectedErrors: number; rowErrors: EstimateRowError[] } | null = null;
+        try {
+          const buffer = await file.arrayBuffer();
+          const workbook = XLSX.read(buffer, { type: 'array' });
+          const sheet = workbook.Sheets[workbook.SheetNames[0]];
+          const sheetRows: (string | number)[][] = XLSX.utils.sheet_to_json(sheet, { header: 1, blankrows: false });
+          const [headerRow, ...dataRows] = sheetRows;
+          if (!headerRow || headerRow.length === 0) throw new Error('The file appears to be empty.');
+          parsedHeaderRow = headerRow;
+          parsedDataRows = dataRows;
+          result = parseEstimateRows(headerRow, dataRows, estimateExtractShopName!, estimateSkipShopNames);
+        } catch (err) {
+          failure = err instanceof Error ? err.message : 'Could not read this file.';
+        }
+
+        for (let i = 0; i < SCAN_MESSAGES.length; i++) {
+          if (cancelled) return;
+          setScanMessageIndex(i);
+          // eslint-disable-next-line no-await-in-loop
+          await new Promise((resolve) => setTimeout(resolve, 180));
+        }
+        if (cancelled) return;
+
+        if (failure || !result) {
+          setScanError(failure ?? 'Could not read this file.');
+          setStep('upload');
+          return;
+        }
+        setEstimateParsed({ headerRow: parsedHeaderRow, dataRows: parsedDataRows });
+        setEstimateDetectedShops(result.detectedShops);
+        setEstimateDetectedErrors(result.detectedErrors);
+        setEstimateRowErrors(result.rowErrors);
+        setStep('validation');
+        return;
+      }
+
+      let parsedRows: ImportRow[] = [];
       let computedEntries: ValidationEntry[] = [];
       let failure: string | null = null;
       try {
         const parsed = await parseWorkbookFile(file);
-        parsedRows = mapSettlementRows(parsed);
+        parsedRows = moduleKind === 'opening' ? mapOpeningRows(parsed) : moduleKind === 'topup' ? mapTopUpRows(parsed) : mapSettlementRows(parsed);
         computedEntries = runValidation(parsedRows);
       } catch (err) {
         failure = err instanceof Error ? err.message : 'Could not read this file.';
@@ -294,7 +534,7 @@ export default function BulkImportModal({
       }
       setRows(parsedRows);
       setEntries(computedEntries);
-      setSummary(calculateImportSummary(parsedRows, computedEntries));
+      setSummary(calculateSummary(parsedRows, computedEntries));
       setStep('validation');
     })();
 
@@ -362,7 +602,7 @@ export default function BulkImportModal({
   }, [skippedRows, reviewRowGroups]);
 
   const readyRows = useMemo(() => rows.filter((row) => !excludedRowNumbers.has(row.row)), [rows, excludedRowNumbers]);
-  const readyTotalAmount = useMemo(() => readyRows.reduce((sum, row) => sum + parseAmount(row.amount), 0), [readyRows]);
+  const readyTotalAmount = useMemo(() => readyRows.reduce((sum, row) => sum + parseAmount(getRowAmount(row)), 0), [readyRows, getRowAmount]);
 
   const handleImportStart = useCallback(() => {
     setStep('importing');
@@ -377,6 +617,60 @@ export default function BulkImportModal({
     );
   }, [readyRows.length]);
 
+  // Real network write — unlike handleImportStart above, this is not a mock.
+  // Same request shape as the old standalone UploadExcelModal's own
+  // handleImportData.
+  const handleEstimateImportStart = useCallback(async () => {
+    if (!estimateParsed || !file || !estimateApiBasePath) return;
+    setStep('importing');
+    setEstimateImportProgress(0);
+    setEstimateImportError(null);
+
+    // No real progress events from the server (single request/response) —
+    // simulate a climb to 90% while in flight, then complete to 100% once
+    // the response actually arrives.
+    estimateProgressTimerRef.current = setInterval(() => {
+      setEstimateImportProgress((current) => (current >= 90 ? current : current + Math.random() * 12));
+    }, 250);
+
+    try {
+      const res = await fetch(`${estimateApiBasePath}/upload-estimated-balance`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ...estimateParsed, fileName: file.name }),
+      });
+      if (!res.ok) {
+        const errBody = await res.json().catch(() => null);
+        throw new Error(errBody?.error || 'Import failed.');
+      }
+      const result: { uploadedAt: string; shopCount: number } = await res.json();
+
+      if (estimateProgressTimerRef.current) {
+        clearInterval(estimateProgressTimerRef.current);
+        estimateProgressTimerRef.current = null;
+      }
+      setEstimateImportProgress(100);
+
+      const record: EstimateImportRecord = {
+        fileName: file.name,
+        shopCount: result.shopCount,
+        importedAt: result.uploadedAt,
+        importedBy: 'Operations Admin',
+      };
+      setEstimateImportResult(record);
+      setLastImport(record);
+      setStep('complete');
+      onImported?.();
+    } catch (err) {
+      if (estimateProgressTimerRef.current) {
+        clearInterval(estimateProgressTimerRef.current);
+        estimateProgressTimerRef.current = null;
+      }
+      setEstimateImportError(err instanceof Error ? err.message : 'Import failed.');
+      setStep('validation');
+    }
+  }, [estimateParsed, file, estimateApiBasePath, onImported]);
+
   const downloadReport = useCallback(() => {
     const headers = ['Row', 'Agent Name', 'Field', 'Invalid Value', 'Error Message'];
     const data = errorEntries.map((entry) => [entry.row, entry.agent, entry.field, entry.value || '(blank)', entry.issue]);
@@ -384,11 +678,22 @@ export default function BulkImportModal({
     worksheet['!cols'] = [{ wch: 8 }, { wch: 20 }, { wch: 14 }, { wch: 18 }, { wch: 40 }];
     const workbook = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(workbook, worksheet, 'Validation Report');
-    const baseName = file?.name.replace(/\.[^.]+$/, '') ?? 'settlement_import';
+    const baseName = file?.name.replace(/\.[^.]+$/, '') ?? `${moduleKind}_import`;
     XLSX.writeFile(workbook, `${baseName}_errors.xlsx`);
-  }, [errorEntries, file]);
+  }, [errorEntries, file, moduleKind]);
 
-  const canContinue = activeErrorCount === 0;
+  const downloadEstimateReport = useCallback(() => {
+    const headers = ['Row', 'Shop Code', 'Shop Name', 'Column', 'Invalid Value', 'Error Message'];
+    const data = estimateRowErrors.map((e) => [e.row, e.shopCode, e.shopName, e.column, e.value, e.message]);
+    const worksheet = XLSX.utils.aoa_to_sheet([headers, ...data]);
+    worksheet['!cols'] = headers.map(() => ({ wch: 18 }));
+    const workbook = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(workbook, worksheet, 'Import Errors');
+    const baseName = file?.name.replace(/\.[^.]+$/, '') ?? 'upload';
+    XLSX.writeFile(workbook, `${baseName}_errors.xlsx`);
+  }, [estimateRowErrors, file]);
+
+  const canContinue = estimateMode ? (estimateParsed !== null && estimateDetectedShops > 0) : activeErrorCount === 0;
   const hasNonBlockingIssues = (summary?.warningCount ?? 0) + (summary?.duplicateCount ?? 0) > 0;
 
   const importedTimestampLabel = importCompletedAt
@@ -399,10 +704,10 @@ export default function BulkImportModal({
   // is already on a button (native Enter-activates-button already covers
   // that case) so this never double-fires.
   const primaryAction = useMemo(() => {
-    if (step === 'validation' && canContinue) return handleImportStart;
+    if (step === 'validation' && canContinue) return estimateMode ? handleEstimateImportStart : handleImportStart;
     if (step === 'complete') return requestClose;
     return null;
-  }, [step, canContinue, handleImportStart, requestClose]);
+  }, [step, canContinue, estimateMode, handleEstimateImportStart, handleImportStart, requestClose]);
 
   useEffect(() => {
     if (!rendered || closing) return;
@@ -429,13 +734,25 @@ export default function BulkImportModal({
   // just once results are in) so the footer isn't left mostly blank on
   // Upload/Scanning; hidden only on the final success screen, which has
   // its own dedicated layout and footer buttons.
+  // Estimate Mode replaces this slot's generic Note with the real Last
+  // Import record — same footprint, no extra height, per explicit "render it
+  // in the same area where Note normally appears" instruction. Hidden on
+  // 'complete' same as the Note always was (that screen shows its own fresh
+  // copy of the same info).
   const footerNote = step !== 'complete' ? (
-    <div className="min-w-0 flex-1 pr-4">
-      <p className="text-[10px] font-semibold text-muted-foreground">Note:</p>
-      <p className="text-[10px] leading-snug text-muted-foreground">
-        Only validated records will be imported. Please review warnings and errors before proceeding.
-      </p>
-    </div>
+    estimateMode && lastImport ? (
+      <div className="min-w-0 flex-1 pr-4">
+        <p className="mb-1 text-[10px] font-semibold text-muted-foreground">Last Import:</p>
+        <EstimateLastImportRow record={lastImport} />
+      </div>
+    ) : (
+      <div className="min-w-0 flex-1 pr-4">
+        <p className="text-[10px] font-semibold text-muted-foreground">Note:</p>
+        <p className="text-[10px] leading-snug text-muted-foreground">
+          Only validated records will be imported. Please review warnings and errors before proceeding.
+        </p>
+      </div>
+    )
   ) : <div />;
 
   return (
@@ -499,17 +816,36 @@ export default function BulkImportModal({
         <div key={step} className="dt-step-fade-in flex-1 overflow-y-auto border-t border-border px-6 py-4">
           {step === 'upload' && (
             <>
-              <div className="flex items-center justify-between gap-3 rounded-xl border border-border bg-muted/20 p-3">
-                <p className="text-[12px] font-medium text-foreground">Need the official template?</p>
-                <button
-                  type="button"
-                  onClick={() => downloadTemplate(templateModule)}
-                  className="flex shrink-0 items-center gap-1.5 rounded-lg border border-border bg-white px-3 py-1.5 text-[12px] font-medium text-foreground transition-colors hover:bg-muted focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#2563EB] dark:bg-transparent"
-                >
-                  <Download size={13} />
-                  Download Latest Template
-                </button>
-              </div>
+              {allowEstimateMode && (
+                <label className="mb-3 flex cursor-pointer items-start gap-2.5 rounded-xl border border-border bg-muted/20 p-3">
+                  <input
+                    type="checkbox"
+                    checked={estimateMode}
+                    onChange={(event) => setEstimateMode(event.target.checked)}
+                    className="mt-0.5 h-4 w-4 shrink-0 rounded border-border accent-[#2563EB]"
+                  />
+                  <div className="min-w-0">
+                    <p className="text-[12px] font-semibold text-foreground">Estimate Opening Balance</p>
+                    <p className="text-[11px] text-muted-foreground">
+                      Upload a raw Balance Limit export to generate the next day&apos;s Opening Balance.
+                    </p>
+                  </div>
+                </label>
+              )}
+
+              {!estimateMode && (
+                <div className="flex items-center justify-between gap-3 rounded-xl border border-border bg-muted/20 p-3">
+                  <p className="text-[12px] font-medium text-foreground">Need the official template?</p>
+                  <button
+                    type="button"
+                    onClick={() => downloadTemplate(templateModule)}
+                    className="flex shrink-0 items-center gap-1.5 rounded-lg border border-border bg-white px-3 py-1.5 text-[12px] font-medium text-foreground transition-colors hover:bg-muted focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#2563EB] dark:bg-transparent"
+                  >
+                    <Download size={13} />
+                    Download Latest Template
+                  </button>
+                </div>
+              )}
 
               <div
                 onDragEnter={(event) => { event.preventDefault(); setDragActive(true); }}
@@ -523,7 +859,9 @@ export default function BulkImportModal({
               >
                 <Upload size={22} className={dragActive ? 'text-[#2563EB]' : 'text-muted-foreground'} />
                 <p className="text-[12px] font-semibold text-foreground">Drag &amp; drop your Excel file here</p>
-                <p className="text-[11px] text-muted-foreground">or click to browse · Supports Settlement Template (.xlsx)</p>
+                <p className="text-[11px] text-muted-foreground">
+                  or click to browse · Supports {estimateMode ? 'Balance Limit export' : TEMPLATE_LABEL[templateModule]} (.xlsx)
+                </p>
                 <input
                   ref={fileInputRef}
                   type="file"
@@ -558,7 +896,136 @@ export default function BulkImportModal({
             </div>
           )}
 
-          {step === 'validation' && summary && (
+          {step === 'validation' && estimateMode && (
+            <div>
+              {/* File Information — same bar as Normal Mode, generalized to
+                  the estimate's own detected-shops count instead of
+                  summary.totalRows. */}
+              <div className="flex items-center gap-3 rounded-xl border border-border bg-muted/20 p-2.5">
+                <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-emerald-600 text-white">
+                  <FileSpreadsheet size={18} />
+                </div>
+                <div className="min-w-0 flex-1">
+                  <p className="truncate text-[13px] font-semibold text-foreground">{file?.name}</p>
+                  <p className="text-[11px] text-muted-foreground">
+                    {file ? (file.size / 1024).toFixed(0) : 0} KB · {estimateDetectedShops} rows · Modified {file ? new Date(file.lastModified).toLocaleDateString() : ''}
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  onClick={resetWizardState}
+                  aria-label="Remove file"
+                  className="shrink-0 rounded-lg p-1 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#2563EB]"
+                >
+                  <X size={16} />
+                </button>
+              </div>
+
+              {/* Detected — Shops / Ready / Errors. Bad rows
+                  are silently excluded at import time (no per-row Edit/Skip
+                  here, unlike Normal Mode) — matches the old standalone
+                  UploadExcelModal's own behavior exactly. */}
+              <p className="mt-3 text-[11px] font-semibold text-muted-foreground">Detected</p>
+              <div className="mt-2 grid grid-cols-3 gap-2">
+                <div className="flex items-center gap-2 rounded-xl border border-border p-2.5">
+                  <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-muted text-foreground">
+                    <Store size={14} />
+                  </div>
+                  <div className="min-w-0">
+                    <p className="text-[15px] font-bold tabular-nums text-foreground">{estimateDetectedShops.toLocaleString()}</p>
+                    <p className="text-[10px] text-muted-foreground">Shops</p>
+                  </div>
+                </div>
+                <div className="flex items-center gap-2 rounded-xl border border-border p-2.5">
+                  <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-emerald-50 text-emerald-600 dark:bg-emerald-500/15 dark:text-emerald-400">
+                    <CheckCircle2 size={14} />
+                  </div>
+                  <div className="min-w-0">
+                    <p className="text-[15px] font-bold tabular-nums text-foreground">{(estimateDetectedShops - estimateDetectedErrors).toLocaleString()}</p>
+                    <p className="text-[10px] text-muted-foreground">Ready</p>
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => { if (estimateDetectedErrors > 0) setEstimateErrorsExpanded((v) => !v); }}
+                  disabled={estimateDetectedErrors === 0}
+                  className={`flex items-center gap-2 rounded-xl border border-border p-2.5 text-left transition-colors ${
+                    estimateDetectedErrors > 0 ? 'cursor-pointer hover:bg-muted/50' : 'cursor-default'
+                  }`}
+                >
+                  <div className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-lg ${
+                    estimateDetectedErrors === 0
+                      ? 'bg-emerald-50 text-emerald-600 dark:bg-emerald-500/15 dark:text-emerald-400'
+                      : 'bg-rose-50 text-rose-600 dark:bg-rose-500/15 dark:text-rose-400'
+                  }`}>
+                    {estimateDetectedErrors === 0 ? <CheckCircle2 size={14} /> : <AlertCircle size={14} />}
+                  </div>
+                  <div className="min-w-0 flex-1">
+                    <p className="text-[15px] font-bold tabular-nums text-foreground">{estimateDetectedErrors}</p>
+                    <p className="text-[10px] text-muted-foreground">Errors</p>
+                  </div>
+                  {estimateDetectedErrors > 0 && (
+                    estimateErrorsExpanded
+                      ? <ChevronUp size={13} className="shrink-0 text-muted-foreground" />
+                      : <ChevronDown size={13} className="shrink-0 text-muted-foreground" />
+                  )}
+                </button>
+              </div>
+
+              {estimateDetectedErrors > 0 && estimateErrorsExpanded && (
+                <div className="mt-3 overflow-hidden rounded-xl border border-border">
+                  <div className="flex items-center justify-between gap-2 border-b border-border bg-muted/20 px-3 py-2">
+                    <p className="text-[11px] text-muted-foreground">
+                      The following rows were skipped during import because of validation errors.
+                    </p>
+                    <button
+                      type="button"
+                      onClick={downloadEstimateReport}
+                      className="flex shrink-0 items-center gap-1 rounded-md border border-border px-2 py-1 text-[10px] font-medium text-foreground transition-colors hover:bg-muted"
+                    >
+                      <Download size={11} />
+                      Download Error Report (.xlsx)
+                    </button>
+                  </div>
+                  <div className="max-h-[208px] overflow-y-auto">
+                    <table className="w-full border-collapse text-[10px]">
+                      <thead className="sticky top-0 z-10 bg-white shadow-[0_2px_2px_-1px_rgba(0,0,0,0.15)] dark:bg-[#2a2a2d]">
+                        <tr className="border-b border-border">
+                          <th className="whitespace-nowrap px-2.5 py-1.5 text-left font-semibold text-muted-foreground">Row</th>
+                          <th className="whitespace-nowrap px-2.5 py-1.5 text-left font-semibold text-muted-foreground">Shop Code</th>
+                          <th className="whitespace-nowrap px-2.5 py-1.5 text-left font-semibold text-muted-foreground">Shop Name</th>
+                          <th className="whitespace-nowrap px-2.5 py-1.5 text-left font-semibold text-muted-foreground">Column</th>
+                          <th className="whitespace-nowrap px-2.5 py-1.5 text-left font-semibold text-muted-foreground">Invalid Value</th>
+                          <th className="whitespace-nowrap px-2.5 py-1.5 text-left font-semibold text-muted-foreground">Error Message</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {estimateRowErrors.map((e, i) => (
+                          <tr key={`${e.row}-${e.column}-${i}`} className="border-b border-border last:border-0">
+                            <td className="whitespace-nowrap px-2.5 py-1.5 tabular-nums text-foreground">{e.row}</td>
+                            <td className="whitespace-nowrap px-2.5 py-1.5 text-foreground">{e.shopCode}</td>
+                            <td className="whitespace-nowrap px-2.5 py-1.5 text-foreground">{e.shopName}</td>
+                            <td className="whitespace-nowrap px-2.5 py-1.5 text-muted-foreground">{e.column}</td>
+                            <td className="whitespace-nowrap px-2.5 py-1.5 text-rose-600 dark:text-rose-400">{e.value || '(blank)'}</td>
+                            <td className="whitespace-nowrap px-2.5 py-1.5 text-muted-foreground">{e.message}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              )}
+
+              {estimateImportError && (
+                <div className="mt-3 flex items-center gap-1.5 rounded-lg bg-rose-50 px-3 py-2 text-[11px] font-medium text-rose-700 dark:bg-rose-500/10 dark:text-rose-400">
+                  <AlertCircle size={13} className="shrink-0" />
+                  {estimateImportError}
+                </div>
+              )}
+            </div>
+          )}
+
+          {step === 'validation' && !estimateMode && summary && (
             <div>
               {/* File Information */}
               <div className="flex items-center gap-3 rounded-xl border border-border bg-muted/20 p-2.5">
@@ -765,7 +1232,21 @@ export default function BulkImportModal({
             </div>
           )}
 
-          {step === 'importing' && summary && (
+          {step === 'importing' && estimateMode && (
+            <div className="flex h-full flex-col items-center justify-center gap-3">
+              <p className="text-[13px] font-semibold text-foreground">Importing data...</p>
+              <p className="text-[12px] text-muted-foreground">This may take a few seconds.</p>
+              <div className="h-1.5 w-full max-w-xs overflow-hidden rounded-full bg-muted">
+                <div
+                  className="h-full rounded-full bg-[#2563EB] transition-all duration-300 ease-out"
+                  style={{ width: `${Math.min(estimateImportProgress, 100)}%` }}
+                />
+              </div>
+              <p className="text-[11px] font-semibold tabular-nums text-foreground">{Math.round(Math.min(estimateImportProgress, 100))}%</p>
+            </div>
+          )}
+
+          {step === 'importing' && !estimateMode && summary && (
             <div className="flex h-full flex-col items-center justify-center gap-3">
               <p className="text-[13px] font-semibold text-foreground">Importing...</p>
               <p className="text-[12px] tabular-nums text-muted-foreground">{importDone} / {readyRows.length}</p>
@@ -778,7 +1259,42 @@ export default function BulkImportModal({
             </div>
           )}
 
-          {step === 'complete' && summary && (
+          {step === 'complete' && estimateMode && estimateImportResult && (
+            <div className="flex h-full flex-col items-center justify-center gap-4 text-center">
+              <div className="rounded-xl bg-emerald-50 p-5 text-center dark:bg-emerald-500/10">
+                <div className="mx-auto flex h-11 w-11 items-center justify-center rounded-full bg-emerald-600 text-white">
+                  <CheckCircle2 size={22} />
+                </div>
+                <p className="mt-3 text-[14px] font-bold text-foreground">Opening Balance imported successfully!</p>
+                <p className="mt-0.5 text-[12px] text-muted-foreground">{estimateImportResult.shopCount} shops imported.</p>
+              </div>
+              <div className="grid w-full grid-cols-3 gap-3">
+                <div className="min-w-0">
+                  <p className="flex items-center justify-center gap-1.5 text-[11px] text-muted-foreground">
+                    <FileText size={12} className="shrink-0" />
+                    File Name
+                  </p>
+                  <p className="mt-1 truncate text-[12px] font-medium text-foreground">{estimateImportResult.fileName}</p>
+                </div>
+                <div className="min-w-0">
+                  <p className="flex items-center justify-center gap-1.5 text-[11px] text-muted-foreground">
+                    <User size={12} className="shrink-0" />
+                    Imported By
+                  </p>
+                  <p className="mt-1 truncate text-[12px] font-medium text-foreground">{estimateImportResult.importedBy}</p>
+                </div>
+                <div className="min-w-0">
+                  <p className="flex items-center justify-center gap-1.5 text-[11px] text-muted-foreground">
+                    <Clock size={12} className="shrink-0" />
+                    Imported At
+                  </p>
+                  <p className="mt-1 truncate text-[12px] font-medium text-foreground">{formatImportTimestamp(estimateImportResult.importedAt)}</p>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {step === 'complete' && !estimateMode && summary && (
             <div className="flex h-full flex-col">
               <div className="flex flex-col items-center justify-center gap-1.5 pb-4 pt-2 text-center">
                 <div className="flex h-11 w-11 items-center justify-center rounded-full bg-emerald-600 text-white">
@@ -847,11 +1363,11 @@ export default function BulkImportModal({
                 </button>
                 <button
                   type="button"
-                  onClick={handleImportStart}
+                  onClick={estimateMode ? handleEstimateImportStart : handleImportStart}
                   disabled={!canContinue}
                   className={`rounded-lg px-4 py-2 text-[12px] font-semibold text-white transition-colors disabled:cursor-not-allowed disabled:opacity-50 ${accentButtonClassName}`}
                 >
-                  {!canContinue ? 'Resolve Errors' : hasNonBlockingIssues ? 'Import Anyway' : 'Import Data'}
+                  {estimateMode ? 'Import Data' : !canContinue ? 'Resolve Errors' : hasNonBlockingIssues ? 'Import Anyway' : 'Import Data'}
                 </button>
               </div>
             </>
@@ -892,7 +1408,7 @@ export default function BulkImportModal({
         onClose={() => setEditingRowNumber(null)}
         onSave={handleRowEditSave}
         title={`Edit Row ${editingRowNumber ?? ''}`}
-        fields={settlementRecordFields}
+        fields={importRecordFields}
         initialValues={editingInitialValues}
         primaryButtonClassName={accentButtonClassName}
         getFieldHint={getFieldHint}

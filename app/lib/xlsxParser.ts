@@ -108,3 +108,114 @@ export function mapSettlementRows(parsed: ParsedWorkbook): SettlementImportRow[]
       date: normalizeDateCell(cols[indices.date]),
     }));
 }
+
+// Top Up's own column contract (public/templates/topup-template.xlsx: Brand,
+// Agent, Amount, Wallet, Type, Date). Deliberately a separate type from
+// SettlementImportRow even though the two shapes are similar — Top Up's
+// "Type" is a closed-set fixed literal per product ("BUNDLE TRANSFER" /
+// "INTERNAL TRANSFER"), not Settlement's free-text "Remarks", so it gets its
+// own field name and its own hard-error validation (see
+// topupValidation.ts's checkTypeField) instead of aliasing onto `remarks`.
+export type TopUpImportRow = {
+  row: number;
+  brand: string;
+  agentName: string;
+  wallet: string;
+  amount: string;
+  type: string;
+  date: string;
+};
+
+export function mapTopUpRows(parsed: ParsedWorkbook): TopUpImportRow[] {
+  const headerRowIndex = findHeaderRowIndex(parsed.allRows);
+  if (headerRowIndex === -1) {
+    throw new Error('Could not find a "Brand" column — this doesn\'t look like the Top Up template.');
+  }
+  const headerRow = parsed.allRows[headerRowIndex];
+  const dataRows = parsed.allRows.slice(headerRowIndex + 1);
+  const normalizedHeader = headerRow.map((h) => String(h ?? '').trim().toLowerCase());
+  const colIndex = (...names: string[]) => {
+    for (const name of names) {
+      const found = normalizedHeader.indexOf(name);
+      if (found !== -1) return found;
+    }
+    return -1;
+  };
+  const indices = {
+    brand: colIndex('brand'),
+    agentName: colIndex('agent name', 'to agent', 'agent'),
+    wallet: colIndex('wallet'),
+    amount: colIndex('amount'),
+    type: colIndex('type'),
+    date: colIndex('date'),
+  };
+
+  return dataRows
+    .filter((cols) => cols.some((cell) => String(cell ?? '').trim() !== ''))
+    .map((cols, i) => ({
+      row: headerRowIndex + i + 2,
+      brand: String(cols[indices.brand] ?? '').trim(),
+      agentName: String(cols[indices.agentName] ?? '').trim(),
+      wallet: String(cols[indices.wallet] ?? '').trim(),
+      amount: String(cols[indices.amount] ?? '').trim(),
+      type: String(cols[indices.type] ?? '').trim(),
+      date: normalizeDateCell(cols[indices.date]),
+    }));
+}
+
+// Opening Balance's own column contract — a static roster snapshot, not a
+// per-transaction record, so neither official template
+// (public/templates/opening-cashout-template.xlsx: Agent name/Opening
+// Bal./SDP/Leader; opening-sendmoney-template.xlsx: Wallet Name/Opening
+// Bal./SDP/TL/Total DP/Total WD) has a "Brand" column at all — the "brand"
+// anchor findHeaderRowIndex() uses doesn't apply here, so this gets its own
+// header-row finder anchored on "sdp" instead (present, identically named,
+// in both templates; absent from Settlement/Top Up's). Total DP/Total WD
+// (Send Money template only) are ignored — neither Opening page's own row
+// model includes them.
+function findOpeningHeaderRowIndex(allRows: (string | number)[][]): number {
+  return allRows.findIndex((row) =>
+    row.some((cell) => String(cell ?? '').trim().toLowerCase() === 'sdp')
+  );
+}
+
+export type OpeningImportRow = {
+  row: number;
+  agentName: string;
+  leader: string;
+  openingBalance: string;
+  sdp: string;
+};
+
+export function mapOpeningRows(parsed: ParsedWorkbook): OpeningImportRow[] {
+  const headerRowIndex = findOpeningHeaderRowIndex(parsed.allRows);
+  if (headerRowIndex === -1) {
+    throw new Error('Could not find an "SDP" column — this doesn\'t look like the Opening Balance template.');
+  }
+  const headerRow = parsed.allRows[headerRowIndex];
+  const dataRows = parsed.allRows.slice(headerRowIndex + 1);
+  const normalizedHeader = headerRow.map((h) => String(h ?? '').trim().toLowerCase());
+  const colIndex = (...names: string[]) => {
+    for (const name of names) {
+      const found = normalizedHeader.indexOf(name);
+      if (found !== -1) return found;
+    }
+    return -1;
+  };
+  const indices = {
+    agentName: colIndex('agent name', 'wallet name'),
+    leader: colIndex('leader', 'tl'),
+    openingBalance: colIndex('opening bal.', 'opening bal', 'opening balance'),
+    sdp: colIndex('sdp'),
+  };
+
+  return dataRows
+    .filter((cols) => cols.some((cell) => String(cell ?? '').trim() !== ''))
+    .map((cols, i) => ({
+      row: headerRowIndex + i + 2,
+      agentName: String(cols[indices.agentName] ?? '').trim(),
+      leader: String(cols[indices.leader] ?? '').trim(),
+      openingBalance: String(cols[indices.openingBalance] ?? '').trim(),
+      sdp: String(cols[indices.sdp] ?? '').trim(),
+    }));
+}

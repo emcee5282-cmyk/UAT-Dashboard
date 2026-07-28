@@ -30,15 +30,15 @@ export default function SettlementHeader({ icon: Icon, title, isRefreshing, onRe
           truly centered in the row regardless of how wide the title/right
           clusters are — a flex-justify-between placement would center it
           relative to the leftover space between those two, not the row. */}
-      <div className="grid min-h-[36px] grid-cols-3 items-center px-4 py-1.5 md:px-6">
-        <div className="flex min-w-0 items-center gap-2">
+      <div className="grid min-h-[52px] grid-cols-3 items-center px-4 py-3 md:px-6">
+        <div className="flex min-w-0 items-center gap-2.5">
           <div
-            className="flex h-6 w-6 shrink-0 items-center justify-center rounded-lg text-white"
+            className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg text-white"
             style={{ background: 'var(--product-accent)' }}
           >
-            <Icon size={13} />
+            <Icon size={15} />
           </div>
-          <h1 className="truncate text-[14px] font-semibold leading-tight tracking-[-0.01em] text-foreground">
+          <h1 className="truncate text-[15px] font-semibold leading-tight tracking-[-0.01em] text-foreground">
             {title}
           </h1>
         </div>
@@ -50,7 +50,7 @@ export default function SettlementHeader({ icon: Icon, title, isRefreshing, onRe
         <div className="flex shrink-0 items-center justify-end gap-3">
           {/* No "Last Updated" timestamp per explicit request — the Live
               dot is the only status indicator now. */}
-          <span className="flex items-center gap-1.5 text-[11px] font-medium text-emerald-600 dark:text-emerald-400">
+          <span className="flex items-center gap-1.5 text-[12px] font-medium text-emerald-600 dark:text-emerald-400">
             {/* animate-pulse is Tailwind's built-in opacity-only pulse (1 ->
                 .5 -> 1, 2s infinite) — exactly the "subtle, opacity only, no
                 scaling" spec, so no custom keyframes needed. */}
@@ -62,9 +62,9 @@ export default function SettlementHeader({ icon: Icon, title, isRefreshing, onRe
             onClick={onRefresh}
             aria-label="Refresh"
             title="Refresh"
-            className="flex h-7 w-7 items-center justify-center rounded-lg border border-border bg-muted/60 text-foreground transition-colors hover:bg-muted"
+            className="flex h-8 w-8 items-center justify-center rounded-lg border border-border bg-muted/60 text-foreground transition-colors hover:bg-muted"
           >
-            <RefreshCw size={13} strokeWidth={1.75} className={isRefreshing ? 'animate-spin' : ''} />
+            <RefreshCw size={14} strokeWidth={1.75} className={isRefreshing ? 'animate-spin' : ''} />
           </button>
           <ThemeToggle />
         </div>

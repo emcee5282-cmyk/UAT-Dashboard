@@ -167,7 +167,20 @@ export default function RecordFormModal({
     // pre-existing/legacy value that never matches any real option (e.g.
     // an unresolved "−" brand from source data) would silently pass
     // validation despite "no custom values" being the whole point.
-    if (field.kind === 'combobox' && !field.allowCustom && !field.options.includes(values[field.key])) {
+    //
+    // Case-INSENSITIVE match — same convention as the business-rule
+    // checkers this modal's own getFieldHint calls (checkAgentNameField/
+    // checkWalletField/etc. in settlementValidation.ts all lowercase both
+    // sides). A raw roster/option list is typically ALL CAPS from the
+    // sheet, while this modal's own initialValues are proper-cased for
+    // display (toProperCase) — an exact case-sensitive `.includes()` here
+    // meant Agent Name (and any other proper-cased closed-set field) could
+    // NEVER pass this check, permanently blocking Save on a field that was
+    // never actually the reported problem, even after the real error
+    // (e.g. Wallet) was fixed. Confirmed via Bulk Import's per-row Edit
+    // dialog: fixing Wallet alone still left Save disabled because Agent
+    // Name silently failed this exact-match check every time.
+    if (field.kind === 'combobox' && !field.allowCustom && !field.options.some((option) => option.toLowerCase() === trimmed.toLowerCase())) {
       return `${field.label} is required.`;
     }
     return null;

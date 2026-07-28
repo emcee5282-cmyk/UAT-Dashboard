@@ -80,7 +80,11 @@
       "Bash(grep -n '</div>$' \"c:/Users/ejboy/Desktop/dashbaord_project/app/stlm/page.tsx\")",
       "Bash(curl -s -o /dev/null -w \"%{http_code}\\\\n\" http://localhost:3000/sendmoney/settlement)",
       "Bash(node \"/c/Users/ejboy/Desktop/dashbaord_project/.qa_sm/check.js\")",
-      "Bash(node check-settlement-redesign.js)"
+      "Bash(node check-settlement-redesign.js)",
+      "Bash(curl -s -o /dev/null -w \"%{http_code}\\\\n\" http://localhost:3000/topup)",
+      "Bash(curl -s -o /dev/null -w \"%{http_code}\\\\n\" http://localhost:3000/summary)",
+      "Bash(curl -s -o /dev/null -w \"%{http_code}\\\\n\" http://localhost:3000/sendmoney/opening)",
+      "Bash(echo \"EXIT:$?\")"
     ]
   }
 }

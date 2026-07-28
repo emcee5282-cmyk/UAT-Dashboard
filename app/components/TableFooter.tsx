@@ -33,6 +33,11 @@ type TableFooterProps = {
   pageSizeOptions?: number[];
   onPageSizeChange?: (size: number) => void;
   totalRecords?: number;
+  // 'default' (unchanged) everywhere except Settlement, which opted into
+  // 'premium' — a rounded-pill pager with a gradient active-page circle,
+  // copied from a reference design. Style only: same page-number math,
+  // same onPageChange/onPageSizeChange wiring, same position in the footer.
+  variant?: 'default' | 'premium';
 };
 
 // Shared table footer: record count pinned left, pagination pinned right,
@@ -40,8 +45,77 @@ type TableFooterProps = {
 // footer never grows/shrinks depending on the current page count. Built by
 // extracting Settlement's own footer verbatim (first consumer); nothing
 // else wired up to it yet.
-export default function TableFooter({ recordCountText, currentPage, totalPages, onPageChange, pageSize, pageSizeOptions, onPageSizeChange, totalRecords }: TableFooterProps) {
+export default function TableFooter({ recordCountText, currentPage, totalPages, onPageChange, pageSize, pageSizeOptions, onPageSizeChange, totalRecords, variant = 'default' }: TableFooterProps) {
   const showSelector = pageSizeOptions && onPageSizeChange && totalRecords !== undefined;
+  if (variant === 'premium') {
+    return (
+      <div className="shrink-0 flex h-[60px] items-center justify-between gap-3 border-t border-[#E5E7EB] px-4 dark:border-[#3a3a3d]">
+        {showSelector ? (
+          <div className="flex items-center gap-2 whitespace-nowrap text-[13px] font-medium text-[#64748B]">
+            <span className="font-semibold text-[#2563EB]">Show</span>
+            <select
+              value={pageSize}
+              onChange={(event) => onPageSizeChange!(Number(event.target.value))}
+              aria-label="Rows per page"
+              className="h-8 rounded-[8px] border border-[#E5E7EB] bg-white px-2 text-[12px] font-medium text-[#475569] outline-none transition-colors focus-visible:border-[#2563EB] dark:border-[#3a3a3d] dark:bg-[#2a2a2d] dark:text-[#9CA3AF]"
+            >
+              {pageSizeOptions!.map((n) => (
+                <option key={n} value={n}>{n}</option>
+              ))}
+            </select>
+            <span>of {totalRecords!.toLocaleString()} entries</span>
+          </div>
+        ) : (
+          <span className="whitespace-nowrap text-[13px] font-medium text-[#64748B]">{recordCountText}</span>
+        )}
+        {totalPages > 1 && (
+          <div className="flex items-center gap-0.5 rounded-full border border-border bg-muted/40 p-1 dark:bg-white/5">
+            <button
+              type="button"
+              onClick={() => onPageChange(Math.max(1, currentPage - 1))}
+              disabled={currentPage === 1}
+              aria-label="Previous page"
+              className="flex h-8 w-8 items-center justify-center rounded-full text-muted-foreground transition-colors duration-150 ease-out hover:bg-white disabled:cursor-not-allowed disabled:opacity-40 dark:hover:bg-white/10"
+            >
+              <ChevronLeft size={15} />
+            </button>
+            {getPageNumbers(currentPage, totalPages).map((p, idx) =>
+              p === 'ellipsis' ? (
+                <span key={`ellipsis-${idx}`} className="flex h-8 w-8 items-center justify-center text-[13px] text-muted-foreground">
+                  …
+                </span>
+              ) : (
+                <button
+                  key={p}
+                  type="button"
+                  onClick={() => onPageChange(p)}
+                  aria-label={`Page ${p}`}
+                  aria-current={p === currentPage ? 'page' : undefined}
+                  className={`flex h-8 w-8 items-center justify-center rounded-full text-[13px] font-medium transition-colors duration-150 ease-out ${
+                    p === currentPage
+                      ? 'text-white shadow-[0_2px_8px_-1px_var(--product-accent)]'
+                      : 'text-muted-foreground hover:bg-white dark:hover:bg-white/10'
+                  }`}
+                  style={p === currentPage ? { background: 'var(--product-accent)' } : undefined}
+                >
+                  {p}
+                </button>
+              )
+            )}
+            <button
+              type="button"
+              onClick={() => onPageChange(Math.min(totalPages, currentPage + 1))}
+              disabled={currentPage === totalPages}
+              aria-label="Next page"
+              className="flex h-8 w-8 items-center justify-center rounded-full text-muted-foreground transition-colors duration-150 ease-out hover:bg-white disabled:cursor-not-allowed disabled:opacity-40 dark:hover:bg-white/10"
+            >
+              <ChevronRight size={15} />
+            </button>
+          </div>
+        )}
+      </div>
+    );
+  }
   return (
     <div className="shrink-0 flex h-[60px] items-center justify-between gap-3 border-t border-[#E5E7EB] px-4 dark:border-[#3a3a3d]">
       {showSelector ? (

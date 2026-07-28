@@ -1,23 +1,99 @@
 'use client';
 
-import { useEffect, useState, useCallback, useMemo, useRef } from 'react';
+import { useEffect, useState, useCallback, useMemo, useRef, type CSSProperties } from 'react';
 import { createPortal } from 'react-dom';
-import { Search, ChevronUp, ChevronDown, Columns3, Download, PlusCircle, RefreshCw } from 'lucide-react';
+import {
+  Search,
+  ChevronUp,
+  ChevronDown,
+  ChevronsUpDown,
+  Download,
+  PlusCircle,
+  RefreshCw,
+  MoreVertical,
+  Copy,
+  Columns3,
+  Pencil,
+  Eye,
+  Trash2,
+  Inbox,
+  Hash,
+  Banknote,
+} from 'lucide-react';
 import * as XLSX from 'xlsx';
-import PageHeader from '../components/PageHeader';
-import ProductSwitchTabs from '../components/ProductSwitchTabs';
-import ThemeToggle from '../components/ThemeToggle';
-import Toolbar from '../components/Toolbar';
-import DataTable from '../components/DataTable';
-import TableFooter from '../components/TableFooter';
-import EmptyState from '../components/EmptyState';
+import SettlementHeader from '../components/SettlementHeader';
+import SettlementSummary, { type SettlementKpiItem } from '../components/SettlementSummary';
 import ConnectionErrorState from '../components/ConnectionErrorState';
+import TableFooter from '../components/TableFooter';
+import Toolbar from '../components/Toolbar';
+import EmptyState from '../components/EmptyState';
+import DataTable from '../components/DataTable';
+import RecordFormModal, { type RecordFormField } from '../components/RecordFormModal';
+import { SETTLEMENT_BRAND_OPTIONS, CASHOUT_WALLET_OPTIONS, TOPUP_TYPE_CASHOUT } from '../lib/topupOptions';
+import AddRecordDropdown from '../components/AddRecordDropdown';
+import BulkImportModal from '../components/BulkImportModal';
+import BulkEditModal, { type BulkEditUpdates } from '../components/BulkEditModal';
 import { classifyFetchError, type ClassifiedError } from '../lib/errors';
-import { rawVal, fmtNum, parseAmount } from '@/app/lib/format';
-import { isToday } from '../lib/businessDate';
-import { TABLE_STICKY_HEADER_CLASS, TABLE_HEADER_CELL_CLASS, TOOLBAR_ROW_CLASS, TOOLBAR_LEFT_CLASS, TOOLBAR_RIGHT_CLASS } from '../design-system/table';
-import { PAGE_MAIN_PADDING_CLASS } from '../design-system/spacing';
+import { rawVal, displayNum, parseAmount } from '@/app/lib/format';
+import { isToday, isYesterday } from '../lib/businessDate';
 import { getPreference, setPreference } from '../lib/preferences';
+import { calculateColumnLayout, type ColumnLayout } from '../lib/columnLayout';
+
+// Ghost button: 36px height, 8px radius, subtle #E2E8F0 border, #F8FAFC
+// hover fill — same shared toolbar control style as Settlement's own
+// Refresh/Export buttons (app/stlm/page.tsx's GHOST_BUTTON, copied verbatim
+// so Top Up's toolbar reads as the same system).
+const GHOST_BUTTON =
+  'inline-flex h-9 items-center gap-1.5 rounded-[8px] border border-[#E2E8F0] px-3 text-[13px] font-medium text-[#475569] transition-colors duration-150 ease-out hover:bg-[#F8FAFC] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#2563EB] dark:border-[#3a3a3d] dark:text-[#9CA3AF] dark:hover:bg-white/5';
+
+const EMPTY_STATE_ACTION_BUTTON =
+  'inline-flex h-9 items-center rounded-[8px] border border-[#E5E7EB] px-3 text-[13px] font-medium text-[#475569] transition-colors hover:bg-[#F1F5F9] dark:border-[#3a3a3d] dark:text-[#9CA3AF] dark:hover:bg-white/5';
+
+const EMPTY_STATE_PRIMARY_BUTTON =
+  'inline-flex h-9 items-center rounded-[8px] bg-indigo-600 px-4 text-[13px] font-medium text-white transition-colors hover:bg-indigo-700';
+
+const PAGE_SIZE_OPTIONS = [50, 100, 250, 500];
+
+type TopUpKpiStats = {
+  todayCount: number;
+  todayAmount: number;
+  yesterdayCount: number;
+  yesterdayAmount: number;
+};
+
+const EMPTY_KPI_STATS: TopUpKpiStats = { todayCount: 0, todayAmount: 0, yesterdayCount: 0, yesterdayAmount: 0 };
+
+// Wraps the matched portion of `text` in <mark> — case-insensitive, every
+// occurrence. Copied verbatim from Settlement (app/stlm/page.tsx) so search
+// highlighting behaves identically here.
+function highlightMatch(text: string, query: string): React.ReactNode {
+  const q = query.trim();
+  if (!q) return text;
+  const escaped = q.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const parts = text.split(new RegExp(`(${escaped})`, 'gi'));
+  if (parts.length === 1) return text;
+  return parts.map((part, i) =>
+    i % 2 === 1 ? (
+      <mark key={i} className="rounded-[2px] bg-[#BFDBFE] text-inherit dark:bg-[rgba(37,99,235,0.4)]">{part}</mark>
+    ) : (
+      part
+    )
+  );
+}
+
+type TopUpRow = {
+  agentName: string;
+  wallet: string;
+  amount: string;
+  date: string;
+  type: string;
+  leader: string;
+  brand: string;
+  // Sequential index assigned once at fetch time — the row-selection
+  // checkbox system's only stable identity, same convention as Settlement's
+  // StlmRow._id (app/stlm/page.tsx).
+  _id: number;
+};
 
 // "AG BD STLM + TOPUP" no longer carries a brand/gateway column (removed from
 // the sheet). Brand now comes first from the "-<brand>" suffix already
@@ -25,7 +101,8 @@ import { getPreference, setPreference } from '../lib/preferences';
 // present; only when a row's shop name has no suffix (e.g. "YUJI024") does
 // it fall back to cross-referencing the bare agent code against "SSP AG
 // BalanceLimit" (same Group data and priority logic Cashout's own Agent
-// Balance page already uses).
+// Balance page already uses). Unchanged from before this rewrite — data
+// logic, not presentation.
 const BRAND_PRIORITY = ['M1', 'M2', 'B1', 'B2', 'B3', 'B4', 'B5', 'K1', 'J1', 'T1'];
 const SKIP_GROUPS = ['wallet with issue', 'disconnected', 'dc account'];
 
@@ -62,9 +139,9 @@ function resolveBrand(groups: string[], agentName: string): string {
   return BRAND_CODES.find((code) => agentName.toUpperCase().includes(code)) ?? '−';
 }
 
-// "To Agent" values on the new sheet sometimes carry a trailing "-<brand>"
-// suffix (e.g. "KONAN001-M1"), sometimes not (e.g. "YUJI024") — strip it so
-// the bare code matches "SSP AG BalanceLimit"'s own (always-bare) wallet names.
+// "To Agent" values sometimes carry a trailing "-<brand>" suffix (e.g.
+// "KONAN001-M1"), sometimes not (e.g. "YUJI024") — strip it so the bare
+// code matches "SSP AG BalanceLimit"'s own (always-bare) wallet names.
 function stripBrandSuffix(name: string): string {
   const parts = name.split('-');
   if (parts.length >= 2 && BRAND_CODES.includes(parts[parts.length - 1].toUpperCase())) {
@@ -83,20 +160,21 @@ function extractBrandSuffix(name: string): string | null {
   return parts.length >= 2 && BRAND_CODES.includes(last) ? last : null;
 }
 
-type TopUpRow = {
-  agentName: string;
-  wallet: string;
-  amount: string;
-  date: string;
-  type: string;
-  leader: string;
-  brand: string;
-};
+const MONTH_ABBR = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 
+// Display-only reformat of the raw "M/D/YYYY" sheet value into "Jul 21,
+// 2026" — copied verbatim from Settlement's formatDateDisplay.
+function formatDateDisplay(dateStr: string): string {
+  const parts = (dateStr ?? '').trim().split('/');
+  if (parts.length !== 3) return dateStr;
+  const [m, d, y] = parts.map(Number);
+  if (!m || !d || !y) return dateStr;
+  return `${MONTH_ABBR[m - 1]} ${d}, ${y}`;
+}
 
 // Permanent column identifiers — same Enterprise Table V2 pattern as
-// app/stlm/page.tsx (the canonical reference); this page gets its own
-// COLUMN_IDS rather than sharing Settlement's.
+// app/stlm/page.tsx; Top Up gets its own COLUMN_IDS (it has a Leader column
+// Settlement doesn't, and no Remarks column).
 const COLUMN_IDS = {
   BRAND: 'brand',
   LEADER: 'leader',
@@ -105,85 +183,333 @@ const COLUMN_IDS = {
   AMOUNT: 'amount',
   TYPE: 'type',
   DATE: 'date',
+  ACTIONS: 'actions',
 } as const;
 
 type ColumnKey = typeof COLUMN_IDS[keyof typeof COLUMN_IDS];
-type SortColumn = '' | Exclude<ColumnKey, typeof COLUMN_IDS.BRAND | typeof COLUMN_IDS.LEADER>;
+type SortColumn = '' | Exclude<ColumnKey, typeof COLUMN_IDS.ACTIONS>;
 
-// Column model matches Settlement's ColumnDef shape (`key` kept instead of
-// Settlement's `id` since every existing reference on this page already
-// reads `col.key`). No protected Actions-style column exists here, so all
-// columns are hideable.
 type ColumnDef = {
-  key: ColumnKey;
+  id: ColumnKey;
   label: string;
   visible: boolean;
   sortable: boolean;
   hideable: boolean;
   align: 'left' | 'right' | 'center';
+  minWidth: number;
+  preferredWidth: number;
+  grow: number;
 };
 
+// Alignment convention copied from Settlement (app/stlm/page.tsx): plain
+// text left, badges/short-enum columns center, dates right, actions center.
+// Leader has no Settlement equivalent — treated as a plain text label, left
+// like Agent Name.
+//
+// preferredWidth values (px, at the same ~1317px reference width used
+// throughout) — Agent Name trimmed down and the freed-up space handed to
+// Leader and Wallet, per explicit request. Percentages: brand 9%, leader
+// 12.5%, agentName 17%, wallet 13.5%, amount 15%, type 15%, date 11%,
+// actions 7% — kept byte-identical to Send Money Top Up's own
+// `columnWidths` (app/sendmoney/topup/page.tsx) so both products render
+// with the same column proportions.
+//
+// grow is set to each column's own preferredWidth (not just Agent Name/
+// Type) — Send Money's table is a native <table> with % <col> widths,
+// which means EVERY column scales together as the container widens (a
+// %-based table can't grow just one column and leave the rest fixed).
+// Verified live via Puppeteer at 1920/1440/1366/1280px: with only Agent
+// Name/Type growing (the pattern copied from Settlement, where growth is
+// deliberately concentrated on 1-2 "important" columns), every other
+// column's real rendered position diverged further from Send Money's the
+// wider the viewport got (e.g. Wallet/Amount/Date all ~30-50px narrower
+// than Send Money's at 1920px, since those stayed pinned to preferredWidth
+// while Send Money's %-based equivalents kept scaling up). Setting
+// grow:preferredWidth on every column makes flex distribute any leftover
+// space in exact proportion to each column's own base size — the same
+// ratio a %-based table produces — so column positions now match at every
+// width, not just the one reference width these numbers were computed at.
 const DEFAULT_COLUMNS: ColumnDef[] = [
-  { key: COLUMN_IDS.BRAND, label: 'Brand', visible: true, sortable: false, hideable: true, align: 'center' },
-  { key: COLUMN_IDS.LEADER, label: 'Leader', visible: true, sortable: false, hideable: true, align: 'center' },
-  { key: COLUMN_IDS.AGENT_NAME, label: 'Agent Name', visible: true, sortable: true, hideable: true, align: 'center' },
-  { key: COLUMN_IDS.WALLET, label: 'Wallet', visible: true, sortable: true, hideable: true, align: 'center' },
-  { key: COLUMN_IDS.AMOUNT, label: 'Amount', visible: true, sortable: true, hideable: true, align: 'center' },
-  { key: COLUMN_IDS.TYPE, label: 'Type', visible: true, sortable: true, hideable: true, align: 'center' },
-  { key: COLUMN_IDS.DATE, label: 'Date', visible: true, sortable: true, hideable: true, align: 'center' },
+  { id: COLUMN_IDS.BRAND, label: 'Brand', visible: true, sortable: true, hideable: true, align: 'left', minWidth: 90, preferredWidth: 119, grow: 119 },
+  { id: COLUMN_IDS.LEADER, label: 'Leader', visible: true, sortable: true, hideable: true, align: 'left', minWidth: 100, preferredWidth: 165, grow: 165 },
+  { id: COLUMN_IDS.AGENT_NAME, label: 'Agent Name', visible: true, sortable: true, hideable: true, align: 'left', minWidth: 140, preferredWidth: 220, grow: 220 },
+  { id: COLUMN_IDS.WALLET, label: 'Wallet', visible: true, sortable: true, hideable: true, align: 'center', minWidth: 90, preferredWidth: 180, grow: 180 },
+  { id: COLUMN_IDS.AMOUNT, label: 'Amount', visible: true, sortable: true, hideable: true, align: 'center', minWidth: 110, preferredWidth: 198, grow: 198 },
+  { id: COLUMN_IDS.TYPE, label: 'Type', visible: true, sortable: true, hideable: true, align: 'center', minWidth: 140, preferredWidth: 198, grow: 198 },
+  { id: COLUMN_IDS.DATE, label: 'Date', visible: true, sortable: true, hideable: true, align: 'right', minWidth: 110, preferredWidth: 145, grow: 145 },
+  { id: COLUMN_IDS.ACTIONS, label: 'Action', visible: true, sortable: false, hideable: false, align: 'center', minWidth: 56, preferredWidth: 92, grow: 92 },
 ];
 
 const COLUMN_VISIBILITY_STORAGE_KEY = 'topUpColumnVisibility';
 
-const columns: { key: ColumnKey; label: string }[] = DEFAULT_COLUMNS.map((col) => ({ key: col.key, label: col.label }));
+// Adaptive Column Width Distribution — same Flex translation as Settlement
+// (app/stlm/page.tsx's toFlexColumnStyle): flex-basis starts at
+// preferredWidth, flex-grow distributes leftover space, minWidth is a hard
+// floor CSS itself enforces, flex-shrink lets every column give way before
+// any single one is singled out. Type (the free-form-ish enum column) and
+// Agent Name share the grow the same way Settlement splits it between
+// Agent Name and Remarks.
+function toFlexColumnStyle(layout: ColumnLayout<ColumnKey>): CSSProperties {
+  return {
+    flexGrow: layout.grow,
+    flexShrink: 1,
+    flexBasis: `${layout.preferredWidth}px`,
+    minWidth: `${layout.minWidth}px`,
+  };
+}
 
-const columnWidths: Record<ColumnKey, string> = {
-  brand: '10%',
-  leader: '12%',
-  agentName: '18%',
-  wallet: '13%',
-  amount: '14%',
-  type: '13%',
-  date: '20%',
-};
+const COLUMN_ALIGN: Record<ColumnKey, 'left' | 'right' | 'center'> = Object.fromEntries(
+  DEFAULT_COLUMNS.map((col) => [col.id, col.align])
+) as Record<ColumnKey, 'left' | 'right' | 'center'>;
 
-function headerCellClasses(_active: boolean) {
-  return `group ${TABLE_HEADER_CELL_CLASS}`;
+function headerCellClasses(align: 'left' | 'right' | 'center', paddingCls: string = 'px-4') {
+  return `group flex items-center text-${align} ${paddingCls} text-[14px] leading-[20px] font-semibold text-[#475569] dark:text-[#9CA3AF] whitespace-nowrap ${
+    align === 'right' ? 'justify-end' : align === 'center' ? 'justify-center' : 'justify-start'
+  }`;
 }
 
 function SortIcon({ active, direction }: { active: boolean; direction: 'asc' | 'desc' }) {
-  if (!active) {
-    return (
-      <span className="flex flex-col items-center justify-center leading-none text-slate-400 opacity-0 transition-opacity duration-150 group-hover:opacity-40">
-        <ChevronUp size={10} className="-mb-0.5" />
-        <ChevronDown size={10} />
-      </span>
-    );
-  }
-  return direction === 'asc' ? (
-    <ChevronUp size={10} className="text-indigo-600 dark:text-indigo-400" />
-  ) : (
-    <ChevronDown size={10} className="text-indigo-600 dark:text-indigo-400" />
+  return (
+    <span className="flex w-3.5 shrink-0 items-center justify-center transition-colors duration-150 ease-out">
+      {!active ? (
+        <ChevronsUpDown size={14} className="text-[#94A3B8]" />
+      ) : direction === 'asc' ? (
+        <ChevronUp size={14} className="text-[#2563EB]" />
+      ) : (
+        <ChevronDown size={14} className="text-[#2563EB]" />
+      )}
+    </span>
   );
 }
 
-function renderCell(row: TopUpRow, key: ColumnKey) {
-  const base = 'whitespace-nowrap overflow-hidden text-ellipsis px-3 py-1.5 text-center text-[11px]';
+// Proper-cases raw uppercase sheet values for display only — copied
+// verbatim from Settlement's toProperCase.
+function toProperCase(str: string): string {
+  return str
+    .toLowerCase()
+    .split(/([\s-]+)/)
+    .map((part) => (/^[\s-]+$/.test(part) ? part : part.charAt(0).toUpperCase() + part.slice(1)))
+    .join('');
+}
+
+function BrandBadge({ children }: { children: React.ReactNode }) {
+  return (
+    <span className="inline-flex h-[28px] items-center rounded-[999px] border border-[#E5E7EB] bg-[#F8FAFC] px-[10px] text-[12px] font-semibold text-[#475569] dark:border-[#3a3a3d] dark:bg-white/5 dark:text-[#9CA3AF]">
+      {children}
+    </span>
+  );
+}
+
+function WalletBadge({ children }: { children: React.ReactNode }) {
+  return (
+    <span className="inline-flex h-[24px] items-center rounded-[999px] border border-[#E5E7EB] bg-[#F8FAFC] px-2 py-1 text-[12px] font-medium text-[#475569] dark:border-[#3a3a3d] dark:bg-white/5 dark:text-[#9CA3AF]">
+      {children}
+    </span>
+  );
+}
+
+// Row actions menu (⋮) — copied verbatim from Settlement's RowActionsCell.
+// Edit opens the (UI-only, prototype) RecordFormModal; View Details/Delete
+// stay disabled placeholders, matching Settlement's own current state.
+function RowActionsCell({ row, onEdit }: { row: TopUpRow; onEdit: (row: TopUpRow) => void }) {
+  const [open, setOpen] = useState(false);
+  const [pos, setPos] = useState({ top: 0, left: 0 });
+  const btnRef = useRef<HTMLButtonElement>(null);
+  const menuRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!open) return;
+    const handlePointerDown = (event: MouseEvent) => {
+      const target = event.target as Node;
+      if (
+        btnRef.current && !btnRef.current.contains(target) &&
+        menuRef.current && !menuRef.current.contains(target)
+      ) {
+        setOpen(false);
+      }
+    };
+    document.addEventListener('mousedown', handlePointerDown);
+    return () => document.removeEventListener('mousedown', handlePointerDown);
+  }, [open]);
+
+  const copyRow = () => {
+    const text = [
+      `Brand: ${row.brand}`,
+      `Leader: ${row.leader}`,
+      `Agent Name: ${toProperCase(row.agentName)}`,
+      `Wallet: ${toProperCase(row.wallet)}`,
+      `Amount: ${displayNum(row.amount)}`,
+      `Type: ${row.type}`,
+      `Date: ${formatDateDisplay(row.date)}`,
+    ].join('\n');
+    navigator.clipboard?.writeText(text).catch(() => {});
+    setOpen(false);
+  };
+
+  return (
+    <span className="relative inline-flex" onClick={(event) => event.stopPropagation()}>
+      <button
+        ref={btnRef}
+        type="button"
+        aria-label="Row actions"
+        onClick={(event) => {
+          event.stopPropagation();
+          const rect = btnRef.current?.getBoundingClientRect();
+          if (rect) setPos({ top: rect.bottom + 4, left: rect.right - 144 });
+          setOpen((current) => !current);
+        }}
+        className="flex h-8 w-8 items-center justify-center rounded-[8px] text-[#94A3B8] transition-colors duration-150 hover:bg-[#F1F5F9] hover:text-[#475569] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#2563EB] dark:hover:bg-white/5"
+      >
+        <MoreVertical size={16} />
+      </button>
+      {open && typeof document !== 'undefined' && createPortal(
+        <div
+          ref={menuRef}
+          style={{ position: 'fixed', top: pos.top, left: pos.left }}
+          className="z-[9999] w-36 rounded-xl border border-[#e5e5e7] bg-white p-1 shadow-xl dark:border-[#3a3a3d] dark:bg-[#2a2a2d]"
+          onClick={(event) => event.stopPropagation()}
+        >
+          <button
+            type="button"
+            onClick={() => { setOpen(false); onEdit(row); }}
+            className="flex w-full items-center gap-2 rounded-lg px-2.5 py-1.5 text-left text-[12px] font-normal text-[#475569] transition-colors hover:bg-[#F1F5F9] dark:text-[#9CA3AF] dark:hover:bg-white/5"
+          >
+            <Pencil size={13} />
+            Edit
+          </button>
+          <button
+            type="button"
+            onClick={copyRow}
+            className="flex w-full items-center gap-2 rounded-lg px-2.5 py-1.5 text-left text-[12px] font-normal text-[#475569] transition-colors hover:bg-[#F1F5F9] dark:text-[#9CA3AF] dark:hover:bg-white/5"
+          >
+            <Copy size={13} />
+            Copy row
+          </button>
+          <div className="my-1 border-t border-[#F1F5F9] dark:border-[#2f2f32]" />
+          <button
+            type="button"
+            disabled
+            title="Coming soon"
+            className="flex w-full cursor-not-allowed items-center gap-2 rounded-lg px-2.5 py-1.5 text-left text-[12px] font-normal text-[#b3b8c2] dark:text-[#5a5f66]"
+          >
+            <Eye size={13} />
+            View Details
+          </button>
+          <button
+            type="button"
+            disabled
+            title="Coming soon"
+            className="flex w-full cursor-not-allowed items-center gap-2 rounded-lg px-2.5 py-1.5 text-left text-[12px] font-normal text-[#b3b8c2] dark:text-[#5a5f66]"
+          >
+            <Trash2 size={13} />
+            Delete
+          </button>
+        </div>,
+        document.body
+      )}
+    </span>
+  );
+}
+
+const AGENT_NAME_SKELETON_WIDTHS = [55, 70, 85];
+const TYPE_SKELETON_WIDTHS = [50, 65, 80];
+const AMOUNT_SKELETON_WIDTHS = [26, 30, 24, 28];
+const WALLET_SKELETON_WIDTHS = [48, 60, 52, 56];
+
+function renderSkeletonCell(col: ColumnDef, rowIndex: number, style: CSSProperties) {
+  const key = col.id;
+  const base = 'flex items-center px-4 py-[14px]';
   switch (key) {
-    case 'brand':
-      return <td key={key} className={`${base} text-muted-foreground`}>{row.brand}</td>;
-    case 'leader':
-      return <td key={key} className={`${base} text-muted-foreground`}>{row.leader || '−'}</td>;
-    case 'agentName':
-      return <td key={key} className={`${base} font-semibold text-foreground`}>{row.agentName}</td>;
-    case 'wallet':
-      return <td key={key} className={`${base} text-foreground`}>{row.wallet}</td>;
-    case 'amount':
-      return <td key={key} className={`${base} tabular-nums text-teal-600 dark:text-teal-400 font-medium`}>{fmtNum(row.amount)}</td>;
-    case 'type':
-      return <td key={key} className={`${base} text-foreground`}>{row.type}</td>;
-    case 'date':
-      return <td key={key} className={`${base} text-muted-foreground`}>{row.date}</td>;
+    case COLUMN_IDS.BRAND:
+      return (
+        <div key={key} role="cell" style={style} className={base}>
+          <div className="dt-skeleton h-[28px] w-9 rounded-full" />
+        </div>
+      );
+    case COLUMN_IDS.LEADER:
+      return (
+        <div key={key} role="cell" style={style} className={base}>
+          <div className="dt-skeleton h-3 w-2/3 rounded-md" />
+        </div>
+      );
+    case COLUMN_IDS.AGENT_NAME:
+      return (
+        <div key={key} role="cell" style={style} className={base}>
+          <div
+            className="dt-skeleton h-3 rounded-md"
+            style={{ width: `${AGENT_NAME_SKELETON_WIDTHS[rowIndex % AGENT_NAME_SKELETON_WIDTHS.length]}%` }}
+          />
+        </div>
+      );
+    case COLUMN_IDS.WALLET:
+      return (
+        <div key={key} role="cell" style={style} className={`${base} justify-center`}>
+          <div
+            className="dt-skeleton h-6 rounded-full"
+            style={{ width: WALLET_SKELETON_WIDTHS[rowIndex % WALLET_SKELETON_WIDTHS.length] }}
+          />
+        </div>
+      );
+    case COLUMN_IDS.AMOUNT:
+      return (
+        <div key={key} role="cell" style={style} className={`${base} justify-center`}>
+          <div className="dt-skeleton h-3 rounded-md" style={{ width: `${AMOUNT_SKELETON_WIDTHS[rowIndex % AMOUNT_SKELETON_WIDTHS.length]}%` }} />
+        </div>
+      );
+    case COLUMN_IDS.TYPE:
+      return (
+        <div key={key} role="cell" style={style} className={`${base} justify-center`}>
+          <div
+            className="dt-skeleton h-3 rounded-md"
+            style={{ width: `${TYPE_SKELETON_WIDTHS[rowIndex % TYPE_SKELETON_WIDTHS.length]}%` }}
+          />
+        </div>
+      );
+    case COLUMN_IDS.DATE:
+      return (
+        <div key={key} role="cell" style={style} className={`${base} justify-end`}>
+          <div className="dt-skeleton h-3 rounded-md" style={{ width: '50%' }} />
+        </div>
+      );
+    case COLUMN_IDS.ACTIONS:
+      return (
+        <div key={key} role="cell" style={style} className={`${base} justify-center`}>
+          <div className="dt-skeleton h-8 w-8 rounded-[8px]" />
+        </div>
+      );
+    default:
+      return null;
+  }
+}
+
+function renderCell(row: TopUpRow, col: ColumnDef, style: CSSProperties, onEdit: (row: TopUpRow) => void, searchTerm: string) {
+  const key = col.id;
+  const base = `whitespace-nowrap overflow-hidden text-ellipsis px-4 py-[14px] text-${COLUMN_ALIGN[key]} text-[13px] leading-[20px] font-normal text-[#111827] dark:text-[#E5E7EB]`;
+  switch (key) {
+    case COLUMN_IDS.BRAND:
+      return <div key={key} role="cell" style={style} className={base}><BrandBadge>{highlightMatch(row.brand, searchTerm)}</BrandBadge></div>;
+    case COLUMN_IDS.LEADER: {
+      const leaderText = row.leader && row.leader !== '-' ? row.leader : '−';
+      return <div key={key} role="cell" style={style} title={leaderText} className={base}>{highlightMatch(leaderText, searchTerm)}</div>;
+    }
+    case COLUMN_IDS.AGENT_NAME: {
+      const agentNameText = row.agentName.toUpperCase();
+      return <div key={key} role="cell" style={style} title={agentNameText} className={base}>{highlightMatch(agentNameText, searchTerm)}</div>;
+    }
+    case COLUMN_IDS.WALLET:
+      return <div key={key} role="cell" style={style} className={base}><WalletBadge>{highlightMatch(toProperCase(row.wallet), searchTerm)}</WalletBadge></div>;
+    case COLUMN_IDS.AMOUNT:
+      return <div key={key} role="cell" style={style} className={`${base} !text-[12px] font-semibold tabular-nums`}>{highlightMatch(displayNum(row.amount), searchTerm)}</div>;
+    case COLUMN_IDS.TYPE: {
+      const typeText = row.type && row.type !== '-' ? row.type : '−';
+      return <div key={key} role="cell" style={style} title={typeText} className={base}>{highlightMatch(typeText, searchTerm)}</div>;
+    }
+    case COLUMN_IDS.DATE: {
+      const dateText = formatDateDisplay(row.date);
+      return <div key={key} role="cell" style={style} className={base}>{highlightMatch(dateText, searchTerm)}</div>;
+    }
+    case COLUMN_IDS.ACTIONS:
+      return <div key={key} role="cell" style={style} className={`${base} flex items-center justify-center`}><RowActionsCell row={row} onEdit={onEdit} /></div>;
     default:
       return null;
   }
@@ -191,18 +517,36 @@ function renderCell(row: TopUpRow, key: ColumnKey) {
 
 export default function TopUpPage() {
   const [topUpRows, setTopUpRows] = useState<TopUpRow[]>([]);
+  // Real Balance Shop Agent roster — same source/purpose as Settlement's
+  // openingAgentNames (app/stlm/page.tsx): the full ~3,486-agent list from
+  // Opening Balance's own "Opening AG" sheet, not just today's rows.
+  const [openingAgentNames, setOpeningAgentNames] = useState<string[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<ClassifiedError | null>(null);
   const [spinning, setSpinning] = useState(false);
+  // Lifted from DataTable.ScrollArea's own scroll listener so
+  // SettlementSummary (which sits above <main>, outside that component's
+  // children) can show the same "shadow while scrolling" the table's own
+  // sticky column header uses — same pattern as app/stlm/page.tsx.
+  const [tableScrolled, setTableScrolled] = useState(false);
+  // SettlementSummary's KPI row — real counts/totals computed in fetchData
+  // from the SAME "AG BD STLM + TOPUP" sheet the table itself reads (it
+  // carries several weeks of rows, not just today's; isToday()/isYesterday()
+  // narrow it down). Not derived from topUpRows itself, since that's already
+  // narrowed to today only — see fetchData for the actual computation.
+  const [kpiStats, setKpiStats] = useState<TopUpKpiStats>(EMPTY_KPI_STATS);
   const [searchTerm, setSearchTerm] = useState('');
   const [sortColumn, setSortColumn] = useState<SortColumn>('');
   const [sortDirection, setSortDirection] = useState<'asc' | 'desc'>('asc');
-  const [brandFilter, setBrandFilter] = useState<Record<string, boolean>>({});
-  const [brandMenuOpen, setBrandMenuOpen] = useState(false);
-  const [brandMenuPos, setBrandMenuPos] = useState({ top: 0, left: 0 });
-  // Column Visibility (Enterprise Table V2) — same model/persistence as
-  // app/stlm/page.tsx: read saved preference once on mount (gated by
-  // `mounted`), written on every change thereafter.
+  const [editingRow, setEditingRow] = useState<TopUpRow | null>(null);
+  const [newRecordOpen, setNewRecordOpen] = useState(false);
+  const [bulkImportOpen, setBulkImportOpen] = useState(false);
+  const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set());
+  const [bulkEditOpen, setBulkEditOpen] = useState(false);
+  const [selectionBarRendered, setSelectionBarRendered] = useState(false);
+  const [page, setPage] = useState(1);
+  const [rowsPerPage, setRowsPerPage] = useState(50);
+
   const [columnDefs, setColumnDefs] = useState<ColumnDef[]>(DEFAULT_COLUMNS);
   const [columnsMenuOpen, setColumnsMenuOpen] = useState(false);
   const [columnsMenuPos, setColumnsMenuPos] = useState({ top: 0, left: 0 });
@@ -210,10 +554,80 @@ export default function TopUpPage() {
   const columnsButtonRef = useRef<HTMLButtonElement>(null);
   const columnsMenuRef = useRef<HTMLDivElement>(null);
 
-  const [page, setPage] = useState(1);
-  const rowsPerPage = 50;
-  const brandButtonRef = useRef<HTMLButtonElement>(null);
-  const brandDropdownRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    setMounted(true);
+    const saved = getPreference<Record<string, boolean> | null>(COLUMN_VISIBILITY_STORAGE_KEY, null);
+    if (!saved) return;
+    setColumnDefs((current) =>
+      current.map((col) => (col.id in saved ? { ...col, visible: saved[col.id] } : col))
+    );
+  }, []);
+
+  useEffect(() => {
+    if (!mounted) return;
+    const visibility = Object.fromEntries(columnDefs.map((col) => [col.id, col.visible])) as Record<ColumnKey, boolean>;
+    setPreference(COLUMN_VISIBILITY_STORAGE_KEY, visibility);
+  }, [columnDefs, mounted]);
+
+  useEffect(() => {
+    if (!columnsMenuOpen) return;
+    const handlePointerDown = (event: MouseEvent) => {
+      const target = event.target as Node;
+      if (
+        columnsButtonRef.current && !columnsButtonRef.current.contains(target) &&
+        columnsMenuRef.current && !columnsMenuRef.current.contains(target)
+      ) {
+        setColumnsMenuOpen(false);
+      }
+    };
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        setColumnsMenuOpen(false);
+        columnsButtonRef.current?.focus();
+      }
+    };
+    document.addEventListener('mousedown', handlePointerDown);
+    document.addEventListener('keydown', handleKeyDown);
+    return () => {
+      document.removeEventListener('mousedown', handlePointerDown);
+      document.removeEventListener('keydown', handleKeyDown);
+    };
+  }, [columnsMenuOpen]);
+
+  useEffect(() => {
+    if (!columnsMenuOpen) return;
+    const firstControl = columnsMenuRef.current?.querySelector<HTMLElement>('input, button');
+    firstControl?.focus();
+  }, [columnsMenuOpen]);
+
+  const visibleColumns = useMemo(
+    () => (mounted ? columnDefs : []).filter((col) => col.visible),
+    [columnDefs, mounted]
+  );
+  const visibleHideableCount = useMemo(
+    () => columnDefs.filter((col) => col.hideable && col.visible).length,
+    [columnDefs]
+  );
+
+  const columnLayout = useMemo(() => calculateColumnLayout(visibleColumns), [visibleColumns]);
+  const flexStyleById = useMemo(
+    () => Object.fromEntries(
+      columnLayout.map((layout) => [layout.id, toFlexColumnStyle(layout)])
+    ) as Record<ColumnKey, CSSProperties>,
+    [columnLayout]
+  );
+
+  const [rowsPhase, setRowsPhase] = useState<'skeleton' | 'fadingOut' | 'table'>('skeleton');
+
+  useEffect(() => {
+    if (loading) {
+      setRowsPhase('skeleton');
+      return;
+    }
+    setRowsPhase('fadingOut');
+    const timer = setTimeout(() => setRowsPhase('table'), 120);
+    return () => clearTimeout(timer);
+  }, [loading]);
 
   const fetchData = useCallback(async () => {
     try {
@@ -233,14 +647,17 @@ export default function TopUpPage() {
 
       // build agentName → leader lookup from opening sheet
       const leaderMap: Record<string, string> = {};
+      const openingNames = new Set<string>();
       if (agentText) {
         agentText.trim().split('\n').slice(1).forEach(line => {
           const cols = line.split(',');
           const name = rawVal(cols[0]);
           const leader = rawVal(cols[3]);
+          if (name && name !== '-' && name !== 'OLD') openingNames.add(name);
           if (name && leader) leaderMap[name.toUpperCase()] = leader;
         });
       }
+      setOpeningAgentNames(Array.from(openingNames).sort((a, b) => a.localeCompare(b)));
 
       // Brand cross-reference: "SSP AG BalanceLimit" col G (index 6) is the
       // Group text; same computeBrand/resolveBrand priority logic as
@@ -267,16 +684,8 @@ export default function TopUpPage() {
       const lines = text.trim().split('\n').slice(1);
       const topUp: TopUpRow[] = [];
 
-      // One canonical brand per shop, not per row — if ANY of a shop's Top
-      // Up rows carries an explicit "-<brand>" suffix, that's authoritative
-      // for every one of its rows (a shop's brand doesn't change
-      // transaction to transaction); only shops that NEVER carry a suffix
-      // anywhere fall back to the cross-reference. Resolving this per-shop
-      // first (instead of independently per row, each with its own
-      // suffix-or-fallback check) is what keeps a shop's brand consistent —
-      // e.g. "CALAMARI008" was showing as both B3 (one row's own suffix)
-      // and M1 (another row with no suffix, cross-reference-resolved) on
-      // this same page before this fix.
+      // One canonical brand per shop, not per row — see app/stlm/page.tsx's
+      // identical rationale (agentBrandOverride). Unchanged data logic.
       const agentBrandOverride: Record<string, string> = {};
       lines
         .filter(line => line.trim() !== '')
@@ -292,7 +701,7 @@ export default function TopUpPage() {
 
       lines
         .filter(line => line.trim() !== '')
-        .forEach(line => {
+        .forEach((line, index) => {
           const cols = line.split(',');
           const toAgent = rawVal(cols[1]);
           if (toAgent && toAgent !== '-') {
@@ -306,11 +715,29 @@ export default function TopUpPage() {
               type: rawVal(cols[5]),
               leader: leaderMap[bareAgentKey] || '−',
               brand: agentBrandOverride[bareAgentKey] ?? resolveBrand(brandGroups[bareAgentKey] ?? [], toAgent),
+              _id: index,
             });
           }
         });
 
-      setTopUpRows(topUp.filter(row => isToday(row.date)));
+      // Split out so both the table's "today only" rows and the KPI row's
+      // "today vs yesterday" comparison can be computed from one pass over
+      // the full (unfiltered-by-date) sheet, instead of the table's own
+      // isToday() filter discarding yesterday's rows before the KPI row
+      // ever gets a chance to see them. Same pattern as app/stlm/page.tsx.
+      const todayTopUp = topUp.filter(row => isToday(row.date));
+      const yesterdayTopUp = topUp.filter(row => isYesterday(row.date));
+
+      setTopUpRows(todayTopUp);
+      // A fresh fetch means brand-new row objects (and _ids reset) — any
+      // previous selection no longer refers to anything real.
+      setSelectedIds(new Set());
+      setKpiStats({
+        todayCount: todayTopUp.length,
+        todayAmount: todayTopUp.reduce((sum, row) => sum + parseAmount(row.amount), 0),
+        yesterdayCount: yesterdayTopUp.length,
+        yesterdayAmount: yesterdayTopUp.reduce((sum, row) => sum + parseAmount(row.amount), 0),
+      });
     } catch (err) {
       setError(classifyFetchError(err instanceof Error ? err.message : String(err)));
     } finally {
@@ -325,119 +752,32 @@ export default function TopUpPage() {
 
   useEffect(() => {
     setPage(1);
-  }, [searchTerm, brandFilter, sortColumn, sortDirection]);
-
-  useEffect(() => {
-    if (!brandMenuOpen) return;
-
-    const handlePointerDown = (event: MouseEvent) => {
-      const target = event.target as Node;
-      if (
-        brandButtonRef.current && !brandButtonRef.current.contains(target) &&
-        brandDropdownRef.current && !brandDropdownRef.current.contains(target)
-      ) {
-        setBrandMenuOpen(false);
-      }
-    };
-
-    document.addEventListener('mousedown', handlePointerDown);
-    return () => document.removeEventListener('mousedown', handlePointerDown);
-  }, [brandMenuOpen]);
-
-  useEffect(() => {
-    setMounted(true);
-    const saved = getPreference<Record<string, boolean> | null>(COLUMN_VISIBILITY_STORAGE_KEY, null);
-    if (!saved) return;
-    setColumnDefs((current) =>
-      current.map((col) => (col.key in saved ? { ...col, visible: saved[col.key] } : col))
-    );
-  }, []);
-
-  useEffect(() => {
-    if (!mounted) return;
-    const visibility = Object.fromEntries(columnDefs.map((col) => [col.key, col.visible])) as Record<ColumnKey, boolean>;
-    setPreference(COLUMN_VISIBILITY_STORAGE_KEY, visibility);
-  }, [columnDefs, mounted]);
-
-  useEffect(() => {
-    if (!columnsMenuOpen) return;
-
-    const handlePointerDown = (event: MouseEvent) => {
-      const target = event.target as Node;
-      if (
-        columnsButtonRef.current && !columnsButtonRef.current.contains(target) &&
-        columnsMenuRef.current && !columnsMenuRef.current.contains(target)
-      ) {
-        setColumnsMenuOpen(false);
-      }
-    };
-    const handleKeyDown = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') {
-        setColumnsMenuOpen(false);
-        columnsButtonRef.current?.focus();
-      }
-    };
-
-    document.addEventListener('mousedown', handlePointerDown);
-    document.addEventListener('keydown', handleKeyDown);
-    return () => {
-      document.removeEventListener('mousedown', handlePointerDown);
-      document.removeEventListener('keydown', handleKeyDown);
-    };
-  }, [columnsMenuOpen]);
-
-  useEffect(() => {
-    if (!columnsMenuOpen) return;
-    const firstControl = columnsMenuRef.current?.querySelector<HTMLElement>('input, button');
-    firstControl?.focus();
-  }, [columnsMenuOpen]);
-
-  const visibleColumns = useMemo(
-    () => (mounted ? columnDefs : []).filter((col) => col.visible),
-    [columnDefs, mounted]
-  );
-  const visibleHideableCount = useMemo(
-    () => columnDefs.filter((col) => col.hideable && col.visible).length,
-    [columnDefs]
-  );
-  const columnVisibility = useMemo(
-    () => Object.fromEntries(columnDefs.map((col) => [col.key, col.visible])) as Record<ColumnKey, boolean>,
-    [columnDefs]
-  );
-
-  const brandOptions = useMemo(() => {
-    return Array.from(new Set(topUpRows.map((row) => row.brand).filter(Boolean))).sort((a, b) => a.localeCompare(b));
-  }, [topUpRows]);
-
-  const isBrandChecked = (name: string) => brandFilter[name] !== false;
-  const allBrandsChecked = brandOptions.every((name) => isBrandChecked(name));
-  const anyBrandUnchecked = brandOptions.some((name) => !isBrandChecked(name));
-  const selectedBrandCount = brandOptions.filter((name) => isBrandChecked(name)).length;
+  }, [searchTerm, sortColumn, sortDirection, rowsPerPage]);
 
   const searchedRows = topUpRows.filter((row) => {
-    const haystack = `${row.agentName} ${row.wallet} ${row.amount} ${row.date} ${row.type}`.toLowerCase();
+    const haystack = `${row.agentName} ${row.amount} ${row.type} ${row.date} ${row.wallet} ${row.brand} ${row.leader}`.toLowerCase();
     return haystack.includes(searchTerm.toLowerCase());
   });
 
-  const filteredRows = brandOptions.some((name) => brandFilter[name] === false)
-    ? searchedRows.filter((row) => brandFilter[row.brand] !== false)
-    : searchedRows;
-
   const sortedRows = useMemo(() => {
-    if (!sortColumn) return filteredRows;
-    const list = [...filteredRows];
+    if (!sortColumn) return searchedRows;
+    const list = [...searchedRows];
     list.sort((a, b) => {
       const getValue = (row: TopUpRow) => {
         switch (sortColumn) {
-          case 'agentName':
+          case COLUMN_IDS.BRAND:
+            return row.brand.toLowerCase();
+          case COLUMN_IDS.LEADER:
+            return row.leader.toLowerCase();
+          case COLUMN_IDS.AGENT_NAME:
             return row.agentName.toLowerCase();
-          case 'wallet':
+          case COLUMN_IDS.WALLET:
             return row.wallet.toLowerCase();
-          case 'amount':
+          case COLUMN_IDS.AMOUNT:
             return parseAmount(row.amount);
-          case 'type':
+          case COLUMN_IDS.TYPE:
             return row.type.toLowerCase();
-          case 'date':
+          case COLUMN_IDS.DATE:
             return row.date.toLowerCase();
           default:
             return '';
@@ -456,7 +796,7 @@ export default function TopUpPage() {
       return sortDirection === 'asc' ? comparison : -comparison;
     });
     return list;
-  }, [filteredRows, sortColumn, sortDirection]);
+  }, [searchedRows, sortColumn, sortDirection]);
 
   const totalPages = Math.max(1, Math.ceil(sortedRows.length / rowsPerPage));
   const currentPage = Math.min(page, totalPages);
@@ -464,34 +804,101 @@ export default function TopUpPage() {
   const endIndex = startIndex + rowsPerPage;
   const pagedRows = sortedRows.slice(startIndex, endIndex);
 
+  const pageRowIds = pagedRows.map((row) => row._id);
+  const selectedOnPageCount = pageRowIds.filter((id) => selectedIds.has(id)).length;
+  const allOnPageSelected = pageRowIds.length > 0 && selectedOnPageCount === pageRowIds.length;
+
+  useEffect(() => {
+    setSelectionBarRendered(selectedIds.size > 0);
+  }, [selectedIds.size]);
+
+  const toggleRowSelection = useCallback((id: number) => {
+    setSelectedIds((current) => {
+      const next = new Set(current);
+      if (next.has(id)) next.delete(id); else next.add(id);
+      return next;
+    });
+  }, []);
+
+  const toggleSelectAllOnPage = useCallback(() => {
+    if (allOnPageSelected) {
+      setSelectedIds(new Set());
+      return;
+    }
+    setSelectedIds((current) => {
+      const next = new Set(current);
+      pageRowIds.forEach((id) => next.add(id));
+      return next;
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [allOnPageSelected, pageRowIds.join(',')]);
+
+  // Reverses DateInput's own "Jul 24, 2026" display format back into this
+  // page's raw "M/D/YYYY" row storage convention — copied verbatim from
+  // Settlement's parseDisplayDateToStorage.
+  const parseDisplayDateToStorage = (display: string): string => {
+    const parsed = new Date(display);
+    if (isNaN(parsed.getTime())) return display;
+    return `${parsed.getMonth() + 1}/${parsed.getDate()}/${parsed.getFullYear()}`;
+  };
+
+  const handleBulkEditApply = useCallback((updates: BulkEditUpdates) => {
+    setTopUpRows((current) => current.map((row) => {
+      if (!selectedIds.has(row._id)) return row;
+      return {
+        ...row,
+        ...(updates.wallet !== undefined ? { wallet: updates.wallet } : {}),
+        ...(updates.date !== undefined ? { date: parseDisplayDateToStorage(updates.date) } : {}),
+      };
+    }));
+    setBulkEditOpen(false);
+    setSelectedIds(new Set());
+  }, [selectedIds]);
+
   useEffect(() => {
     if (page !== currentPage) {
       setPage(currentPage);
     }
   }, [page, currentPage]);
 
+  // Type is a fixed literal for Cashout Top Up ("BUNDLE TRANSFER") — never
+  // observed as anything else in real sheet data, so the field is a
+  // closed, single-option combobox (no allowCustom) rather than a free
+  // dropdown, matching how the row is always actually populated.
+  const topupRecordFields: RecordFormField[] = useMemo(() => [
+    { key: 'brand', label: 'Brand', kind: 'combobox', options: SETTLEMENT_BRAND_OPTIONS, required: true },
+    { key: 'agentName', label: 'Agent Name', kind: 'combobox', options: openingAgentNames, required: true },
+    { key: 'wallet', label: 'Wallet', kind: 'combobox', options: CASHOUT_WALLET_OPTIONS, required: true },
+    { key: 'amount', label: 'Amount', kind: 'amount', required: true },
+    { key: 'type', label: 'Type', kind: 'combobox', options: [TOPUP_TYPE_CASHOUT], required: true },
+    { key: 'date', label: 'Date', kind: 'date', required: true },
+  ], [openingAgentNames]);
+
   const handleExport = useCallback(() => {
     const getExportValue = (row: TopUpRow, key: ColumnKey) => {
       switch (key) {
-        case 'brand':
+        case COLUMN_IDS.BRAND:
           return row.brand;
-        case 'agentName':
+        case COLUMN_IDS.LEADER:
+          return row.leader;
+        case COLUMN_IDS.AGENT_NAME:
           return row.agentName;
-        case 'wallet':
+        case COLUMN_IDS.WALLET:
           return row.wallet;
-        case 'amount':
-          return fmtNum(row.amount);
-        case 'type':
+        case COLUMN_IDS.AMOUNT:
+          return displayNum(row.amount);
+        case COLUMN_IDS.TYPE:
           return row.type;
-        case 'date':
+        case COLUMN_IDS.DATE:
           return row.date;
         default:
           return '';
       }
     };
 
-    const headers = visibleColumns.map((col) => col.label);
-    const data = sortedRows.map((row) => visibleColumns.map((col) => getExportValue(row, col.key)));
+    const exportColumns = visibleColumns.filter((col) => col.id !== COLUMN_IDS.ACTIONS);
+    const headers = exportColumns.map((col) => col.label);
+    const data = sortedRows.map((row) => exportColumns.map((col) => getExportValue(row, col.id)));
 
     const worksheet = XLSX.utils.aoa_to_sheet([headers, ...data]);
     worksheet['!cols'] = headers.map(() => ({ wch: 16 }));
@@ -505,284 +912,331 @@ export default function TopUpPage() {
     XLSX.writeFile(workbook, `SSP1_TOPUP_${datePart}_${timePart}.xlsx`);
   }, [sortedRows, visibleColumns]);
 
+  const clearSearch = useCallback(() => {
+    setSearchTerm('');
+  }, []);
+
+  const handlePageSizeChange = useCallback((size: number) => {
+    setRowsPerPage(size);
+  }, []);
+
+  const kpiItems: SettlementKpiItem[] = useMemo(() => [
+    { icon: Hash, label: "Today's Total Count", value: kpiStats.todayCount.toLocaleString('en-US') },
+    { icon: Banknote, label: "Today's Total Amount", value: displayNum(kpiStats.todayAmount) },
+    { icon: Hash, label: "Yesterday's Total Count", value: kpiStats.yesterdayCount.toLocaleString('en-US') },
+    { icon: Banknote, label: "Yesterday's Total Amount", value: displayNum(kpiStats.yesterdayAmount) },
+  ], [kpiStats]);
+
+  const hasAnyRecords = topUpRows.length > 0;
+  const emptyStateNode = !hasAnyRecords ? (
+    <EmptyState
+      icon={Inbox}
+      title="No Top Up Records"
+      description="Top Up records will appear here once they are created or imported."
+      action={
+        <button type="button" onClick={() => setNewRecordOpen(true)} className={EMPTY_STATE_PRIMARY_BUTTON}>
+          Add Record
+        </button>
+      }
+    />
+  ) : (
+    <EmptyState
+      title="No matching Top Up records."
+      description="Try changing your search or filters."
+      action={
+        <button type="button" onClick={clearSearch} className={EMPTY_STATE_ACTION_BUTTON}>
+          Clear Search
+        </button>
+      }
+    />
+  );
+
   return (
-    <div className="h-screen w-full flex flex-col overflow-hidden bg-background font-[Inter,sans-serif] text-foreground transition-colors duration-300 dark:bg-[#1c1c1e]">
-      <PageHeader
+    <div
+      className="h-screen w-full flex flex-col overflow-hidden bg-background text-foreground transition-colors duration-300 dark:bg-[#1c1c1e]"
+      style={{ fontFamily: 'var(--font-inter), ui-sans-serif, system-ui, sans-serif' }}
+    >
+      <SettlementHeader
         icon={PlusCircle}
         title="Top Up"
-        centerSlot={<ProductSwitchTabs />}
-        actions={<ThemeToggle />}
+        isRefreshing={spinning}
+        onRefresh={fetchData}
       />
+      <SettlementSummary items={kpiItems} isScrolled={tableScrolled} loading={loading} />
 
-      <main className={PAGE_MAIN_PADDING_CLASS}>
+      <main className="flex-1 flex flex-col overflow-hidden px-6 pb-6 pt-1">
 
         {error && <ConnectionErrorState error={error} onRetry={fetchData} />}
 
         {!error && (
-          <DataTable className="mt-3">
-            <Toolbar className={TOOLBAR_ROW_CLASS}>
-              <Toolbar.Left className={TOOLBAR_LEFT_CLASS}>
-                {loading ? (
-                  <div className="h-5 w-28 animate-pulse rounded-md bg-slate-200 dark:bg-slate-700" />
-                ) : (
-                  <div className="flex items-center gap-1.5 rounded-md bg-indigo-50 px-2.5 py-1 dark:bg-indigo-500/15">
-                    <span className="text-[10px] font-medium text-indigo-600 dark:text-indigo-400">Records</span>
-                    <span className="text-[11px] font-bold tabular-nums text-indigo-700 dark:text-indigo-300">{sortedRows.length.toLocaleString('en-PH')}</span>
-                  </div>
-                )}
-                <div className="flex w-full min-w-[140px] flex-1 items-center gap-2 rounded-lg border border-border bg-white px-3 py-1.5 dark:bg-[#2a2a2d] sm:w-52 sm:flex-none">
+          <DataTable>
+            <Toolbar>
+              <Toolbar.Left>
+                <div className="flex h-10 w-full min-w-[200px] items-center gap-2 rounded-[10px] border border-[#E5E7EB] bg-white px-[14px] transition-colors focus-within:border-[#2563EB] focus-within:ring-2 focus-within:ring-[#2563EB]/20 dark:border-[#3a3a3d] dark:bg-[#2a2a2d] sm:w-[380px]">
                   {loading ? (
-                    <div className="h-3 w-32 animate-pulse rounded-md bg-slate-200 dark:bg-slate-700" />
+                    <div className="dt-skeleton h-3 w-32 rounded-md" />
                   ) : (
                     <>
-                      <Search size={14} className="text-muted-foreground" />
+                      <Search size={16} className="shrink-0 text-[#94A3B8]" />
                       <input
+                        aria-label="Search agent, wallet, or brand"
                         value={searchTerm}
                         onChange={(event) => setSearchTerm(event.target.value)}
-                        className="flex-1 bg-transparent text-[10px] text-foreground placeholder:text-muted-foreground outline-none border-none"
-                        placeholder="Search shops or brands..."
+                        className="flex-1 bg-transparent text-[13px] font-normal text-[#111827] placeholder:text-[#94A3B8] outline-none border-none dark:text-[#E5E7EB]"
+                        placeholder="Search agent, wallet, or brand..."
                       />
                     </>
                   )}
                 </div>
               </Toolbar.Left>
-              <Toolbar.Right className={TOOLBAR_RIGHT_CLASS}>
-                {loading && <div className="h-7 w-7 animate-pulse rounded-lg bg-slate-200 dark:bg-slate-700" />}
-                {!loading && (
-                  <button
-                    type="button"
-                    onClick={fetchData}
-                    title="Refresh"
-                    className="rounded-lg border border-border bg-white p-1.5 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground dark:bg-transparent"
-                  >
-                    <RefreshCw size={13} className={spinning ? 'animate-spin' : ''} />
-                  </button>
+
+              <Toolbar.Right>
+                {loading && (
+                  <>
+                    <div className="dt-skeleton h-9 w-[76px] rounded-[8px]" />
+                    <div className="dt-skeleton h-8 w-8 rounded-[8px]" />
+                    <div className="dt-skeleton h-9 w-[88px] rounded-[8px]" />
+                    <div className="dt-skeleton h-9 w-[104px] rounded-[8px]" />
+                  </>
                 )}
-                {loading && <div className="h-7 w-20 animate-pulse rounded-lg bg-slate-200 dark:bg-slate-700" />}
                 {!loading && (
-                  <button
-                    type="button"
-                    onClick={handleExport}
-                    title="Export to Excel"
-                    className="rounded-lg border border-border bg-white p-1.5 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground dark:bg-transparent"
-                  >
-                    <Download size={13} />
-                  </button>
-                )}
-                {loading && <div className="h-7 w-7 animate-pulse rounded-lg bg-slate-200 dark:bg-slate-700" />}
-                {!loading && (
-                  <div className="relative">
-                    <button
-                      type="button"
-                      ref={columnsButtonRef}
-                      onClick={(event) => {
-                        event.stopPropagation();
-                        const rect = columnsButtonRef.current?.getBoundingClientRect();
-                        if (rect) {
-                          const dropdownWidth = 224;
-                          const left = Math.max(8, Math.min(rect.right - dropdownWidth, window.innerWidth - dropdownWidth - 8));
-                          setColumnsMenuPos({ top: rect.bottom + 8, left });
-                        }
-                        setColumnsMenuOpen((current) => !current);
-                      }}
-                      aria-haspopup="true"
-                      aria-expanded={columnsMenuOpen}
-                      aria-controls="topup-columns-popover"
-                      aria-label="Columns"
-                      title="Columns"
-                      className="rounded-lg border border-border bg-white p-1.5 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground dark:bg-transparent"
-                    >
-                      <Columns3 size={13} />
-                    </button>
-                    {columnsMenuOpen && typeof document !== 'undefined' && createPortal(
-                      <div
-                        ref={columnsMenuRef}
-                        id="topup-columns-popover"
-                        role="dialog"
-                        aria-label="Column visibility"
-                        style={{ position: 'fixed', top: columnsMenuPos.top, left: columnsMenuPos.left }}
-                        className="z-[9999] w-56 max-h-[70vh] overflow-y-auto rounded-xl border border-[#e5e5e7] bg-white p-2 shadow-xl dark:border-[#3a3a3d] dark:bg-[#2a2a2d]"
-                        onClick={(event) => event.stopPropagation()}
-                        onKeyDown={(event) => {
-                          if (event.key === 'Escape') {
-                            event.stopPropagation();
-                            setColumnsMenuOpen(false);
-                            columnsButtonRef.current?.focus();
-                          }
-                        }}
-                      >
-                        <div className="px-2 py-1.5 text-[10px] font-semibold uppercase tracking-[0.24em] text-[#6b7280] dark:text-[#a0a0a0]">Columns</div>
-                        {columnDefs.filter((col) => col.hideable).map((col) => {
-                          const isLastVisible = col.visible && visibleHideableCount === 1;
-                          return (
-                            <label
-                              key={col.key}
-                              title={isLastVisible ? 'At least one column must stay visible' : undefined}
-                              className={`flex w-full items-center justify-start gap-2 whitespace-nowrap rounded-xl px-3 py-1.5 text-left text-[10px] ${
-                                isLastVisible
-                                  ? 'cursor-not-allowed text-[#b3b8c2] dark:text-[#5a5f66]'
-                                  : 'text-[#6b7280] hover:bg-[#f5f5f7] dark:text-[#a0a0a0] dark:hover:bg-slate-800'
-                              }`}
-                            >
-                              <input
-                                type="checkbox"
-                                checked={col.visible}
-                                disabled={isLastVisible}
-                                onChange={() => {
-                                  setColumnDefs((current) =>
-                                    current.map((c) => (c.key === col.key ? { ...c, visible: !c.visible } : c))
-                                  );
-                                }}
-                              />
-                              <span>{col.label}</span>
-                            </label>
-                          );
-                        })}
-                        <div className="mt-1 border-t border-[#F1F5F9] pt-1 dark:border-[#2f2f32]">
-                          <button
-                            type="button"
-                            onClick={() => setColumnDefs(DEFAULT_COLUMNS.map((col) => ({ ...col })))}
-                            className="flex w-full items-center justify-center rounded-lg px-2.5 py-1.5 text-[11px] font-medium text-indigo-600 transition-colors hover:bg-indigo-50 dark:text-indigo-400 dark:hover:bg-white/5"
-                          >
-                            Restore Defaults
-                          </button>
-                        </div>
-                      </div>,
-                      document.body
+                  <>
+                    {selectionBarRendered ? (
+                      <div className="flex flex-wrap items-center gap-3 dt-bar-fade-in">
+                        <span className="text-[13px] font-medium text-foreground">{selectedIds.size} Selected</span>
+                        <button
+                          type="button"
+                          onClick={() => setBulkEditOpen(true)}
+                          className="inline-flex h-9 items-center rounded-[8px] bg-indigo-600 px-3 text-[13px] font-medium text-white transition-colors hover:bg-indigo-700 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#2563EB]"
+                        >
+                          Bulk Edit
+                        </button>
+                      </div>
+                    ) : (
+                      <AddRecordDropdown
+                        templateModule="topup"
+                        onNewRecord={() => setNewRecordOpen(true)}
+                        onBulkImport={() => setBulkImportOpen(true)}
+                        buttonClassName="bg-indigo-600 hover:bg-indigo-700"
+                      />
                     )}
-                  </div>
+                    <button type="button" onClick={fetchData} aria-label="Refresh" title="Refresh" className={GHOST_BUTTON}>
+                      <RefreshCw size={15} className={spinning ? 'animate-spin' : ''} />
+                    </button>
+                    <button type="button" onClick={handleExport} aria-label="Export to Excel" title="Export to Excel" className={GHOST_BUTTON}>
+                      <Download size={15} />
+                      Export
+                    </button>
+                    <div className="relative">
+                      <button
+                        type="button"
+                        ref={columnsButtonRef}
+                        onClick={(event) => {
+                          event.stopPropagation();
+                          const rect = columnsButtonRef.current?.getBoundingClientRect();
+                          if (rect) {
+                            const dropdownWidth = 224;
+                            const left = Math.max(8, Math.min(rect.right - dropdownWidth, window.innerWidth - dropdownWidth - 8));
+                            setColumnsMenuPos({ top: rect.bottom + 8, left });
+                          }
+                          setColumnsMenuOpen((current) => !current);
+                        }}
+                        aria-haspopup="true"
+                        aria-expanded={columnsMenuOpen}
+                        aria-controls="topup-columns-popover"
+                        aria-label="Columns"
+                        title="Columns"
+                        className={GHOST_BUTTON}
+                      >
+                        <Columns3 size={15} />
+                        Columns
+                      </button>
+                      {columnsMenuOpen && typeof document !== 'undefined' && createPortal(
+                        <div
+                          ref={columnsMenuRef}
+                          id="topup-columns-popover"
+                          role="dialog"
+                          aria-label="Column visibility"
+                          style={{ position: 'fixed', top: columnsMenuPos.top, left: columnsMenuPos.left }}
+                          className="z-[9999] w-56 rounded-xl border border-[#e5e5e7] bg-white p-2 shadow-xl dark:border-[#3a3a3d] dark:bg-[#2a2a2d]"
+                          onClick={(event) => event.stopPropagation()}
+                          onKeyDown={(event) => {
+                            if (event.key === 'Escape') {
+                              event.stopPropagation();
+                              setColumnsMenuOpen(false);
+                              columnsButtonRef.current?.focus();
+                            }
+                          }}
+                        >
+                          <div className="px-2 py-1.5 text-[10px] font-semibold uppercase tracking-[0.24em] text-[#6b7280] dark:text-[#a0a0a0]">
+                            Columns
+                          </div>
+                          <div className="max-h-64 overflow-y-auto">
+                            {columnDefs.filter((col) => col.hideable).map((col) => {
+                              const isLastVisible = col.visible && visibleHideableCount === 1;
+                              return (
+                                <label
+                                  key={col.id}
+                                  title={isLastVisible ? 'At least one column must stay visible' : undefined}
+                                  className={`flex w-full items-center justify-start gap-2 whitespace-nowrap rounded-lg px-2.5 py-1.5 text-left text-[13px] font-normal ${
+                                    isLastVisible
+                                      ? 'cursor-not-allowed text-[#94A3B8] dark:text-[#6b7280]'
+                                      : 'text-[#475569] hover:bg-[#F1F5F9] dark:text-[#9CA3AF] dark:hover:bg-white/5'
+                                  }`}
+                                >
+                                  <input
+                                    type="checkbox"
+                                    checked={col.visible}
+                                    disabled={isLastVisible}
+                                    onChange={() => {
+                                      setColumnDefs((current) =>
+                                        current.map((c) => (c.id === col.id ? { ...c, visible: !c.visible } : c))
+                                      );
+                                    }}
+                                  />
+                                  <span>{col.label}</span>
+                                </label>
+                              );
+                            })}
+                          </div>
+                          <div className="mt-1 border-t border-[#F1F5F9] pt-1 dark:border-[#2f2f32]">
+                            <button
+                              type="button"
+                              onClick={() => setColumnDefs(DEFAULT_COLUMNS.map((col) => ({ ...col })))}
+                              className="flex w-full items-center justify-center rounded-lg px-2.5 py-1.5 text-[13px] font-medium text-[#2563EB] transition-colors hover:bg-[#EFF6FF] dark:hover:bg-white/5"
+                            >
+                              Restore Defaults
+                            </button>
+                          </div>
+                        </div>,
+                        document.body
+                      )}
+                    </div>
+                  </>
                 )}
               </Toolbar.Right>
             </Toolbar>
-            <div className="hidden flex-1 min-h-0 overflow-y-auto overflow-x-auto sm:block">
-              <table className="w-full table-fixed text-sm">
-                <colgroup>
-                  {visibleColumns.map((col) => (
-                    <col key={col.key} style={{ width: columnWidths[col.key] }} />
-                  ))}
-                </colgroup>
-                <thead className={TABLE_STICKY_HEADER_CLASS}>
-                  <tr>
+            <div className="hidden h-1.5 shrink-0 sm:block" />
+            <DataTable.ScrollArea className="hidden sm:block" onScrolledChange={setTableScrolled}>
+              {(isScrolled) => (
+                <>
+                  <DataTable.StickyHeader isScrolled={isScrolled}>
+                  <div role="row" className="flex h-[48px] items-center">
+                    <div role="columnheader" className="flex h-full w-[44px] shrink-0 items-center justify-center">
+                      <input
+                        type="checkbox"
+                        aria-label="Select all rows on this page"
+                        checked={allOnPageSelected}
+                        onChange={toggleSelectAllOnPage}
+                        className="h-3.5 w-3.5 cursor-pointer"
+                      />
+                    </div>
                     {visibleColumns.map((col) => (
-                      <th
-                        key={col.key}
-                        style={{ width: columnWidths[col.key] }}
-                        className={headerCellClasses(col.key !== 'brand' && sortColumn === col.key)}>
-                        {loading ? (
-                          <div className="mx-auto h-5 w-16 animate-pulse rounded-md bg-slate-200 dark:bg-slate-700" />
-                        ) : col.key === 'brand' ? (
-                          <div className="relative flex items-center justify-center gap-1">
-                            <span>{col.label}</span>
-                            <button
-                              type="button"
-                              ref={brandButtonRef}
-                              onClick={(event) => {
-                                event.stopPropagation();
-                                const rect = brandButtonRef.current?.getBoundingClientRect();
-                                if (rect) {
-                                  setBrandMenuPos({ top: rect.bottom + 4, left: rect.left });
-                                }
-                                setBrandMenuOpen((current) => !current);
-                              }}
-                              className={`flex items-center justify-center rounded-full p-1 transition ${anyBrandUnchecked ? 'bg-indigo-100 text-indigo-700 dark:bg-indigo-500/30 dark:text-indigo-200' : 'text-[#6b7280] hover:bg-slate-200 dark:text-[#a0a0a0] dark:hover:bg-white/10'}`}
-                            >
-                              {anyBrandUnchecked ? (
-                                <span className="flex h-3 min-w-[12px] items-center justify-center px-0.5 text-[10px] font-semibold leading-none">
-                                  {selectedBrandCount}
-                                </span>
-                              ) : (
-                                <ChevronUp
-                                  size={12}
-                                  className={`transition-transform duration-150 ease-in-out ${brandMenuOpen ? 'rotate-180' : ''} opacity-70`}
-                                />
-                              )}
-                            </button>
-                            {brandMenuOpen && typeof document !== 'undefined' && createPortal(
-                              <div
-                                ref={brandDropdownRef}
-                                style={{ position: 'fixed', top: brandMenuPos.top, left: brandMenuPos.left }}
-                                className="z-[9999] w-44 rounded-xl border border-[#e5e5e7] bg-white p-2 shadow-xl dark:border-[#3a3a3d] dark:bg-[#2a2a2d]"
-                                onClick={(event) => event.stopPropagation()}
-                              >
-                                <div className="px-2 py-1.5 text-center text-[10px] font-semibold uppercase tracking-[0.24em] text-[#6b7280] dark:text-[#a0a0a0]">Brand</div>
-                                <div className="max-h-56 overflow-y-auto">
-                                  <label className="flex w-full items-center justify-center gap-2 rounded-xl px-3 py-1.5 text-center text-[10px] text-[#6b7280] hover:bg-[#f5f5f7] dark:text-[#a0a0a0] dark:hover:bg-slate-800">
-                                    <input
-                                      type="checkbox"
-                                      checked={allBrandsChecked}
-                                      onChange={() => {
-                                        const nextValue = !allBrandsChecked;
-                                        setBrandFilter(
-                                          Object.fromEntries(brandOptions.map((name) => [name, nextValue]))
-                                        );
-                                      }}
-                                    />
-                                    <span>All</span>
-                                  </label>
-                                  {brandOptions.map((brand) => (
-                                    <label key={brand} className="flex w-full items-center justify-center gap-2 rounded-xl px-3 py-1.5 text-center text-[10px] text-[#6b7280] hover:bg-[#f5f5f7] dark:text-[#a0a0a0] dark:hover:bg-slate-800">
-                                      <input
-                                        type="checkbox"
-                                        checked={isBrandChecked(brand)}
-                                        onChange={() => {
-                                          setBrandFilter((current) => ({ ...current, [brand]: !isBrandChecked(brand) }));
-                                        }}
-                                      />
-                                      <span>{brand}</span>
-                                    </label>
-                                  ))}
-                                </div>
-                              </div>,
-                              document.body
-                            )}
-                          </div>
+                      <div
+                        key={col.id}
+                        role="columnheader"
+                        style={flexStyleById[col.id]}
+                        aria-sort={!col.sortable ? undefined : sortColumn === col.id ? (sortDirection === 'asc' ? 'ascending' : 'descending') : 'none'}
+                        className={headerCellClasses(COLUMN_ALIGN[col.id], 'px-4')}>
+                        {!col.sortable ? (
+                          <span>{col.label}</span>
                         ) : (
                           <button
                             type="button"
+                            aria-label={`Sort by ${col.label}${sortColumn === col.id ? (sortDirection === 'asc' ? ', ascending' : ', descending') : ''}`}
                             onClick={() => {
-                              if (sortColumn === col.key) {
+                              if (sortColumn === col.id) {
                                 setSortDirection((current) => current === 'asc' ? 'desc' : 'asc');
                               } else {
-                                setSortColumn(col.key as SortColumn);
+                                setSortColumn(col.id as SortColumn);
                                 setSortDirection('asc');
                               }
                             }}
-                            className="flex w-full items-center justify-center gap-1.5 text-center transition hover:opacity-80"
+                            className={`relative flex w-full items-center gap-1.5 text-${COLUMN_ALIGN[col.id]} transition-colors duration-150 ease-out hover:text-[#111827] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#2563EB] dark:hover:text-white ${
+                              COLUMN_ALIGN[col.id] === 'right' ? 'justify-end' : COLUMN_ALIGN[col.id] === 'center' ? 'justify-center' : 'justify-start'
+                            }`}
                           >
-                            <span>{col.label}</span>
-                            <SortIcon active={sortColumn === col.key} direction={sortDirection} />
+                            {COLUMN_ALIGN[col.id] === 'center' ? (
+                              <span className="relative inline-flex items-center">
+                                {col.label}
+                                <span className="absolute left-full ml-1.5 flex items-center">
+                                  <SortIcon active={sortColumn === col.id} direction={sortDirection} />
+                                </span>
+                              </span>
+                            ) : (
+                              <>
+                                <span>{col.label}</span>
+                                <SortIcon active={sortColumn === col.id} direction={sortDirection} />
+                              </>
+                            )}
                           </button>
                         )}
-                      </th>
+                      </div>
                     ))}
-                  </tr>
-                </thead>
-                <tbody>
-                  {loading ? Array.from({ length: 18 }).map((_, i) => (
-                    <tr key={i}>
-                      {visibleColumns.map((col) => (
-                        <td key={col.key} className="px-3 py-1.5">
-                          <div className="mx-auto h-2.5 w-3/4 animate-pulse rounded-md bg-slate-200 dark:bg-slate-700" />
-                        </td>
-                      ))}
-                    </tr>
-                  )) : pagedRows.length > 0 ? pagedRows.map((row, i) => (
-                    <tr key={i} className={`border-b border-border last:border-0 transition-colors hover:bg-muted/10 ${i % 2 === 1 ? 'bg-muted/5' : ''}`}>
-                      {visibleColumns.map((col) => renderCell(row, col.key))}
-                    </tr>
-                  )) : (
-                    <tr>
-                      <td colSpan={Math.max(visibleColumns.length, 1)}>
-                        <EmptyState
-                          title="No matching records found"
-                          description="Try adjusting your search or filters."
-                        />
-                      </td>
-                    </tr>
+                  </div>
+                  </DataTable.StickyHeader>
+                <div
+                  key={rowsPhase === 'table' ? 'data' : 'skeleton'}
+                  role="rowgroup"
+                  className={rowsPhase === 'fadingOut' ? 'dt-fade-out' : 'dt-fade-in'}
+                >
+                  {rowsPhase !== 'table' ? Array.from({ length: 11 }).map((_, i) => (
+                    <div
+                      key={i}
+                      role="row"
+                      className="flex h-[52px] items-center border-b border-[#ECEFF3] last:border-0 dark:border-[#2f2f32]"
+                    >
+                      <div className="h-full w-[44px] shrink-0" />
+                      {visibleColumns.map((col) => renderSkeletonCell(col, i, flexStyleById[col.id]))}
+                    </div>
+                  )) : pagedRows.length > 0 ? pagedRows.map((row, i) => {
+                    const isChecked = selectedIds.has(row._id);
+                    return (
+                      <div
+                        key={i}
+                        tabIndex={0}
+                        role="row"
+                        onClick={() => toggleRowSelection(row._id)}
+                        onKeyDown={(event) => {
+                          if (event.key === 'Enter' || event.key === ' ') {
+                            event.preventDefault();
+                            toggleRowSelection(row._id);
+                          }
+                        }}
+                        aria-selected={isChecked}
+                        className={`flex h-[52px] items-center cursor-pointer border-b border-[#ECEFF3] last:border-0 dark:border-[#2f2f32] transition-colors duration-150 ease-out focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-[#2563EB] ${
+                          isChecked
+                            ? 'bg-[color:var(--product-accent-soft)]'
+                            : 'hover:bg-black/[0.02] dark:hover:bg-white/[0.025]'
+                        }`}
+                      >
+                        <div
+                          role="cell"
+                          className="flex h-full w-[44px] shrink-0 items-center justify-center"
+                          onClick={(event) => event.stopPropagation()}
+                        >
+                          <input
+                            type="checkbox"
+                            aria-label={`Select row for ${row.agentName}`}
+                            checked={isChecked}
+                            onChange={() => toggleRowSelection(row._id)}
+                            className="h-3.5 w-3.5 cursor-pointer"
+                          />
+                        </div>
+                        {visibleColumns.map((col) => renderCell(row, col, flexStyleById[col.id], setEditingRow, searchTerm))}
+                      </div>
+                    );
+                  }) : rowsPhase === 'table' && (
+                    <div role="row">
+                      <div role="cell">
+                        {emptyStateNode}
+                      </div>
+                    </div>
                   )}
-                </tbody>
-              </table>
-            </div>
+                </div>
+                </>
+              )}
+            </DataTable.ScrollArea>
 
             <div className="flex-1 min-h-0 overflow-y-auto sm:hidden">
               <div className="flex flex-col gap-2 p-3">
@@ -799,23 +1253,20 @@ export default function TopUpPage() {
                     <div key={i} className="rounded-xl border border-border bg-white p-3.5 dark:bg-[#2a2a2d]">
                       <div className="flex items-start justify-between gap-2">
                         <div className="min-w-0">
-                          <p className="truncate text-sm font-bold text-foreground">{row.agentName}</p>
-                          <p className="truncate text-[11px] text-muted-foreground">{row.leader !== '−' ? `${row.leader} · ` : ''}{row.brand} · {row.wallet}</p>
+                          <p className="truncate text-sm font-bold text-foreground">{row.agentName.toUpperCase()}</p>
+                          <p className="truncate text-[12px] font-normal text-muted-foreground">{row.brand} · {toProperCase(row.wallet)}{row.leader && row.leader !== '−' ? ` · ${row.leader}` : ''}</p>
                         </div>
-                        <span className="shrink-0 text-[11px] text-muted-foreground">{row.date}</span>
+                        <span className="shrink-0 text-[12px] font-normal text-muted-foreground">{formatDateDisplay(row.date)}</span>
                       </div>
 
                       <div className="mt-2.5 flex items-baseline justify-between border-t border-border pt-2.5">
-                        <span className="text-[10px] font-medium text-muted-foreground">{row.type}</span>
-                        <span className="text-lg font-bold tabular-nums text-teal-600 dark:text-teal-400">{fmtNum(row.amount)}</span>
+                        <span className="text-[11px] font-normal text-muted-foreground">{row.type}</span>
+                        <span className="text-lg font-bold tabular-nums text-foreground">{displayNum(row.amount)}</span>
                       </div>
                     </div>
                   ))
                 ) : (
-                  <EmptyState
-                    title="No matching records found"
-                    description="Try adjusting your search or filters."
-                  />
+                  emptyStateNode
                 )}
               </div>
             </div>
@@ -830,11 +1281,63 @@ export default function TopUpPage() {
                 currentPage={currentPage}
                 totalPages={totalPages}
                 onPageChange={setPage}
+                pageSize={rowsPerPage}
+                pageSizeOptions={PAGE_SIZE_OPTIONS}
+                onPageSizeChange={handlePageSizeChange}
+                totalRecords={sortedRows.length}
+                variant="premium"
               />
             )}
           </DataTable>
         )}
       </main>
+
+      <RecordFormModal
+        isOpen={editingRow !== null}
+        onClose={() => setEditingRow(null)}
+        title="Edit Top Up Record"
+        fields={topupRecordFields}
+        initialValues={editingRow ? {
+          brand: editingRow.brand,
+          agentName: toProperCase(editingRow.agentName),
+          wallet: toProperCase(editingRow.wallet),
+          amount: String(parseAmount(editingRow.amount)),
+          type: editingRow.type,
+          date: formatDateDisplay(editingRow.date),
+        } : {}}
+        primaryButtonClassName="bg-indigo-600 hover:bg-indigo-700"
+      />
+
+      <RecordFormModal
+        isOpen={newRecordOpen}
+        onClose={() => setNewRecordOpen(false)}
+        title="New Top Up Record"
+        fields={topupRecordFields}
+        initialValues={{}}
+        primaryButtonClassName="bg-indigo-600 hover:bg-indigo-700"
+      />
+
+      <BulkImportModal
+        isOpen={bulkImportOpen}
+        onClose={() => setBulkImportOpen(false)}
+        moduleLabel="Top Up Records"
+        templateModule="topup"
+        moduleKind="topup"
+        accentButtonClassName="bg-indigo-600 hover:bg-indigo-700"
+        brandOptions={SETTLEMENT_BRAND_OPTIONS}
+        walletOptions={CASHOUT_WALLET_OPTIONS}
+        agentRoster={openingAgentNames}
+        typeOptions={[TOPUP_TYPE_CASHOUT]}
+      />
+
+      <BulkEditModal
+        isOpen={bulkEditOpen}
+        onClose={() => setBulkEditOpen(false)}
+        onApply={handleBulkEditApply}
+        selectedCount={selectedIds.size}
+        walletOptions={CASHOUT_WALLET_OPTIONS}
+        primaryButtonClassName="bg-indigo-600 hover:bg-indigo-700"
+      />
     </div>
   );
 }

@@ -2,11 +2,9 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { ChevronDown, ChevronUp, Columns3, Download, RefreshCw, Search, Shuffle } from 'lucide-react';
+import { ChevronDown, ChevronUp, ChevronsUpDown, Columns3, Download, RefreshCw, Search, Shuffle } from 'lucide-react';
 import * as XLSX from 'xlsx';
-import PageHeader from '@/app/components/PageHeader';
-import ProductSwitchTabs from '@/app/components/ProductSwitchTabs';
-import ThemeToggle from '@/app/components/ThemeToggle';
+import SettlementHeader from '@/app/components/SettlementHeader';
 import Toolbar from '@/app/components/Toolbar';
 import DataTable from '@/app/components/DataTable';
 import TableFooter from '@/app/components/TableFooter';
@@ -17,9 +15,21 @@ import { rawVal } from '@/app/lib/format';
 import { parseCsvLines } from '@/app/lib/csv';
 import { BRAND_CODES as CASHOUT_BRAND_CODES } from '@/app/lib/transferQueueCount';
 import { getBusinessToday } from '@/app/lib/businessDate';
-import { TABLE_STICKY_HEADER_CLASS, TABLE_HEADER_CELL_CLASS, TOOLBAR_ROW_CLASS, TOOLBAR_LEFT_CLASS, TOOLBAR_RIGHT_CLASS } from '@/app/design-system/table';
-import { PAGE_MAIN_PADDING_CLASS } from '@/app/design-system/spacing';
 import { getPreference, setPreference } from '@/app/lib/preferences';
+
+// Ghost button — copied verbatim from Settlement/Top Up's own toolbar button
+// style, replacing this page's old smaller compact buttons.
+const GHOST_BUTTON =
+  'inline-flex h-9 items-center gap-1.5 rounded-[8px] border border-[#E2E8F0] px-3 text-[13px] font-medium text-[#475569] transition-colors duration-150 ease-out hover:bg-[#F8FAFC] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#2563EB] dark:border-[#3a3a3d] dark:text-[#9CA3AF] dark:hover:bg-white/5';
+
+// 1700 (not 1100) — with 9 columns, every header's own natural width (label
+// + balanced spacer + icon, measured via table-layout:auto) sums to ~1600px;
+// a lower floor let the container squeeze columns below that on ordinary
+// laptop widths, truncating headers even though nothing was actually
+// crowded — a horizontal scrollbar on a smaller screen reads better than a
+// clipped "Company Balanc…".
+const TABLE_MIN_WIDTH_PX = 1760;
+const PAGE_SIZE_OPTIONS = [50, 100, 250, 500];
 
 function displayNum(num: number): string {
   if (Math.abs(num) < 0.01) return '−';
@@ -211,13 +221,23 @@ type ColumnDef = {
   align: 'left' | 'right' | 'center';
 };
 
+// Every column left-aligned (incl. numeric ones) per explicit instruction —
+// a deliberate divergence from Settlement/Top Up/Opening's own convention,
+// scoped to this page only.
 const DEFAULT_COLUMNS: ColumnDef[] = [
+  // Everything center-aligned except Agent, which stays left — explicit
+  // instruction (Agent is a code/name, reads better left-anchored; every
+  // other column is a short value/label that reads better centered).
   { key: COLUMN_IDS.BRAND, label: 'Brand', visible: true, sortable: false, hideable: true, align: 'center' },
-  { key: COLUMN_IDS.SHOP_NAME, label: 'Agent', visible: true, sortable: true, hideable: true, align: 'center' },
+  { key: COLUMN_IDS.SHOP_NAME, label: 'Agent', visible: true, sortable: true, hideable: true, align: 'left' },
   { key: COLUMN_IDS.COMPANY_BALANCE, label: 'Company Balance', visible: true, sortable: true, hideable: true, align: 'center' },
   { key: COLUMN_IDS.BALANCE_INSIDE, label: 'Balance Inside', visible: true, sortable: true, hideable: true, align: 'center' },
   { key: COLUMN_IDS.DISCREPANCY, label: 'Discrepancy', visible: true, sortable: true, hideable: true, align: 'center' },
   { key: COLUMN_IDS.SDP_VS_BALANCE, label: 'SDP VS Balance', visible: true, sortable: true, hideable: true, align: 'center' },
+  // Current Group / Correct Group / Remarks are 'center' — their data wraps
+  // to 2 lines and is center-aligned (see renderCell's `wrapCell`), so the
+  // header must match that alignment instead of sitting left while the data
+  // floats centered underneath it.
   { key: COLUMN_IDS.CURRENT_GROUP, label: 'Current Group', visible: true, sortable: true, hideable: true, align: 'center' },
   { key: COLUMN_IDS.CORRECT_GROUP, label: 'Correct Group', visible: true, sortable: false, hideable: true, align: 'center' },
   { key: COLUMN_IDS.REMARKS, label: 'Remarks', visible: true, sortable: true, hideable: true, align: 'center' },
@@ -225,16 +245,36 @@ const DEFAULT_COLUMNS: ColumnDef[] = [
 
 const COLUMN_VISIBILITY_STORAGE_KEY = 'sendMoneyTransferQueueColumnVisibility';
 
+// Rebalanced for 9 left-aligned columns (not copy-pasted from Top Up's own
+// 6-column widths) — roughly proportional to each column's own content
+// length now that numbers no longer need right-aligned "settling room".
+// companyBalance is 11% (not 10% like its same-length siblings) — measured
+// via real DOM scrollWidth that "Company Balance" is the one label among
+// this group that actually needs the extra ~10px at 14px font-semibold;
+// remarks gives up the matching 1% since it degrades gracefully (wraps to
+// 2 lines) instead of truncating, unlike a header label.
+// shopName (Agent) bumped 12% -> 15% — real account codes run up to ~24
+// chars and were truncating even at a normal desktop width (measured
+// scrollWidth vs allotted). The 3% comes out of currentGroup/correctGroup/
+// remarks (-1% each), which degrade gracefully by wrapping to a 2nd line
+// instead of truncating, unlike Agent.
+// Re-measured after the header centering fix switched to a "balanced
+// invisible spacer" (see the header cells below) — that spacer is a REAL
+// flex item now (unlike the old absolute-positioned icon), so every
+// center-aligned column's label has less room than before. sdpVsBalance
+// +1%/remarks -1% keeps every header's own natural width (measured via
+// table-layout:auto) comfortably inside its column at a normal desktop
+// width.
 const columnWidths: Record<ColumnKey, string> = {
-  brand: '7%',
-  shopName: '11%',
-  companyBalance: '10%',
-  balanceInside: '11%',
+  brand: '8%',
+  shopName: '15%',
+  companyBalance: '11%',
+  balanceInside: '10%',
   discrepancy: '9%',
-  sdpVsBalance: '9%',
-  currentGroup: '14%',
-  correctGroup: '14%',
-  remarks: '15%',
+  sdpVsBalance: '11%',
+  currentGroup: '13%',
+  correctGroup: '13%',
+  remarks: '10%',
 };
 
 const rowSkeletonWidths: Record<ColumnKey, string[]> = {
@@ -249,23 +289,50 @@ const rowSkeletonWidths: Record<ColumnKey, string[]> = {
   remarks: ['w-28', 'w-32', 'w-24'],
 };
 
-function headerCellClasses(_colKey: ColumnKey, _active: boolean) {
-  return `group ${TABLE_HEADER_CELL_CLASS}`;
+// 16px both sides (px-4), same for every column regardless of sortability —
+// matches the explicit "16px per col both sides" spacing instruction. Font
+// size/weight/color copied verbatim from Settlement/Top Up's own header
+// cells (text-[14px] font-semibold text-[#475569]) so this page's header
+// reads identically to the rest of the app instead of the old legacy 11px.
+// overflow-hidden so a long label truncates ("…") instead of visually
+// bleeding into the next column when the table is squeezed toward its
+// min-width (narrow viewport/browser zoom) — confirmed via screenshot that
+// "Company Balance"/"Balance Inside" ran into each other without this.
+function headerCellClasses(align: 'left' | 'right' | 'center') {
+  return `group overflow-hidden whitespace-nowrap px-4 text-${align} text-[14px] font-semibold text-[#475569] dark:text-[#9CA3AF]`;
 }
 
+// Always visible (not opacity-0-until-hover) — same always-on visibility as
+// the Brand/Correct Group filter chevrons, so every sortable column reads
+// consistently instead of most of them appearing to have no sort control
+// at all until the user happens to hover.
+// Copied verbatim from Send Money Settlement/Top Up/Opening's own
+// SortIcon — same solid ChevronsUpDown at full opacity (not a faded/
+// opacity-reduced pair) and the same hardcoded #2563EB active color (not
+// var(--product-accent) — those reference pages don't use the accent var
+// here either), so this page's sort icon reads exactly as bold/consistent
+// as every other migrated Send Money page's.
 function SortIcon({ active, direction }: { active: boolean; direction: 'asc' | 'desc' }) {
-  if (!active) {
-    return (
-      <span className="flex flex-col items-center justify-center leading-none text-slate-400 opacity-0 transition-opacity duration-150 group-hover:opacity-40">
-        <ChevronUp size={10} className="-mb-0.5" />
-        <ChevronDown size={10} />
-      </span>
-    );
-  }
-  return direction === 'asc' ? (
-    <ChevronUp size={10} className="text-[color:var(--product-accent)]" />
-  ) : (
-    <ChevronDown size={10} className="text-[color:var(--product-accent)]" />
+  return (
+    <span className="flex w-3.5 shrink-0 items-center justify-center transition-colors duration-150 ease-out">
+      {!active ? (
+        <ChevronsUpDown size={14} className="text-[#94A3B8]" />
+      ) : direction === 'asc' ? (
+        <ChevronUp size={14} className="text-[#2563EB]" />
+      ) : (
+        <ChevronDown size={14} className="text-[#2563EB]" />
+      )}
+    </span>
+  );
+}
+
+// Copied verbatim from Settlement/Top Up's own BrandBadge — same pill so
+// Brand reads identically across every migrated page.
+function BrandBadge({ children }: { children: React.ReactNode }) {
+  return (
+    <span className="inline-flex h-[28px] items-center rounded-[999px] border border-[#E5E7EB] bg-[#F8FAFC] px-[10px] text-[12px] font-semibold text-[#475569] dark:border-[#3a3a3d] dark:bg-white/5 dark:text-[#9CA3AF]">
+      {children}
+    </span>
   );
 }
 
@@ -282,16 +349,39 @@ function mobileNumericField(row: QueueRow, key: ColumnKey): { value: string; cla
   }
 }
 
+// One shared base for every column — same 16px both-sides padding, same
+// font size/weight (13px/normal, matching Settlement/Top Up's own body
+// cells — NOT the old legacy 11px) — per explicit "same font style lang
+// lahat" instruction. The only exception is the rose color for a negative
+// balance, which is a semantic flag (not a font-style difference).
 function renderCell(row: QueueRow, key: ColumnKey) {
-  const base = 'whitespace-nowrap overflow-hidden text-ellipsis text-[11px] text-center px-3 py-1.5';
+  // align-top on every cell (not just the wrapping ones) — rows with a
+  // 2-line Current Group/Correct Group/Remarks are taller than the rest,
+  // and without this the plain single-line cells vertically CENTER within
+  // that taller row while the wrapped cells sit at the top, making the row
+  // look uneven/misaligned even though every cell's own text is correct.
+  const base = 'whitespace-nowrap overflow-hidden text-ellipsis text-[13px] font-normal text-center px-4 py-[14px] align-top';
+  // Agent stays left-aligned per explicit instruction — every other column
+  // (short values/labels) reads better centered, but a code/name reads
+  // better left-anchored.
+  const agentBase = 'whitespace-nowrap overflow-hidden text-ellipsis text-[13px] font-normal text-left px-4 py-[14px] align-top';
+  // Current Group / Correct Group / Remarks can run long — instead of
+  // truncating with "…", these wrap onto a 2nd line (capped at 2 lines) and
+  // are center-aligned, per explicit instruction. Every other column stays
+  // single-line/left-aligned. The clamp lives on an inner <span>, NOT the
+  // <td> itself — line-clamp sets `display: -webkit-box`, which breaks a
+  // table cell's own `display: table-cell` and visually collapses/misplaces
+  // the cell's content into the wrong column (confirmed via screenshot).
+  const wrapCell = 'text-center px-4 py-[14px] align-top';
+  const wrapSpan = 'block text-[13px] font-normal whitespace-normal break-words leading-snug line-clamp-2';
   switch (key) {
     case 'brand':
-      return <td key={key} className={`${base} text-muted-foreground`}>{displayBrand(row.brand)}</td>;
+      return <td key={key} className={base}><BrandBadge>{displayBrand(row.brand)}</BrandBadge></td>;
     case 'shopName':
-      return <td key={key} className={`${base} font-semibold text-foreground`}>{row.account}</td>;
+      return <td key={key} className={`${agentBase} text-foreground`}>{row.account}</td>;
     case 'companyBalance':
       return (
-        <td key={key} className={`${base} tabular-nums font-bold ${row.companyBalance < 0 ? 'text-rose-600 dark:text-rose-400' : 'text-foreground'}`}>
+        <td key={key} className={`${base} tabular-nums ${row.companyBalance < 0 ? 'text-rose-600 dark:text-rose-400' : 'text-foreground'}`}>
           {displayNum(row.companyBalance)}
         </td>
       );
@@ -314,11 +404,11 @@ function renderCell(row: QueueRow, key: ColumnKey) {
         </td>
       );
     case 'currentGroup':
-      return <td key={key} className={`${base} text-muted-foreground`}>{row.currentGroup}</td>;
+      return <td key={key} className={wrapCell}><span className={`${wrapSpan} text-foreground`}>{row.currentGroup}</span></td>;
     case 'correctGroup':
-      return <td key={key} className={`${base} font-medium text-foreground`}>{row.correctGroup}</td>;
+      return <td key={key} className={wrapCell}><span className={`${wrapSpan} text-foreground`}>{row.correctGroup}</span></td>;
     case 'remarks':
-      return <td key={key} className={`${base} text-muted-foreground`}>{row.remarks}</td>;
+      return <td key={key} className={wrapCell}><span className={`${wrapSpan} text-foreground`}>{row.remarks}</span></td>;
   }
 }
 
@@ -351,7 +441,19 @@ export default function SendMoneyTransferQueue() {
   const correctGroupButtonRef = useRef<HTMLButtonElement>(null);
   const correctGroupDropdownRef = useRef<HTMLDivElement>(null);
   const [page, setPage] = useState(1);
-  const rowsPerPage = 50;
+  const [rowsPerPage, setRowsPerPage] = useState(50);
+
+  // Sticky-header scroll shadow — copied from Settlement/Top Up's own pattern.
+  const [isScrolled, setIsScrolled] = useState(false);
+  const tableScrollRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const el = tableScrollRef.current;
+    if (!el) return;
+    const handleScroll = () => setIsScrolled(el.scrollTop > 0);
+    el.addEventListener('scroll', handleScroll, { passive: true });
+    return () => el.removeEventListener('scroll', handleScroll);
+  }, []);
 
   const fetchData = useCallback(async () => {
     try {
@@ -543,7 +645,11 @@ export default function SendMoneyTransferQueue() {
 
   useEffect(() => {
     setPage(1);
-  }, [searchTerm, brandFilter, correctGroupFilter, sortColumn, sortDirection]);
+  }, [searchTerm, brandFilter, correctGroupFilter, sortColumn, sortDirection, rowsPerPage]);
+
+  const handlePageSizeChange = useCallback((size: number) => {
+    setRowsPerPage(size);
+  }, []);
 
   useEffect(() => {
     if (!brandMenuOpen) return;
@@ -770,68 +876,52 @@ export default function SendMoneyTransferQueue() {
 
   return (
     <div className="h-screen w-full flex flex-col overflow-hidden bg-background font-[Inter,sans-serif] text-foreground transition-colors duration-300 dark:bg-[#1c1c1e]">
-      <PageHeader
+      <SettlementHeader
         icon={Shuffle}
         title="Transfer Queue"
-        centerSlot={<ProductSwitchTabs />}
-        actions={<ThemeToggle />}
+        isRefreshing={spinning}
+        onRefresh={fetchData}
       />
 
-      <main className={PAGE_MAIN_PADDING_CLASS}>
+      <main className="flex-1 flex flex-col overflow-hidden px-6 pb-6 pt-4">
         {error && <ConnectionErrorState error={error} onRetry={fetchData} />}
 
         {!error && (
-          <DataTable className="mt-3">
-            <Toolbar className={TOOLBAR_ROW_CLASS}>
-              <Toolbar.Left className={TOOLBAR_LEFT_CLASS}>
-                {loading ? (
-                  <div className="h-5 w-28 animate-pulse rounded-md bg-slate-200 dark:bg-slate-700" />
-                ) : (
-                  <div className="flex items-center gap-1.5 rounded-md bg-[color:var(--product-accent-soft)] px-2.5 py-1">
-                    <span className="text-[10px] font-medium text-[color:var(--product-accent)]">For Transfer</span>
-                    <span className="text-[11px] font-bold tabular-nums text-[color:var(--product-accent)]">{filteredRows.length.toLocaleString('en-PH')}</span>
-                  </div>
-                )}
-                <div className="flex w-full min-w-[140px] flex-1 items-center gap-2 rounded-lg border border-border bg-white px-3 py-1.5 dark:bg-[#2a2a2d] sm:w-52 sm:flex-none">
+          <DataTable>
+            <Toolbar>
+              <Toolbar.Left>
+                <div className="flex h-10 w-full min-w-[200px] items-center gap-2 rounded-[10px] border border-border bg-white px-[14px] transition-colors focus-within:border-[#2563EB] focus-within:ring-2 focus-within:ring-[#2563EB]/20 dark:bg-[#2a2a2d] sm:w-[380px]">
                   {loading ? (
-                    <div className="h-3 w-32 animate-pulse rounded-md bg-slate-200 dark:bg-slate-700" />
+                    <div className="dt-skeleton h-3 w-32 rounded-md" />
                   ) : (
                     <>
-                      <Search size={14} className="text-muted-foreground" />
+                      <Search size={16} className="shrink-0 text-muted-foreground" />
                       <input
+                        aria-label="Search shops or brands"
                         value={searchTerm}
                         onChange={(event) => setSearchTerm(event.target.value)}
-                        className="flex-1 bg-transparent text-[10px] text-foreground placeholder:text-muted-foreground outline-none border-none"
+                        className="flex-1 bg-transparent text-[13px] font-normal text-foreground placeholder:text-muted-foreground outline-none border-none"
                         placeholder="Search shops or brands..."
                       />
                     </>
                   )}
                 </div>
               </Toolbar.Left>
-              <Toolbar.Right className={TOOLBAR_RIGHT_CLASS}>
-                {loading && <div className="h-7 w-7 animate-pulse rounded-lg bg-slate-200 dark:bg-slate-700" />}
+              <Toolbar.Right>
+                {loading && <div className="dt-skeleton h-8 w-8 rounded-[8px]" />}
                 {!loading && (
-                  <button
-                    type="button"
-                    onClick={fetchData}
-                    title="Refresh"
-                    className="rounded-lg border border-border bg-white p-1.5 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground dark:bg-transparent"
-                  >
-                    <RefreshCw size={13} className={spinning ? 'animate-spin' : ''} />
+                  <button type="button" onClick={fetchData} aria-label="Refresh" title="Refresh" className={GHOST_BUTTON}>
+                    <RefreshCw size={15} className={spinning ? 'animate-spin' : ''} />
                   </button>
                 )}
-                {loading && <div className="h-7 w-20 animate-pulse rounded-lg bg-slate-200 dark:bg-slate-700" />}
+                {loading && <div className="dt-skeleton h-9 w-[88px] rounded-[8px]" />}
                 {!loading && (
-                  <button
-                    type="button"
-                    onClick={handleExport}
-                    title="Export to Excel"
-                    className="rounded-lg border border-border bg-white p-1.5 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground dark:bg-transparent"
-                  >
-                    <Download size={13} />
+                  <button type="button" onClick={handleExport} aria-label="Export to Excel" title="Export to Excel" className={GHOST_BUTTON}>
+                    <Download size={15} />
+                    Export
                   </button>
                 )}
-                {loading && <div className="h-7 w-7 animate-pulse rounded-lg bg-slate-200 dark:bg-slate-700" />}
+                {loading && <div className="dt-skeleton h-9 w-[104px] rounded-[8px]" />}
                 {!loading && (
                   <div className="relative">
                     <button
@@ -852,9 +942,10 @@ export default function SendMoneyTransferQueue() {
                       aria-controls="sendmoney-transfer-queue-columns-popover"
                       aria-label="Columns"
                       title="Columns"
-                      className="rounded-lg border border-border bg-white p-1.5 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground dark:bg-transparent"
+                      className={GHOST_BUTTON}
                     >
-                      <Columns3 size={13} />
+                      <Columns3 size={15} />
+                      Columns
                     </button>
                     {columnsMenuOpen && typeof document !== 'undefined' && createPortal(
                       <div
@@ -896,7 +987,7 @@ export default function SendMoneyTransferQueue() {
                                   );
                                 }}
                               />
-                              <span>{col.label}</span>
+                              <span className="min-w-0 flex-1 truncate">{col.label}</span>
                             </label>
                           );
                         })}
@@ -921,24 +1012,44 @@ export default function SendMoneyTransferQueue() {
                 )}
               </Toolbar.Right>
             </Toolbar>
-            <div className="hidden flex-1 min-h-0 overflow-y-auto overflow-x-auto sm:block">
-              <table className="w-full table-fixed text-xs">
+            <div className="hidden h-1.5 shrink-0 sm:block" />
+            <div ref={tableScrollRef} className="dt-scroll hidden relative flex-1 min-h-0 overflow-y-auto overflow-x-auto sm:block">
+              <table className="w-full table-fixed text-xs" style={{ minWidth: TABLE_MIN_WIDTH_PX }}>
                 <colgroup>
                   {visibleColumns.map((col) => (
                     <col key={col.key} style={{ width: columnWidths[col.key] }} />
                   ))}
                 </colgroup>
-                <thead className={TABLE_STICKY_HEADER_CLASS}>
-                  <tr>
+                <thead className={`sticky top-0 z-[50] bg-[#FAFAFB] dark:bg-[#252528] border-b border-[#E2E8F0] dark:border-[#3a3a3d] transition-shadow duration-150 ease-out ${
+                  isScrolled ? 'shadow-[0_2px_4px_rgba(15,23,42,0.1)] dark:shadow-[0_2px_4px_rgba(0,0,0,0.35)]' : ''
+                }`}>
+                  <tr className="h-[48px]">
                     {visibleColumns.map((col) => (
                       <th
                         key={col.key}
-                        className={headerCellClasses(col.key, sortColumn === col.key)}>
+                        className={headerCellClasses(col.align)}>
                         {loading ? (
-                          <div className="mx-auto h-5 w-16 animate-pulse rounded-md bg-slate-200 dark:bg-slate-700" />
+                          <div className="dt-skeleton h-3 w-16 rounded-md" />
                         ) : col.key === 'brand' ? (
-                          <div className="relative flex items-center justify-center gap-1">
-                            <span>{col.label}</span>
+                          // A mirrored INVISIBLE copy of the button sits on the
+                          // opposite side of the label, same width as the real
+                          // one — this "balanced spacer" trick centers the
+                          // LABEL itself (matching the data's true center)
+                          // while keeping a normal, consistent gap between the
+                          // label and the real button (an absolute-positioned
+                          // icon put them at inconsistent/overlapping distances
+                          // depending on the label's own rendered width).
+                          <div className="flex w-full items-center justify-center gap-0.5">
+                            <span aria-hidden="true" className="invisible flex items-center justify-center rounded-full p-1">
+                              {anyBrandUnchecked ? (
+                                <span className="flex h-3 min-w-[12px] items-center justify-center px-0.5 text-[10px] font-semibold leading-none">
+                                  {selectedBrandCount}
+                                </span>
+                              ) : (
+                                <ChevronUp size={12} />
+                              )}
+                            </span>
+                            <span className="min-w-0 flex-1 truncate">{col.label}</span>
                             <button
                               type="button"
                               ref={brandButtonRef}
@@ -1003,8 +1114,25 @@ export default function SendMoneyTransferQueue() {
                             )}
                           </div>
                         ) : col.key === 'correctGroup' ? (
-                          <div className="relative flex items-center justify-center gap-1">
-                            <span>{col.label}</span>
+                          // A mirrored INVISIBLE copy of the button sits on the
+                          // opposite side of the label, same width as the real
+                          // one — this "balanced spacer" trick centers the
+                          // LABEL itself (matching the data's true center)
+                          // while keeping a normal, consistent gap between the
+                          // label and the real button (an absolute-positioned
+                          // icon put them at inconsistent/overlapping distances
+                          // depending on the label's own rendered width).
+                          <div className="flex w-full items-center justify-center gap-0.5">
+                            <span aria-hidden="true" className="invisible flex items-center justify-center rounded-full p-1">
+                              {anyCorrectGroupUnchecked ? (
+                                <span className="flex h-3 min-w-[12px] items-center justify-center px-0.5 text-[10px] font-semibold leading-none">
+                                  {selectedCorrectGroupCount}
+                                </span>
+                              ) : (
+                                <ChevronUp size={12} />
+                              )}
+                            </span>
+                            <span className="min-w-0 flex-1 truncate">{col.label}</span>
                             <button
                               type="button"
                               ref={correctGroupButtonRef}
@@ -1079,9 +1207,34 @@ export default function SendMoneyTransferQueue() {
                                 setSortDirection('asc');
                               }
                             }}
-                            className="flex w-full items-center justify-center gap-1.5 transition hover:opacity-80"
+                            className={`flex w-full items-center gap-1.5 transition hover:opacity-80 ${col.align === 'center' ? 'justify-center' : 'justify-start'}`}
                           >
-                            <span>{col.label}</span>
+                            {col.align === 'center' && (
+                              // A mirrored INVISIBLE copy of the icon sits on
+                              // the opposite side of the label — same
+                              // "balanced spacer" trick as Brand/Correct Group
+                              // above, so the LABEL centers on the data's true
+                              // center while keeping a normal, consistent gap
+                              // to the icon (an absolute-positioned icon put
+                              // them at inconsistent/overlapping distances
+                              // depending on the label's own rendered width).
+                              <span aria-hidden="true" className="invisible">
+                                <SortIcon active={sortColumn === col.key} direction={sortDirection} />
+                              </span>
+                            )}
+                            {/* flex-1 only for center-aligned columns — it's
+                                what lets the label's own text-center (inherited
+                                from the <th>) land on the true row center. For
+                                a LEFT-aligned column (Agent), flex-1 would still
+                                grow the label's box to fill the whole row, so
+                                text-left renders the text flush left same as
+                                before but leaves a big empty gap between the
+                                text and the icon sitting at the far edge of
+                                that oversized box — Agent needs the label sized
+                                to its own (shrinkable) content only, so the
+                                icon sits directly after it via the row's own
+                                gap-1.5, not stranded at the column's far edge. */}
+                            <span className={`min-w-0 truncate ${col.align === 'center' ? 'flex-1' : ''}`}>{col.label}</span>
                             <SortIcon active={sortColumn === col.key} direction={sortDirection} />
                           </button>
                         )}
@@ -1097,8 +1250,8 @@ export default function SendMoneyTransferQueue() {
                           const widths = rowSkeletonWidths[col.key];
                           const width = widths[rowIndex % widths.length];
                           return (
-                            <td key={col.key} className="px-3 py-1.5">
-                              <div className={`mx-auto h-2.5 animate-pulse rounded-md bg-slate-200 dark:bg-slate-700 ${width}`} />
+                            <td key={col.key} className="px-4 py-[14px]">
+                              <div className={`dt-skeleton h-2.5 rounded-md ${width}`} />
                             </td>
                           );
                         })}
@@ -1217,6 +1370,11 @@ export default function SendMoneyTransferQueue() {
                 currentPage={currentPage}
                 totalPages={totalPages}
                 onPageChange={setPage}
+                pageSize={rowsPerPage}
+                pageSizeOptions={PAGE_SIZE_OPTIONS}
+                onPageSizeChange={handlePageSizeChange}
+                totalRecords={sortedRows.length}
+                variant="premium"
               />
             )}
           </DataTable>

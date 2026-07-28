@@ -14,7 +14,10 @@ export type SendMoneyOpeningRow = {
 
 // A blank cell means "not set" — must stay null, not become 0, so sums/counts
 // (e.g. "No Opening Yet") can tell the difference from a genuine zero balance.
-function parseNullableNumber(raw: string | undefined): number | null {
+// Exported so the page's own Bulk Edit apply logic (a plain string coming
+// back from the modal) can reuse this exact same blank-is-null parsing
+// instead of a second, possibly-drifting copy.
+export function parseNullableNumber(raw: string | undefined): number | null {
   const cleaned = (raw ?? '').replace(/,/g, '').trim();
   if (cleaned === '' || cleaned === '-') return null;
   const num = parseFloat(cleaned);
