@@ -468,11 +468,29 @@ function SortIcon({ active, direction }: { active: boolean; direction: 'asc' | '
   );
 }
 
-// Copied verbatim from Settlement/Top Up's own BrandBadge — same pill so
-// Brand reads identically across every migrated page.
-function BrandBadge({ children }: { children: React.ReactNode }) {
+// Per-code tint map — same scheme as Balance's own BrandBadge
+// (app/agentbal/page.tsx), applied here too. Unknown codes fall back to the
+// same neutral slate this badge used exclusively before.
+const BRAND_BADGE_TINTS: Record<string, string> = {
+  M1: 'bg-blue-50 text-blue-700 border-blue-200 dark:bg-blue-500/10 dark:text-blue-400 dark:border-blue-900/50',
+  M2: 'bg-cyan-50 text-cyan-700 border-cyan-200 dark:bg-cyan-500/10 dark:text-cyan-400 dark:border-cyan-900/50',
+  B1: 'bg-purple-50 text-purple-700 border-purple-200 dark:bg-purple-500/10 dark:text-purple-400 dark:border-purple-900/50',
+  B2: 'bg-violet-50 text-violet-700 border-violet-200 dark:bg-violet-500/10 dark:text-violet-400 dark:border-violet-900/50',
+  B3: 'bg-fuchsia-50 text-fuchsia-700 border-fuchsia-200 dark:bg-fuchsia-500/10 dark:text-fuchsia-400 dark:border-fuchsia-900/50',
+  B4: 'bg-indigo-50 text-indigo-700 border-indigo-200 dark:bg-indigo-500/10 dark:text-indigo-400 dark:border-indigo-900/50',
+  B5: 'bg-sky-50 text-sky-700 border-sky-200 dark:bg-sky-500/10 dark:text-sky-400 dark:border-sky-900/50',
+  K1: 'bg-orange-50 text-orange-700 border-orange-200 dark:bg-orange-500/10 dark:text-orange-400 dark:border-orange-900/50',
+  J1: 'bg-amber-50 text-amber-700 border-amber-200 dark:bg-amber-500/10 dark:text-amber-400 dark:border-amber-900/50',
+  T1: 'bg-teal-50 text-teal-700 border-teal-200 dark:bg-teal-500/10 dark:text-teal-400 dark:border-teal-900/50',
+};
+
+function brandBadgeClasses(brand: string): string {
+  return BRAND_BADGE_TINTS[brand] ?? 'bg-slate-100 text-slate-600 border-slate-200 dark:bg-slate-500/10 dark:text-slate-400 dark:border-slate-700';
+}
+
+function BrandBadge({ children }: { children: string }) {
   return (
-    <span className="inline-flex h-[28px] items-center rounded-[999px] border border-[#E5E7EB] bg-[#F8FAFC] px-[10px] text-[12px] font-semibold text-[#475569] dark:border-[#3a3a3d] dark:bg-white/5 dark:text-[#9CA3AF]">
+    <span className={`inline-flex h-[28px] items-center rounded-[999px] border px-[10px] text-[12px] font-semibold transition-[filter] duration-150 hover:brightness-95 dark:hover:brightness-110 ${brandBadgeClasses(children)}`}>
       {children}
     </span>
   );
