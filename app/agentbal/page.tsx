@@ -74,15 +74,6 @@ function numOrBlank(num: number): number | undefined {
   return Math.abs(num) < 0.01 ? undefined : num;
 }
 
-// Sign-based coloring for columns that can legitimately swing positive/
-// negative/zero (Company Balance, Balance Inside, Agent Withdrawal, SDP VS
-// Balance) — category-color columns (Top Up teal, Settlement orange, Total
-// DP/WD's fixed emerald/rose) don't use this.
-function signColor(value: number, displayValue: string): string {
-  if (displayValue === '−') return 'text-muted-foreground';
-  return value < 0 ? 'text-rose-600 dark:text-rose-400' : 'text-emerald-600 dark:text-emerald-400';
-}
-
 function parseNumber(val: string): number {
   const cleaned = (val ?? '').replace(/"/g, '').replace(/,/g, '').trim();
   if (cleaned === '-' || cleaned === '') return 0;
@@ -370,48 +361,44 @@ function mobileCardFieldValue(row: MergedRow, key: ColumnKey): { value: string; 
 
 function renderCell(row: MergedRow, key: ColumnKey) {
 
-  const base = `whitespace-nowrap px-4 py-[12px] text-${COLUMN_ALIGN[key]} text-[13px] font-normal`;
+  // Neutral text scheme matches Settlement's own renderCell base exactly
+  // (app/stlm/page.tsx:686) — per explicit instruction, plain values no
+  // longer carry semantic color (emerald/rose/teal/orange); only Brand and
+  // Wallet Status stay as their own badge components, kept as-is.
+  const base = `whitespace-nowrap px-4 py-[12px] text-${COLUMN_ALIGN[key]} text-[13px] leading-[20px] font-normal text-[#111827] dark:text-[#E5E7EB]`;
 
   switch (key) {
     case 'brand':
       return <td key={key} className={base}><BrandBadge>{row.brand}</BrandBadge></td>;
     case 'leader':
-      return <td key={key} className={`${base} text-muted-foreground`}>{row.leader}</td>;
+      return <td key={key} className={base}>{row.leader}</td>;
     case 'walletName':
-      return <td key={key} className={`${base} font-semibold text-foreground`}>{row.agentName}</td>;
+      return <td key={key} className={`${base} font-semibold`}>{row.agentName}</td>;
     case 'walletType':
-      return <td key={key} className={`${base} text-muted-foreground`}>{row.walletType}</td>;
+      return <td key={key} className={base}>{row.walletType}</td>;
     case 'sdp':
-      return <td key={key} className={`${base} tabular-nums text-foreground`}>{displayNum(row.sdp)}</td>;
+      return <td key={key} className={`${base} tabular-nums`}>{displayNum(row.sdp)}</td>;
     case 'opening':
-      return <td key={key} className={`${base} tabular-nums text-foreground`}>{displayNum(row.openingBal)}</td>;
+      return <td key={key} className={`${base} tabular-nums`}>{displayNum(row.openingBal)}</td>;
     case 'totalDP':
-      return <td key={key} className={`${base} tabular-nums font-medium text-emerald-600 dark:text-emerald-400`}>{displayNum(row.agentTotalDP)}</td>;
+      return <td key={key} className={`${base} tabular-nums`}>{displayNum(row.agentTotalDP)}</td>;
     case 'totalWD':
-      return <td key={key} className={`${base} tabular-nums font-medium text-rose-600 dark:text-rose-400`}>{displayNum(row.agentTotalWD)}</td>;
+      return <td key={key} className={`${base} tabular-nums`}>{displayNum(row.agentTotalWD)}</td>;
     case 'topUp':
-      return <td key={key} className={`${base} tabular-nums text-teal-600 dark:text-teal-400`}>{displayNum(row.totalTopUp)}</td>;
+      return <td key={key} className={`${base} tabular-nums`}>{displayNum(row.totalTopUp)}</td>;
     case 'settlement':
-      return <td key={key} className={`${base} tabular-nums text-orange-500 dark:text-orange-400`}>{displayNum(row.totalStlm)}</td>;
-    case 'balanceInside': {
-      const v = displayNum(String(row.balanceInside ?? 0));
-      return <td key={key} className={`${base} tabular-nums ${signColor(row.balanceInside, v)}`}>{v}</td>;
-    }
-    case 'agentWithdrawal': {
-      const v = displayNum(String(row.agentWithdrawal));
-      return <td key={key} className={`${base} tabular-nums ${signColor(row.agentWithdrawal, v)}`}>{v}</td>;
-    }
-    case 'sdpVsBalance': {
-      const v = row.sdpVsBalance > 0 ? displayNum(String(Math.abs(row.sdpVsBalance))) : '−';
-      return <td key={key} className={`${base} tabular-nums ${signColor(row.sdpVsBalance, v)}`}>{v}</td>;
-    }
+      return <td key={key} className={`${base} tabular-nums`}>{displayNum(row.totalStlm)}</td>;
+    case 'balanceInside':
+      return <td key={key} className={`${base} tabular-nums`}>{displayNum(String(row.balanceInside ?? 0))}</td>;
+    case 'agentWithdrawal':
+      return <td key={key} className={`${base} tabular-nums`}>{displayNum(String(row.agentWithdrawal))}</td>;
+    case 'sdpVsBalance':
+      return <td key={key} className={`${base} tabular-nums`}>{row.sdpVsBalance > 0 ? displayNum(String(Math.abs(row.sdpVsBalance))) : '−'}</td>;
     case 'walletStatus':
       return <td key={key} className={base}><WalletStatusBadge status={row.walletStatus} /></td>;
     case 'companyBalance':
-    default: {
-      const v = displayNum(row.runningBalance);
-      return <td key={key} className={`${base} tabular-nums font-bold ${signColor(row.runningBalance, v)}`}>{v}</td>;
-    }
+    default:
+      return <td key={key} className={`${base} tabular-nums font-semibold`}>{displayNum(row.runningBalance)}</td>;
   }
 }
 
