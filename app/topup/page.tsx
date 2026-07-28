@@ -22,7 +22,6 @@ import {
 } from 'lucide-react';
 import * as XLSX from 'xlsx';
 import SettlementHeader from '../components/SettlementHeader';
-import SettlementSummary, { type SettlementKpiItem } from '../components/SettlementSummary';
 import ConnectionErrorState from '../components/ConnectionErrorState';
 import TableFooter from '../components/TableFooter';
 import Toolbar from '../components/Toolbar';
@@ -34,10 +33,11 @@ import AddRecordDropdown from '../components/AddRecordDropdown';
 import BulkImportModal from '../components/BulkImportModal';
 import BulkEditModal, { type BulkEditUpdates } from '../components/BulkEditModal';
 import { classifyFetchError, type ClassifiedError } from '../lib/errors';
-import { rawVal, displayNum, parseAmount } from '@/app/lib/format';
+import { rawVal, displayNum, parseAmount, fmt, fmtAbbrev } from '@/app/lib/format';
 import { isToday, isYesterday } from '../lib/businessDate';
 import { getPreference, setPreference } from '../lib/preferences';
 import { calculateColumnLayout, type ColumnLayout } from '../lib/columnLayout';
+import { TABLE_STICKY_HEADER_SHADOW_CLASS } from '../design-system/shadows';
 
 // Ghost button: 36px height, 8px radius, subtle #E2E8F0 border, #F8FAFC
 // hover fill — same shared toolbar control style as Settlement's own
@@ -926,11 +926,32 @@ export default function TopUpPage() {
     setRowsPerPage(size);
   }, []);
 
-  const kpiItems: SettlementKpiItem[] = useMemo(() => [
-    { icon: Hash, label: "Today's Total Count", value: kpiStats.todayCount.toLocaleString('en-US') },
-    { icon: Banknote, label: "Today's Total Amount", value: displayNum(kpiStats.todayAmount) },
-    { icon: Hash, label: "Yesterday's Total Count", value: kpiStats.yesterdayCount.toLocaleString('en-US') },
-    { icon: Banknote, label: "Yesterday's Total Amount", value: displayNum(kpiStats.yesterdayAmount) },
+  // Balance-style KPI cards (bespoke, not SettlementSummary — that component
+  // is shared with the 3 Send Money equivalent pages, which weren't part of
+  // this redesign). Count metrics have no subtitle (would just duplicate the
+  // big value); amount metrics get an abbreviated big value + full-figure
+  // subtitle, matching Balance's Total DP/Total WD pattern exactly.
+  const kpis = useMemo(() => [
+    {
+      label: "Today's Total Count", icon: Hash,
+      accent: 'text-indigo-600 dark:text-indigo-400', iconBg: 'bg-indigo-50 dark:bg-indigo-500/10',
+      bigValue: kpiStats.todayCount.toLocaleString('en-US'), subtitle: undefined as string | undefined,
+    },
+    {
+      label: "Today's Total Amount", icon: Banknote,
+      accent: 'text-emerald-600 dark:text-emerald-400', iconBg: 'bg-emerald-50 dark:bg-emerald-500/10',
+      bigValue: fmtAbbrev(kpiStats.todayAmount), subtitle: fmt(kpiStats.todayAmount) as string | undefined,
+    },
+    {
+      label: "Yesterday's Total Count", icon: Hash,
+      accent: 'text-slate-500 dark:text-slate-400', iconBg: 'bg-slate-100 dark:bg-slate-500/10',
+      bigValue: kpiStats.yesterdayCount.toLocaleString('en-US'), subtitle: undefined as string | undefined,
+    },
+    {
+      label: "Yesterday's Total Amount", icon: Banknote,
+      accent: 'text-orange-500 dark:text-orange-400', iconBg: 'bg-orange-50 dark:bg-orange-500/10',
+      bigValue: fmtAbbrev(kpiStats.yesterdayAmount), subtitle: fmt(kpiStats.yesterdayAmount) as string | undefined,
+    },
   ], [kpiStats]);
 
   const hasAnyRecords = topUpRows.length > 0;
@@ -968,7 +989,43 @@ export default function TopUpPage() {
         isRefreshing={spinning}
         onRefresh={fetchData}
       />
-      <SettlementSummary items={kpiItems} isScrolled={tableScrolled} loading={loading} />
+      <div className={`w-full border-t border-border bg-[#f4f6fb] px-4 py-3 transition-shadow duration-150 ease-out dark:bg-[#1c1c1e] md:px-6 ${tableScrolled ? TABLE_STICKY_HEADER_SHADOW_CLASS : ''}`}>
+        <div className="flex gap-2">
+          {loading ? (
+            Array.from({ length: 4 }).map((_, i) => (
+              <div key={i} className="h-[80.5px] flex-1 min-w-[200px] rounded-xl border border-border bg-white p-2.5 dark:bg-[#2a2a2d]">
+                <div className="flex h-full items-center gap-3">
+                  <div className="h-8 w-8 shrink-0 animate-pulse rounded-full bg-slate-200 dark:bg-slate-700" />
+                  <div className="min-w-0 flex-1">
+                    <div className="h-3 w-20 animate-pulse rounded-md bg-slate-200 dark:bg-slate-700" />
+                    <div className="mt-1.5 h-6 w-24 animate-pulse rounded-md bg-slate-200 dark:bg-slate-700" />
+                  </div>
+                </div>
+              </div>
+            ))
+          ) : (
+            kpis.map((kpi) => (
+              <div
+                key={kpi.label}
+                className="h-[80.5px] flex-1 min-w-[200px] rounded-xl border border-border bg-white p-2.5 transition-[transform,box-shadow,border-color] duration-150 ease-out hover:-translate-y-px hover:border-foreground/20 hover:shadow-sm dark:bg-[#2a2a2d]"
+              >
+                <div className="flex h-full items-center gap-3">
+                  <div className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-full ${kpi.iconBg}`}>
+                    <kpi.icon size={16} className={kpi.accent} />
+                  </div>
+                  <div className="min-w-0 flex-1">
+                    <p className="text-[11px] font-medium leading-snug text-muted-foreground truncate">{kpi.label}</p>
+                    <p className="text-[21px] font-bold leading-tight text-foreground">{kpi.bigValue}</p>
+                    {kpi.subtitle && (
+                      <p className="mt-0.5 text-[11px] leading-snug text-muted-foreground truncate">{kpi.subtitle}</p>
+                    )}
+                  </div>
+                </div>
+              </div>
+            ))
+          )}
+        </div>
+      </div>
 
       <main className="flex-1 flex flex-col overflow-hidden px-6 pb-6 pt-1">
 

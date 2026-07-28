@@ -8,7 +8,6 @@ import {
 } from 'lucide-react';
 import * as XLSX from 'xlsx';
 import SettlementHeader from '../components/SettlementHeader';
-import SettlementSummary, { type SettlementKpiItem } from '../components/SettlementSummary';
 import ConnectionErrorState from '../components/ConnectionErrorState';
 import DataTable from '../components/DataTable';
 import Toolbar from '../components/Toolbar';
@@ -22,6 +21,8 @@ import { classifyFetchError, type ClassifiedError, assertAllOk } from '../lib/er
 import { extractRealShopName } from '../lib/realShopName';
 import { getPreference, setPreference } from '../lib/preferences';
 import { SETTLEMENT_BRAND_OPTIONS } from '../lib/topupOptions';
+import { fmtAbbrev } from '@/app/lib/format';
+import { TABLE_STICKY_HEADER_SHADOW_CLASS } from '../design-system/shadows';
 
 // Ghost button — copied verbatim from Settlement's own toolbar button style
 // (app/stlm/page.tsx), same as Top Up already adopted.
@@ -616,12 +617,38 @@ export default function Summary() {
     setRowsPerPage(size);
   }, []);
 
-  const kpiItems: SettlementKpiItem[] = useMemo(() => [
-    { icon: Users, label: 'Total Accounts', value: rows.length.toLocaleString('en-US') },
-    { icon: Banknote, label: 'Total Opening Balance', value: fmt(rows.reduce((sum, row) => sum + row.openingBal, 0)) },
-    { icon: ShieldCheck, label: 'Total SDP', value: fmt(rows.reduce((sum, row) => sum + row.sdp, 0)) },
-    { icon: CircleSlash, label: 'No Opening Yet', value: rows.filter((row) => row.openingBal === 0).length.toLocaleString('en-US') },
-  ], [rows]);
+  // Balance-style KPI cards (bespoke, not SettlementSummary — that component
+  // is shared with the Send Money Opening equivalent, which wasn't part of
+  // this redesign). Count metrics have no subtitle (would just duplicate the
+  // big value); amount metrics get an abbreviated big value + full-figure
+  // subtitle (this page's own `fmt`, above), matching Balance's Total DP/
+  // Total WD pattern exactly.
+  const kpis = useMemo(() => {
+    const totalOpening = rows.reduce((sum, row) => sum + row.openingBal, 0);
+    const totalSdp = rows.reduce((sum, row) => sum + row.sdp, 0);
+    return [
+      {
+        label: 'Total Accounts', icon: Users,
+        accent: 'text-indigo-600 dark:text-indigo-400', iconBg: 'bg-indigo-50 dark:bg-indigo-500/10',
+        bigValue: rows.length.toLocaleString('en-US'), subtitle: undefined as string | undefined,
+      },
+      {
+        label: 'Total Opening Balance', icon: Banknote,
+        accent: 'text-emerald-600 dark:text-emerald-400', iconBg: 'bg-emerald-50 dark:bg-emerald-500/10',
+        bigValue: fmtAbbrev(totalOpening), subtitle: fmt(totalOpening) as string | undefined,
+      },
+      {
+        label: 'Total SDP', icon: ShieldCheck,
+        accent: 'text-blue-600 dark:text-blue-400', iconBg: 'bg-blue-50 dark:bg-blue-500/10',
+        bigValue: fmtAbbrev(totalSdp), subtitle: fmt(totalSdp) as string | undefined,
+      },
+      {
+        label: 'No Opening Yet', icon: CircleSlash,
+        accent: 'text-rose-600 dark:text-rose-400', iconBg: 'bg-rose-50 dark:bg-rose-500/10',
+        bigValue: rows.filter((row) => row.openingBal === 0).length.toLocaleString('en-US'), subtitle: undefined as string | undefined,
+      },
+    ];
+  }, [rows]);
 
   const hasAnyRecords = rows.length > 0;
   const emptyStateNode = !hasAnyRecords ? (
@@ -658,7 +685,43 @@ export default function Summary() {
         isRefreshing={spinning}
         onRefresh={fetchData}
       />
-      <SettlementSummary items={kpiItems} isScrolled={isScrolled} loading={loading} />
+      <div className={`w-full border-t border-border bg-[#f4f6fb] px-4 py-3 transition-shadow duration-150 ease-out dark:bg-[#1c1c1e] md:px-6 ${isScrolled ? TABLE_STICKY_HEADER_SHADOW_CLASS : ''}`}>
+        <div className="flex gap-2">
+          {loading ? (
+            Array.from({ length: 4 }).map((_, i) => (
+              <div key={i} className="h-[80.5px] flex-1 min-w-[200px] rounded-xl border border-border bg-white p-2.5 dark:bg-[#2a2a2d]">
+                <div className="flex h-full items-center gap-3">
+                  <div className="h-8 w-8 shrink-0 animate-pulse rounded-full bg-slate-200 dark:bg-slate-700" />
+                  <div className="min-w-0 flex-1">
+                    <div className="h-3 w-20 animate-pulse rounded-md bg-slate-200 dark:bg-slate-700" />
+                    <div className="mt-1.5 h-6 w-24 animate-pulse rounded-md bg-slate-200 dark:bg-slate-700" />
+                  </div>
+                </div>
+              </div>
+            ))
+          ) : (
+            kpis.map((kpi) => (
+              <div
+                key={kpi.label}
+                className="h-[80.5px] flex-1 min-w-[200px] rounded-xl border border-border bg-white p-2.5 transition-[transform,box-shadow,border-color] duration-150 ease-out hover:-translate-y-px hover:border-foreground/20 hover:shadow-sm dark:bg-[#2a2a2d]"
+              >
+                <div className="flex h-full items-center gap-3">
+                  <div className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-full ${kpi.iconBg}`}>
+                    <kpi.icon size={16} className={kpi.accent} />
+                  </div>
+                  <div className="min-w-0 flex-1">
+                    <p className="text-[11px] font-medium leading-snug text-muted-foreground truncate">{kpi.label}</p>
+                    <p className="text-[21px] font-bold leading-tight text-foreground">{kpi.bigValue}</p>
+                    {kpi.subtitle && (
+                      <p className="mt-0.5 text-[11px] leading-snug text-muted-foreground truncate">{kpi.subtitle}</p>
+                    )}
+                  </div>
+                </div>
+              </div>
+            ))
+          )}
+        </div>
+      </div>
 
       <main className="flex-1 flex flex-col overflow-hidden px-6 pb-6 pt-1">
 
