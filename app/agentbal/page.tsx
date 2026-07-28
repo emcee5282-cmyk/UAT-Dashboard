@@ -4,9 +4,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { ChevronDown, ChevronUp, Columns3, Download, RefreshCw, Search, Wallet } from 'lucide-react';
 import * as XLSX from 'xlsx';
-import PageHeader from '../components/PageHeader';
-import ProductSwitchTabs from '../components/ProductSwitchTabs';
-import ThemeToggle from '../components/ThemeToggle';
+import SettlementHeader from '../components/SettlementHeader';
 import ConnectionErrorState from '../components/ConnectionErrorState';
 import DataTable from '../components/DataTable';
 import Toolbar from '../components/Toolbar';
@@ -25,8 +23,7 @@ import {
   computeSdpVsBalance,
   resolveBrand,
 } from '../lib/balanceEngine';
-import { TABLE_STICKY_HEADER_CLASS, TABLE_HEADER_CELL_CLASS, TOOLBAR_ROW_CLASS, TOOLBAR_LEFT_CLASS, TOOLBAR_RIGHT_CLASS } from '../design-system/table';
-import { PAGE_MAIN_PADDING_CLASS, KPI_CARD_CLASS } from '../design-system/spacing';
+import { KPI_CARD_CLASS } from '../design-system/spacing';
 import { getPreference, setPreference } from '../lib/preferences';
 
 type OpeningRow = {
@@ -189,46 +186,29 @@ type ColumnDef = {
 const DEFAULT_HIDDEN: ColumnKey[] = ['brand', 'sdp', 'settlement', 'topUp', 'sdpVsBalance'];
 
 const DEFAULT_COLUMNS: ColumnDef[] = [
-  { key: COLUMN_IDS.BRAND, label: 'Brand', visible: !DEFAULT_HIDDEN.includes(COLUMN_IDS.BRAND), sortable: false, hideable: true, align: 'center' },
-  { key: COLUMN_IDS.LEADER, label: 'Leader', visible: !DEFAULT_HIDDEN.includes(COLUMN_IDS.LEADER), sortable: false, hideable: true, align: 'center' },
-  { key: COLUMN_IDS.WALLET_NAME, label: 'Shop Name', visible: !DEFAULT_HIDDEN.includes(COLUMN_IDS.WALLET_NAME), sortable: true, hideable: true, align: 'center' },
-  { key: COLUMN_IDS.WALLET_TYPE, label: 'Type', visible: !DEFAULT_HIDDEN.includes(COLUMN_IDS.WALLET_TYPE), sortable: false, hideable: true, align: 'center' },
-  { key: COLUMN_IDS.SDP, label: 'SDP', visible: !DEFAULT_HIDDEN.includes(COLUMN_IDS.SDP), sortable: true, hideable: true, align: 'center' },
-  { key: COLUMN_IDS.OPENING, label: 'Opening', visible: !DEFAULT_HIDDEN.includes(COLUMN_IDS.OPENING), sortable: true, hideable: true, align: 'center' },
-  { key: COLUMN_IDS.TOTAL_DP, label: 'Total DP', visible: !DEFAULT_HIDDEN.includes(COLUMN_IDS.TOTAL_DP), sortable: true, hideable: true, align: 'center' },
-  { key: COLUMN_IDS.TOTAL_WD, label: 'Total WD', visible: !DEFAULT_HIDDEN.includes(COLUMN_IDS.TOTAL_WD), sortable: true, hideable: true, align: 'center' },
-  { key: COLUMN_IDS.TOP_UP, label: 'Top Up', visible: !DEFAULT_HIDDEN.includes(COLUMN_IDS.TOP_UP), sortable: true, hideable: true, align: 'center' },
-  { key: COLUMN_IDS.SETTLEMENT, label: 'Settlement', visible: !DEFAULT_HIDDEN.includes(COLUMN_IDS.SETTLEMENT), sortable: true, hideable: true, align: 'center' },
-  { key: COLUMN_IDS.COMPANY_BALANCE, label: 'Company Balance', visible: !DEFAULT_HIDDEN.includes(COLUMN_IDS.COMPANY_BALANCE), sortable: true, hideable: true, align: 'center' },
-  { key: COLUMN_IDS.BALANCE_INSIDE, label: 'Balance Inside', visible: !DEFAULT_HIDDEN.includes(COLUMN_IDS.BALANCE_INSIDE), sortable: true, hideable: true, align: 'center' },
-  { key: COLUMN_IDS.AGENT_WITHDRAWAL, label: 'Agent Withdrawal', visible: !DEFAULT_HIDDEN.includes(COLUMN_IDS.AGENT_WITHDRAWAL), sortable: true, hideable: true, align: 'center' },
-  { key: COLUMN_IDS.SDP_VS_BALANCE, label: 'SDP VS Balance', visible: !DEFAULT_HIDDEN.includes(COLUMN_IDS.SDP_VS_BALANCE), sortable: true, hideable: true, align: 'center' },
-  { key: COLUMN_IDS.WALLET_STATUS, label: 'Wallet Status', visible: !DEFAULT_HIDDEN.includes(COLUMN_IDS.WALLET_STATUS), sortable: false, hideable: true, align: 'center' },
+  { key: COLUMN_IDS.BRAND, label: 'Brand', visible: !DEFAULT_HIDDEN.includes(COLUMN_IDS.BRAND), sortable: false, hideable: true, align: 'left' },
+  { key: COLUMN_IDS.LEADER, label: 'Leader', visible: !DEFAULT_HIDDEN.includes(COLUMN_IDS.LEADER), sortable: false, hideable: true, align: 'left' },
+  { key: COLUMN_IDS.WALLET_NAME, label: 'Shop Name', visible: !DEFAULT_HIDDEN.includes(COLUMN_IDS.WALLET_NAME), sortable: true, hideable: true, align: 'left' },
+  { key: COLUMN_IDS.WALLET_TYPE, label: 'Type', visible: !DEFAULT_HIDDEN.includes(COLUMN_IDS.WALLET_TYPE), sortable: false, hideable: true, align: 'left' },
+  { key: COLUMN_IDS.SDP, label: 'SDP', visible: !DEFAULT_HIDDEN.includes(COLUMN_IDS.SDP), sortable: true, hideable: true, align: 'left' },
+  { key: COLUMN_IDS.OPENING, label: 'Opening', visible: !DEFAULT_HIDDEN.includes(COLUMN_IDS.OPENING), sortable: true, hideable: true, align: 'left' },
+  { key: COLUMN_IDS.TOTAL_DP, label: 'Total DP', visible: !DEFAULT_HIDDEN.includes(COLUMN_IDS.TOTAL_DP), sortable: true, hideable: true, align: 'left' },
+  { key: COLUMN_IDS.TOTAL_WD, label: 'Total WD', visible: !DEFAULT_HIDDEN.includes(COLUMN_IDS.TOTAL_WD), sortable: true, hideable: true, align: 'left' },
+  { key: COLUMN_IDS.TOP_UP, label: 'Top Up', visible: !DEFAULT_HIDDEN.includes(COLUMN_IDS.TOP_UP), sortable: true, hideable: true, align: 'left' },
+  { key: COLUMN_IDS.SETTLEMENT, label: 'Settlement', visible: !DEFAULT_HIDDEN.includes(COLUMN_IDS.SETTLEMENT), sortable: true, hideable: true, align: 'left' },
+  { key: COLUMN_IDS.COMPANY_BALANCE, label: 'Company Balance', visible: !DEFAULT_HIDDEN.includes(COLUMN_IDS.COMPANY_BALANCE), sortable: true, hideable: true, align: 'left' },
+  { key: COLUMN_IDS.BALANCE_INSIDE, label: 'Balance Inside', visible: !DEFAULT_HIDDEN.includes(COLUMN_IDS.BALANCE_INSIDE), sortable: true, hideable: true, align: 'left' },
+  { key: COLUMN_IDS.AGENT_WITHDRAWAL, label: 'Agent Withdrawal', visible: !DEFAULT_HIDDEN.includes(COLUMN_IDS.AGENT_WITHDRAWAL), sortable: true, hideable: true, align: 'left' },
+  { key: COLUMN_IDS.SDP_VS_BALANCE, label: 'SDP VS Balance', visible: !DEFAULT_HIDDEN.includes(COLUMN_IDS.SDP_VS_BALANCE), sortable: true, hideable: true, align: 'left' },
+  { key: COLUMN_IDS.WALLET_STATUS, label: 'Wallet Status', visible: !DEFAULT_HIDDEN.includes(COLUMN_IDS.WALLET_STATUS), sortable: false, hideable: true, align: 'left' },
 ];
 
 const COLUMN_VISIBILITY_STORAGE_KEY = 'agentBalanceColumnVisibility';
 
-const columnWidths: Record<ColumnKey, string> = {
-  brand: '70px',
-  leader: '90px',
-  walletName: '140px',
-  walletType: '110px',
-  sdp: '105px',
-  opening: '105px',
-  totalDP: '105px',
-  totalWD: '105px',
-  topUp: '105px',
-  settlement: '105px',
-  companyBalance: '130px',
-  balanceInside: '120px',
-  agentWithdrawal: '135px',
-  sdpVsBalance: '130px',
-  walletStatus: '125px',
-};
+const GHOST_BUTTON =
+  'inline-flex h-9 items-center gap-1.5 rounded-[8px] border border-[#E2E8F0] px-3 text-[13px] font-medium text-[#475569] transition-colors duration-150 ease-out hover:bg-[#F8FAFC] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#2563EB] dark:border-[#3a3a3d] dark:text-[#9CA3AF] dark:hover:bg-white/5';
 
-const TABLE_MIN_WIDTH = '1680px';
-
-const STICKY_COLS: ColumnKey[] = [];
+const PAGE_SIZE_OPTIONS = [50, 100, 250, 500];
 
 // Fixed display order for the mobile card's balances grid.
 const BALANCE_GRID_ORDER: ColumnKey[] = [
@@ -254,7 +234,7 @@ function SortIcon({ active, direction }: { active: boolean; direction: 'asc' | '
 }
 
 function headerCellClasses(_colKey: ColumnKey, _isSorted: boolean) {
-  return TABLE_HEADER_CELL_CLASS;
+  return 'group overflow-hidden whitespace-nowrap px-4 text-left text-[14px] font-semibold text-[#475569] dark:text-[#9CA3AF]';
 }
 
 function walletStatusBadgeClasses(status: string): string {
@@ -309,42 +289,42 @@ function mobileCardFieldValue(row: MergedRow, key: ColumnKey): { value: string; 
 
 function renderCell(row: MergedRow, key: ColumnKey) {
 
-  const base = 'whitespace-nowrap overflow-hidden text-ellipsis px-3 py-1.5 text-[11px]';
+  const base = 'whitespace-nowrap px-4 py-[14px] text-left text-[13px] font-normal';
 
   switch (key) {
     case 'brand':
-      return <td key={key} className={`${base} text-center font-semibold text-foreground`}>{row.brand}</td>;
+      return <td key={key} className={`${base} font-semibold text-foreground`}>{row.brand}</td>;
     case 'leader':
-      return <td key={key} className={`${base} text-center text-muted-foreground`}>{row.leader}</td>;
+      return <td key={key} className={`${base} text-muted-foreground`}>{row.leader}</td>;
     case 'walletName':
-      return <td key={key} className={`${base} text-center font-semibold text-foreground`}>{row.agentName}</td>;
+      return <td key={key} className={`${base} font-semibold text-foreground`}>{row.agentName}</td>;
     case 'walletType':
-      return <td key={key} className={`${base} text-center text-muted-foreground`}>{row.walletType}</td>;
+      return <td key={key} className={`${base} text-muted-foreground`}>{row.walletType}</td>;
     case 'sdp':
-      return <td key={key} className={`${base} text-center tabular-nums text-foreground`}>{displayNum(row.sdp)}</td>;
+      return <td key={key} className={`${base} tabular-nums text-foreground`}>{displayNum(row.sdp)}</td>;
     case 'opening':
-      return <td key={key} className={`${base} text-center tabular-nums text-foreground`}>{displayNum(row.openingBal)}</td>;
+      return <td key={key} className={`${base} tabular-nums text-foreground`}>{displayNum(row.openingBal)}</td>;
     case 'totalDP':
-      return <td key={key} className={`${base} text-center tabular-nums font-medium text-emerald-600 dark:text-emerald-400`}>{displayNum(row.agentTotalDP)}</td>;
+      return <td key={key} className={`${base} tabular-nums font-medium text-emerald-600 dark:text-emerald-400`}>{displayNum(row.agentTotalDP)}</td>;
     case 'totalWD':
-      return <td key={key} className={`${base} text-center tabular-nums font-medium text-rose-600 dark:text-rose-400`}>{displayNum(row.agentTotalWD)}</td>;
+      return <td key={key} className={`${base} tabular-nums font-medium text-rose-600 dark:text-rose-400`}>{displayNum(row.agentTotalWD)}</td>;
     case 'topUp':
-      return <td key={key} className={`${base} text-center tabular-nums text-teal-600 dark:text-teal-400`}>{displayNum(row.totalTopUp)}</td>;
+      return <td key={key} className={`${base} tabular-nums text-teal-600 dark:text-teal-400`}>{displayNum(row.totalTopUp)}</td>;
     case 'settlement':
-      return <td key={key} className={`${base} text-center tabular-nums text-orange-500 dark:text-orange-400`}>{displayNum(row.totalStlm)}</td>;
+      return <td key={key} className={`${base} tabular-nums text-orange-500 dark:text-orange-400`}>{displayNum(row.totalStlm)}</td>;
     case 'balanceInside':
-      return <td key={key} className={`${base} text-center tabular-nums text-foreground`}>{displayNum(String(row.balanceInside ?? 0))}</td>;
+      return <td key={key} className={`${base} tabular-nums text-foreground`}>{displayNum(String(row.balanceInside ?? 0))}</td>;
     case 'agentWithdrawal':
-      return <td key={key} className={`${base} text-center tabular-nums text-foreground`}>{displayNum(String(row.agentWithdrawal))}</td>;
+      return <td key={key} className={`${base} tabular-nums text-foreground`}>{displayNum(String(row.agentWithdrawal))}</td>;
     case 'sdpVsBalance':
-      return <td key={key} className={`${base} text-center tabular-nums text-foreground`}>{row.sdpVsBalance > 0 ? displayNum(String(Math.abs(row.sdpVsBalance))) : '−'}</td>;
+      return <td key={key} className={`${base} tabular-nums text-foreground`}>{row.sdpVsBalance > 0 ? displayNum(String(Math.abs(row.sdpVsBalance))) : '−'}</td>;
     case 'walletStatus':
-      return <td key={key} className={`${base} text-center text-foreground`}>{row.walletStatus}</td>;
+      return <td key={key} className={`${base} text-foreground`}>{row.walletStatus}</td>;
     case 'companyBalance':
     default: {
       const v = displayNum(row.runningBalance);
       const color = v !== '−' && row.runningBalance < 0 ? 'text-rose-600 dark:text-rose-400' : 'text-foreground';
-      return <td key={key} className={`${base} text-center tabular-nums font-bold ${color}`}>{v}</td>;
+      return <td key={key} className={`${base} tabular-nums font-bold ${color}`}>{v}</td>;
     }
   }
 }
@@ -384,7 +364,7 @@ export default function AgentBalance() {
     () => Object.fromEntries(WALLET_STATUS_OPTIONS.map((status) => [status, true]))
   );
   const [page, setPage] = useState(1);
-  const rowsPerPage = 50;
+  const [rowsPerPage, setRowsPerPage] = useState(50);
   const brandButtonRef = useRef<HTMLButtonElement>(null);
   const brandDropdownRef = useRef<HTMLDivElement>(null);
   const leaderButtonRef = useRef<HTMLButtonElement>(null);
@@ -394,6 +374,34 @@ export default function AgentBalance() {
   const walletStatusButtonRef = useRef<HTMLButtonElement>(null);
   const walletStatusDropdownRef = useRef<HTMLDivElement>(null);
   const scrollRef = useRef<number>(0);
+  const tableScrollRef = useRef<HTMLDivElement>(null);
+  const [isScrolled, setIsScrolled] = useState(false);
+  const [selectedRows, setSelectedRows] = useState<Set<string>>(new Set());
+
+  useEffect(() => {
+    const el = tableScrollRef.current;
+    if (!el) return;
+    const handleScroll = () => setIsScrolled(el.scrollTop > 0);
+    el.addEventListener('scroll', handleScroll, { passive: true });
+    return () => el.removeEventListener('scroll', handleScroll);
+  }, []);
+
+  const toggleRowSelection = useCallback((agentName: string) => {
+    setSelectedRows((current) => {
+      const next = new Set(current);
+      if (next.has(agentName)) {
+        next.delete(agentName);
+      } else {
+        next.add(agentName);
+      }
+      return next;
+    });
+  }, []);
+
+  const handlePageSizeChange = useCallback((size: number) => {
+    setRowsPerPage(size);
+    setPage(1);
+  }, []);
 
   const fetchData = useCallback(async () => {
     scrollRef.current = window.scrollY;
@@ -744,18 +752,6 @@ export default function AgentBalance() {
     [columnDefs]
   );
 
-  const stickyLeft = useMemo(() => {
-    const result: Partial<Record<ColumnKey, number>> = {};
-    let offset = 0;
-    for (const col of visibleColumns) {
-      if (STICKY_COLS.includes(col.key)) {
-        result[col.key] = offset;
-        offset += parseInt(columnWidths[col.key], 10);
-      }
-    }
-    return result;
-  }, [visibleColumns]);
-
   const walletStatusOptions = useMemo(() => {
     const present = new Set(rows.map((row) => row.walletStatus));
     return WALLET_STATUS_OPTIONS.filter((status) => present.has(status));
@@ -1018,26 +1014,14 @@ export default function AgentBalance() {
 
   return (
     <div className="h-screen w-full flex flex-col overflow-hidden bg-background font-[Inter,sans-serif] text-foreground transition-colors duration-300 dark:bg-[#1c1c1e]">
-      <PageHeader
+      <SettlementHeader
         icon={Wallet}
         title="Balance"
-        centerSlot={<ProductSwitchTabs />}
-        actions={
-          <>
-            <button
-              type="button"
-              onClick={() => setCardsExpanded((current) => !current)}
-              title={cardsExpanded ? 'Hide summary cards' : 'Show summary cards'}
-              className="flex h-8 w-8 items-center justify-center rounded-lg border border-border bg-muted/60 text-muted-foreground transition-colors hover:bg-muted"
-            >
-              {cardsExpanded ? <ChevronUp size={13} /> : <ChevronDown size={13} />}
-            </button>
-            <ThemeToggle />
-          </>
-        }
+        isRefreshing={spinning}
+        onRefresh={fetchData}
       />
 
-      <main className={PAGE_MAIN_PADDING_CLASS}>
+      <main className="flex-1 flex flex-col overflow-hidden px-6 pb-6 pt-4">
         {error && <ConnectionErrorState error={error} onRetry={fetchData} />}
 
         {!error && (
@@ -1077,8 +1061,8 @@ export default function AgentBalance() {
 
         {!error && (
           <DataTable className="mt-3">
-            <Toolbar className={TOOLBAR_ROW_CLASS}>
-              <Toolbar.Left className={TOOLBAR_LEFT_CLASS}>
+            <Toolbar>
+              <Toolbar.Left>
                 {loading ? (
                   <div className="h-5 w-28 animate-pulse rounded-md bg-slate-200 dark:bg-slate-700" />
                 ) : (
@@ -1087,46 +1071,48 @@ export default function AgentBalance() {
                     <span className="text-[11px] font-bold tabular-nums text-indigo-700 dark:text-indigo-300">{sortedRows.length.toLocaleString('en-PH')}</span>
                   </div>
                 )}
-                <div className="flex w-full min-w-[140px] flex-1 items-center gap-2 rounded-lg border border-border bg-white px-3 py-1.5 dark:bg-[#2a2a2d] sm:w-52 sm:flex-none">
+                <div className="flex h-10 w-full min-w-[200px] items-center gap-2 rounded-[10px] border border-[#E5E7EB] bg-white px-[14px] transition-colors focus-within:border-[#2563EB] focus-within:ring-2 focus-within:ring-[#2563EB]/20 dark:border-[#3a3a3d] dark:bg-[#2a2a2d] sm:w-[380px]">
                   {loading ? (
                     <div className="h-3 w-32 animate-pulse rounded-md bg-slate-200 dark:bg-slate-700" />
                   ) : (
                     <>
-                      <Search size={13} className="shrink-0 text-muted-foreground" />
+                      <Search size={14} className="shrink-0 text-muted-foreground" />
                       <input
                         value={searchTerm}
                         onChange={(event) => setSearchTerm(event.target.value)}
-                        className="flex-1 bg-transparent text-[10px] text-foreground placeholder:text-muted-foreground outline-none border-none"
+                        className="flex-1 bg-transparent text-[13px] font-normal text-[#111827] placeholder:text-[#94A3B8] outline-none border-none dark:text-[#E5E7EB]"
                         placeholder="Search shops or brands..."
                       />
                     </>
                   )}
                 </div>
               </Toolbar.Left>
-              <Toolbar.Right className={TOOLBAR_RIGHT_CLASS}>
-                {loading && <div className="h-7 w-7 animate-pulse rounded-lg bg-slate-200 dark:bg-slate-700" />}
+              <Toolbar.Right>
+                {loading && <div className="h-9 w-9 animate-pulse rounded-lg bg-slate-200 dark:bg-slate-700" />}
                 {!loading && (
                   <button
                     type="button"
-                    onClick={fetchData}
-                    title="Refresh"
-                    className="rounded-lg border border-border bg-white p-1.5 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground dark:bg-transparent"
+                    onClick={() => setCardsExpanded((current) => !current)}
+                    aria-label={cardsExpanded ? 'Hide summary cards' : 'Show summary cards'}
+                    title={cardsExpanded ? 'Hide summary cards' : 'Show summary cards'}
+                    className={GHOST_BUTTON}
                   >
-                    <RefreshCw size={13} className={spinning ? 'animate-spin' : ''} />
+                    {cardsExpanded ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
                   </button>
                 )}
-                {loading && <div className="h-7 w-20 animate-pulse rounded-lg bg-slate-200 dark:bg-slate-700" />}
+                {loading && <div className="h-9 w-9 animate-pulse rounded-lg bg-slate-200 dark:bg-slate-700" />}
                 {!loading && (
-                  <button
-                    type="button"
-                    onClick={handleExport}
-                    title="Export to Excel"
-                    className="rounded-lg border border-border bg-white p-1.5 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground dark:bg-transparent"
-                  >
-                    <Download size={13} />
+                  <button type="button" onClick={fetchData} aria-label="Refresh" title="Refresh" className={GHOST_BUTTON}>
+                    <RefreshCw size={14} className={spinning ? 'animate-spin' : ''} />
                   </button>
                 )}
-                {loading && <div className="h-7 w-7 animate-pulse rounded-lg bg-slate-200 dark:bg-slate-700" />}
+                {loading && <div className="h-9 w-9 animate-pulse rounded-lg bg-slate-200 dark:bg-slate-700" />}
+                {!loading && (
+                  <button type="button" onClick={handleExport} aria-label="Export to Excel" title="Export to Excel" className={GHOST_BUTTON}>
+                    <Download size={14} />
+                  </button>
+                )}
+                {loading && <div className="h-9 w-9 animate-pulse rounded-lg bg-slate-200 dark:bg-slate-700" />}
                 {!loading && (
                   <div className="relative">
                     <button
@@ -1147,9 +1133,9 @@ export default function AgentBalance() {
                       aria-controls="agentbal-columns-popover"
                       aria-label="Columns"
                       title="Columns"
-                      className="rounded-lg border border-border bg-white p-1.5 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground dark:bg-transparent"
+                      className={GHOST_BUTTON}
                     >
-                      <Columns3 size={13} />
+                      <Columns3 size={14} />
                     </button>
                     {columnsMenuOpen && typeof document !== 'undefined' && createPortal(
                       <div
@@ -1211,24 +1197,20 @@ export default function AgentBalance() {
                 )}
               </Toolbar.Right>
             </Toolbar>
-            <div className="hidden flex-1 min-h-0 overflow-y-auto overflow-x-auto sm:block">
-              <table className="w-full table-fixed text-xs" style={{ minWidth: TABLE_MIN_WIDTH }}>
-                <colgroup>
-                  {visibleColumns.map((col) => (
-                    <col key={col.key} style={{ width: columnWidths[col.key] }} />
-                  ))}
-                </colgroup>
-                <thead className={TABLE_STICKY_HEADER_CLASS}>
+            <div ref={tableScrollRef} className="dt-scroll hidden relative flex-1 min-h-0 overflow-y-auto overflow-x-auto sm:block">
+              <table className="text-xs">
+                <thead className={`sticky top-0 z-[50] bg-[#FAFAFB] dark:bg-[#252528] border-b border-[#E2E8F0] dark:border-[#3a3a3d] transition-shadow duration-150 ease-out ${
+                  isScrolled ? 'shadow-[0_2px_4px_rgba(15,23,42,0.1)] dark:shadow-[0_2px_4px_rgba(0,0,0,0.35)]' : ''
+                }`}>
                   <tr>
                     {visibleColumns.map((col) => (
                       <th
                         key={col.key}
-                        style={stickyLeft[col.key] !== undefined ? { position: 'sticky' as const, left: `${stickyLeft[col.key]}px`, zIndex: 52 } : undefined}
                         className={headerCellClasses(col.key, sortColumn === col.key)}>
                         {loading ? (
-                          <div className="mx-auto h-[18px] w-14 animate-pulse rounded-md bg-slate-200 dark:bg-slate-700" />
+                          <div className="h-[18px] w-14 animate-pulse rounded-md bg-slate-200 dark:bg-slate-700" />
                         ) : col.key === 'brand' ? (
-                          <div className="relative flex items-center justify-center gap-1">
+                          <div className="relative flex items-center justify-start gap-1">
                             <span className="normal-case font-semibold text-foreground">{col.label}</span>
                             <button
                               type="button"
@@ -1296,7 +1278,7 @@ export default function AgentBalance() {
                             )}
                           </div>
                         ) : col.key === 'leader' ? (
-                          <div className="relative flex items-center justify-center gap-1">
+                          <div className="relative flex items-center justify-start gap-1">
                             <span className="normal-case font-semibold text-foreground">{col.label}</span>
                             <button
                               type="button"
@@ -1364,7 +1346,7 @@ export default function AgentBalance() {
                             )}
                           </div>
                         ) : col.key === 'walletType' ? (
-                          <div className="relative flex items-center justify-center gap-1">
+                          <div className="relative flex items-center justify-start gap-1">
                             <span className="normal-case font-semibold text-foreground">{col.label}</span>
                             <button
                               type="button"
@@ -1430,7 +1412,7 @@ export default function AgentBalance() {
                             )}
                           </div>
                         ) : col.key === 'walletStatus' ? (
-                          <div className="relative flex items-center justify-center gap-1">
+                          <div className="relative flex items-center justify-start gap-1">
                             <span className="normal-case font-semibold text-foreground">{col.label}</span>
                             <button
                               type="button"
@@ -1506,7 +1488,7 @@ export default function AgentBalance() {
                                 setSortDirection('asc');
                               }
                             }}
-                            className="flex w-full items-center justify-center gap-1 transition hover:opacity-80"
+                            className="flex w-full items-center justify-start gap-1 transition hover:opacity-80"
                           >
                             <span>{col.label}</span>
                             <SortIcon active={sortColumn === col.key} direction={sortDirection} />
@@ -1522,19 +1504,27 @@ export default function AgentBalance() {
                   {loading ? Array.from({ length: 18 }).map((_, i) => (
                     <tr key={i}>
                       {visibleColumns.map((col) => (
-                        <td key={col.key} className="px-3 py-1.5">
-                          <div className="mx-auto h-2.5 w-3/4 animate-pulse rounded-md bg-slate-200 dark:bg-slate-700" />
+                        <td key={col.key} className="px-4 py-[14px]">
+                          <div className="h-2.5 w-3/4 animate-pulse rounded-md bg-slate-200 dark:bg-slate-700" />
                         </td>
                       ))}
                     </tr>
-                  )) : pagedRows.length > 0 ? pagedRows.map((row, i) => (
-                    <tr
-                      key={row.agentName || i}
-                      className={`border-b border-border last:border-0 transition-colors hover:bg-muted/10 ${i % 2 === 1 ? 'bg-muted/5' : ''}`}
-                    >
-                      {visibleColumns.map((col) => renderCell(row, col.key))}
-                    </tr>
-                  )) : (
+                  )) : pagedRows.length > 0 ? pagedRows.map((row, i) => {
+                    const isSelected = selectedRows.has(row.agentName);
+                    return (
+                      <tr
+                        key={row.agentName || i}
+                        onClick={() => toggleRowSelection(row.agentName)}
+                        className={`cursor-pointer border-b border-border last:border-0 transition-colors duration-150 ease-out ${
+                          isSelected
+                            ? 'bg-[color:var(--product-accent-soft)] shadow-[inset_2.5px_0_0_var(--product-accent)]'
+                            : `hover:bg-muted/10 ${i % 2 === 1 ? 'bg-muted/5' : ''}`
+                        }`}
+                      >
+                        {visibleColumns.map((col) => renderCell(row, col.key))}
+                      </tr>
+                    );
+                  }) : (
                     <tr>
                       <td colSpan={Math.max(visibleColumns.length, 1)}>
                         <EmptyState
@@ -1638,6 +1628,11 @@ export default function AgentBalance() {
                 currentPage={currentPage}
                 totalPages={totalPages}
                 onPageChange={setPage}
+                pageSize={rowsPerPage}
+                pageSizeOptions={PAGE_SIZE_OPTIONS}
+                onPageSizeChange={handlePageSizeChange}
+                totalRecords={sortedRows.length}
+                variant="premium"
               />
             )}
           </DataTable>
