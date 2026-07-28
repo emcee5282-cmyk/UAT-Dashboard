@@ -1098,8 +1098,8 @@ export default function AgentBalance() {
         {!error && <div className="shrink-0 border-t border-border" />}
 
         {!error && (
-          <div className={`shrink-0 overflow-hidden transition-all duration-300 ease-in-out ${cardsExpanded ? 'h-[105px] opacity-100 mt-3 mb-2' : 'h-0 opacity-0 mt-0 mb-0'}`}>
-            <div className="flex gap-2 pb-3">
+          <div className={`shrink-0 overflow-hidden transition-all duration-300 ease-in-out ${cardsExpanded ? 'h-[101px] opacity-100 mt-3 mb-2' : 'h-0 opacity-0 mt-0 mb-0'}`}>
+            <div className="flex gap-2 pb-3 pt-2">
               {loading ? (
                 Array.from({ length: 5 }).map((_, i) => (
                   <div key={i} className="flex-1 min-w-[200px] rounded-xl border border-border bg-white p-2.5 dark:bg-[#2a2a2d]">
