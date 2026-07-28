@@ -2,7 +2,10 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { ChevronDown, ChevronUp, Columns3, Download, RefreshCw, Search, Wallet } from 'lucide-react';
+import {
+  ChevronDown, ChevronUp, Columns3, Download, RefreshCw, Search, Wallet,
+  TrendingUp, ArrowDownToLine, ArrowUpFromLine, Gauge, PlusCircle, ArrowLeftRight,
+} from 'lucide-react';
 import * as XLSX from 'xlsx';
 import SettlementHeader from '../components/SettlementHeader';
 import ConnectionErrorState from '../components/ConnectionErrorState';
@@ -11,7 +14,7 @@ import Toolbar from '../components/Toolbar';
 import TableFooter from '../components/TableFooter';
 import EmptyState from '../components/EmptyState';
 import { classifyFetchError, type ClassifiedError, assertAllOk } from '../lib/errors';
-import { rawVal, fmt, fmtAbbrev } from '@/app/lib/format';
+import { rawVal, fmtAbbrev } from '@/app/lib/format';
 import { parseCsvLines } from '../lib/csv';
 import { getBusinessToday, toBusinessDate, parseCardCutoffDate } from '../lib/businessDate';
 import {
@@ -23,7 +26,6 @@ import {
   computeSdpVsBalance,
   resolveBrand,
 } from '../lib/balanceEngine';
-import { KPI_CARD_CLASS } from '../design-system/spacing';
 import { getPreference, setPreference } from '../lib/preferences';
 
 type OpeningRow = {
@@ -334,7 +336,7 @@ export default function AgentBalance() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<ClassifiedError | null>(null);
   const [spinning, setSpinning] = useState(false);
-  const [cardsExpanded, setCardsExpanded] = useState(false);
+  const [cardsExpanded, setCardsExpanded] = useState(true);
   const [searchTerm, setSearchTerm] = useState('');
   const [leaderFilter, setLeaderFilter] = useState<Record<string, boolean>>({});
   const [brandFilter, setBrandFilter] = useState<Record<string, boolean>>({});
@@ -821,78 +823,44 @@ export default function AgentBalance() {
     return list;
   }, [leaderFilter, leaderOptions, brandFilter, brandOptions, walletStatusFilter, walletTypeFilter, walletTypeOptions, searchedRows]);
 
-  const summaryCards = useMemo(() => {
-    const totalDP = filteredRows.reduce((sum, row) => sum + row.agentTotalDP, 0);
-    const totalWD = filteredRows.reduce((sum, row) => sum + row.agentTotalWD, 0);
-    const totalSdp = filteredRows.reduce((sum, row) => sum + parseNumber(row.sdp), 0);
-    const totalTopUp = filteredRows.reduce((sum, row) => sum + row.totalTopUp, 0);
-    const totalSettlement = filteredRows.reduce((sum, row) => sum + row.totalStlm, 0);
+  const primaryKpis = useMemo(() => {
     const totalBalanceInside = filteredRows.reduce((sum, row) => sum + row.balanceInside, 0);
     const totalRunningBalance = filteredRows.reduce((sum, row) => sum + row.runningBalance, 0);
     const totalOpening = filteredRows.reduce((sum, row) => sum + parseNumber(row.openingBal), 0);
     const runningVsOpening = totalRunningBalance - totalOpening;
 
-    const cards: Array<{
-      label: string;
-      bigValue: string;
-      subAmount: string;
-      subSuffix?: string;
-      subPositive: boolean;
-      showArrow: boolean;
-    }> = [
-      {
-        label: 'Total DP',
-        bigValue: fmtAbbrev(totalDP),
-        subAmount: fmt(totalDP),
-        subPositive: false,
-        showArrow: false,
-      },
-      {
-        label: 'Total WD',
-        bigValue: fmtAbbrev(totalWD),
-        subAmount: fmt(totalWD),
-        subPositive: false,
-        showArrow: false,
-      },
-      {
-        label: 'SDP',
-        bigValue: fmtAbbrev(totalSdp),
-        subAmount: fmt(totalSdp),
-        subPositive: false,
-        showArrow: false,
-      },
-      {
-        label: 'Total Top Up',
-        bigValue: fmtAbbrev(totalTopUp),
-        subAmount: fmt(totalTopUp),
-        subPositive: false,
-        showArrow: false,
-      },
-      {
-        label: 'Total Settlement',
-        bigValue: fmtAbbrev(totalSettlement),
-        subAmount: fmt(totalSettlement),
-        subPositive: false,
-        showArrow: false,
-      },
+    return [
       {
         label: 'Actual Balance',
+        icon: Wallet,
+        accent: 'text-blue-600 dark:text-blue-400',
         bigValue: fmtAbbrev(totalBalanceInside),
-        subAmount: fmt(totalBalanceInside),
-        subPositive: false,
-        showArrow: false,
+        helperText: 'Current available balance',
       },
       {
         label: 'Running Balance',
+        icon: TrendingUp,
+        accent: 'text-emerald-600 dark:text-emerald-400',
         bigValue: fmtAbbrev(totalRunningBalance),
-        subAmount: fmt(runningVsOpening),
-        subSuffix: 'vs opening',
-        subPositive: runningVsOpening >= 0,
-        showArrow: true,
+        helperText: `${runningVsOpening >= 0 ? '+' : '-'}${fmtAbbrev(Math.abs(runningVsOpening))} vs Opening`,
       },
     ];
+  }, [filteredRows]);
 
-    return cards;
+  const secondaryKpis = useMemo(() => {
+    const totalDP = filteredRows.reduce((sum, row) => sum + row.agentTotalDP, 0);
+    const totalWD = filteredRows.reduce((sum, row) => sum + row.agentTotalWD, 0);
+    const totalSdp = filteredRows.reduce((sum, row) => sum + parseNumber(row.sdp), 0);
+    const totalTopUp = filteredRows.reduce((sum, row) => sum + row.totalTopUp, 0);
+    const totalSettlement = filteredRows.reduce((sum, row) => sum + row.totalStlm, 0);
+
+    return [
+      { label: 'Total DP', icon: ArrowDownToLine, accent: 'text-emerald-600 dark:text-emerald-400', value: fmtAbbrev(totalDP) },
+      { label: 'Total WD', icon: ArrowUpFromLine, accent: 'text-rose-600 dark:text-rose-400', value: fmtAbbrev(totalWD) },
+      { label: 'SDP', icon: Gauge, accent: 'text-slate-500 dark:text-slate-400', value: fmtAbbrev(totalSdp) },
+      { label: 'Total Top Up', icon: PlusCircle, accent: 'text-purple-600 dark:text-purple-400', value: fmtAbbrev(totalTopUp) },
+      { label: 'Total Settlement', icon: ArrowLeftRight, accent: 'text-orange-500 dark:text-orange-400', value: fmtAbbrev(totalSettlement) },
+    ];
   }, [filteredRows]);
 
   const sortedRows = useMemo(() => {
@@ -1021,54 +989,75 @@ export default function AgentBalance() {
         onRefresh={fetchData}
       />
 
-      <main className="flex-1 flex flex-col overflow-hidden px-6 pb-6 pt-4">
+      <main className="flex-1 flex flex-col overflow-hidden px-6 pb-6 pt-3">
         {error && <ConnectionErrorState error={error} onRetry={fetchData} />}
 
         {!error && (
-          <div className={`shrink-0 overflow-hidden transition-all duration-300 ease-in-out ${cardsExpanded ? 'h-[102px] opacity-100 mb-1' : 'h-0 opacity-0 mb-0'}`}>
-            <div className="flex gap-2 overflow-x-auto pb-3">
-              {loading ? (
-                Array.from({ length: 7 }).map((_, i) => (
-                  <div key={i} className={KPI_CARD_CLASS}>
-                    <div className="h-3 w-12 animate-pulse rounded-md bg-slate-200 dark:bg-slate-700" />
-                    <div className="mt-1.5 h-6 w-16 animate-pulse rounded-md bg-slate-200 dark:bg-slate-700" />
-                    <div className="mt-1 h-5 w-16 animate-pulse rounded-md bg-slate-200 dark:bg-slate-700" />
-                  </div>
-                ))
-              ) : (
-                summaryCards.map((card) => (
-                  <div key={card.label} className={`${KPI_CARD_CLASS} hover:shadow-md`}>
-                    <p className="text-[10px] font-semibold text-muted-foreground truncate">{card.label}</p>
-                    <p className="mt-1 text-[15px] font-bold leading-tight text-foreground">{card.bigValue}</p>
-                    <div className={`mt-0.5 text-[9px] font-medium ${
-                      card.label === 'Total DP' ? 'text-emerald-600 dark:text-emerald-400' :
-                      card.label === 'Total WD' ? 'text-rose-600 dark:text-rose-400' :
-                      card.label === 'Running Balance' ? (card.subPositive ? 'text-emerald-600 dark:text-emerald-400' : 'text-rose-600 dark:text-rose-400') :
-                      'text-muted-foreground'
-                    }`}>
-                      <div className="flex items-center gap-0.5">
-                        {card.showArrow && <span>{card.subPositive ? '▲' : '▼'}</span>}
-                        <span className="tabular-nums">{card.subAmount}</span>
-                      </div>
-                      {card.subSuffix && <span className="block font-normal text-muted-foreground">{card.subSuffix}</span>}
+          <div className={`shrink-0 overflow-hidden transition-all duration-300 ease-in-out ${cardsExpanded ? 'h-[185px] opacity-100 mb-2' : 'h-0 opacity-0 mb-0'}`}>
+            <div className="flex flex-col gap-2 pb-3">
+              <div className="flex gap-2">
+                {loading ? (
+                  Array.from({ length: 2 }).map((_, i) => (
+                    <div key={i} className="flex-[1.5] min-w-[220px] rounded-xl border border-border bg-white p-4 dark:bg-[#2a2a2d]">
+                      <div className="h-3 w-20 animate-pulse rounded-md bg-slate-200 dark:bg-slate-700" />
+                      <div className="mt-2 h-6 w-24 animate-pulse rounded-md bg-slate-200 dark:bg-slate-700" />
+                      <div className="mt-1.5 h-3 w-28 animate-pulse rounded-md bg-slate-200 dark:bg-slate-700" />
                     </div>
-                  </div>
-                ))
-              )}
+                  ))
+                ) : (
+                  primaryKpis.map((kpi) => (
+                    <div
+                      key={kpi.label}
+                      className="flex-[1.5] min-w-[220px] rounded-xl border border-border bg-white p-4 transition-[transform,box-shadow,border-color] duration-150 ease-out hover:-translate-y-px hover:border-foreground/20 hover:shadow-sm dark:bg-[#2a2a2d]"
+                    >
+                      <div className="flex items-center gap-1.5">
+                        <kpi.icon size={14} className={`shrink-0 ${kpi.accent}`} />
+                        <p className="text-[11px] font-medium text-muted-foreground truncate">{kpi.label}</p>
+                      </div>
+                      <p className="mt-1.5 text-[21px] font-bold leading-tight text-foreground">{kpi.bigValue}</p>
+                      <p className="mt-1 text-[11px] text-muted-foreground">{kpi.helperText}</p>
+                    </div>
+                  ))
+                )}
+              </div>
+
+              <div className="flex gap-2 overflow-x-auto">
+                {loading ? (
+                  Array.from({ length: 5 }).map((_, i) => (
+                    <div key={i} className="flex-1 min-w-[110px] rounded-xl border border-border bg-white p-2.5 dark:bg-[#2a2a2d]">
+                      <div className="h-2.5 w-12 animate-pulse rounded-md bg-slate-200 dark:bg-slate-700" />
+                      <div className="mt-1.5 h-4 w-16 animate-pulse rounded-md bg-slate-200 dark:bg-slate-700" />
+                    </div>
+                  ))
+                ) : (
+                  secondaryKpis.map((kpi) => (
+                    <div
+                      key={kpi.label}
+                      className="flex-1 min-w-[110px] rounded-xl border border-border bg-white p-2.5 transition-[transform,box-shadow,border-color] duration-150 ease-out hover:-translate-y-px hover:border-foreground/20 hover:shadow-sm dark:bg-[#2a2a2d]"
+                    >
+                      <div className="flex items-center gap-1.5">
+                        <kpi.icon size={12} className={`shrink-0 ${kpi.accent}`} />
+                        <p className="text-[10.5px] font-medium text-muted-foreground truncate">{kpi.label}</p>
+                      </div>
+                      <p className="mt-1 text-[16px] font-bold leading-tight text-foreground">{kpi.value}</p>
+                    </div>
+                  ))
+                )}
+              </div>
             </div>
           </div>
         )}
 
         {!error && (
-          <DataTable className="mt-3">
+          <DataTable className="mt-2">
             <Toolbar>
               <Toolbar.Left>
                 {loading ? (
                   <div className="h-5 w-28 animate-pulse rounded-md bg-slate-200 dark:bg-slate-700" />
                 ) : (
-                  <div className="flex items-center gap-1.5 rounded-md bg-indigo-50 px-2.5 py-1 dark:bg-indigo-500/15">
-                    <span className="text-[10px] font-medium text-indigo-600 dark:text-indigo-400">Accounts</span>
+                  <div className="flex items-center whitespace-nowrap rounded-full bg-indigo-50 px-3 py-1.5 dark:bg-indigo-500/15">
                     <span className="text-[11px] font-bold tabular-nums text-indigo-700 dark:text-indigo-300">{sortedRows.length.toLocaleString('en-PH')}</span>
+                    <span className="ml-1 text-[11px] font-medium text-indigo-600 dark:text-indigo-400">Accounts</span>
                   </div>
                 )}
                 <div className="flex h-10 w-full min-w-[200px] items-center gap-2 rounded-[10px] border border-[#E5E7EB] bg-white px-[14px] transition-colors focus-within:border-[#2563EB] focus-within:ring-2 focus-within:ring-[#2563EB]/20 dark:border-[#3a3a3d] dark:bg-[#2a2a2d] sm:w-[380px]">
