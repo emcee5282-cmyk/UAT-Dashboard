@@ -9,6 +9,7 @@ import {
 import * as XLSX from 'xlsx';
 import SettlementHeader from '@/app/components/SettlementHeader';
 import Toolbar from '@/app/components/Toolbar';
+import ColumnsDropdown from '@/app/components/ColumnsDropdown';
 import DataTable from '@/app/components/DataTable';
 import TableFooter from '@/app/components/TableFooter';
 import EmptyState from '@/app/components/EmptyState';
@@ -335,22 +336,8 @@ export default function SendMoneyOpeningPage() {
 
   const [columnDefs, setColumnDefs] = useState<ColumnDef[]>(DEFAULT_COLUMNS);
   const [columnsMenuOpen, setColumnsMenuOpen] = useState(false);
-  const [columnsMenuPos, setColumnsMenuPos] = useState({ top: 0, left: 0 });
   const [mounted, setMounted] = useState(false);
   const columnsButtonRef = useRef<HTMLButtonElement>(null);
-  const columnsMenuRef = useRef<HTMLDivElement>(null);
-  // Keeps the portal mounted for 150ms after close so the closing
-  // opacity/scale transition (driven by columnsMenuOpen below) can play
-  // before React unmounts it — same pattern as Balance's Columns menu.
-  const [columnsMenuRendered, setColumnsMenuRendered] = useState(false);
-  useEffect(() => {
-    if (columnsMenuOpen) {
-      setColumnsMenuRendered(true);
-    } else {
-      const timeout = setTimeout(() => setColumnsMenuRendered(false), 150);
-      return () => clearTimeout(timeout);
-    }
-  }, [columnsMenuOpen]);
 
   const [editingRow, setEditingRow] = useState<Row | null>(null);
   const [newRecordOpen, setNewRecordOpen] = useState(false);
@@ -428,44 +415,9 @@ export default function SendMoneyOpeningPage() {
     setPreference(COLUMN_VISIBILITY_STORAGE_KEY, visibility);
   }, [columnDefs, mounted]);
 
-  useEffect(() => {
-    if (!columnsMenuOpen) return;
-    const handlePointerDown = (event: MouseEvent) => {
-      const target = event.target as Node;
-      if (
-        columnsButtonRef.current && !columnsButtonRef.current.contains(target) &&
-        columnsMenuRef.current && !columnsMenuRef.current.contains(target)
-      ) {
-        setColumnsMenuOpen(false);
-      }
-    };
-    const handleKeyDown = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') {
-        setColumnsMenuOpen(false);
-        columnsButtonRef.current?.focus();
-      }
-    };
-    document.addEventListener('mousedown', handlePointerDown);
-    document.addEventListener('keydown', handleKeyDown);
-    return () => {
-      document.removeEventListener('mousedown', handlePointerDown);
-      document.removeEventListener('keydown', handleKeyDown);
-    };
-  }, [columnsMenuOpen]);
-
-  useEffect(() => {
-    if (!columnsMenuOpen) return;
-    const firstControl = columnsMenuRef.current?.querySelector<HTMLElement>('input, button');
-    firstControl?.focus();
-  }, [columnsMenuOpen]);
-
   const visibleColumns = useMemo(
     () => (mounted ? columnDefs : []).filter((col) => col.visible),
     [columnDefs, mounted]
-  );
-  const visibleHideableCount = useMemo(
-    () => columnDefs.filter((col) => col.hideable && col.visible).length,
-    [columnDefs]
   );
 
   const filteredRows = rows.filter((row) => {
@@ -772,16 +724,7 @@ export default function SendMoneyOpeningPage() {
                     <button
                       type="button"
                       ref={columnsButtonRef}
-                      onClick={(event) => {
-                        event.stopPropagation();
-                        const rect = columnsButtonRef.current?.getBoundingClientRect();
-                        if (rect) {
-                          const dropdownWidth = 224;
-                          const left = Math.max(8, Math.min(rect.right - dropdownWidth, window.innerWidth - dropdownWidth - 8));
-                          setColumnsMenuPos({ top: rect.bottom + 8, left });
-                        }
-                        setColumnsMenuOpen((current) => !current);
-                      }}
+                      onClick={() => setColumnsMenuOpen((current) => !current)}
                       aria-haspopup="true"
                       aria-expanded={columnsMenuOpen}
                       aria-controls="sendmoney-opening-columns-popover"
@@ -792,64 +735,15 @@ export default function SendMoneyOpeningPage() {
                       <Columns3 size={15} />
                       Columns
                     </button>
-                    {columnsMenuRendered && typeof document !== 'undefined' && createPortal(
-                      <div
-                        ref={columnsMenuRef}
-                        id="sendmoney-opening-columns-popover"
-                        role="dialog"
-                        aria-label="Column visibility"
-                        style={{ position: 'fixed', top: columnsMenuPos.top, left: columnsMenuPos.left, transformOrigin: 'top right' }}
-                        className={`z-[9999] w-56 max-h-[70vh] overflow-y-auto rounded-xl border border-[#e5e5e7] bg-white p-2 shadow-xl transition-[transform,opacity] duration-150 ease-[var(--ease-out-strong)] dark:border-[#3a3a3d] dark:bg-[#2a2a2d] ${
-                          columnsMenuOpen ? 'opacity-100 scale-100' : 'opacity-0 scale-95'
-                        }`}
-                        onClick={(event) => event.stopPropagation()}
-                        onKeyDown={(event) => {
-                          if (event.key === 'Escape') {
-                            event.stopPropagation();
-                            setColumnsMenuOpen(false);
-                            columnsButtonRef.current?.focus();
-                          }
-                        }}
-                      >
-                        <div className="px-2 py-1.5 text-[10px] font-semibold uppercase tracking-[0.24em] text-[#6b7280] dark:text-[#a0a0a0]">Columns</div>
-                        {columnDefs.filter((col) => col.hideable).map((col) => {
-                          const isLastVisible = col.visible && visibleHideableCount === 1;
-                          return (
-                            <label
-                              key={col.key}
-                              title={isLastVisible ? 'At least one column must stay visible' : undefined}
-                              className={`flex w-full items-center justify-start gap-2 whitespace-nowrap rounded-xl px-3 py-1.5 text-left text-[10px] ${
-                                isLastVisible
-                                  ? 'cursor-not-allowed text-[#b3b8c2] dark:text-[#5a5f66]'
-                                  : 'text-[#6b7280] hover:bg-[#f5f5f7] dark:text-[#a0a0a0] dark:hover:bg-slate-800'
-                              }`}
-                            >
-                              <input
-                                type="checkbox"
-                                checked={col.visible}
-                                disabled={isLastVisible}
-                                onChange={() => {
-                                  setColumnDefs((current) =>
-                                    current.map((c) => (c.key === col.key ? { ...c, visible: !c.visible } : c))
-                                  );
-                                }}
-                              />
-                              <span>{col.label}</span>
-                            </label>
-                          );
-                        })}
-                        <div className="mt-1 border-t border-[#F1F5F9] pt-1 dark:border-[#2f2f32]">
-                          <button
-                            type="button"
-                            onClick={() => setColumnDefs(DEFAULT_COLUMNS.map((col) => ({ ...col })))}
-                            className="flex w-full items-center justify-center rounded-lg px-2.5 py-1.5 text-[11px] font-medium text-[#0d9488] transition-[background-color,transform] duration-150 ease-[var(--ease-out-strong)] hover:bg-[rgba(13,148,136,0.08)] active:scale-[0.97] dark:hover:bg-[rgba(45,212,191,0.12)]"
-                          >
-                            Restore Defaults
-                          </button>
-                        </div>
-                      </div>,
-                      document.body
-                    )}
+                    <ColumnsDropdown
+                      id="sendmoney-opening-columns-popover"
+                      open={columnsMenuOpen}
+                      onOpenChange={setColumnsMenuOpen}
+                      anchorRef={columnsButtonRef}
+                      columns={columnDefs}
+                      onToggle={(key) => setColumnDefs((current) => current.map((c) => (c.key === key ? { ...c, visible: !c.visible } : c)))}
+                      onRestoreDefaults={() => setColumnDefs(DEFAULT_COLUMNS.map((col) => ({ ...col })))}
+                    />
                   </div>
                 )}
               </Toolbar.Right>

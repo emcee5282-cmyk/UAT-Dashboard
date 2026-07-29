@@ -8,6 +8,7 @@ import SettlementHeader from '../components/SettlementHeader';
 import ConnectionErrorState from '../components/ConnectionErrorState';
 import DataTable from '../components/DataTable';
 import Toolbar from '../components/Toolbar';
+import ColumnsDropdown from '../components/ColumnsDropdown';
 import TableFooter from '../components/TableFooter';
 import EmptyState from '../components/EmptyState';
 import { classifyFetchError, type ClassifiedError, assertAllOk } from '../lib/errors';
@@ -591,10 +592,8 @@ export default function TransferQueue() {
   // `mounted`), written on every change thereafter.
   const [columnDefs, setColumnDefs] = useState<ColumnDef[]>(DEFAULT_COLUMNS);
   const [columnsMenuOpen, setColumnsMenuOpen] = useState(false);
-  const [columnsMenuPos, setColumnsMenuPos] = useState({ top: 0, left: 0 });
   const [mounted, setMounted] = useState(false);
   const columnsButtonRef = useRef<HTMLButtonElement>(null);
-  const columnsMenuRef = useRef<HTMLDivElement>(null);
 
   const brandButtonRef = useRef<HTMLButtonElement>(null);
   const brandDropdownRef = useRef<HTMLDivElement>(null);
@@ -866,39 +865,6 @@ export default function TransferQueue() {
     setPreference(COLUMN_VISIBILITY_STORAGE_KEY, visibility);
   }, [columnDefs, mounted]);
 
-  useEffect(() => {
-    if (!columnsMenuOpen) return;
-
-    const handlePointerDown = (event: MouseEvent) => {
-      const target = event.target as Node;
-      if (
-        columnsButtonRef.current && !columnsButtonRef.current.contains(target) &&
-        columnsMenuRef.current && !columnsMenuRef.current.contains(target)
-      ) {
-        setColumnsMenuOpen(false);
-      }
-    };
-    const handleKeyDown = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') {
-        setColumnsMenuOpen(false);
-        columnsButtonRef.current?.focus();
-      }
-    };
-
-    document.addEventListener('mousedown', handlePointerDown);
-    document.addEventListener('keydown', handleKeyDown);
-    return () => {
-      document.removeEventListener('mousedown', handlePointerDown);
-      document.removeEventListener('keydown', handleKeyDown);
-    };
-  }, [columnsMenuOpen]);
-
-  useEffect(() => {
-    if (!columnsMenuOpen) return;
-    const firstControl = columnsMenuRef.current?.querySelector<HTMLElement>('input, button');
-    firstControl?.focus();
-  }, [columnsMenuOpen]);
-
   const searchedRows = useMemo(() => {
     const query = searchTerm.toLowerCase();
     if (!query) return queueRows;
@@ -987,10 +953,6 @@ export default function TransferQueue() {
   const visibleColumns = useMemo(
     () => (mounted ? columnDefs : []).filter((col) => col.visible),
     [columnDefs, mounted]
-  );
-  const visibleHideableCount = useMemo(
-    () => columnDefs.filter((col) => col.hideable && col.visible).length,
-    [columnDefs]
   );
   const columnVisibility = useMemo(
     () => Object.fromEntries(columnDefs.map((col) => [col.key, col.visible])) as Record<ColumnKey, boolean>,
@@ -1093,16 +1055,7 @@ export default function TransferQueue() {
                     <button
                       type="button"
                       ref={columnsButtonRef}
-                      onClick={(event) => {
-                        event.stopPropagation();
-                        const rect = columnsButtonRef.current?.getBoundingClientRect();
-                        if (rect) {
-                          const dropdownWidth = 224;
-                          const left = Math.max(8, Math.min(rect.right - dropdownWidth, window.innerWidth - dropdownWidth - 8));
-                          setColumnsMenuPos({ top: rect.bottom + 8, left });
-                        }
-                        setColumnsMenuOpen((current) => !current);
-                      }}
+                      onClick={() => setColumnsMenuOpen((current) => !current)}
                       aria-haspopup="true"
                       aria-expanded={columnsMenuOpen}
                       aria-controls="transfer-queue-columns-popover"
@@ -1113,62 +1066,15 @@ export default function TransferQueue() {
                       <Columns3 size={15} />
                       Columns
                     </button>
-                    {columnsMenuOpen && typeof document !== 'undefined' && createPortal(
-                      <div
-                        ref={columnsMenuRef}
-                        id="transfer-queue-columns-popover"
-                        role="dialog"
-                        aria-label="Column visibility"
-                        style={{ position: 'fixed', top: columnsMenuPos.top, left: columnsMenuPos.left }}
-                        className="z-[9999] w-56 max-h-[70vh] overflow-y-auto rounded-xl border border-[#e5e5e7] bg-white p-2 shadow-xl dark:border-[#3a3a3d] dark:bg-[#2a2a2d]"
-                        onClick={(event) => event.stopPropagation()}
-                        onKeyDown={(event) => {
-                          if (event.key === 'Escape') {
-                            event.stopPropagation();
-                            setColumnsMenuOpen(false);
-                            columnsButtonRef.current?.focus();
-                          }
-                        }}
-                      >
-                        <div className="px-2 py-1.5 text-[10px] font-semibold uppercase tracking-[0.24em] text-[#6b7280] dark:text-[#a0a0a0]">Columns</div>
-                        {columnDefs.filter((col) => col.hideable).map((col) => {
-                          const isLastVisible = col.visible && visibleHideableCount === 1;
-                          return (
-                            <label
-                              key={col.key}
-                              title={isLastVisible ? 'At least one column must stay visible' : undefined}
-                              className={`flex w-full items-center justify-start gap-2 whitespace-nowrap rounded-xl px-3 py-1.5 text-left text-[10px] ${
-                                isLastVisible
-                                  ? 'cursor-not-allowed text-[#b3b8c2] dark:text-[#5a5f66]'
-                                  : 'text-[#6b7280] hover:bg-[#f5f5f7] dark:text-[#a0a0a0] dark:hover:bg-slate-800'
-                              }`}
-                            >
-                              <input
-                                type="checkbox"
-                                checked={col.visible}
-                                disabled={isLastVisible}
-                                onChange={() => {
-                                  setColumnDefs((current) =>
-                                    current.map((c) => (c.key === col.key ? { ...c, visible: !c.visible } : c))
-                                  );
-                                }}
-                              />
-                              <span className="min-w-0 flex-1 truncate">{col.label}</span>
-                            </label>
-                          );
-                        })}
-                        <div className="mt-1 border-t border-[#F1F5F9] pt-1 dark:border-[#2f2f32]">
-                          <button
-                            type="button"
-                            onClick={() => setColumnDefs(DEFAULT_COLUMNS.map((col) => ({ ...col })))}
-                            className="flex w-full items-center justify-center rounded-lg px-2.5 py-1.5 text-[11px] font-medium text-indigo-600 transition-colors hover:bg-indigo-50 dark:text-indigo-400 dark:hover:bg-white/5"
-                          >
-                            Restore Defaults
-                          </button>
-                        </div>
-                      </div>,
-                      document.body
-                    )}
+                    <ColumnsDropdown
+                      id="transfer-queue-columns-popover"
+                      open={columnsMenuOpen}
+                      onOpenChange={setColumnsMenuOpen}
+                      anchorRef={columnsButtonRef}
+                      columns={columnDefs}
+                      onToggle={(key) => setColumnDefs((current) => current.map((c) => (c.key === key ? { ...c, visible: !c.visible } : c)))}
+                      onRestoreDefaults={() => setColumnDefs(DEFAULT_COLUMNS.map((col) => ({ ...col })))}
+                    />
                   </div>
                 )}
               </Toolbar.Right>

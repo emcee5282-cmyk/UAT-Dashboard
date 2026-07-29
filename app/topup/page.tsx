@@ -25,6 +25,7 @@ import SettlementHeader from '../components/SettlementHeader';
 import ConnectionErrorState from '../components/ConnectionErrorState';
 import TableFooter from '../components/TableFooter';
 import Toolbar from '../components/Toolbar';
+import ColumnsDropdown from '../components/ColumnsDropdown';
 import EmptyState from '../components/EmptyState';
 import DataTable from '../components/DataTable';
 import RecordFormModal, { type RecordFormField } from '../components/RecordFormModal';
@@ -629,22 +630,8 @@ export default function TopUpPage() {
 
   const [columnDefs, setColumnDefs] = useState<ColumnDef[]>(DEFAULT_COLUMNS);
   const [columnsMenuOpen, setColumnsMenuOpen] = useState(false);
-  const [columnsMenuPos, setColumnsMenuPos] = useState({ top: 0, left: 0 });
   const [mounted, setMounted] = useState(false);
   const columnsButtonRef = useRef<HTMLButtonElement>(null);
-  const columnsMenuRef = useRef<HTMLDivElement>(null);
-  // Keeps the portal mounted for 150ms after close so the closing
-  // opacity/scale transition (driven by columnsMenuOpen below) can play
-  // before React unmounts it — same pattern as Balance's Columns menu.
-  const [columnsMenuRendered, setColumnsMenuRendered] = useState(false);
-  useEffect(() => {
-    if (columnsMenuOpen) {
-      setColumnsMenuRendered(true);
-    } else {
-      const timeout = setTimeout(() => setColumnsMenuRendered(false), 150);
-      return () => clearTimeout(timeout);
-    }
-  }, [columnsMenuOpen]);
 
   useEffect(() => {
     setMounted(true);
@@ -661,44 +648,9 @@ export default function TopUpPage() {
     setPreference(COLUMN_VISIBILITY_STORAGE_KEY, visibility);
   }, [columnDefs, mounted]);
 
-  useEffect(() => {
-    if (!columnsMenuOpen) return;
-    const handlePointerDown = (event: MouseEvent) => {
-      const target = event.target as Node;
-      if (
-        columnsButtonRef.current && !columnsButtonRef.current.contains(target) &&
-        columnsMenuRef.current && !columnsMenuRef.current.contains(target)
-      ) {
-        setColumnsMenuOpen(false);
-      }
-    };
-    const handleKeyDown = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') {
-        setColumnsMenuOpen(false);
-        columnsButtonRef.current?.focus();
-      }
-    };
-    document.addEventListener('mousedown', handlePointerDown);
-    document.addEventListener('keydown', handleKeyDown);
-    return () => {
-      document.removeEventListener('mousedown', handlePointerDown);
-      document.removeEventListener('keydown', handleKeyDown);
-    };
-  }, [columnsMenuOpen]);
-
-  useEffect(() => {
-    if (!columnsMenuOpen) return;
-    const firstControl = columnsMenuRef.current?.querySelector<HTMLElement>('input, button');
-    firstControl?.focus();
-  }, [columnsMenuOpen]);
-
   const visibleColumns = useMemo(
     () => (mounted ? columnDefs : []).filter((col) => col.visible),
     [columnDefs, mounted]
-  );
-  const visibleHideableCount = useMemo(
-    () => columnDefs.filter((col) => col.hideable && col.visible).length,
-    [columnDefs]
   );
 
   const columnLayout = useMemo(() => calculateColumnLayout(visibleColumns), [visibleColumns]);
@@ -1184,16 +1136,7 @@ export default function TopUpPage() {
                       <button
                         type="button"
                         ref={columnsButtonRef}
-                        onClick={(event) => {
-                          event.stopPropagation();
-                          const rect = columnsButtonRef.current?.getBoundingClientRect();
-                          if (rect) {
-                            const dropdownWidth = 224;
-                            const left = Math.max(8, Math.min(rect.right - dropdownWidth, window.innerWidth - dropdownWidth - 8));
-                            setColumnsMenuPos({ top: rect.bottom + 8, left });
-                          }
-                          setColumnsMenuOpen((current) => !current);
-                        }}
+                        onClick={() => setColumnsMenuOpen((current) => !current)}
                         aria-haspopup="true"
                         aria-expanded={columnsMenuOpen}
                         aria-controls="topup-columns-popover"
@@ -1204,68 +1147,15 @@ export default function TopUpPage() {
                         <Columns3 size={15} />
                         Columns
                       </button>
-                      {columnsMenuRendered && typeof document !== 'undefined' && createPortal(
-                        <div
-                          ref={columnsMenuRef}
-                          id="topup-columns-popover"
-                          role="dialog"
-                          aria-label="Column visibility"
-                          style={{ position: 'fixed', top: columnsMenuPos.top, left: columnsMenuPos.left, transformOrigin: 'top right' }}
-                          className={`z-[9999] w-56 rounded-xl border border-[#e5e5e7] bg-white p-2 shadow-xl transition-[transform,opacity] duration-150 ease-[var(--ease-out-strong)] dark:border-[#3a3a3d] dark:bg-[#2a2a2d] ${
-                            columnsMenuOpen ? 'opacity-100 scale-100' : 'opacity-0 scale-95'
-                          }`}
-                          onClick={(event) => event.stopPropagation()}
-                          onKeyDown={(event) => {
-                            if (event.key === 'Escape') {
-                              event.stopPropagation();
-                              setColumnsMenuOpen(false);
-                              columnsButtonRef.current?.focus();
-                            }
-                          }}
-                        >
-                          <div className="px-2 py-1.5 text-[10px] font-semibold uppercase tracking-[0.24em] text-[#6b7280] dark:text-[#a0a0a0]">
-                            Columns
-                          </div>
-                          <div className="max-h-64 overflow-y-auto">
-                            {columnDefs.filter((col) => col.hideable).map((col) => {
-                              const isLastVisible = col.visible && visibleHideableCount === 1;
-                              return (
-                                <label
-                                  key={col.id}
-                                  title={isLastVisible ? 'At least one column must stay visible' : undefined}
-                                  className={`flex w-full items-center justify-start gap-2 whitespace-nowrap rounded-lg px-2.5 py-1.5 text-left text-[13px] font-normal ${
-                                    isLastVisible
-                                      ? 'cursor-not-allowed text-[#94A3B8] dark:text-[#6b7280]'
-                                      : 'text-[#475569] hover:bg-[#F1F5F9] dark:text-[#9CA3AF] dark:hover:bg-white/5'
-                                  }`}
-                                >
-                                  <input
-                                    type="checkbox"
-                                    checked={col.visible}
-                                    disabled={isLastVisible}
-                                    onChange={() => {
-                                      setColumnDefs((current) =>
-                                        current.map((c) => (c.id === col.id ? { ...c, visible: !c.visible } : c))
-                                      );
-                                    }}
-                                  />
-                                  <span>{col.label}</span>
-                                </label>
-                              );
-                            })}
-                          </div>
-                          <div className="mt-1 border-t border-[#F1F5F9] pt-1 dark:border-[#2f2f32]">
-                            <button
-                              type="button"
-                              onClick={() => setColumnDefs(DEFAULT_COLUMNS.map((col) => ({ ...col })))}
-                              className="flex w-full items-center justify-center rounded-lg px-2.5 py-1.5 text-[13px] font-medium text-[#2563EB] transition-[background-color,transform] duration-150 ease-[var(--ease-out-strong)] hover:bg-[#EFF6FF] active:scale-[0.97] dark:hover:bg-white/5"
-                            >
-                              Restore Defaults
-                            </button>
-                          </div>
-                        </div>,
-                        document.body
-                      )}
+                      <ColumnsDropdown
+                        id="topup-columns-popover"
+                        open={columnsMenuOpen}
+                        onOpenChange={setColumnsMenuOpen}
+                        anchorRef={columnsButtonRef}
+                        columns={columnDefs.map((col) => ({ key: col.id, label: col.label, visible: col.visible, hideable: col.hideable }))}
+                        onToggle={(key) => setColumnDefs((current) => current.map((c) => (c.id === key ? { ...c, visible: !c.visible } : c)))}
+                        onRestoreDefaults={() => setColumnDefs(DEFAULT_COLUMNS.map((col) => ({ ...col })))}
+                      />
                     </div>
                   </>
                 )}
