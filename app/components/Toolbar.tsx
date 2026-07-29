@@ -26,7 +26,7 @@ function ToolbarRight({ children, className }: { children?: ReactNode; className
 // interaction patterns, not identical pixel dimensions on every page.
 export default function Toolbar({ children, className }: { children: ReactNode; className?: string }) {
   return (
-    <div className={className ?? 'shrink-0 h-[56px] px-4 border-b border-[#E5E7EB] dark:border-[#3a3a3d] flex flex-wrap items-center justify-between gap-3'}>
+    <div className={className ?? 'shrink-0 min-h-[56px] px-4 border-b border-[#E5E7EB] dark:border-[#3a3a3d] flex flex-wrap items-center justify-between gap-3'}>
       {children}
     </div>
   );

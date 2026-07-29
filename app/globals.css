@@ -12,6 +12,10 @@
      otherwise untouched. Default here is the collapsed width, since that's
      the state before the panelOpen-restoring effect runs on mount. */
   --sidebar-width: 72px;
+  /* Stronger than Tailwind's built-in ease-out/ease-in-out — the default
+     curves are too weak to read as intentional on fast (150ms) UI motion. */
+  --ease-out-strong: cubic-bezier(0.23, 1, 0.32, 1);
+  --ease-in-out-strong: cubic-bezier(0.77, 0, 0.175, 1);
   --border: #e2e8f0;
   --muted: #f1f5f9;
   --muted-foreground: #64748b;
@@ -332,6 +336,19 @@ body {
 }
 .dt-step-fade-in {
   animation: dt-step-fade-in 200ms ease-out;
+}
+/* Toolbar filter-count badge (e.g. Balance's Brand/Leader pills) — pops in
+   whenever a filter goes from "all selected" to "some selected", instead of
+   snapping into existence. Never mounted at scale(0): starts at 0.5, not 0. */
+@keyframes dt-badge-pop {
+  from {
+    opacity: 0;
+    transform: scale(0.5);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
 }
 /* Bulk selection action bar (Settlement toolbar) — slides down into place
    under the toolbar on appear, retracts back up on dismiss. Its own pair

@@ -44,7 +44,7 @@ import { TABLE_STICKY_HEADER_SHADOW_CLASS } from '../design-system/shadows';
 // Refresh/Export buttons (app/stlm/page.tsx's GHOST_BUTTON, copied verbatim
 // so Top Up's toolbar reads as the same system).
 const GHOST_BUTTON =
-  'inline-flex h-9 items-center gap-1.5 rounded-[8px] border border-[#E2E8F0] px-3 text-[13px] font-medium text-[#475569] transition-colors duration-150 ease-out hover:bg-[#F8FAFC] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#2563EB] dark:border-[#3a3a3d] dark:text-[#9CA3AF] dark:hover:bg-white/5';
+  'inline-flex h-9 items-center gap-1.5 rounded-[8px] border border-[#E2E8F0] px-3 text-[13px] font-medium text-[#475569] transition-[color,background-color,transform] duration-150 ease-[var(--ease-out-strong)] hover:bg-[#E2E8F0] active:scale-[0.97] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#2563EB] dark:border-[#3a3a3d] dark:text-[#9CA3AF] dark:hover:bg-white/5';
 
 const EMPTY_STATE_ACTION_BUTTON =
   'inline-flex h-9 items-center rounded-[8px] border border-[#E5E7EB] px-3 text-[13px] font-medium text-[#475569] transition-colors hover:bg-[#F1F5F9] dark:border-[#3a3a3d] dark:text-[#9CA3AF] dark:hover:bg-white/5';
@@ -380,6 +380,18 @@ function RowActionsCell({ row, onEdit }: { row: TopUpRow; onEdit: (row: TopUpRow
   const [pos, setPos] = useState({ top: 0, left: 0 });
   const btnRef = useRef<HTMLButtonElement>(null);
   const menuRef = useRef<HTMLDivElement>(null);
+  // Keeps the portal mounted for 150ms after close so the closing
+  // opacity/scale transition (driven by `open` below) can play before React
+  // unmounts it — same pattern as the Columns menu.
+  const [rendered, setRendered] = useState(false);
+  useEffect(() => {
+    if (open) {
+      setRendered(true);
+    } else {
+      const timeout = setTimeout(() => setRendered(false), 150);
+      return () => clearTimeout(timeout);
+    }
+  }, [open]);
 
   useEffect(() => {
     if (!open) return;
@@ -422,15 +434,17 @@ function RowActionsCell({ row, onEdit }: { row: TopUpRow; onEdit: (row: TopUpRow
           if (rect) setPos({ top: rect.bottom + 4, left: rect.right - 144 });
           setOpen((current) => !current);
         }}
-        className="flex h-8 w-8 items-center justify-center rounded-[8px] text-[#94A3B8] transition-colors duration-150 hover:bg-[#F1F5F9] hover:text-[#475569] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#2563EB] dark:hover:bg-white/5"
+        className="flex h-8 w-8 items-center justify-center rounded-[8px] text-[#94A3B8] transition-[color,background-color,transform] duration-150 ease-[var(--ease-out-strong)] hover:bg-[#F1F5F9] hover:text-[#475569] active:scale-[0.97] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#2563EB] dark:hover:bg-white/5"
       >
         <MoreVertical size={16} />
       </button>
-      {open && typeof document !== 'undefined' && createPortal(
+      {rendered && typeof document !== 'undefined' && createPortal(
         <div
           ref={menuRef}
-          style={{ position: 'fixed', top: pos.top, left: pos.left }}
-          className="z-[9999] w-36 rounded-xl border border-[#e5e5e7] bg-white p-1 shadow-xl dark:border-[#3a3a3d] dark:bg-[#2a2a2d]"
+          style={{ position: 'fixed', top: pos.top, left: pos.left, transformOrigin: 'top right' }}
+          className={`z-[9999] w-36 rounded-xl border border-[#e5e5e7] bg-white p-1 shadow-xl transition-[transform,opacity] duration-150 ease-[var(--ease-out-strong)] dark:border-[#3a3a3d] dark:bg-[#2a2a2d] ${
+            open ? 'opacity-100 scale-100' : 'opacity-0 scale-95'
+          }`}
           onClick={(event) => event.stopPropagation()}
         >
           <button
@@ -619,6 +633,18 @@ export default function TopUpPage() {
   const [mounted, setMounted] = useState(false);
   const columnsButtonRef = useRef<HTMLButtonElement>(null);
   const columnsMenuRef = useRef<HTMLDivElement>(null);
+  // Keeps the portal mounted for 150ms after close so the closing
+  // opacity/scale transition (driven by columnsMenuOpen below) can play
+  // before React unmounts it — same pattern as Balance's Columns menu.
+  const [columnsMenuRendered, setColumnsMenuRendered] = useState(false);
+  useEffect(() => {
+    if (columnsMenuOpen) {
+      setColumnsMenuRendered(true);
+    } else {
+      const timeout = setTimeout(() => setColumnsMenuRendered(false), 150);
+      return () => clearTimeout(timeout);
+    }
+  }, [columnsMenuOpen]);
 
   useEffect(() => {
     setMounted(true);
@@ -1178,14 +1204,16 @@ export default function TopUpPage() {
                         <Columns3 size={15} />
                         Columns
                       </button>
-                      {columnsMenuOpen && typeof document !== 'undefined' && createPortal(
+                      {columnsMenuRendered && typeof document !== 'undefined' && createPortal(
                         <div
                           ref={columnsMenuRef}
                           id="topup-columns-popover"
                           role="dialog"
                           aria-label="Column visibility"
-                          style={{ position: 'fixed', top: columnsMenuPos.top, left: columnsMenuPos.left }}
-                          className="z-[9999] w-56 rounded-xl border border-[#e5e5e7] bg-white p-2 shadow-xl dark:border-[#3a3a3d] dark:bg-[#2a2a2d]"
+                          style={{ position: 'fixed', top: columnsMenuPos.top, left: columnsMenuPos.left, transformOrigin: 'top right' }}
+                          className={`z-[9999] w-56 rounded-xl border border-[#e5e5e7] bg-white p-2 shadow-xl transition-[transform,opacity] duration-150 ease-[var(--ease-out-strong)] dark:border-[#3a3a3d] dark:bg-[#2a2a2d] ${
+                            columnsMenuOpen ? 'opacity-100 scale-100' : 'opacity-0 scale-95'
+                          }`}
                           onClick={(event) => event.stopPropagation()}
                           onKeyDown={(event) => {
                             if (event.key === 'Escape') {
@@ -1230,7 +1258,7 @@ export default function TopUpPage() {
                             <button
                               type="button"
                               onClick={() => setColumnDefs(DEFAULT_COLUMNS.map((col) => ({ ...col })))}
-                              className="flex w-full items-center justify-center rounded-lg px-2.5 py-1.5 text-[13px] font-medium text-[#2563EB] transition-colors hover:bg-[#EFF6FF] dark:hover:bg-white/5"
+                              className="flex w-full items-center justify-center rounded-lg px-2.5 py-1.5 text-[13px] font-medium text-[#2563EB] transition-[background-color,transform] duration-150 ease-[var(--ease-out-strong)] hover:bg-[#EFF6FF] active:scale-[0.97] dark:hover:bg-white/5"
                             >
                               Restore Defaults
                             </button>
@@ -1279,7 +1307,7 @@ export default function TopUpPage() {
                                 setSortDirection('asc');
                               }
                             }}
-                            className={`relative flex w-full items-center gap-1.5 text-${COLUMN_ALIGN[col.id]} transition-colors duration-150 ease-out hover:text-[#111827] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#2563EB] dark:hover:text-white ${
+                            className={`relative flex w-full items-center gap-1.5 text-${COLUMN_ALIGN[col.id]} transition-[color,transform] duration-150 ease-[var(--ease-out-strong)] hover:text-[#111827] active:scale-[0.98] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#2563EB] dark:hover:text-white ${
                               COLUMN_ALIGN[col.id] === 'right' ? 'justify-end' : COLUMN_ALIGN[col.id] === 'center' ? 'justify-center' : 'justify-start'
                             }`}
                           >

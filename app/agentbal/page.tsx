@@ -14,6 +14,7 @@ import DataTable from '../components/DataTable';
 import Toolbar from '../components/Toolbar';
 import TableFooter from '../components/TableFooter';
 import EmptyState from '../components/EmptyState';
+import FilterDropdown from '../components/FilterDropdown';
 import { classifyFetchError, type ClassifiedError, assertAllOk } from '../lib/errors';
 import { rawVal, fmt, fmtAbbrev } from '@/app/lib/format';
 import { parseCsvLines } from '../lib/csv';
@@ -325,7 +326,7 @@ function computeColumnWidthsPx(rows: MergedRow[], columns: ColumnDef[]): Partial
 }
 
 const GHOST_BUTTON =
-  'inline-flex h-9 items-center gap-1.5 rounded-[8px] border border-[#E2E8F0] px-3 text-[13px] font-medium text-[#475569] transition-[color,background-color,transform] duration-150 ease-out hover:bg-[#F8FAFC] active:scale-[0.97] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#2563EB] dark:border-[#3a3a3d] dark:text-[#9CA3AF] dark:hover:bg-white/5';
+  'inline-flex h-9 items-center gap-1.5 rounded-[8px] border border-[#E2E8F0] px-3 text-[13px] font-medium text-[#475569] transition-[color,background-color,transform] duration-150 ease-[var(--ease-out-strong)] hover:bg-[#E2E8F0] active:scale-[0.97] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#2563EB] dark:border-[#3a3a3d] dark:text-[#9CA3AF] dark:hover:bg-white/5';
 
 const PAGE_SIZE_OPTIONS = [50, 100, 250, 500];
 
@@ -352,125 +353,53 @@ function headerCellClasses(colKey: ColumnKey, _isSorted: boolean) {
   return `group overflow-hidden whitespace-nowrap px-5 text-${COLUMN_ALIGN[colKey]} text-[13px] font-semibold text-[#475569] dark:text-[#9CA3AF]`;
 }
 
-// Toolbar filter pill — Brand/Leader/Wallet Type/Wallet Status, per explicit
-// spec: filters live ONLY in the toolbar, never in the table header. Same
-// state/refs/handlers each column already had when this lived in its own
-// <th> — only the JSX location and visual shell moved, no filtering logic
-// changed. Reused four times (four separate buttons, not one combined
-// filter), matching the reference layout exactly.
-function ToolbarFilterDropdown({
+// Toolbar filter trigger — Brand/Leader/Wallet Type/Wallet Status. This is
+// the pill button only; the panel beneath it is the shared, cross-page
+// FilterDropdown component (app/components/FilterDropdown.tsx). Keeping the
+// trigger page-local (rather than folding it into the shared component)
+// lets other pages migrate to FilterDropdown later without being forced
+// into this exact pill shape — the shared piece is the premium multi-select
+// panel itself, not the button that opens it.
+function FilterTriggerButton({
   label,
   icon: Icon,
-  options,
-  isChecked,
-  allChecked,
   anyUnchecked,
   selectedCount,
-  onToggleAll,
-  onToggleOne,
   menuOpen,
-  setMenuOpen,
   buttonRef,
-  dropdownRef,
-  menuPos,
-  setMenuPos,
+  onClick,
 }: {
   label: string;
   icon: React.ComponentType<{ size?: number; className?: string }>;
-  options: string[];
-  isChecked: (value: string) => boolean;
-  allChecked: boolean;
   anyUnchecked: boolean;
   selectedCount: number;
-  onToggleAll: () => void;
-  onToggleOne: (value: string) => void;
   menuOpen: boolean;
-  setMenuOpen: (updater: (current: boolean) => boolean) => void;
   buttonRef: React.RefObject<HTMLButtonElement | null>;
-  dropdownRef: React.RefObject<HTMLDivElement | null>;
-  menuPos: { top: number; left: number };
-  setMenuPos: (pos: { top: number; left: number }) => void;
+  onClick: () => void;
 }) {
-  // Mount-delay pattern for an exit animation — createPortal content used
-  // to unmount the instant menuOpen went false, so the dropdown just
-  // vanished with no transition. `rendered` stays true for one extra
-  // 150ms tick after close so the closing transition (menuOpen driving
-  // opacity/scale below) actually gets to play before the DOM node is
-  // removed.
-  const [rendered, setRendered] = useState(false);
-  useEffect(() => {
-    if (menuOpen) {
-      setRendered(true);
-    } else {
-      const timeout = setTimeout(() => setRendered(false), 150);
-      return () => clearTimeout(timeout);
-    }
-  }, [menuOpen]);
-
   return (
-    <div className="relative">
-      <button
-        type="button"
-        ref={buttonRef}
-        onClick={(event) => {
-          event.stopPropagation();
-          const rect = buttonRef.current?.getBoundingClientRect();
-          if (rect) {
-            const dropdownWidth = 176;
-            const left = Math.min(rect.left, window.innerWidth - dropdownWidth - 8);
-            setMenuPos({ top: rect.bottom + 8, left: Math.max(8, left) });
-          }
-          setMenuOpen((current) => !current);
-        }}
-        className={`inline-flex h-9 shrink-0 items-center gap-1.5 rounded-full border px-3 text-[13px] font-medium transition-[color,background-color,border-color,transform] duration-150 ease-out active:scale-[0.97] ${
-          anyUnchecked
-            ? 'border-indigo-200 bg-indigo-50 text-indigo-700 dark:border-indigo-900/50 dark:bg-indigo-500/10 dark:text-indigo-300'
-            : 'border-[#E5E7EB] bg-white text-[#475569] hover:bg-[#F8FAFC] dark:border-[#3a3a3d] dark:bg-[#2a2a2d] dark:text-[#9CA3AF] dark:hover:bg-white/5'
-        }`}
-      >
-        <Icon size={14} className={anyUnchecked ? 'text-indigo-600 dark:text-indigo-400' : 'text-[#475569] dark:text-[#9CA3AF]'} />
-        <span>{label}</span>
-        {anyUnchecked && (
-          <span className="flex h-4 min-w-[16px] items-center justify-center rounded-full bg-indigo-600 px-1 text-[10px] font-semibold text-white">
-            {selectedCount}
-          </span>
-        )}
-        <ChevronDown
-          size={14}
-          className={`transition-transform duration-150 ease-in-out ${menuOpen ? 'rotate-180' : ''} ${anyUnchecked ? 'text-indigo-600 dark:text-indigo-400' : 'text-[#475569] dark:text-[#9CA3AF]'}`}
-        />
-      </button>
-      {rendered && typeof document !== 'undefined' && createPortal(
-        <div
-          ref={dropdownRef}
-          style={{ position: 'fixed', top: menuPos.top, left: menuPos.left, transformOrigin: 'top left' }}
-          className={`z-[9999] w-44 rounded-xl border border-[#e5e5e7] bg-white p-2 shadow-xl transition-[transform,opacity] duration-150 ease-out dark:border-[#3a3a3d] dark:bg-[#2a2a2d] ${
-            menuOpen ? 'opacity-100 scale-100' : 'opacity-0 scale-95'
-          }`}
-          onClick={(event) => event.stopPropagation()}
-        >
-          <div className="px-2 py-1.5 text-left text-[10px] font-semibold uppercase tracking-[0.24em] text-[#6b7280] dark:text-[#a0a0a0]">{label}</div>
-          <div className="max-h-56 overflow-y-auto">
-            {options.map((opt) => (
-              <label key={opt} className="flex w-full items-center justify-start gap-2 whitespace-nowrap rounded-xl px-3 py-1.5 text-left text-[10px] text-[#6b7280] hover:bg-[#f5f5f7] dark:text-[#a0a0a0] dark:hover:bg-slate-800">
-                <input type="checkbox" checked={isChecked(opt)} onChange={() => onToggleOne(opt)} />
-                <span>{opt}</span>
-              </label>
-            ))}
-          </div>
-          <div className="mt-1 border-t border-[#F1F5F9] pt-1 dark:border-[#2f2f32]">
-            <button
-              type="button"
-              onClick={onToggleAll}
-              className="flex w-full items-center justify-center rounded-lg px-2.5 py-1.5 text-[11px] font-medium text-indigo-600 transition-[background-color,transform] duration-150 ease-out hover:bg-indigo-50 active:scale-[0.97] dark:text-indigo-400 dark:hover:bg-white/5"
-            >
-              {allChecked ? 'Clear All' : 'Select All'}
-            </button>
-          </div>
-        </div>,
-        document.body
+    <button
+      type="button"
+      ref={buttonRef}
+      onClick={onClick}
+      className={`inline-flex h-9 shrink-0 items-center gap-1.5 rounded-full border px-3 text-[13px] font-medium transition-[color,background-color,border-color,transform] duration-150 ease-[var(--ease-out-strong)] active:scale-[0.97] ${
+        anyUnchecked
+          ? 'border-indigo-200 bg-indigo-50 text-indigo-700 dark:border-indigo-900/50 dark:bg-indigo-500/10 dark:text-indigo-300'
+          : 'border-[#E5E7EB] bg-white text-[#475569] hover:bg-[#E2E8F0] dark:border-[#3a3a3d] dark:bg-[#2a2a2d] dark:text-[#9CA3AF] dark:hover:bg-white/5'
+      }`}
+    >
+      <Icon size={14} className={`transition-colors duration-150 ${anyUnchecked ? 'text-indigo-600 dark:text-indigo-400' : 'text-[#475569] dark:text-[#9CA3AF]'}`} />
+      <span>{label}</span>
+      {anyUnchecked && (
+        <span className="flex h-4 min-w-[16px] animate-[dt-badge-pop_150ms_var(--ease-out-strong)] items-center justify-center rounded-full bg-indigo-600 px-1 text-[10px] font-semibold text-white">
+          {selectedCount}
+        </span>
       )}
-    </div>
+      <ChevronDown
+        size={14}
+        className={`transition-[transform,color] duration-150 ease-[var(--ease-in-out-strong)] ${menuOpen ? 'rotate-180' : ''} ${anyUnchecked ? 'text-indigo-600 dark:text-indigo-400' : 'text-[#475569] dark:text-[#9CA3AF]'}`}
+      />
+    </button>
   );
 }
 
@@ -702,13 +631,9 @@ export default function AgentBalance() {
   const [sortColumn, setSortColumn] = useState<ColumnKey>('companyBalance');
   const [sortDirection, setSortDirection] = useState<'asc' | 'desc'>('desc');
   const [brandMenuOpen, setBrandMenuOpen] = useState(false);
-  const [brandMenuPos, setBrandMenuPos] = useState({ top: 0, left: 0 });
   const [leaderMenuOpen, setLeaderMenuOpen] = useState(false);
-  const [leaderMenuPos, setLeaderMenuPos] = useState({ top: 0, left: 0 });
   const [walletTypeMenuOpen, setWalletTypeMenuOpen] = useState(false);
-  const [walletTypeMenuPos, setWalletTypeMenuPos] = useState({ top: 0, left: 0 });
   const [walletStatusMenuOpen, setWalletStatusMenuOpen] = useState(false);
-  const [walletStatusMenuPos, setWalletStatusMenuPos] = useState({ top: 0, left: 0 });
 
   // Column Visibility (Enterprise Table V2) — same model/persistence as
   // app/stlm/page.tsx: read saved preference once on mount (gated by
@@ -738,30 +663,19 @@ export default function AgentBalance() {
   const [page, setPage] = useState(1);
   const [rowsPerPage, setRowsPerPage] = useState(50);
   const brandButtonRef = useRef<HTMLButtonElement>(null);
-  const brandDropdownRef = useRef<HTMLDivElement>(null);
   const leaderButtonRef = useRef<HTMLButtonElement>(null);
-  const leaderDropdownRef = useRef<HTMLDivElement>(null);
   const walletTypeButtonRef = useRef<HTMLButtonElement>(null);
-  const walletTypeDropdownRef = useRef<HTMLDivElement>(null);
   const walletStatusButtonRef = useRef<HTMLButtonElement>(null);
-  const walletStatusDropdownRef = useRef<HTMLDivElement>(null);
   const scrollRef = useRef<number>(0);
   const tableScrollRef = useRef<HTMLDivElement>(null);
   const [isScrolled, setIsScrolled] = useState(false);
   const [selectedRows, setSelectedRows] = useState<Set<string>>(new Set());
-  // Small left/right edge-fade cues on the horizontally-scrollable table,
-  // so text at the boundary doesn't look abruptly cut off — shown only
-  // while there's actually more content to scroll to in that direction.
-  const [atScrollStart, setAtScrollStart] = useState(true);
-  const [atScrollEnd, setAtScrollEnd] = useState(true);
 
   useEffect(() => {
     const el = tableScrollRef.current;
     if (!el) return;
     const handleScroll = () => {
       setIsScrolled(el.scrollTop > 0);
-      setAtScrollStart(el.scrollLeft <= 1);
-      setAtScrollEnd(el.scrollLeft >= el.scrollWidth - el.offsetWidth - 1);
     };
     handleScroll();
     el.addEventListener('scroll', handleScroll, { passive: true });
@@ -1060,74 +974,6 @@ export default function AgentBalance() {
     firstControl?.focus();
   }, [columnsMenuOpen]);
 
-  useEffect(() => {
-    if (!brandMenuOpen) return;
-
-    const handlePointerDown = (event: MouseEvent) => {
-      const target = event.target as Node;
-      if (
-        brandButtonRef.current && !brandButtonRef.current.contains(target) &&
-        brandDropdownRef.current && !brandDropdownRef.current.contains(target)
-      ) {
-        setBrandMenuOpen(false);
-      }
-    };
-
-    document.addEventListener('mousedown', handlePointerDown);
-    return () => document.removeEventListener('mousedown', handlePointerDown);
-  }, [brandMenuOpen]);
-
-  useEffect(() => {
-    if (!leaderMenuOpen) return;
-
-    const handlePointerDown = (event: MouseEvent) => {
-      const target = event.target as Node;
-      if (
-        leaderButtonRef.current && !leaderButtonRef.current.contains(target) &&
-        leaderDropdownRef.current && !leaderDropdownRef.current.contains(target)
-      ) {
-        setLeaderMenuOpen(false);
-      }
-    };
-
-    document.addEventListener('mousedown', handlePointerDown);
-    return () => document.removeEventListener('mousedown', handlePointerDown);
-  }, [leaderMenuOpen]);
-
-  useEffect(() => {
-    if (!walletTypeMenuOpen) return;
-
-    const handlePointerDown = (event: MouseEvent) => {
-      const target = event.target as Node;
-      if (
-        walletTypeButtonRef.current && !walletTypeButtonRef.current.contains(target) &&
-        walletTypeDropdownRef.current && !walletTypeDropdownRef.current.contains(target)
-      ) {
-        setWalletTypeMenuOpen(false);
-      }
-    };
-
-    document.addEventListener('mousedown', handlePointerDown);
-    return () => document.removeEventListener('mousedown', handlePointerDown);
-  }, [walletTypeMenuOpen]);
-
-  useEffect(() => {
-    if (!walletStatusMenuOpen) return;
-
-    const handlePointerDown = (event: MouseEvent) => {
-      const target = event.target as Node;
-      if (
-        walletStatusButtonRef.current && !walletStatusButtonRef.current.contains(target) &&
-        walletStatusDropdownRef.current && !walletStatusDropdownRef.current.contains(target)
-      ) {
-        setWalletStatusMenuOpen(false);
-      }
-    };
-
-    document.addEventListener('mousedown', handlePointerDown);
-    return () => document.removeEventListener('mousedown', handlePointerDown);
-  }, [walletStatusMenuOpen]);
-
   // Gated on `mounted` so the very first paint never shows the all-visible
   // DEFAULT_COLUMNS set before the saved preference has been read (same
   // reload-flash fix as Settlement's).
@@ -1152,7 +998,6 @@ export default function AgentBalance() {
     return WALLET_STATUS_OPTIONS.filter((status) => present.has(status));
   }, [rows]);
 
-  const allWalletStatusesChecked = walletStatusOptions.every((status) => walletStatusFilter[status]);
   const anyWalletStatusUnchecked = walletStatusOptions.some((status) => !walletStatusFilter[status]);
   const selectedWalletStatusCount = walletStatusOptions.filter((status) => walletStatusFilter[status]).length;
 
@@ -1162,7 +1007,6 @@ export default function AgentBalance() {
   }, [rows]);
 
   const isLeaderChecked = (name: string) => leaderFilter[name] !== false;
-  const allLeadersChecked = leaderOptions.every((name) => isLeaderChecked(name));
   const anyLeaderUnchecked = leaderOptions.some((name) => !isLeaderChecked(name));
   const selectedLeaderCount = leaderOptions.filter((name) => isLeaderChecked(name)).length;
 
@@ -1172,14 +1016,12 @@ export default function AgentBalance() {
   }, [rows]);
 
   const isBrandChecked = (name: string) => brandFilter[name] !== false;
-  const allBrandsChecked = brandOptions.every((name) => isBrandChecked(name));
   const anyBrandUnchecked = brandOptions.some((name) => !isBrandChecked(name));
   const selectedBrandCount = brandOptions.filter((name) => isBrandChecked(name)).length;
 
   const walletTypeOptions = WALLET_TYPE_FILTER_LABELS;
 
   const isWalletTypeChecked = (name: string) => walletTypeFilter[name] !== false;
-  const allWalletTypesChecked = walletTypeOptions.every((name) => isWalletTypeChecked(name));
   const anyWalletTypeUnchecked = walletTypeOptions.some((name) => !isWalletTypeChecked(name));
   const selectedWalletTypeCount = walletTypeOptions.filter((name) => isWalletTypeChecked(name)).length;
 
@@ -1215,6 +1057,126 @@ export default function AgentBalance() {
     }
     return list;
   }, [leaderFilter, leaderOptions, brandFilter, brandOptions, walletStatusFilter, walletTypeFilter, walletTypeOptions, searchedRows]);
+
+  // Faceted option counts for the 4 filter dropdowns — same "other filters +
+  // search" composition as filteredRows above, each omitting its own facet's
+  // clause so unchecking an option doesn't shrink its own list toward zero.
+  // Presentation-only tallies; filteredRows itself (the real table filter)
+  // is untouched.
+  const leaderFacetRows = useMemo(() => {
+    let list = searchedRows;
+    if (brandOptions.some((name) => brandFilter[name] === false)) {
+      list = list.filter((row) => brandFilter[row.brand] !== false);
+    }
+    if (walletStatusOptions.some((status) => !walletStatusFilter[status])) {
+      list = list.filter((row) => walletStatusFilter[row.walletStatus]);
+    }
+    if (walletTypeOptions.some((name) => walletTypeFilter[name] === false)) {
+      list = list.filter((row) => {
+        if (row.walletType === '−') return isWalletTypeChecked('—');
+        const rowAbbreviations = row.walletType.split(' | ');
+        return WALLET_TYPE_FILTER_OPTIONS.some(
+          (opt) => rowAbbreviations.includes(opt.abbreviation) && isWalletTypeChecked(opt.label)
+        );
+      });
+    }
+    return list;
+  }, [searchedRows, brandFilter, brandOptions, walletStatusFilter, walletStatusOptions, walletTypeFilter, walletTypeOptions]);
+
+  const leaderFilterOptions = useMemo(() => {
+    const counts = new Map<string, number>();
+    for (const row of leaderFacetRows) {
+      counts.set(row.leader, (counts.get(row.leader) ?? 0) + 1);
+    }
+    return leaderOptions.map((name) => ({ value: name, label: name, count: counts.get(name) ?? 0 }));
+  }, [leaderFacetRows, leaderOptions]);
+
+  const brandFacetRows = useMemo(() => {
+    let list = searchedRows;
+    if (leaderOptions.some((name) => leaderFilter[name] === false)) {
+      list = list.filter((row) => leaderFilter[row.leader] !== false);
+    }
+    if (walletStatusOptions.some((status) => !walletStatusFilter[status])) {
+      list = list.filter((row) => walletStatusFilter[row.walletStatus]);
+    }
+    if (walletTypeOptions.some((name) => walletTypeFilter[name] === false)) {
+      list = list.filter((row) => {
+        if (row.walletType === '−') return isWalletTypeChecked('—');
+        const rowAbbreviations = row.walletType.split(' | ');
+        return WALLET_TYPE_FILTER_OPTIONS.some(
+          (opt) => rowAbbreviations.includes(opt.abbreviation) && isWalletTypeChecked(opt.label)
+        );
+      });
+    }
+    return list;
+  }, [searchedRows, leaderFilter, leaderOptions, walletStatusFilter, walletStatusOptions, walletTypeFilter, walletTypeOptions]);
+
+  const brandFilterOptions = useMemo(() => {
+    const counts = new Map<string, number>();
+    for (const row of brandFacetRows) {
+      counts.set(row.brand, (counts.get(row.brand) ?? 0) + 1);
+    }
+    return brandOptions.map((name) => ({ value: name, label: name, count: counts.get(name) ?? 0 }));
+  }, [brandFacetRows, brandOptions]);
+
+  const walletStatusFacetRows = useMemo(() => {
+    let list = searchedRows;
+    if (leaderOptions.some((name) => leaderFilter[name] === false)) {
+      list = list.filter((row) => leaderFilter[row.leader] !== false);
+    }
+    if (brandOptions.some((name) => brandFilter[name] === false)) {
+      list = list.filter((row) => brandFilter[row.brand] !== false);
+    }
+    if (walletTypeOptions.some((name) => walletTypeFilter[name] === false)) {
+      list = list.filter((row) => {
+        if (row.walletType === '−') return isWalletTypeChecked('—');
+        const rowAbbreviations = row.walletType.split(' | ');
+        return WALLET_TYPE_FILTER_OPTIONS.some(
+          (opt) => rowAbbreviations.includes(opt.abbreviation) && isWalletTypeChecked(opt.label)
+        );
+      });
+    }
+    return list;
+  }, [searchedRows, leaderFilter, leaderOptions, brandFilter, brandOptions, walletTypeFilter, walletTypeOptions]);
+
+  const walletStatusFilterOptions = useMemo(() => {
+    const counts = new Map<string, number>();
+    for (const row of walletStatusFacetRows) {
+      counts.set(row.walletStatus, (counts.get(row.walletStatus) ?? 0) + 1);
+    }
+    return walletStatusOptions.map((status) => ({ value: status, label: status, count: counts.get(status) ?? 0 }));
+  }, [walletStatusFacetRows, walletStatusOptions]);
+
+  const walletTypeFacetRows = useMemo(() => {
+    let list = searchedRows;
+    if (leaderOptions.some((name) => leaderFilter[name] === false)) {
+      list = list.filter((row) => leaderFilter[row.leader] !== false);
+    }
+    if (brandOptions.some((name) => brandFilter[name] === false)) {
+      list = list.filter((row) => brandFilter[row.brand] !== false);
+    }
+    if (walletStatusOptions.some((status) => !walletStatusFilter[status])) {
+      list = list.filter((row) => walletStatusFilter[row.walletStatus]);
+    }
+    return list;
+  }, [searchedRows, leaderFilter, leaderOptions, brandFilter, brandOptions, walletStatusFilter, walletStatusOptions]);
+
+  const walletTypeFilterOptions = useMemo(() => {
+    const counts = new Map<string, number>();
+    for (const row of walletTypeFacetRows) {
+      if (row.walletType === '−') {
+        counts.set('—', (counts.get('—') ?? 0) + 1);
+        continue;
+      }
+      const rowAbbreviations = row.walletType.split(' | ');
+      for (const opt of WALLET_TYPE_FILTER_OPTIONS) {
+        if (rowAbbreviations.includes(opt.abbreviation)) {
+          counts.set(opt.label, (counts.get(opt.label) ?? 0) + 1);
+        }
+      }
+    }
+    return walletTypeOptions.map((name) => ({ value: name, label: name, count: counts.get(name) ?? 0 }));
+  }, [walletTypeFacetRows, walletTypeOptions]);
 
   // Unified 5-card KPI row — Total DP, Total WD, SDP, Actual Balance, Running
   // Balance all rendered at equal size in one row (per explicit instruction,
@@ -1482,86 +1444,82 @@ export default function AgentBalance() {
                 )}
                 {!loading && (
                   <>
-                    <ToolbarFilterDropdown
-                      label="Brand"
-                      icon={Tag}
-                      options={brandOptions}
-                      isChecked={isBrandChecked}
-                      allChecked={allBrandsChecked}
-                      anyUnchecked={anyBrandUnchecked}
-                      selectedCount={selectedBrandCount}
-                      onToggleAll={() => {
-                        const nextValue = !allBrandsChecked;
-                        setBrandFilter(Object.fromEntries(brandOptions.map((name) => [name, nextValue])));
-                      }}
-                      onToggleOne={(name) => setBrandFilter((current) => ({ ...current, [name]: !isBrandChecked(name) }))}
-                      menuOpen={brandMenuOpen}
-                      setMenuOpen={setBrandMenuOpen}
-                      buttonRef={brandButtonRef}
-                      dropdownRef={brandDropdownRef}
-                      menuPos={brandMenuPos}
-                      setMenuPos={setBrandMenuPos}
-                    />
-                    <ToolbarFilterDropdown
-                      label="Leader"
-                      icon={User}
-                      options={leaderOptions}
-                      isChecked={isLeaderChecked}
-                      allChecked={allLeadersChecked}
-                      anyUnchecked={anyLeaderUnchecked}
-                      selectedCount={selectedLeaderCount}
-                      onToggleAll={() => {
-                        const nextValue = !allLeadersChecked;
-                        setLeaderFilter(Object.fromEntries(leaderOptions.map((name) => [name, nextValue])));
-                      }}
-                      onToggleOne={(name) => setLeaderFilter((current) => ({ ...current, [name]: !isLeaderChecked(name) }))}
-                      menuOpen={leaderMenuOpen}
-                      setMenuOpen={setLeaderMenuOpen}
-                      buttonRef={leaderButtonRef}
-                      dropdownRef={leaderDropdownRef}
-                      menuPos={leaderMenuPos}
-                      setMenuPos={setLeaderMenuPos}
-                    />
-                    <ToolbarFilterDropdown
-                      label="Wallet Type"
-                      icon={CreditCard}
-                      options={walletTypeOptions}
-                      isChecked={isWalletTypeChecked}
-                      allChecked={allWalletTypesChecked}
-                      anyUnchecked={anyWalletTypeUnchecked}
-                      selectedCount={selectedWalletTypeCount}
-                      onToggleAll={() => {
-                        const nextValue = !allWalletTypesChecked;
-                        setWalletTypeFilter(Object.fromEntries(walletTypeOptions.map((name) => [name, nextValue])));
-                      }}
-                      onToggleOne={(name) => setWalletTypeFilter((current) => ({ ...current, [name]: !isWalletTypeChecked(name) }))}
-                      menuOpen={walletTypeMenuOpen}
-                      setMenuOpen={setWalletTypeMenuOpen}
-                      buttonRef={walletTypeButtonRef}
-                      dropdownRef={walletTypeDropdownRef}
-                      menuPos={walletTypeMenuPos}
-                      setMenuPos={setWalletTypeMenuPos}
-                    />
-                    <ToolbarFilterDropdown
-                      label="Wallet Status"
-                      icon={Shield}
-                      options={walletStatusOptions}
-                      isChecked={(status) => !!walletStatusFilter[status]}
-                      allChecked={allWalletStatusesChecked}
-                      anyUnchecked={anyWalletStatusUnchecked}
-                      selectedCount={selectedWalletStatusCount}
-                      onToggleAll={() => {
-                        const nextValue = !allWalletStatusesChecked;
-                        setWalletStatusFilter(Object.fromEntries(walletStatusOptions.map((status) => [status, nextValue])));
-                      }}
-                      onToggleOne={(status) => setWalletStatusFilter((current) => ({ ...current, [status]: !current[status] }))}
-                      menuOpen={walletStatusMenuOpen}
-                      setMenuOpen={setWalletStatusMenuOpen}
-                      buttonRef={walletStatusButtonRef}
-                      dropdownRef={walletStatusDropdownRef}
-                      menuPos={walletStatusMenuPos}
-                      setMenuPos={setWalletStatusMenuPos}
-                    />
+                    <div className="relative">
+                      <FilterTriggerButton
+                        label="Brand"
+                        icon={Tag}
+                        anyUnchecked={anyBrandUnchecked}
+                        selectedCount={selectedBrandCount}
+                        menuOpen={brandMenuOpen}
+                        buttonRef={brandButtonRef}
+                        onClick={() => setBrandMenuOpen((current) => !current)}
+                      />
+                      <FilterDropdown
+                        open={brandMenuOpen}
+                        onOpenChange={setBrandMenuOpen}
+                        anchorRef={brandButtonRef}
+                        options={brandFilterOptions}
+                        selected={brandFilter}
+                        onApply={setBrandFilter}
+                      />
+                    </div>
+                    <div className="relative">
+                      <FilterTriggerButton
+                        label="Leader"
+                        icon={User}
+                        anyUnchecked={anyLeaderUnchecked}
+                        selectedCount={selectedLeaderCount}
+                        menuOpen={leaderMenuOpen}
+                        buttonRef={leaderButtonRef}
+                        onClick={() => setLeaderMenuOpen((current) => !current)}
+                      />
+                      <FilterDropdown
+                        open={leaderMenuOpen}
+                        onOpenChange={setLeaderMenuOpen}
+                        anchorRef={leaderButtonRef}
+                        options={leaderFilterOptions}
+                        selected={leaderFilter}
+                        onApply={setLeaderFilter}
+                      />
+                    </div>
+                    <div className="relative">
+                      <FilterTriggerButton
+                        label="Wallet Type"
+                        icon={CreditCard}
+                        anyUnchecked={anyWalletTypeUnchecked}
+                        selectedCount={selectedWalletTypeCount}
+                        menuOpen={walletTypeMenuOpen}
+                        buttonRef={walletTypeButtonRef}
+                        onClick={() => setWalletTypeMenuOpen((current) => !current)}
+                      />
+                      <FilterDropdown
+                        open={walletTypeMenuOpen}
+                        onOpenChange={setWalletTypeMenuOpen}
+                        anchorRef={walletTypeButtonRef}
+                        options={walletTypeFilterOptions}
+                        selected={walletTypeFilter}
+                        onApply={setWalletTypeFilter}
+                      />
+                    </div>
+                    <div className="relative">
+                      <FilterTriggerButton
+                        label="Wallet Status"
+                        icon={Shield}
+                        anyUnchecked={anyWalletStatusUnchecked}
+                        selectedCount={selectedWalletStatusCount}
+                        menuOpen={walletStatusMenuOpen}
+                        buttonRef={walletStatusButtonRef}
+                        onClick={() => setWalletStatusMenuOpen((current) => !current)}
+                      />
+                      <FilterDropdown
+                        open={walletStatusMenuOpen}
+                        onOpenChange={setWalletStatusMenuOpen}
+                        anchorRef={walletStatusButtonRef}
+                        options={walletStatusFilterOptions}
+                        selected={walletStatusFilter}
+                        onApply={setWalletStatusFilter}
+                      />
+                    </div>
                   </>
                 )}
               </Toolbar.Left>
@@ -1605,7 +1563,7 @@ export default function AgentBalance() {
                       >
                         <Columns3 size={14} />
                         <span>Columns</span>
-                        <ChevronDown size={14} className={`transition-transform duration-150 ease-in-out ${columnsMenuOpen ? 'rotate-180' : ''}`} />
+                        <ChevronDown size={14} className={`transition-transform duration-150 ease-[var(--ease-in-out-strong)] ${columnsMenuOpen ? 'rotate-180' : ''}`} />
                       </button>
                     {columnsMenuRendered && typeof document !== 'undefined' && createPortal(
                       <div
@@ -1614,7 +1572,7 @@ export default function AgentBalance() {
                         role="dialog"
                         aria-label="Column visibility"
                         style={{ position: 'fixed', top: columnsMenuPos.top, left: columnsMenuPos.left, transformOrigin: 'top right' }}
-                        className={`z-[9999] w-56 max-h-[70vh] overflow-y-auto rounded-xl border border-[#e5e5e7] bg-white p-2 shadow-xl transition-[transform,opacity] duration-150 ease-out dark:border-[#3a3a3d] dark:bg-[#2a2a2d] ${
+                        className={`z-[9999] w-56 max-h-[70vh] overflow-y-auto rounded-xl border border-[#e5e5e7] bg-white p-2 shadow-xl transition-[transform,opacity] duration-150 ease-[var(--ease-out-strong)] dark:border-[#3a3a3d] dark:bg-[#2a2a2d] ${
                           columnsMenuOpen ? 'opacity-100 scale-100' : 'opacity-0 scale-95'
                         }`}
                         onClick={(event) => event.stopPropagation()}
@@ -1657,7 +1615,7 @@ export default function AgentBalance() {
                           <button
                             type="button"
                             onClick={() => setColumnDefs(DEFAULT_COLUMNS.map((col) => ({ ...col })))}
-                            className="flex w-full items-center justify-center rounded-lg px-2.5 py-1.5 text-[11px] font-medium text-indigo-600 transition-[background-color,transform] duration-150 ease-out hover:bg-indigo-50 active:scale-[0.97] dark:text-indigo-400 dark:hover:bg-white/5"
+                            className="flex w-full items-center justify-center rounded-lg px-2.5 py-1.5 text-[11px] font-medium text-indigo-600 transition-[background-color,transform] duration-150 ease-[var(--ease-out-strong)] hover:bg-indigo-50 active:scale-[0.97] dark:text-indigo-400 dark:hover:bg-white/5"
                           >
                             Restore Defaults
                           </button>
@@ -1807,20 +1765,8 @@ export default function AgentBalance() {
                 </tbody>
               </table>
               </div>
-              {!loading && !atScrollStart && (
+              {!loading && (
                 <div className="pointer-events-none absolute inset-y-0 left-0 z-[55] w-6 bg-gradient-to-r from-white to-transparent dark:from-[#2a2a2d]" />
-              )}
-              {/* right-[10px], not right-0 — this table's scrollbar-gutter:
-                  stable reserves ~10px on the right for the vertical
-                  scrollbar. A right-0 fade sat on TOP of that gutter, so
-                  the scrollbar's own background visibly "faded" in and out
-                  as atScrollEnd toggled (reported live: normal at the far
-                  right, washed-out white everywhere else). Insetting past
-                  the gutter keeps the fade over the table content only —
-                  the scrollbar's own background stays constant regardless
-                  of horizontal scroll position. */}
-              {!loading && !atScrollEnd && (
-                <div className="pointer-events-none absolute inset-y-0 right-[10px] z-[55] w-6 bg-gradient-to-l from-white to-transparent dark:from-[#2a2a2d]" />
               )}
             </div>
 
