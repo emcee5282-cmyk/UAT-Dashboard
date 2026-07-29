@@ -8,7 +8,6 @@ import {
 } from 'lucide-react';
 import * as XLSX from 'xlsx';
 import SettlementHeader from '@/app/components/SettlementHeader';
-import SettlementSummary, { type SettlementKpiItem } from '@/app/components/SettlementSummary';
 import Toolbar from '@/app/components/Toolbar';
 import DataTable from '@/app/components/DataTable';
 import TableFooter from '@/app/components/TableFooter';
@@ -23,6 +22,8 @@ import { parseSendMoneyOpeningCsv, parseNullableNumber, type SendMoneyOpeningRow
 import { extractSendMoneyShopName } from '@/app/lib/realShopName';
 import { getPreference, setPreference } from '@/app/lib/preferences';
 import { SETTLEMENT_BRAND_OPTIONS } from '@/app/lib/topupOptions';
+import { fmtAbbrev } from '@/app/lib/format';
+import { TABLE_STICKY_HEADER_SHADOW_CLASS } from '@/app/design-system/shadows';
 
 // Ghost button — copied verbatim from Settlement's own toolbar button style.
 const GHOST_BUTTON =
@@ -61,6 +62,29 @@ function fmt(value: number | null): string {
     minimumFractionDigits: 2,
     maximumFractionDigits: 2,
   });
+}
+
+// Re-triggers a short opacity+translateY fade whenever `value` changes,
+// matching Cashout Opening's own (app/summary/page.tsx) bespoke FadeValue —
+// duplicated here since these KPI cards are bespoke, not SettlementSummary.
+function FadeValue({ value, className }: { value: string; className: string }) {
+  const [visible, setVisible] = useState(false);
+
+  useEffect(() => {
+    setVisible(false);
+    const raf = requestAnimationFrame(() => setVisible(true));
+    return () => cancelAnimationFrame(raf);
+  }, [value]);
+
+  return (
+    <p
+      className={`${className} transition-[opacity,transform] duration-200 ease-out ${
+        visible ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-[5px]'
+      }`}
+    >
+      {value}
+    </p>
+  );
 }
 
 type Row = SendMoneyOpeningRow & { _id: number };
@@ -563,12 +587,37 @@ export default function SendMoneyOpeningPage() {
     setRowsPerPage(size);
   }, []);
 
-  const kpiItems: SettlementKpiItem[] = useMemo(() => [
-    { icon: Users, label: 'Total Accounts', value: rows.length.toLocaleString('en-US') },
-    { icon: Banknote, label: 'Total Opening Balance', value: fmt(rows.reduce((sum, row) => sum + (row.openingBalance ?? 0), 0)) },
-    { icon: ShieldCheck, label: 'Total SDP', value: fmt(rows.reduce((sum, row) => sum + (row.securityDeposit ?? 0), 0)) },
-    { icon: CircleSlash, label: 'No Opening Yet', value: rows.filter((row) => row.openingBalance === null).length.toLocaleString('en-US') },
-  ], [rows]);
+  // Balance-style KPI cards (bespoke, not SettlementSummary), matching
+  // Cashout Opening (app/summary/page.tsx) exactly. Count metrics have no
+  // subtitle; amount metrics get an abbreviated big value + full-figure
+  // subtitle (via this file's own nullable-aware fmt() — blank≠0 here,
+  // unlike Cashout's Opening Bal/SDP).
+  const kpis = useMemo(() => {
+    const totalOpening = rows.reduce((sum, row) => sum + (row.openingBalance ?? 0), 0);
+    const totalSdp = rows.reduce((sum, row) => sum + (row.securityDeposit ?? 0), 0);
+    return [
+      {
+        label: 'Total Accounts', icon: Users,
+        accent: 'text-indigo-600 dark:text-indigo-400', iconBg: 'bg-indigo-50 dark:bg-indigo-500/10',
+        bigValue: rows.length.toLocaleString('en-US'), subtitle: undefined as string | undefined,
+      },
+      {
+        label: 'Total Opening Balance', icon: Banknote,
+        accent: 'text-emerald-600 dark:text-emerald-400', iconBg: 'bg-emerald-50 dark:bg-emerald-500/10',
+        bigValue: fmtAbbrev(totalOpening), subtitle: fmt(totalOpening) as string | undefined,
+      },
+      {
+        label: 'Total SDP', icon: ShieldCheck,
+        accent: 'text-blue-600 dark:text-blue-400', iconBg: 'bg-blue-50 dark:bg-blue-500/10',
+        bigValue: fmtAbbrev(totalSdp), subtitle: fmt(totalSdp) as string | undefined,
+      },
+      {
+        label: 'No Opening Yet', icon: CircleSlash,
+        accent: 'text-rose-600 dark:text-rose-400', iconBg: 'bg-rose-50 dark:bg-rose-500/10',
+        bigValue: rows.filter((row) => row.openingBalance === null).length.toLocaleString('en-US'), subtitle: undefined as string | undefined,
+      },
+    ];
+  }, [rows]);
 
   const hasAnyRecords = rows.length > 0;
   const emptyStateNode = !hasAnyRecords ? (
@@ -602,7 +651,43 @@ export default function SendMoneyOpeningPage() {
         isRefreshing={spinning}
         onRefresh={fetchData}
       />
-      <SettlementSummary items={kpiItems} isScrolled={isScrolled} loading={loading} />
+      <div className={`w-full border-t border-border bg-[#f4f6fb] px-4 py-3 transition-shadow duration-150 ease-out dark:bg-[#1c1c1e] md:px-6 ${isScrolled ? TABLE_STICKY_HEADER_SHADOW_CLASS : ''}`}>
+        <div className="flex gap-2">
+          {loading ? (
+            Array.from({ length: 4 }).map((_, i) => (
+              <div key={i} className="h-[80.5px] flex-1 min-w-[200px] rounded-xl border border-border bg-white p-2.5 dark:bg-[#2a2a2d]">
+                <div className="flex h-full items-center gap-3">
+                  <div className="h-8 w-8 shrink-0 animate-pulse rounded-full bg-slate-200 dark:bg-slate-700" />
+                  <div className="min-w-0 flex-1">
+                    <div className="h-3 w-20 animate-pulse rounded-md bg-slate-200 dark:bg-slate-700" />
+                    <div className="mt-1.5 h-6 w-24 animate-pulse rounded-md bg-slate-200 dark:bg-slate-700" />
+                  </div>
+                </div>
+              </div>
+            ))
+          ) : (
+            kpis.map((kpi) => (
+              <div
+                key={kpi.label}
+                className="h-[80.5px] flex-1 min-w-[200px] rounded-xl border border-border bg-white p-2.5 transition-[transform,box-shadow,border-color] duration-150 ease-out hover:-translate-y-px hover:border-foreground/20 hover:shadow-sm dark:bg-[#2a2a2d]"
+              >
+                <div className="flex h-full items-center gap-3">
+                  <div className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-full ${kpi.iconBg}`}>
+                    <kpi.icon size={16} className={kpi.accent} />
+                  </div>
+                  <div className="min-w-0 flex-1">
+                    <p className="text-[11px] font-medium leading-snug text-muted-foreground truncate">{kpi.label}</p>
+                    <FadeValue value={kpi.bigValue} className={`font-bold leading-tight text-foreground ${kpi.subtitle ? 'text-[21px]' : 'text-[28px]'}`} />
+                    {kpi.subtitle && (
+                      <p className="mt-0.5 text-[11px] leading-snug text-muted-foreground truncate">{kpi.subtitle}</p>
+                    )}
+                  </div>
+                </div>
+              </div>
+            ))
+          )}
+        </div>
+      </div>
 
       <main className="flex-1 flex flex-col overflow-hidden px-6 pb-6 pt-1">
 

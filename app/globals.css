@@ -248,6 +248,39 @@ body {
   background-color: #94a3b8;
 }
 
+/* Balance (Cashout)-only: the shared thumb color above (#cbd5e1) has good
+   contrast against a dark table body but reads as barely visible against
+   a light/white one — reported live (clearly visible in dark mode, not in
+   light mode). Darkens just the light-mode thumb here; dark mode already
+   works and is left on the shared color unchanged. Compound selector
+   (.dt-scroll.agentbal-scroll) is a strictly higher-specificity override
+   of .dt-scroll's own rule above, scoped to this one page only. First
+   pass used #94a3b8 (slate-400) — still read as too faint per a direct
+   side-by-side comparison against a reference screenshot; #64748b
+   (slate-500) is the confirmed target.
+   No separate :hover color — a hover-darken made the horizontal thumb
+   read as two different colors depending on whether the cursor happened
+   to be over it (reported live as "kulay nagbabago depende kung naka
+   sagad sa right side", since scrolling to the end is exactly when the
+   cursor/drag is active over the thumb). One constant color at rest and
+   on hover/active removes that inconsistency. */
+.dt-scroll.agentbal-scroll {
+  scrollbar-color: #64748b transparent;
+}
+.dt-scroll.agentbal-scroll::-webkit-scrollbar-thumb,
+.dt-scroll.agentbal-scroll::-webkit-scrollbar-thumb:hover,
+.dt-scroll.agentbal-scroll::-webkit-scrollbar-thumb:active {
+  background-color: #64748b;
+}
+.dark .dt-scroll.agentbal-scroll {
+  scrollbar-color: #cbd5e1 transparent;
+}
+.dark .dt-scroll.agentbal-scroll::-webkit-scrollbar-thumb,
+.dark .dt-scroll.agentbal-scroll::-webkit-scrollbar-thumb:hover,
+.dark .dt-scroll.agentbal-scroll::-webkit-scrollbar-thumb:active {
+  background-color: #cbd5e1;
+}
+
 .dt-skeleton {
   position: relative;
   overflow: hidden;

@@ -253,6 +253,18 @@ const columnWidths: Record<ColumnKey, string> = {
 
 const TABLE_MIN_WIDTH = '1680px';
 
+// Loading-skeleton bar widths — cycled by row index (not one fixed width
+// for every row) so consecutive rows read as varied, natural content
+// rather than a repeated bar, matching Settlement/Top Up's own convention
+// (AGENT_NAME_SKELETON_WIDTHS etc. in app/stlm/page.tsx) and Cashout
+// Balance's own (app/agentbal/page.tsx). brand/walletStatus render their
+// own pill-shaped skeleton instead (see the loading branch in the table
+// body) since those are badges, not text/numbers.
+const LEADER_SKELETON_WIDTHS = [55, 70, 85];
+const SHOP_NAME_SKELETON_WIDTHS = [50, 65, 80];
+const TYPE_SKELETON_WIDTHS = [40, 55, 70];
+const AMOUNT_SKELETON_WIDTHS = [50, 60, 45, 55];
+
 const STICKY_COLS: ColumnKey[] = [];
 
 // Fixed display order for the mobile card's balances grid.
@@ -1077,9 +1089,9 @@ export default function SendMoneyAgentBalance() {
               {loading ? (
                 Array.from({ length: 6 }).map((_, i) => (
                   <div key={i} className={KPI_CARD_CLASS}>
-                    <div className="h-3 w-12 animate-pulse rounded-md bg-slate-200 dark:bg-slate-700" />
-                    <div className="mt-1.5 h-6 w-16 animate-pulse rounded-md bg-slate-200 dark:bg-slate-700" />
-                    <div className="mt-1 h-5 w-16 animate-pulse rounded-md bg-slate-200 dark:bg-slate-700" />
+                    <div className="h-3 w-12 dt-skeleton rounded-md" />
+                    <div className="mt-1.5 h-6 w-16 dt-skeleton rounded-md" />
+                    <div className="mt-1 h-5 w-16 dt-skeleton rounded-md" />
                   </div>
                 ))
               ) : (
@@ -1111,7 +1123,7 @@ export default function SendMoneyAgentBalance() {
             <Toolbar className={TOOLBAR_ROW_CLASS}>
               <Toolbar.Left className={TOOLBAR_LEFT_CLASS}>
                 {loading ? (
-                  <div className="h-5 w-28 animate-pulse rounded-md bg-slate-200 dark:bg-slate-700" />
+                  <div className="h-5 w-28 dt-skeleton rounded-md" />
                 ) : (
                   <div className="flex items-center gap-1.5 rounded-md bg-[color:var(--product-accent-soft)] px-2.5 py-1">
                     <span className="text-[10px] font-medium text-[color:var(--product-accent)]">Accounts</span>
@@ -1120,7 +1132,7 @@ export default function SendMoneyAgentBalance() {
                 )}
                 <div className="flex w-full min-w-[140px] flex-1 items-center gap-2 rounded-lg border border-border bg-white px-3 py-1.5 dark:bg-[#2a2a2d] sm:w-52 sm:flex-none">
                   {loading ? (
-                    <div className="h-3 w-32 animate-pulse rounded-md bg-slate-200 dark:bg-slate-700" />
+                    <div className="h-3 w-32 dt-skeleton rounded-md" />
                   ) : (
                     <>
                       <Search size={13} className="shrink-0 text-muted-foreground" />
@@ -1135,7 +1147,7 @@ export default function SendMoneyAgentBalance() {
                 </div>
               </Toolbar.Left>
               <Toolbar.Right className={TOOLBAR_RIGHT_CLASS}>
-                {loading && <div className="h-7 w-7 animate-pulse rounded-lg bg-slate-200 dark:bg-slate-700" />}
+                {loading && <div className="h-7 w-7 dt-skeleton rounded-lg" />}
                 {!loading && (
                   <button
                     type="button"
@@ -1146,7 +1158,7 @@ export default function SendMoneyAgentBalance() {
                     <RefreshCw size={13} className={spinning ? 'animate-spin' : ''} />
                   </button>
                 )}
-                {loading && <div className="h-7 w-20 animate-pulse rounded-lg bg-slate-200 dark:bg-slate-700" />}
+                {loading && <div className="h-7 w-20 dt-skeleton rounded-lg" />}
                 {!loading && (
                   <button
                     type="button"
@@ -1157,7 +1169,7 @@ export default function SendMoneyAgentBalance() {
                     <Download size={13} />
                   </button>
                 )}
-                {loading && <div className="h-7 w-7 animate-pulse rounded-lg bg-slate-200 dark:bg-slate-700" />}
+                {loading && <div className="h-7 w-7 dt-skeleton rounded-lg" />}
                 {!loading && (
                   <div className="relative">
                     <button
@@ -1262,9 +1274,11 @@ export default function SendMoneyAgentBalance() {
                         key={col.key}
                         style={stickyLeft[col.key] !== undefined ? { position: 'sticky' as const, left: `${stickyLeft[col.key]}px`, zIndex: 52 } : undefined}
                         className={headerCellClasses(col.key, sortColumn === col.key)}>
-                        {loading ? (
-                          <div className="mx-auto h-[18px] w-14 animate-pulse rounded-md bg-slate-200 dark:bg-slate-700" />
-                        ) : col.key === 'brand' ? (
+                        {/* Header always renders its real label/sort control,
+                            loading or not — only data rows shimmer (premium
+                            skeleton spec: headers are never placeholders,
+                            matching Settlement/Top Up's own convention). */}
+                        {col.key === 'brand' ? (
                           <div className="relative flex items-center justify-center gap-1">
                             <span className="normal-case font-semibold text-foreground">{col.label}</span>
                             <button
@@ -1560,7 +1574,17 @@ export default function SendMoneyAgentBalance() {
                     <tr key={i}>
                       {visibleColumns.map((col) => (
                         <td key={col.key} className="px-3 py-1.5">
-                          <div className="mx-auto h-2.5 w-3/4 animate-pulse rounded-md bg-slate-200 dark:bg-slate-700" />
+                          {col.key === 'brand' ? (
+                            <div className="mx-auto h-[28px] w-12 dt-skeleton rounded-[999px]" />
+                          ) : col.key === 'leader' ? (
+                            <div className="mx-auto h-2.5 dt-skeleton rounded-md" style={{ width: `${LEADER_SKELETON_WIDTHS[i % LEADER_SKELETON_WIDTHS.length]}%` }} />
+                          ) : col.key === 'walletName' ? (
+                            <div className="mx-auto h-2.5 dt-skeleton rounded-md" style={{ width: `${SHOP_NAME_SKELETON_WIDTHS[i % SHOP_NAME_SKELETON_WIDTHS.length]}%` }} />
+                          ) : col.key === 'walletType' || col.key === 'walletStatus' ? (
+                            <div className="mx-auto h-2.5 dt-skeleton rounded-md" style={{ width: `${TYPE_SKELETON_WIDTHS[i % TYPE_SKELETON_WIDTHS.length]}%` }} />
+                          ) : (
+                            <div className="mx-auto h-2.5 dt-skeleton rounded-md" style={{ width: `${AMOUNT_SKELETON_WIDTHS[i % AMOUNT_SKELETON_WIDTHS.length]}%` }} />
+                          )}
                         </td>
                       ))}
                     </tr>
@@ -1597,9 +1621,9 @@ export default function SendMoneyAgentBalance() {
                 {loading ? (
                   Array.from({ length: 8 }).map((_, i) => (
                     <div key={i} className="rounded-xl border border-border bg-white p-3.5 dark:bg-[#2a2a2d]">
-                      <div className="h-4 w-2/3 animate-pulse rounded-md bg-slate-200 dark:bg-slate-700" />
-                      <div className="mt-2 h-3 w-1/3 animate-pulse rounded-md bg-slate-200 dark:bg-slate-700" />
-                      <div className="mt-3 h-6 w-1/2 animate-pulse rounded-md bg-slate-200 dark:bg-slate-700" />
+                      <div className="h-4 w-2/3 dt-skeleton rounded-md" />
+                      <div className="mt-2 h-3 w-1/3 dt-skeleton rounded-md" />
+                      <div className="mt-3 h-6 w-1/2 dt-skeleton rounded-md" />
                     </div>
                   ))
                 ) : pagedRows.length > 0 ? (

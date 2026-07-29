@@ -1,10 +1,11 @@
 'use client';
 
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
 import { createPortal } from 'react-dom';
 import {
-  ChevronDown, ChevronUp, Columns3, Download, RefreshCw, Search, Wallet,
-  TrendingUp, ArrowDownToLine, ArrowUpFromLine, Shield,
+  ChevronDown, Columns3, Download, RefreshCw, Search, Wallet,
+  TrendingUp, ArrowDownToLine, ArrowUpFromLine, Shield, ArrowUpDown,
+  Tag, User, CreditCard,
 } from 'lucide-react';
 import * as XLSX from 'xlsx';
 import SettlementHeader from '../components/SettlementHeader';
@@ -16,7 +17,6 @@ import EmptyState from '../components/EmptyState';
 import { classifyFetchError, type ClassifiedError, assertAllOk } from '../lib/errors';
 import { rawVal, fmt, fmtAbbrev } from '@/app/lib/format';
 import { parseCsvLines } from '../lib/csv';
-import { TABLE_STICKY_HEADER_SHADOW_CLASS } from '../design-system/shadows';
 import { getBusinessToday, toBusinessDate, parseCardCutoffDate } from '../lib/businessDate';
 import {
   computeWalletStatus,
@@ -186,13 +186,15 @@ type ColumnDef = {
   align: 'left' | 'right' | 'center';
 };
 
-const DEFAULT_HIDDEN: ColumnKey[] = ['brand', 'sdp', 'settlement', 'topUp', 'sdpVsBalance'];
+// All columns visible by default — Restore Defaults must always land on
+// every column checked, none hidden.
+const DEFAULT_HIDDEN: ColumnKey[] = [];
 
 const DEFAULT_COLUMNS: ColumnDef[] = [
-  { key: COLUMN_IDS.BRAND, label: 'Brand', visible: !DEFAULT_HIDDEN.includes(COLUMN_IDS.BRAND), sortable: false, hideable: true, align: 'left' },
-  { key: COLUMN_IDS.LEADER, label: 'Leader', visible: !DEFAULT_HIDDEN.includes(COLUMN_IDS.LEADER), sortable: false, hideable: true, align: 'left' },
+  { key: COLUMN_IDS.BRAND, label: 'Brand', visible: !DEFAULT_HIDDEN.includes(COLUMN_IDS.BRAND), sortable: true, hideable: true, align: 'left' },
+  { key: COLUMN_IDS.LEADER, label: 'Leader', visible: !DEFAULT_HIDDEN.includes(COLUMN_IDS.LEADER), sortable: true, hideable: true, align: 'left' },
   { key: COLUMN_IDS.WALLET_NAME, label: 'Shop Name', visible: !DEFAULT_HIDDEN.includes(COLUMN_IDS.WALLET_NAME), sortable: true, hideable: true, align: 'left' },
-  { key: COLUMN_IDS.WALLET_TYPE, label: 'Type', visible: !DEFAULT_HIDDEN.includes(COLUMN_IDS.WALLET_TYPE), sortable: false, hideable: true, align: 'left' },
+  { key: COLUMN_IDS.WALLET_TYPE, label: 'Type', visible: !DEFAULT_HIDDEN.includes(COLUMN_IDS.WALLET_TYPE), sortable: true, hideable: true, align: 'left' },
   { key: COLUMN_IDS.SDP, label: 'SDP', visible: !DEFAULT_HIDDEN.includes(COLUMN_IDS.SDP), sortable: true, hideable: true, align: 'right' },
   { key: COLUMN_IDS.OPENING, label: 'Opening', visible: !DEFAULT_HIDDEN.includes(COLUMN_IDS.OPENING), sortable: true, hideable: true, align: 'right' },
   { key: COLUMN_IDS.TOTAL_DP, label: 'Total DP', visible: !DEFAULT_HIDDEN.includes(COLUMN_IDS.TOTAL_DP), sortable: true, hideable: true, align: 'right' },
@@ -203,7 +205,7 @@ const DEFAULT_COLUMNS: ColumnDef[] = [
   { key: COLUMN_IDS.BALANCE_INSIDE, label: 'Balance Inside', visible: !DEFAULT_HIDDEN.includes(COLUMN_IDS.BALANCE_INSIDE), sortable: true, hideable: true, align: 'right' },
   { key: COLUMN_IDS.AGENT_WITHDRAWAL, label: 'Agent Withdrawal', visible: !DEFAULT_HIDDEN.includes(COLUMN_IDS.AGENT_WITHDRAWAL), sortable: true, hideable: true, align: 'right' },
   { key: COLUMN_IDS.SDP_VS_BALANCE, label: 'SDP VS Balance', visible: !DEFAULT_HIDDEN.includes(COLUMN_IDS.SDP_VS_BALANCE), sortable: true, hideable: true, align: 'right' },
-  { key: COLUMN_IDS.WALLET_STATUS, label: 'Wallet Status', visible: !DEFAULT_HIDDEN.includes(COLUMN_IDS.WALLET_STATUS), sortable: false, hideable: true, align: 'left' },
+  { key: COLUMN_IDS.WALLET_STATUS, label: 'Wallet Status', visible: !DEFAULT_HIDDEN.includes(COLUMN_IDS.WALLET_STATUS), sortable: true, hideable: true, align: 'left' },
 ];
 
 const COLUMN_VISIBILITY_STORAGE_KEY = 'agentBalanceColumnVisibility';
@@ -212,36 +214,118 @@ const COLUMN_ALIGN: Record<ColumnKey, 'left' | 'right' | 'center'> = Object.from
   DEFAULT_COLUMNS.map((col) => [col.key, col.align])
 ) as Record<ColumnKey, 'left' | 'right' | 'center'>;
 
-// Loading-skeleton bar widths per column — varied instead of one uniform
-// width, so the skeleton reads as "natural" content rather than a repeated
-// bar. brand/walletStatus render their own pill-shaped skeleton instead
-// (see the loading branch in the table body) since those are badges.
-const SKELETON_WIDTH: Record<ColumnKey, string> = {
-  brand: 'w-12',
-  leader: 'w-16',
-  walletName: 'w-24',
-  walletType: 'w-14',
-  sdp: 'w-16',
-  opening: 'w-20',
-  totalDP: 'w-14',
-  totalWD: 'w-14',
-  topUp: 'w-16',
-  settlement: 'w-16',
-  companyBalance: 'w-24',
-  balanceInside: 'w-20',
-  agentWithdrawal: 'w-20',
-  sdpVsBalance: 'w-14',
-  walletStatus: 'w-20',
-};
+// Loading-skeleton bar widths — cycled by row index (not one fixed width
+// per column) so consecutive rows read as varied, natural content rather
+// than a repeated bar, matching Settlement/Top Up's own convention
+// (AGENT_NAME_SKELETON_WIDTHS etc. in app/stlm/page.tsx). brand/walletStatus
+// render their own pill-shaped skeleton instead (see the loading branch in
+// the table body) since those are badges, not text/numbers.
+const LEADER_SKELETON_WIDTHS = [55, 70, 85];
+const SHOP_NAME_SKELETON_WIDTHS = [50, 65, 80];
+const TYPE_SKELETON_WIDTHS = [40, 55, 70];
+const AMOUNT_SKELETON_WIDTHS = [50, 60, 45, 55];
+
+// This table is plain `table-auto` with no <colgroup> — every column is
+// purely content-driven, none has an explicit width. Left alone, whichever
+// row currently has the longest value in a given column stretches that
+// column to fit it, and since auto-layout only ever looks at the rows
+// CURRENTLY in the DOM, paginating/sorting/filtering to a page whose
+// longest value differs re-triggers that stretch — every other column
+// visibly shifts too (reported: "sobrang haba ng pangalan/value,
+// nag-aadjust yung ibang column"). Fixing every column's own width to its
+// longest real value across the FULL dataset (rows, not just the current
+// page) removes that instability without converting the whole table to
+// table-fixed/<colgroup>.
+let measureCanvas: HTMLCanvasElement | null = null;
+function measureTextWidthPx(text: string, font: string): number {
+  if (typeof document === 'undefined') return 0;
+  if (!measureCanvas) measureCanvas = document.createElement('canvas');
+  const ctx = measureCanvas.getContext('2d');
+  if (!ctx) return 0;
+  ctx.font = font;
+  return ctx.measureText(text).width;
+}
+
+// Fonts mirror each cell type's own real classes exactly: plain body text
+// (text-[13px] font-normal), the header label (text-[13px] font-semibold),
+// BrandBadge (text-[11px] font-semibold) and WalletStatusBadge
+// (text-[11px] font-medium).
+const BODY_TEXT_FONT = '400 13px Inter, sans-serif';
+const HEADER_TEXT_FONT = '600 13px Inter, sans-serif';
+const BRAND_BADGE_FONT = '600 11px Inter, sans-serif';
+const WALLET_STATUS_BADGE_FONT = '500 11px Inter, sans-serif';
+
+// px-5 cell padding = 20px each side = 40px total, on every cell.
+const CELL_PADDING_PX = 40;
+// Sort icon + its gap reserve, for sortable headers only (see SortIcon).
+const HEADER_SORT_ICON_RESERVE_PX = 20;
+// BrandBadge chrome beyond its text: px-2.5 (10px) each side + 1px border
+// each side.
+const BRAND_BADGE_CHROME_PX = 22;
+// WalletStatusBadge chrome beyond its text: px-2 (8px) each side + 1px
+// border each side + the status dot (6px) + its gap-1.5 (6px).
+const WALLET_STATUS_BADGE_CHROME_PX = 30;
+// Extra breathing room so the longest value never sits flush against the
+// next column's edge.
+const EXTRA_BREATHING_ROOM_PX = 8;
+
+// Exact display string per column — mirrors renderCell's own per-column
+// JSX content, kept as plain strings here purely for width measurement.
+function getColumnDisplayText(row: MergedRow, key: ColumnKey): string {
+  switch (key) {
+    case 'brand': return row.brand;
+    case 'leader': return row.leader;
+    case 'walletName': return row.agentName;
+    case 'walletType': return row.walletType;
+    case 'sdp': return displayNum(row.sdp);
+    case 'opening': return displayNum(row.openingBal);
+    case 'totalDP': return displayNum(row.agentTotalDP);
+    case 'totalWD': return displayNum(row.agentTotalWD);
+    case 'topUp': return displayNum(row.totalTopUp);
+    case 'settlement': return displayNum(row.totalStlm);
+    case 'balanceInside': return displayNum(String(row.balanceInside ?? 0));
+    case 'agentWithdrawal': return displayNum(String(row.agentWithdrawal));
+    case 'sdpVsBalance': return row.sdpVsBalance > 0 ? displayNum(String(Math.abs(row.sdpVsBalance))) : '−';
+    case 'walletStatus': return row.walletStatus;
+    case 'companyBalance':
+    default: return displayNum(row.runningBalance);
+  }
+}
+
+// For every visible column: measures the longest real value across the
+// full dataset (plus each column's own badge chrome, where applicable),
+// takes the max against the header label's own required width (so the
+// label itself is never the thing that gets clipped), and returns a fixed
+// px width to pin both the header and every body cell to.
+function computeColumnWidthsPx(rows: MergedRow[], columns: ColumnDef[]): Partial<Record<ColumnKey, number>> {
+  const result: Partial<Record<ColumnKey, number>> = {};
+  for (const col of columns) {
+    const font = col.key === 'brand' ? BRAND_BADGE_FONT
+      : col.key === 'walletStatus' ? WALLET_STATUS_BADGE_FONT
+      : BODY_TEXT_FONT;
+    const chrome = col.key === 'brand' ? BRAND_BADGE_CHROME_PX
+      : col.key === 'walletStatus' ? WALLET_STATUS_BADGE_CHROME_PX
+      : 0;
+
+    let maxTextWidth = 0;
+    for (const row of rows) {
+      const w = measureTextWidthPx(getColumnDisplayText(row, col.key) ?? '', font);
+      if (w > maxTextWidth) maxTextWidth = w;
+    }
+    const dataWidth = maxTextWidth > 0 ? Math.ceil(maxTextWidth) + chrome + CELL_PADDING_PX + EXTRA_BREATHING_ROOM_PX : 0;
+
+    const headerWidth = Math.ceil(measureTextWidthPx(col.label, HEADER_TEXT_FONT))
+      + CELL_PADDING_PX
+      + (col.sortable ? HEADER_SORT_ICON_RESERVE_PX : 0);
+
+    const width = Math.max(dataWidth, headerWidth);
+    if (width > 0) result[col.key] = width;
+  }
+  return result;
+}
 
 const GHOST_BUTTON =
-  'inline-flex h-9 items-center gap-1.5 rounded-[8px] border border-[#E2E8F0] px-3 text-[13px] font-medium text-[#475569] transition-colors duration-150 ease-out hover:bg-[#F8FAFC] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#2563EB] dark:border-[#3a3a3d] dark:text-[#9CA3AF] dark:hover:bg-white/5';
-
-// Same as GHOST_BUTTON but without its own border/radius — used for buttons
-// grouped inside one shared bordered pill (Refresh/Export/Columns) instead
-// of standing alone.
-const GHOST_BUTTON_SEGMENT =
-  'inline-flex h-9 items-center gap-1.5 px-3 text-[13px] font-medium text-[#475569] transition-colors duration-150 ease-out hover:bg-[#F8FAFC] focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-[#2563EB] dark:text-[#9CA3AF] dark:hover:bg-white/5';
+  'inline-flex h-9 items-center gap-1.5 rounded-[8px] border border-[#E2E8F0] px-3 text-[13px] font-medium text-[#475569] transition-[color,background-color,transform] duration-150 ease-out hover:bg-[#F8FAFC] active:scale-[0.97] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#2563EB] dark:border-[#3a3a3d] dark:text-[#9CA3AF] dark:hover:bg-white/5';
 
 const PAGE_SIZE_OPTIONS = [50, 100, 250, 500];
 
@@ -252,24 +336,142 @@ const BALANCE_GRID_ORDER: ColumnKey[] = [
   'settlement', 'sdp', 'sdpVsBalance',
 ];
 
-function SortIcon({ active, direction }: { active: boolean; direction: 'asc' | 'desc' }) {
-  if (!active) {
-    return (
-      <span className="flex flex-col items-center justify-center leading-none text-slate-400 opacity-40">
-        <ChevronUp size={10} className="-mb-0.5" />
-        <ChevronDown size={10} />
-      </span>
-    );
-  }
-  return direction === 'asc' ? (
-    <ChevronUp size={10} className="text-indigo-600 dark:text-indigo-400" />
-  ) : (
-    <ChevronDown size={10} className="text-indigo-600 dark:text-indigo-400" />
+// One consistent glyph everywhere (never swapped for a different shape) —
+// active vs neutral is color-only, per explicit spec: "Keep using the SAME
+// icon. Only rotate / change state internally. Do not swap icons."
+function SortIcon({ active }: { active: boolean; direction: 'asc' | 'desc' }) {
+  return (
+    <ArrowUpDown
+      size={12}
+      className={active ? 'text-indigo-600 dark:text-indigo-400' : 'text-slate-400 dark:text-slate-500'}
+    />
   );
 }
 
 function headerCellClasses(colKey: ColumnKey, _isSorted: boolean) {
-  return `group overflow-hidden whitespace-nowrap px-4 text-${COLUMN_ALIGN[colKey]} text-[13px] font-semibold text-[#475569] dark:text-[#9CA3AF]`;
+  return `group overflow-hidden whitespace-nowrap px-5 text-${COLUMN_ALIGN[colKey]} text-[13px] font-semibold text-[#475569] dark:text-[#9CA3AF]`;
+}
+
+// Toolbar filter pill — Brand/Leader/Wallet Type/Wallet Status, per explicit
+// spec: filters live ONLY in the toolbar, never in the table header. Same
+// state/refs/handlers each column already had when this lived in its own
+// <th> — only the JSX location and visual shell moved, no filtering logic
+// changed. Reused four times (four separate buttons, not one combined
+// filter), matching the reference layout exactly.
+function ToolbarFilterDropdown({
+  label,
+  icon: Icon,
+  options,
+  isChecked,
+  allChecked,
+  anyUnchecked,
+  selectedCount,
+  onToggleAll,
+  onToggleOne,
+  menuOpen,
+  setMenuOpen,
+  buttonRef,
+  dropdownRef,
+  menuPos,
+  setMenuPos,
+}: {
+  label: string;
+  icon: React.ComponentType<{ size?: number; className?: string }>;
+  options: string[];
+  isChecked: (value: string) => boolean;
+  allChecked: boolean;
+  anyUnchecked: boolean;
+  selectedCount: number;
+  onToggleAll: () => void;
+  onToggleOne: (value: string) => void;
+  menuOpen: boolean;
+  setMenuOpen: (updater: (current: boolean) => boolean) => void;
+  buttonRef: React.RefObject<HTMLButtonElement | null>;
+  dropdownRef: React.RefObject<HTMLDivElement | null>;
+  menuPos: { top: number; left: number };
+  setMenuPos: (pos: { top: number; left: number }) => void;
+}) {
+  // Mount-delay pattern for an exit animation — createPortal content used
+  // to unmount the instant menuOpen went false, so the dropdown just
+  // vanished with no transition. `rendered` stays true for one extra
+  // 150ms tick after close so the closing transition (menuOpen driving
+  // opacity/scale below) actually gets to play before the DOM node is
+  // removed.
+  const [rendered, setRendered] = useState(false);
+  useEffect(() => {
+    if (menuOpen) {
+      setRendered(true);
+    } else {
+      const timeout = setTimeout(() => setRendered(false), 150);
+      return () => clearTimeout(timeout);
+    }
+  }, [menuOpen]);
+
+  return (
+    <div className="relative">
+      <button
+        type="button"
+        ref={buttonRef}
+        onClick={(event) => {
+          event.stopPropagation();
+          const rect = buttonRef.current?.getBoundingClientRect();
+          if (rect) {
+            const dropdownWidth = 176;
+            const left = Math.min(rect.left, window.innerWidth - dropdownWidth - 8);
+            setMenuPos({ top: rect.bottom + 8, left: Math.max(8, left) });
+          }
+          setMenuOpen((current) => !current);
+        }}
+        className={`inline-flex h-9 shrink-0 items-center gap-1.5 rounded-full border px-3 text-[13px] font-medium transition-[color,background-color,border-color,transform] duration-150 ease-out active:scale-[0.97] ${
+          anyUnchecked
+            ? 'border-indigo-200 bg-indigo-50 text-indigo-700 dark:border-indigo-900/50 dark:bg-indigo-500/10 dark:text-indigo-300'
+            : 'border-[#E5E7EB] bg-white text-[#475569] hover:bg-[#F8FAFC] dark:border-[#3a3a3d] dark:bg-[#2a2a2d] dark:text-[#9CA3AF] dark:hover:bg-white/5'
+        }`}
+      >
+        <Icon size={14} className={anyUnchecked ? 'text-indigo-600 dark:text-indigo-400' : 'text-[#475569] dark:text-[#9CA3AF]'} />
+        <span>{label}</span>
+        {anyUnchecked && (
+          <span className="flex h-4 min-w-[16px] items-center justify-center rounded-full bg-indigo-600 px-1 text-[10px] font-semibold text-white">
+            {selectedCount}
+          </span>
+        )}
+        <ChevronDown
+          size={14}
+          className={`transition-transform duration-150 ease-in-out ${menuOpen ? 'rotate-180' : ''} ${anyUnchecked ? 'text-indigo-600 dark:text-indigo-400' : 'text-[#475569] dark:text-[#9CA3AF]'}`}
+        />
+      </button>
+      {rendered && typeof document !== 'undefined' && createPortal(
+        <div
+          ref={dropdownRef}
+          style={{ position: 'fixed', top: menuPos.top, left: menuPos.left, transformOrigin: 'top left' }}
+          className={`z-[9999] w-44 rounded-xl border border-[#e5e5e7] bg-white p-2 shadow-xl transition-[transform,opacity] duration-150 ease-out dark:border-[#3a3a3d] dark:bg-[#2a2a2d] ${
+            menuOpen ? 'opacity-100 scale-100' : 'opacity-0 scale-95'
+          }`}
+          onClick={(event) => event.stopPropagation()}
+        >
+          <div className="px-2 py-1.5 text-left text-[10px] font-semibold uppercase tracking-[0.24em] text-[#6b7280] dark:text-[#a0a0a0]">{label}</div>
+          <div className="max-h-56 overflow-y-auto">
+            {options.map((opt) => (
+              <label key={opt} className="flex w-full items-center justify-start gap-2 whitespace-nowrap rounded-xl px-3 py-1.5 text-left text-[10px] text-[#6b7280] hover:bg-[#f5f5f7] dark:text-[#a0a0a0] dark:hover:bg-slate-800">
+                <input type="checkbox" checked={isChecked(opt)} onChange={() => onToggleOne(opt)} />
+                <span>{opt}</span>
+              </label>
+            ))}
+          </div>
+          <div className="mt-1 border-t border-[#F1F5F9] pt-1 dark:border-[#2f2f32]">
+            <button
+              type="button"
+              onClick={onToggleAll}
+              className="flex w-full items-center justify-center rounded-lg px-2.5 py-1.5 text-[11px] font-medium text-indigo-600 transition-[background-color,transform] duration-150 ease-out hover:bg-indigo-50 active:scale-[0.97] dark:text-indigo-400 dark:hover:bg-white/5"
+            >
+              {allChecked ? 'Clear All' : 'Select All'}
+            </button>
+          </div>
+        </div>,
+        document.body
+      )}
+    </div>
+  );
 }
 
 function walletStatusBadgeClasses(status: string): string {
@@ -365,14 +567,24 @@ function mobileCardFieldValue(row: MergedRow, key: ColumnKey): { value: string; 
       return { value: displayNum(row.sdp), className: 'text-foreground' };
     case 'opening':
       return { value: displayNum(row.openingBal), className: 'text-foreground' };
-    case 'totalDP':
-      return { value: displayNum(row.agentTotalDP), className: 'text-emerald-600 dark:text-emerald-400' };
-    case 'totalWD':
-      return { value: displayNum(row.agentTotalWD), className: 'text-rose-600 dark:text-rose-400' };
-    case 'topUp':
-      return { value: displayNum(row.totalTopUp), className: 'text-teal-600 dark:text-teal-400' };
-    case 'settlement':
-      return { value: displayNum(row.totalStlm), className: 'text-orange-500 dark:text-orange-400' };
+    case 'totalDP': {
+      const formatted = displayNum(row.agentTotalDP);
+      return { value: formatted, className: formatted === '−' ? 'text-foreground' : 'text-emerald-600 dark:text-emerald-400' };
+    }
+    case 'totalWD': {
+      const formatted = displayNum(row.agentTotalWD);
+      const isZero = formatted === '−';
+      return { value: isZero ? formatted : `-${formatted}`, className: isZero ? 'text-foreground' : 'text-rose-600 dark:text-rose-400' };
+    }
+    case 'topUp': {
+      const formatted = displayNum(row.totalTopUp);
+      return { value: formatted, className: formatted === '−' ? 'text-foreground' : 'text-emerald-600 dark:text-emerald-400' };
+    }
+    case 'settlement': {
+      const formatted = displayNum(row.totalStlm);
+      const isZero = formatted === '−';
+      return { value: isZero ? formatted : `-${formatted}`, className: isZero ? 'text-foreground' : 'text-rose-600 dark:text-rose-400' };
+    }
     case 'balanceInside':
       return { value: displayNum(String(row.balanceInside ?? 0)), className: 'text-foreground' };
     case 'agentWithdrawal':
@@ -384,52 +596,103 @@ function mobileCardFieldValue(row: MergedRow, key: ColumnKey): { value: string; 
   }
 }
 
-function renderCell(row: MergedRow, key: ColumnKey) {
+function renderCell(row: MergedRow, key: ColumnKey, colWidthsPx?: Partial<Record<ColumnKey, number>>) {
 
   // Neutral text scheme matches Settlement's own renderCell base exactly
-  // (app/stlm/page.tsx:686) — per explicit instruction, plain values no
-  // longer carry semantic color (emerald/rose/teal/orange); only Brand and
-  // Wallet Status stay as their own badge components, kept as-is.
-  const base = `whitespace-nowrap px-4 py-[12px] text-${COLUMN_ALIGN[key]} text-[13px] leading-[20px] font-normal text-[#111827] dark:text-[#E5E7EB]`;
+  // (app/stlm/page.tsx:686) — plain values carry no semantic color; only
+  // Brand and Wallet Status stay as their own badge components. Total DP/
+  // Total WD/Top Up/Settlement are the explicit exception (re-added per
+  // later instruction): green for inflows (DP, Top Up), red + a leading
+  // "-" for outflows (WD, Settlement — stored as positive magnitudes but
+  // read as deductions), neutral whenever the value is zero/blank (the
+  // em-dash). Company Balance stays fully neutral, no exception.
+  const baseNoColor = `whitespace-nowrap px-5 py-[12px] text-${COLUMN_ALIGN[key]} text-[13px] leading-[20px] font-normal`;
+  const base = `${baseNoColor} text-[#111827] dark:text-[#E5E7EB]`;
+  // Every column gets the same fixed width treatment (see
+  // computeColumnWidthsPx above) — not just Shop Name.
+  const width = colWidthsPx?.[key];
+  const cellStyle = width ? { width, minWidth: width } : undefined;
 
   switch (key) {
     case 'brand':
-      return <td key={key} className={base}><BrandBadge>{row.brand}</BrandBadge></td>;
+      return <td key={key} style={cellStyle} className={base}><BrandBadge>{row.brand}</BrandBadge></td>;
     case 'leader':
-      return <td key={key} className={base}>{row.leader}</td>;
+      return <td key={key} style={cellStyle} className={base}>{row.leader}</td>;
     case 'walletName':
-      return <td key={key} className={base}>{row.agentName}</td>;
+      return <td key={key} style={cellStyle} className={base}>{row.agentName}</td>;
     case 'walletType':
-      return <td key={key} className={base}>{row.walletType}</td>;
+      return <td key={key} style={cellStyle} className={base}>{row.walletType}</td>;
     case 'sdp':
-      return <td key={key} className={`${base} tabular-nums`}>{displayNum(row.sdp)}</td>;
+      return <td key={key} style={cellStyle} className={`${base} tabular-nums`}>{displayNum(row.sdp)}</td>;
     case 'opening':
-      return <td key={key} className={`${base} tabular-nums`}>{displayNum(row.openingBal)}</td>;
-    case 'totalDP':
-      return <td key={key} className={`${base} tabular-nums`}>{displayNum(row.agentTotalDP)}</td>;
-    case 'totalWD':
-      return <td key={key} className={`${base} tabular-nums`}>{displayNum(row.agentTotalWD)}</td>;
-    case 'topUp':
-      return <td key={key} className={`${base} tabular-nums`}>{displayNum(row.totalTopUp)}</td>;
-    case 'settlement':
-      return <td key={key} className={`${base} tabular-nums`}>{displayNum(row.totalStlm)}</td>;
+      return <td key={key} style={cellStyle} className={`${base} tabular-nums`}>{displayNum(row.openingBal)}</td>;
+    case 'totalDP': {
+      const formatted = displayNum(row.agentTotalDP);
+      const color = formatted === '−' ? 'text-[#111827] dark:text-[#E5E7EB]' : 'text-emerald-600 dark:text-emerald-400';
+      return <td key={key} style={cellStyle} className={`${baseNoColor} tabular-nums ${color}`}>{formatted}</td>;
+    }
+    case 'totalWD': {
+      const formatted = displayNum(row.agentTotalWD);
+      const isZero = formatted === '−';
+      const color = isZero ? 'text-[#111827] dark:text-[#E5E7EB]' : 'text-rose-600 dark:text-rose-400';
+      return <td key={key} style={cellStyle} className={`${baseNoColor} tabular-nums ${color}`}>{isZero ? formatted : `-${formatted}`}</td>;
+    }
+    case 'topUp': {
+      const formatted = displayNum(row.totalTopUp);
+      const color = formatted === '−' ? 'text-[#111827] dark:text-[#E5E7EB]' : 'text-emerald-600 dark:text-emerald-400';
+      return <td key={key} style={cellStyle} className={`${baseNoColor} tabular-nums ${color}`}>{formatted}</td>;
+    }
+    case 'settlement': {
+      const formatted = displayNum(row.totalStlm);
+      const isZero = formatted === '−';
+      const color = isZero ? 'text-[#111827] dark:text-[#E5E7EB]' : 'text-rose-600 dark:text-rose-400';
+      return <td key={key} style={cellStyle} className={`${baseNoColor} tabular-nums ${color}`}>{isZero ? formatted : `-${formatted}`}</td>;
+    }
     case 'balanceInside':
-      return <td key={key} className={`${base} tabular-nums`}>{displayNum(String(row.balanceInside ?? 0))}</td>;
+      return <td key={key} style={cellStyle} className={`${base} tabular-nums`}>{displayNum(String(row.balanceInside ?? 0))}</td>;
     case 'agentWithdrawal':
-      return <td key={key} className={`${base} tabular-nums`}>{displayNum(String(row.agentWithdrawal))}</td>;
+      return <td key={key} style={cellStyle} className={`${base} tabular-nums`}>{displayNum(String(row.agentWithdrawal))}</td>;
     case 'sdpVsBalance':
-      return <td key={key} className={`${base} tabular-nums`}>{row.sdpVsBalance > 0 ? displayNum(String(Math.abs(row.sdpVsBalance))) : '−'}</td>;
+      return <td key={key} style={cellStyle} className={`${base} tabular-nums`}>{row.sdpVsBalance > 0 ? displayNum(String(Math.abs(row.sdpVsBalance))) : '−'}</td>;
     case 'walletStatus':
-      return <td key={key} className={base}><WalletStatusBadge status={row.walletStatus} /></td>;
-    case 'companyBalance':
+      return <td key={key} style={cellStyle} className={base}><WalletStatusBadge status={row.walletStatus} /></td>;
+    case 'companyBalance': {
+      const color = row.runningBalance < 0 ? 'text-rose-600 dark:text-rose-400' : 'text-[#111827] dark:text-[#E5E7EB]';
+      return <td key={key} style={cellStyle} className={`${baseNoColor} tabular-nums ${color}`}>{displayNum(row.runningBalance)}</td>;
+    }
     default:
-      return <td key={key} className={`${base} tabular-nums`}>{displayNum(row.runningBalance)}</td>;
+      return <td key={key} style={cellStyle} className={`${base} tabular-nums`}>{displayNum(row.runningBalance)}</td>;
   }
 }
 
 export default function AgentBalance() {
   const [rows, setRows] = useState<MergedRow[]>([]);
+
+  // Fixed width per column — sized to each column's own longest real value
+  // across the FULL dataset (rows, not the current page/search/sort
+  // slice), so every column stays constant no matter which rows are on
+  // screen. See computeColumnWidthsPx above for why this can't just be a
+  // CSS min-width. Computed over DEFAULT_COLUMNS (not visibleColumns) so it
+  // never depends on columnDefs' own declaration order below.
+  const colWidthsPx = useMemo(() => computeColumnWidthsPx(rows, DEFAULT_COLUMNS), [rows]);
+
   const [loading, setLoading] = useState(true);
+  // Skeleton -> real data is a real two-step cross-fade, not an instant
+  // swap: the skeleton fades OUT in place for 120ms (same tbody node, so
+  // the opacity transition actually plays), then real rows replace it and
+  // fade IN over 200ms. Refreshing (loading flips back true) snaps
+  // straight back to the skeleton — only the appearance of data needs the
+  // soft landing. Matches Settlement's own established pattern.
+  const [rowsPhase, setRowsPhase] = useState<'skeleton' | 'fadingOut' | 'table'>('skeleton');
+  useEffect(() => {
+    if (loading) {
+      setRowsPhase('skeleton');
+      return;
+    }
+    setRowsPhase('fadingOut');
+    const timeout = setTimeout(() => setRowsPhase('table'), 120);
+    return () => clearTimeout(timeout);
+  }, [loading]);
   const [error, setError] = useState<ClassifiedError | null>(null);
   const [spinning, setSpinning] = useState(false);
   const [searchTerm, setSearchTerm] = useState('');
@@ -456,6 +719,18 @@ export default function AgentBalance() {
   const [mounted, setMounted] = useState(false);
   const columnsButtonRef = useRef<HTMLButtonElement>(null);
   const columnsMenuRef = useRef<HTMLDivElement>(null);
+  // Mount-delay so the Columns menu's closing transition (opacity/scale
+  // driven by columnsMenuOpen below) gets to play before the portal node
+  // is removed — same pattern as ToolbarFilterDropdown's own `rendered`.
+  const [columnsMenuRendered, setColumnsMenuRendered] = useState(false);
+  useEffect(() => {
+    if (columnsMenuOpen) {
+      setColumnsMenuRendered(true);
+    } else {
+      const timeout = setTimeout(() => setColumnsMenuRendered(false), 150);
+      return () => clearTimeout(timeout);
+    }
+  }, [columnsMenuOpen]);
 
   const [walletStatusFilter, setWalletStatusFilter] = useState<Record<string, boolean>>(
     () => Object.fromEntries(WALLET_STATUS_OPTIONS.map((status) => [status, true]))
@@ -1132,7 +1407,7 @@ export default function AgentBalance() {
       />
 
       {!error && (
-        <div className={`w-full border-t border-border bg-[#f4f6fb] px-4 py-3 transition-shadow duration-150 ease-out dark:bg-[#1c1c1e] md:px-6 ${isScrolled ? TABLE_STICKY_HEADER_SHADOW_CLASS : ''}`}>
+        <div className="w-full border-t border-border bg-[#f4f6fb] px-4 py-3 dark:bg-[#1c1c1e] md:px-6">
           <div className="flex gap-2">
             {loading ? (
               Array.from({ length: 5 }).map((_, i) => (
@@ -1148,10 +1423,11 @@ export default function AgentBalance() {
                 </div>
               ))
             ) : (
-              kpis.map((kpi) => (
+              kpis.map((kpi, i) => (
                 <div
                   key={kpi.label}
-                  className="flex-1 min-w-[200px] rounded-xl border border-border bg-white p-2.5 transition-[transform,box-shadow,border-color] duration-150 ease-out hover:-translate-y-px hover:border-foreground/20 hover:shadow-sm dark:bg-[#2a2a2d]"
+                  style={{ animationDelay: `${i * 25}ms`, animationFillMode: 'backwards' }}
+                  className="dt-step-fade-in flex-1 min-w-[200px] rounded-xl border border-border bg-white p-2.5 transition-[transform,box-shadow,border-color] duration-150 ease-out hover:-translate-y-px hover:border-foreground/20 hover:shadow-sm dark:bg-[#2a2a2d]"
                 >
                   <div className="flex items-center gap-3">
                     <div className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-full ${kpi.iconBg}`}>
@@ -1186,7 +1462,7 @@ export default function AgentBalance() {
                     <div className="h-3 w-32 dt-skeleton rounded-md" />
                   ) : (
                     <>
-                      <Search size={14} className="shrink-0 text-muted-foreground" />
+                      <Search size={14} className="shrink-0 text-[#475569] dark:text-[#9CA3AF]" />
                       <input
                         value={searchTerm}
                         onChange={(event) => setSearchTerm(event.target.value)}
@@ -1196,19 +1472,117 @@ export default function AgentBalance() {
                     </>
                   )}
                 </div>
+                {loading && (
+                  <>
+                    <div className="h-9 w-[92px] shrink-0 dt-skeleton rounded-full" />
+                    <div className="h-9 w-[98px] shrink-0 dt-skeleton rounded-full" />
+                    <div className="h-9 w-[130px] shrink-0 dt-skeleton rounded-full" />
+                    <div className="h-9 w-[140px] shrink-0 dt-skeleton rounded-full" />
+                  </>
+                )}
+                {!loading && (
+                  <>
+                    <ToolbarFilterDropdown
+                      label="Brand"
+                      icon={Tag}
+                      options={brandOptions}
+                      isChecked={isBrandChecked}
+                      allChecked={allBrandsChecked}
+                      anyUnchecked={anyBrandUnchecked}
+                      selectedCount={selectedBrandCount}
+                      onToggleAll={() => {
+                        const nextValue = !allBrandsChecked;
+                        setBrandFilter(Object.fromEntries(brandOptions.map((name) => [name, nextValue])));
+                      }}
+                      onToggleOne={(name) => setBrandFilter((current) => ({ ...current, [name]: !isBrandChecked(name) }))}
+                      menuOpen={brandMenuOpen}
+                      setMenuOpen={setBrandMenuOpen}
+                      buttonRef={brandButtonRef}
+                      dropdownRef={brandDropdownRef}
+                      menuPos={brandMenuPos}
+                      setMenuPos={setBrandMenuPos}
+                    />
+                    <ToolbarFilterDropdown
+                      label="Leader"
+                      icon={User}
+                      options={leaderOptions}
+                      isChecked={isLeaderChecked}
+                      allChecked={allLeadersChecked}
+                      anyUnchecked={anyLeaderUnchecked}
+                      selectedCount={selectedLeaderCount}
+                      onToggleAll={() => {
+                        const nextValue = !allLeadersChecked;
+                        setLeaderFilter(Object.fromEntries(leaderOptions.map((name) => [name, nextValue])));
+                      }}
+                      onToggleOne={(name) => setLeaderFilter((current) => ({ ...current, [name]: !isLeaderChecked(name) }))}
+                      menuOpen={leaderMenuOpen}
+                      setMenuOpen={setLeaderMenuOpen}
+                      buttonRef={leaderButtonRef}
+                      dropdownRef={leaderDropdownRef}
+                      menuPos={leaderMenuPos}
+                      setMenuPos={setLeaderMenuPos}
+                    />
+                    <ToolbarFilterDropdown
+                      label="Wallet Type"
+                      icon={CreditCard}
+                      options={walletTypeOptions}
+                      isChecked={isWalletTypeChecked}
+                      allChecked={allWalletTypesChecked}
+                      anyUnchecked={anyWalletTypeUnchecked}
+                      selectedCount={selectedWalletTypeCount}
+                      onToggleAll={() => {
+                        const nextValue = !allWalletTypesChecked;
+                        setWalletTypeFilter(Object.fromEntries(walletTypeOptions.map((name) => [name, nextValue])));
+                      }}
+                      onToggleOne={(name) => setWalletTypeFilter((current) => ({ ...current, [name]: !isWalletTypeChecked(name) }))}
+                      menuOpen={walletTypeMenuOpen}
+                      setMenuOpen={setWalletTypeMenuOpen}
+                      buttonRef={walletTypeButtonRef}
+                      dropdownRef={walletTypeDropdownRef}
+                      menuPos={walletTypeMenuPos}
+                      setMenuPos={setWalletTypeMenuPos}
+                    />
+                    <ToolbarFilterDropdown
+                      label="Wallet Status"
+                      icon={Shield}
+                      options={walletStatusOptions}
+                      isChecked={(status) => !!walletStatusFilter[status]}
+                      allChecked={allWalletStatusesChecked}
+                      anyUnchecked={anyWalletStatusUnchecked}
+                      selectedCount={selectedWalletStatusCount}
+                      onToggleAll={() => {
+                        const nextValue = !allWalletStatusesChecked;
+                        setWalletStatusFilter(Object.fromEntries(walletStatusOptions.map((status) => [status, nextValue])));
+                      }}
+                      onToggleOne={(status) => setWalletStatusFilter((current) => ({ ...current, [status]: !current[status] }))}
+                      menuOpen={walletStatusMenuOpen}
+                      setMenuOpen={setWalletStatusMenuOpen}
+                      buttonRef={walletStatusButtonRef}
+                      dropdownRef={walletStatusDropdownRef}
+                      menuPos={walletStatusMenuPos}
+                      setMenuPos={setWalletStatusMenuPos}
+                    />
+                  </>
+                )}
               </Toolbar.Left>
               <Toolbar.Right>
-                {loading && <div className="h-9 w-28 dt-skeleton rounded-lg" />}
+                {loading && (
+                  <>
+                    <div className="h-9 w-[92px] shrink-0 dt-skeleton rounded-[8px]" />
+                    <div className="h-9 w-[88px] shrink-0 dt-skeleton rounded-[8px]" />
+                    <div className="h-9 w-[108px] shrink-0 dt-skeleton rounded-[8px]" />
+                  </>
+                )}
                 {!loading && (
-                  <div className="inline-flex items-center rounded-[8px] border border-[#E2E8F0] dark:border-[#3a3a3d] overflow-hidden">
-                    <button type="button" onClick={fetchData} aria-label="Refresh" title="Refresh" className={GHOST_BUTTON_SEGMENT}>
+                  <>
+                    <button type="button" onClick={fetchData} aria-label="Refresh" className={GHOST_BUTTON}>
                       <RefreshCw size={14} className={spinning ? 'animate-spin' : ''} />
+                      <span>Refresh</span>
                     </button>
-                    <div className="h-5 w-px bg-[#E2E8F0] dark:bg-[#3a3a3d]" />
-                    <button type="button" onClick={handleExport} aria-label="Export to Excel" title="Export to Excel" className={GHOST_BUTTON_SEGMENT}>
+                    <button type="button" onClick={handleExport} aria-label="Export to Excel" className={GHOST_BUTTON}>
                       <Download size={14} />
+                      <span>Export</span>
                     </button>
-                    <div className="h-5 w-px bg-[#E2E8F0] dark:bg-[#3a3a3d]" />
                     <div className="relative">
                       <button
                         type="button"
@@ -1227,19 +1601,22 @@ export default function AgentBalance() {
                         aria-expanded={columnsMenuOpen}
                         aria-controls="agentbal-columns-popover"
                         aria-label="Columns"
-                        title="Columns"
-                        className={GHOST_BUTTON_SEGMENT}
+                        className={GHOST_BUTTON}
                       >
                         <Columns3 size={14} />
+                        <span>Columns</span>
+                        <ChevronDown size={14} className={`transition-transform duration-150 ease-in-out ${columnsMenuOpen ? 'rotate-180' : ''}`} />
                       </button>
-                    {columnsMenuOpen && typeof document !== 'undefined' && createPortal(
+                    {columnsMenuRendered && typeof document !== 'undefined' && createPortal(
                       <div
                         ref={columnsMenuRef}
                         id="agentbal-columns-popover"
                         role="dialog"
                         aria-label="Column visibility"
-                        style={{ position: 'fixed', top: columnsMenuPos.top, left: columnsMenuPos.left }}
-                        className="z-[9999] w-56 max-h-[70vh] overflow-y-auto rounded-xl border border-[#e5e5e7] bg-white p-2 shadow-xl dark:border-[#3a3a3d] dark:bg-[#2a2a2d]"
+                        style={{ position: 'fixed', top: columnsMenuPos.top, left: columnsMenuPos.left, transformOrigin: 'top right' }}
+                        className={`z-[9999] w-56 max-h-[70vh] overflow-y-auto rounded-xl border border-[#e5e5e7] bg-white p-2 shadow-xl transition-[transform,opacity] duration-150 ease-out dark:border-[#3a3a3d] dark:bg-[#2a2a2d] ${
+                          columnsMenuOpen ? 'opacity-100 scale-100' : 'opacity-0 scale-95'
+                        }`}
                         onClick={(event) => event.stopPropagation()}
                         onKeyDown={(event) => {
                           if (event.key === 'Escape') {
@@ -1280,7 +1657,7 @@ export default function AgentBalance() {
                           <button
                             type="button"
                             onClick={() => setColumnDefs(DEFAULT_COLUMNS.map((col) => ({ ...col })))}
-                            className="flex w-full items-center justify-center rounded-lg px-2.5 py-1.5 text-[11px] font-medium text-indigo-600 transition-colors hover:bg-indigo-50 dark:text-indigo-400 dark:hover:bg-white/5"
+                            className="flex w-full items-center justify-center rounded-lg px-2.5 py-1.5 text-[11px] font-medium text-indigo-600 transition-[background-color,transform] duration-150 ease-out hover:bg-indigo-50 active:scale-[0.97] dark:text-indigo-400 dark:hover:bg-white/5"
                           >
                             Restore Defaults
                           </button>
@@ -1289,12 +1666,17 @@ export default function AgentBalance() {
                       document.body
                     )}
                     </div>
-                  </div>
+                  </>
                 )}
               </Toolbar.Right>
             </Toolbar>
             <div className="relative hidden flex-1 min-h-0 sm:block">
-              <div ref={tableScrollRef} className="dt-scroll h-full overflow-y-auto overflow-x-auto">
+              <div
+                ref={tableScrollRef}
+                className={`dt-scroll agentbal-scroll h-full ${
+                  loading ? 'overflow-hidden pointer-events-none' : 'overflow-y-auto overflow-x-auto pointer-events-auto'
+                }`}
+              >
               <table className="w-full text-xs">
                 <thead className={`sticky top-0 z-[50] bg-[#FAFBFC] dark:bg-[#1C1F26] border-b border-[#E2E8F0] dark:border-[#3a3a3d] transition-shadow duration-150 ease-out ${
                   isScrolled ? 'shadow-[0_2px_4px_rgba(15,23,42,0.1)] dark:shadow-[0_2px_4px_rgba(0,0,0,0.35)]' : ''
@@ -1303,278 +1685,13 @@ export default function AgentBalance() {
                     {visibleColumns.map((col) => (
                       <th
                         key={col.key}
+                        style={colWidthsPx[col.key] ? { width: colWidthsPx[col.key], minWidth: colWidthsPx[col.key] } : undefined}
                         className={headerCellClasses(col.key, sortColumn === col.key)}>
-                        {loading ? (
-                          <div className="h-[18px] w-14 dt-skeleton rounded-md" />
-                        ) : col.key === 'brand' ? (
-                          <div className="relative flex items-center justify-start gap-1">
-                            <span className="normal-case font-semibold text-foreground">{col.label}</span>
-                            <button
-                              type="button"
-                              ref={brandButtonRef}
-                              onClick={(event) => {
-                                event.stopPropagation();
-                                const rect = brandButtonRef.current?.getBoundingClientRect();
-                                if (rect) {
-                                  const dropdownWidth = 176;
-                                  const left = Math.min(rect.left, window.innerWidth - dropdownWidth - 8);
-                                  setBrandMenuPos({ top: rect.bottom + 8, left: Math.max(8, left) });
-                                }
-                                setBrandMenuOpen((current) => !current);
-                              }}
-                              className={`flex items-center justify-center rounded-full p-1 transition ${anyBrandUnchecked ? 'bg-indigo-100 text-indigo-700 dark:bg-indigo-500/30 dark:text-indigo-200' : 'text-[#6b7280] hover:bg-slate-200 dark:text-[#a0a0a0] dark:hover:bg-white/10'}`}
-                            >
-                              {anyBrandUnchecked ? (
-                                <span className="flex h-3 min-w-[12px] items-center justify-center px-0.5 text-[10px] font-semibold leading-none">
-                                  {selectedBrandCount}
-                                </span>
-                              ) : (
-                                <ChevronUp
-                                  size={12}
-                                  className={`transition-transform duration-150 ease-in-out ${brandMenuOpen ? 'rotate-180' : ''} opacity-70`}
-                                />
-                              )}
-                            </button>
-                            {brandMenuOpen && typeof document !== 'undefined' && createPortal(
-                              <div
-                                ref={brandDropdownRef}
-                                style={{ position: 'fixed', top: brandMenuPos.top, left: brandMenuPos.left }}
-                                className="z-[9999] w-44 rounded-xl border border-[#e5e5e7] bg-white p-2 shadow-xl dark:border-[#3a3a3d] dark:bg-[#2a2a2d]"
-                                onClick={(event) => event.stopPropagation()}
-                              >
-                                <div className="px-2 py-1.5 text-left text-[10px] font-semibold uppercase tracking-[0.24em] text-[#6b7280] dark:text-[#a0a0a0]">Brand</div>
-                                <div className="max-h-56 overflow-y-auto">
-                                  <label className="flex w-full items-center justify-start gap-2 rounded-xl px-3 py-1.5 text-left text-[10px] text-[#6b7280] hover:bg-[#f5f5f7] dark:text-[#a0a0a0] dark:hover:bg-slate-800">
-                                    <input
-                                      type="checkbox"
-                                      checked={allBrandsChecked}
-                                      onChange={() => {
-                                        const nextValue = !allBrandsChecked;
-                                        setBrandFilter(
-                                          Object.fromEntries(brandOptions.map((name) => [name, nextValue]))
-                                        );
-                                      }}
-                                    />
-                                    <span>All</span>
-                                  </label>
-                                  {brandOptions.map((brand) => (
-                                    <label key={brand} className="flex w-full items-center justify-start gap-2 rounded-xl px-3 py-1.5 text-left text-[10px] text-[#6b7280] hover:bg-[#f5f5f7] dark:text-[#a0a0a0] dark:hover:bg-slate-800">
-                                      <input
-                                        type="checkbox"
-                                        checked={isBrandChecked(brand)}
-                                        onChange={() => {
-                                          setBrandFilter((current) => ({ ...current, [brand]: !isBrandChecked(brand) }));
-                                        }}
-                                      />
-                                      <span>{brand}</span>
-                                    </label>
-                                  ))}
-                                </div>
-                              </div>,
-                              document.body
-                            )}
-                          </div>
-                        ) : col.key === 'leader' ? (
-                          <div className="relative flex items-center justify-start gap-1">
-                            <span className="normal-case font-semibold text-foreground">{col.label}</span>
-                            <button
-                              type="button"
-                              ref={leaderButtonRef}
-                              onClick={(event) => {
-                                event.stopPropagation();
-                                const rect = leaderButtonRef.current?.getBoundingClientRect();
-                                if (rect) {
-                                  const dropdownWidth = 176;
-                                  const left = Math.min(rect.left, window.innerWidth - dropdownWidth - 8);
-                                  setLeaderMenuPos({ top: rect.bottom + 8, left: Math.max(8, left) });
-                                }
-                                setLeaderMenuOpen((current) => !current);
-                              }}
-                              className={`flex items-center justify-center rounded-full p-1 transition ${anyLeaderUnchecked ? 'bg-indigo-100 text-indigo-700 dark:bg-indigo-500/30 dark:text-indigo-200' : 'text-[#6b7280] hover:bg-slate-200 dark:text-[#a0a0a0] dark:hover:bg-white/10'}`}
-                            >
-                              {anyLeaderUnchecked ? (
-                                <span className="flex h-3 min-w-[12px] items-center justify-center px-0.5 text-[10px] font-semibold leading-none">
-                                  {selectedLeaderCount}
-                                </span>
-                              ) : (
-                                <ChevronUp
-                                  size={12}
-                                  className={`transition-transform duration-150 ease-in-out ${leaderMenuOpen ? 'rotate-180' : ''} opacity-70`}
-                                />
-                              )}
-                            </button>
-                            {leaderMenuOpen && typeof document !== 'undefined' && createPortal(
-                              <div
-                                ref={leaderDropdownRef}
-                                style={{ position: 'fixed', top: leaderMenuPos.top, left: leaderMenuPos.left }}
-                                className="z-[9999] w-44 rounded-xl border border-[#e5e5e7] bg-white p-2 shadow-xl dark:border-[#3a3a3d] dark:bg-[#2a2a2d]"
-                                onClick={(event) => event.stopPropagation()}
-                              >
-                                <div className="px-2 py-1.5 text-left text-[10px] font-semibold uppercase tracking-[0.24em] text-[#6b7280] dark:text-[#a0a0a0]">Leader</div>
-                                <div className="max-h-56 overflow-y-auto">
-                                  <label className="flex w-full items-center justify-start gap-2 rounded-xl px-3 py-1.5 text-left text-[10px] text-[#6b7280] hover:bg-[#f5f5f7] dark:text-[#a0a0a0] dark:hover:bg-slate-800">
-                                    <input
-                                      type="checkbox"
-                                      checked={allLeadersChecked}
-                                      onChange={() => {
-                                        const nextValue = !allLeadersChecked;
-                                        setLeaderFilter(
-                                          Object.fromEntries(leaderOptions.map((name) => [name, nextValue]))
-                                        );
-                                      }}
-                                    />
-                                    <span>All</span>
-                                  </label>
-                                  {leaderOptions.map((leader) => (
-                                    <label key={leader} className="flex w-full items-center justify-start gap-2 rounded-xl px-3 py-1.5 text-left text-[10px] text-[#6b7280] hover:bg-[#f5f5f7] dark:text-[#a0a0a0] dark:hover:bg-slate-800">
-                                      <input
-                                        type="checkbox"
-                                        checked={isLeaderChecked(leader)}
-                                        onChange={() => {
-                                          setLeaderFilter((current) => ({ ...current, [leader]: !isLeaderChecked(leader) }));
-                                        }}
-                                      />
-                                      <span>{leader}</span>
-                                    </label>
-                                  ))}
-                                </div>
-                              </div>,
-                              document.body
-                            )}
-                          </div>
-                        ) : col.key === 'walletType' ? (
-                          <div className="relative flex items-center justify-start gap-1">
-                            <span className="normal-case font-semibold text-foreground">{col.label}</span>
-                            <button
-                              type="button"
-                              ref={walletTypeButtonRef}
-                              onClick={(event) => {
-                                event.stopPropagation();
-                                const rect = walletTypeButtonRef.current?.getBoundingClientRect();
-                                if (rect) {
-                                  const dropdownWidth = 176;
-                                  const left = Math.min(rect.left, window.innerWidth - dropdownWidth - 8);
-                                  setWalletTypeMenuPos({ top: rect.bottom + 8, left: Math.max(8, left) });
-                                }
-                                setWalletTypeMenuOpen((current) => !current);
-                              }}
-                              className={`flex items-center justify-center rounded-full p-1 transition ${anyWalletTypeUnchecked ? 'bg-indigo-100 text-indigo-700 dark:bg-indigo-500/30 dark:text-indigo-200' : 'text-[#6b7280] hover:bg-slate-200 dark:text-[#a0a0a0] dark:hover:bg-white/10'}`}
-                            >
-                              {anyWalletTypeUnchecked ? (
-                                <span className="flex h-3 min-w-[12px] items-center justify-center px-0.5 text-[10px] font-semibold leading-none">
-                                  {selectedWalletTypeCount}
-                                </span>
-                              ) : (
-                                <ChevronUp
-                                  size={12}
-                                  className={`transition-transform duration-150 ease-in-out ${walletTypeMenuOpen ? 'rotate-180' : ''} opacity-70`}
-                                />
-                              )}
-                            </button>
-                            {walletTypeMenuOpen && typeof document !== 'undefined' && createPortal(
-                              <div
-                                ref={walletTypeDropdownRef}
-                                style={{ position: 'fixed', top: walletTypeMenuPos.top, left: walletTypeMenuPos.left }}
-                                className="z-[9999] w-44 rounded-xl border border-[#e5e5e7] bg-white p-2 shadow-xl dark:border-[#3a3a3d] dark:bg-[#2a2a2d]"
-                                onClick={(event) => event.stopPropagation()}
-                              >
-                                <div className="px-2 py-1.5 text-left text-[10px] font-semibold uppercase tracking-[0.24em] text-[#6b7280] dark:text-[#a0a0a0]">Wallet Type</div>
-                                <div className="max-h-56 overflow-y-auto">
-                                  <label className="flex w-full items-center justify-start gap-2 whitespace-nowrap rounded-xl px-3 py-1.5 text-left text-[10px] text-[#6b7280] hover:bg-[#f5f5f7] dark:text-[#a0a0a0] dark:hover:bg-slate-800">
-                                    <input
-                                      type="checkbox"
-                                      checked={allWalletTypesChecked}
-                                      onChange={() => {
-                                        const nextValue = !allWalletTypesChecked;
-                                        setWalletTypeFilter(Object.fromEntries(walletTypeOptions.map((name) => [name, nextValue])));
-                                      }}
-                                    />
-                                    <span>All</span>
-                                  </label>
-                                  {walletTypeOptions.map((type) => (
-                                    <label key={type} className="flex w-full items-center justify-start gap-2 whitespace-nowrap rounded-xl px-3 py-1.5 text-left text-[10px] text-[#6b7280] hover:bg-[#f5f5f7] dark:text-[#a0a0a0] dark:hover:bg-slate-800">
-                                      <input
-                                        type="checkbox"
-                                        checked={isWalletTypeChecked(type)}
-                                        onChange={() => {
-                                          setWalletTypeFilter((current) => ({ ...current, [type]: !isWalletTypeChecked(type) }));
-                                        }}
-                                      />
-                                      <span>{type}</span>
-                                    </label>
-                                  ))}
-                                </div>
-                              </div>,
-                              document.body
-                            )}
-                          </div>
-                        ) : col.key === 'walletStatus' ? (
-                          <div className="relative flex items-center justify-start gap-1">
-                            <span className="normal-case font-semibold text-foreground">{col.label}</span>
-                            <button
-                              type="button"
-                              ref={walletStatusButtonRef}
-                              onClick={(event) => {
-                                event.stopPropagation();
-                                const rect = walletStatusButtonRef.current?.getBoundingClientRect();
-                                if (rect) {
-                                  const dropdownWidth = 176;
-                                  const left = Math.min(rect.left, window.innerWidth - dropdownWidth - 8);
-                                  setWalletStatusMenuPos({ top: rect.bottom + 8, left: Math.max(8, left) });
-                                }
-                                setWalletStatusMenuOpen((current) => !current);
-                              }}
-                              className={`flex items-center justify-center rounded-full p-1 transition ${anyWalletStatusUnchecked ? 'bg-indigo-100 text-indigo-700 dark:bg-indigo-500/30 dark:text-indigo-200' : 'text-[#6b7280] hover:bg-slate-200 dark:text-[#a0a0a0] dark:hover:bg-white/10'}`}
-                            >
-                              {anyWalletStatusUnchecked ? (
-                                <span className="flex h-3 min-w-[12px] items-center justify-center px-0.5 text-[10px] font-semibold leading-none">
-                                  {selectedWalletStatusCount}
-                                </span>
-                              ) : (
-                                <ChevronUp
-                                  size={12}
-                                  className={`transition-transform duration-150 ease-in-out ${walletStatusMenuOpen ? 'rotate-180' : ''} opacity-70`}
-                                />
-                              )}
-                            </button>
-                            {walletStatusMenuOpen && typeof document !== 'undefined' && createPortal(
-                              <div
-                                ref={walletStatusDropdownRef}
-                                style={{ position: 'fixed', top: walletStatusMenuPos.top, left: walletStatusMenuPos.left }}
-                                className="z-[9999] w-44 rounded-xl border border-[#e5e5e7] bg-white p-2 shadow-xl dark:border-[#3a3a3d] dark:bg-[#2a2a2d]"
-                                onClick={(event) => event.stopPropagation()}
-                              >
-                                <div className="px-2 py-1.5 text-left text-[10px] font-semibold uppercase tracking-[0.24em] text-[#6b7280] dark:text-[#a0a0a0]">Wallet Status</div>
-                                <div className="max-h-56 overflow-y-auto">
-                                  <label className="flex w-full items-center justify-start gap-2 whitespace-nowrap rounded-xl px-3 py-1.5 text-left text-[10px] text-[#6b7280] hover:bg-[#f5f5f7] dark:text-[#a0a0a0] dark:hover:bg-slate-800">
-                                    <input
-                                      type="checkbox"
-                                      checked={allWalletStatusesChecked}
-                                      onChange={() => {
-                                        const nextValue = !allWalletStatusesChecked;
-                                        setWalletStatusFilter(Object.fromEntries(walletStatusOptions.map((status) => [status, nextValue])));
-                                      }}
-                                    />
-                                    <span>All</span>
-                                  </label>
-                                  {walletStatusOptions.map((status) => (
-                                    <label key={status} className="flex w-full items-center justify-start gap-2 whitespace-nowrap rounded-xl px-3 py-1.5 text-left text-[10px] text-[#6b7280] hover:bg-[#f5f5f7] dark:text-[#a0a0a0] dark:hover:bg-slate-800">
-                                      <input
-                                        type="checkbox"
-                                        checked={!!walletStatusFilter[status]}
-                                        onChange={() => {
-                                          setWalletStatusFilter((current) => ({ ...current, [status]: !current[status] }));
-                                        }}
-                                      />
-                                      <span>{status}</span>
-                                    </label>
-                                  ))}
-                                </div>
-                              </div>,
-                              document.body
-                            )}
-                          </div>
-                        ) : col.sortable ? (
+                        {/* Header always renders its real label/sort control,
+                            loading or not — only data rows shimmer (premium
+                            skeleton spec: headers are never placeholders,
+                            matching Settlement/Top Up's own convention). */}
+                        {col.sortable ? (
                           <button
                             type="button"
                             onClick={() => {
@@ -1585,17 +1702,29 @@ export default function AgentBalance() {
                                 setSortDirection('asc');
                               }
                             }}
-                            className={`group/sort flex w-full items-center gap-1 transition hover:opacity-80 ${
-                              col.align === 'right' ? 'justify-end' : col.align === 'center' ? 'justify-center' : 'justify-start'
+                            className={`group/sort flex w-full items-center whitespace-nowrap transition-[opacity,transform] duration-150 ease-out hover:opacity-80 active:scale-[0.98] ${
+                              col.align === 'right' ? 'justify-end' : col.align === 'center' ? 'justify-center' : 'justify-start gap-1.5'
                             }`}
                           >
-                            {col.align === 'right' ? (
-                              <>
-                                <span className={sortColumn === col.key ? '' : 'opacity-60 transition-opacity duration-150 group-hover/sort:opacity-100'}>
+                            {col.align === 'right' || col.align === 'center' ? (
+                              // Right/center-aligned columns: the label sits in
+                              // its own relatively-positioned wrapper sized to
+                              // its own text only, so justify-end/center
+                              // aligns THAT (the label alone) — matching where
+                              // the data below it lines up. The icon is
+                              // pulled out with position:absolute so it never
+                              // contributes to the wrapper's width; without
+                              // this, the icon (not the label) ends up at the
+                              // true right/center edge, leaving the label
+                              // text itself misaligned with the data under it
+                              // (verified live: icon's edge matched the data
+                              // column's edge exactly, label's did not).
+                              <span className="relative inline-flex items-center">
+                                {col.label}
+                                <span className={`absolute left-full ml-1.5 flex items-center ${sortColumn === col.key ? '' : 'opacity-60 transition-opacity duration-150 group-hover/sort:opacity-100'}`}>
                                   <SortIcon active={sortColumn === col.key} direction={sortDirection} />
                                 </span>
-                                <span>{col.label}</span>
-                              </>
+                              </span>
                             ) : (
                               <>
                                 <span>{col.label}</span>
@@ -1612,17 +1741,35 @@ export default function AgentBalance() {
                     ))}
                   </tr>
                 </thead>
-                <tbody>
-                  {loading ? Array.from({ length: 18 }).map((_, i) => (
+                <tbody
+                  className={
+                    rowsPhase === 'table'
+                      ? 'opacity-100 transition-opacity duration-200 ease-out'
+                      : rowsPhase === 'fadingOut'
+                      ? 'opacity-0 transition-opacity duration-[120ms] ease-out'
+                      : 'opacity-100'
+                  }
+                >
+                  {rowsPhase !== 'table' ? Array.from({ length: 18 }).map((_, i) => (
                     <tr key={i}>
                       {visibleColumns.map((col) => (
-                        <td key={col.key} className="px-4 py-[12px]">
+                        <td
+                          key={col.key}
+                          style={colWidthsPx[col.key] ? { width: colWidthsPx[col.key], minWidth: colWidthsPx[col.key] } : undefined}
+                          className="px-5 py-[12px]"
+                        >
                           {col.key === 'brand' ? (
                             <div className="h-[26px] w-12 dt-skeleton rounded-md" />
                           ) : col.key === 'walletStatus' ? (
                             <div className="h-5 w-20 dt-skeleton rounded-md" />
+                          ) : col.key === 'leader' ? (
+                            <div className="h-2.5 dt-skeleton rounded-md" style={{ width: `${LEADER_SKELETON_WIDTHS[i % LEADER_SKELETON_WIDTHS.length]}%` }} />
+                          ) : col.key === 'walletName' ? (
+                            <div className="h-2.5 dt-skeleton rounded-md" style={{ width: `${SHOP_NAME_SKELETON_WIDTHS[i % SHOP_NAME_SKELETON_WIDTHS.length]}%` }} />
+                          ) : col.key === 'walletType' ? (
+                            <div className="h-2.5 dt-skeleton rounded-md" style={{ width: `${TYPE_SKELETON_WIDTHS[i % TYPE_SKELETON_WIDTHS.length]}%` }} />
                           ) : (
-                            <div className={`h-2.5 ${SKELETON_WIDTH[col.key]} dt-skeleton rounded-md`} />
+                            <div className="h-2.5 dt-skeleton rounded-md" style={{ width: `${AMOUNT_SKELETON_WIDTHS[i % AMOUNT_SKELETON_WIDTHS.length]}%` }} />
                           )}
                         </td>
                       ))}
@@ -1633,13 +1780,13 @@ export default function AgentBalance() {
                       <tr
                         key={row.agentName || i}
                         onClick={() => toggleRowSelection(row.agentName)}
-                        className={`border-b border-border last:border-0 transition-colors duration-150 ease-out ${
+                        className={`border-b border-[#ECEFF3] last:border-0 dark:border-[#2f2f32] transition-colors duration-150 ease-out ${
                           isSelected
                             ? 'bg-[color:var(--product-accent-soft)] shadow-[inset_4px_0_0_var(--product-accent)]'
-                            : `hover:bg-slate-50 dark:hover:bg-slate-800 ${i % 2 === 1 ? 'bg-[#FCFCFD] dark:bg-white/[0.02]' : ''}`
+                            : 'hover:bg-slate-50 dark:hover:bg-slate-800'
                         }`}
                       >
-                        {visibleColumns.map((col) => renderCell(row, col.key))}
+                        {visibleColumns.map((col) => renderCell(row, col.key, colWidthsPx))}
                       </tr>
                     );
                   }) : (
@@ -1660,11 +1807,20 @@ export default function AgentBalance() {
                 </tbody>
               </table>
               </div>
-              {!atScrollStart && (
+              {!loading && !atScrollStart && (
                 <div className="pointer-events-none absolute inset-y-0 left-0 z-[55] w-6 bg-gradient-to-r from-white to-transparent dark:from-[#2a2a2d]" />
               )}
-              {!atScrollEnd && (
-                <div className="pointer-events-none absolute inset-y-0 right-0 z-[55] w-6 bg-gradient-to-l from-white to-transparent dark:from-[#2a2a2d]" />
+              {/* right-[10px], not right-0 — this table's scrollbar-gutter:
+                  stable reserves ~10px on the right for the vertical
+                  scrollbar. A right-0 fade sat on TOP of that gutter, so
+                  the scrollbar's own background visibly "faded" in and out
+                  as atScrollEnd toggled (reported live: normal at the far
+                  right, washed-out white everywhere else). Insetting past
+                  the gutter keeps the fade over the table content only —
+                  the scrollbar's own background stays constant regardless
+                  of horizontal scroll position. */}
+              {!loading && !atScrollEnd && (
+                <div className="pointer-events-none absolute inset-y-0 right-[10px] z-[55] w-6 bg-gradient-to-l from-white to-transparent dark:from-[#2a2a2d]" />
               )}
             </div>
 
@@ -1718,7 +1874,7 @@ export default function AgentBalance() {
                         {showBalance && (
                           <div className={`flex items-center justify-between ${hasHeader ? 'pt-3' : ''}`}>
                             <span className="text-[12px] text-muted-foreground">Company Balance</span>
-                            <span className="text-xl font-bold tabular-nums text-foreground">{displayNum(row.runningBalance)}</span>
+                            <span className={`text-xl font-bold tabular-nums ${row.runningBalance < 0 ? 'text-rose-600 dark:text-rose-400' : 'text-foreground'}`}>{displayNum(row.runningBalance)}</span>
                           </div>
                         )}
 

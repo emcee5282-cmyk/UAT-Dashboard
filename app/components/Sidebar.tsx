@@ -25,7 +25,7 @@ import { cn } from '@/lib/utils';
 import { SIDEBAR_SYNC_DURATION_CLASS } from '@/app/design-system/transitions';
 
 const BrandLogo = () => (
-  <Image src="/icon.png" alt="" width={36} height={36} className="h-full w-full rounded-lg object-cover" />
+  <Image src="/kibo-ui-light.svg" alt="" width={36} height={36} className="h-full w-full rounded-lg object-contain p-1.5" unoptimized />
 );
 
 // Hover tooltip shown ONLY while the dock is collapsed (once expanded, the
@@ -255,8 +255,7 @@ export default function Sidebar() {
       <aside className={`fixed left-0 top-0 z-50 flex h-full w-[250px] flex-col border-r border-border bg-white text-foreground transition-transform duration-300 dark:bg-[#0d1117] md:hidden ${mobileOpen ? 'translate-x-0' : '-translate-x-full'}`}>
         <div className="flex h-[60px] shrink-0 items-center gap-3 border-b border-border px-4">
           <div
-            className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg ring-1 ring-white/10"
-            style={{ background: '#0f172a' }}
+            className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-white ring-1 ring-border"
           >
             <BrandLogo />
           </div>
@@ -383,8 +382,7 @@ export default function Sidebar() {
           <div className="mb-1 border-b border-border pb-3">
             <div className="relative flex h-14 items-center gap-2.5 rounded-lg px-2.5">
               <div
-                className="relative flex h-9 w-9 shrink-0 items-center justify-center rounded-lg ring-1 ring-white/10"
-                style={{ background: '#0f172a' }}
+                className="relative flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-white ring-1 ring-border"
               >
                 <BrandLogo />
               </div>

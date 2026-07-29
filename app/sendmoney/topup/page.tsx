@@ -5,7 +5,6 @@ import { createPortal } from 'react-dom';
 import { Search, ChevronUp, ChevronDown, ChevronsUpDown, Columns3, Download, PlusCircle, RefreshCw, MoreVertical, Copy, Pencil, Eye, Trash2, Inbox, Hash, Banknote } from 'lucide-react';
 import * as XLSX from 'xlsx';
 import SettlementHeader from '@/app/components/SettlementHeader';
-import SettlementSummary, { type SettlementKpiItem } from '@/app/components/SettlementSummary';
 import Toolbar from '@/app/components/Toolbar';
 import DataTable from '@/app/components/DataTable';
 import TableFooter from '@/app/components/TableFooter';
@@ -16,7 +15,8 @@ import AddRecordDropdown from '@/app/components/AddRecordDropdown';
 import BulkImportModal from '@/app/components/BulkImportModal';
 import BulkEditModal, { type BulkEditUpdates } from '@/app/components/BulkEditModal';
 import { classifyFetchError, type ClassifiedError } from '@/app/lib/errors';
-import { rawVal, displayNum, parseAmount } from '@/app/lib/format';
+import { rawVal, displayNum, parseAmount, fmtAbbrev, fmt } from '@/app/lib/format';
+import { TABLE_STICKY_HEADER_SHADOW_CLASS } from '@/app/design-system/shadows';
 import { BRAND_CODES as CASHOUT_BRAND_CODES } from '@/app/lib/transferQueueCount';
 import { isToday, isYesterday } from '@/app/lib/businessDate';
 import { getPreference, setPreference } from '@/app/lib/preferences';
@@ -111,6 +111,29 @@ type TopUpRow = {
   // StlmRow._id.
   _id: number;
 };
+
+// Re-triggers a short opacity+translateY fade whenever `value` changes,
+// matching Cashout Top Up's own (app/topup/page.tsx) bespoke FadeValue —
+// duplicated here since these KPI cards are bespoke, not SettlementSummary.
+function FadeValue({ value, className }: { value: string; className: string }) {
+  const [visible, setVisible] = useState(false);
+
+  useEffect(() => {
+    setVisible(false);
+    const raf = requestAnimationFrame(() => setVisible(true));
+    return () => cancelAnimationFrame(raf);
+  }, [value]);
+
+  return (
+    <p
+      className={`${className} transition-[opacity,transform] duration-200 ease-out ${
+        visible ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-[5px]'
+      }`}
+    >
+      {value}
+    </p>
+  );
+}
 
 const COLUMN_IDS = {
   BRAND: 'brand',
@@ -835,11 +858,31 @@ export default function SendMoneyTopUpPage() {
     setRowsPerPage(size);
   }, []);
 
-  const kpiItems: SettlementKpiItem[] = useMemo(() => [
-    { icon: Hash, label: "Today's Total Count", value: kpiStats.todayCount.toLocaleString('en-US') },
-    { icon: Banknote, label: "Today's Total Amount", value: displayNum(kpiStats.todayAmount) },
-    { icon: Hash, label: "Yesterday's Total Count", value: kpiStats.yesterdayCount.toLocaleString('en-US') },
-    { icon: Banknote, label: "Yesterday's Total Amount", value: displayNum(kpiStats.yesterdayAmount) },
+  // Balance-style KPI cards (bespoke, not SettlementSummary), matching
+  // Cashout Top Up (app/topup/page.tsx) exactly. Count metrics have no
+  // subtitle (would just duplicate the big value); amount metrics get an
+  // abbreviated big value + full-figure subtitle.
+  const kpis = useMemo(() => [
+    {
+      label: "Today's Total Count", icon: Hash,
+      accent: 'text-indigo-600 dark:text-indigo-400', iconBg: 'bg-indigo-50 dark:bg-indigo-500/10',
+      bigValue: kpiStats.todayCount.toLocaleString('en-US'), subtitle: undefined as string | undefined,
+    },
+    {
+      label: "Today's Total Amount", icon: Banknote,
+      accent: 'text-emerald-600 dark:text-emerald-400', iconBg: 'bg-emerald-50 dark:bg-emerald-500/10',
+      bigValue: fmtAbbrev(kpiStats.todayAmount), subtitle: fmt(kpiStats.todayAmount) as string | undefined,
+    },
+    {
+      label: "Yesterday's Total Count", icon: Hash,
+      accent: 'text-slate-500 dark:text-slate-400', iconBg: 'bg-slate-100 dark:bg-slate-500/10',
+      bigValue: kpiStats.yesterdayCount.toLocaleString('en-US'), subtitle: undefined as string | undefined,
+    },
+    {
+      label: "Yesterday's Total Amount", icon: Banknote,
+      accent: 'text-orange-500 dark:text-orange-400', iconBg: 'bg-orange-50 dark:bg-orange-500/10',
+      bigValue: fmtAbbrev(kpiStats.yesterdayAmount), subtitle: fmt(kpiStats.yesterdayAmount) as string | undefined,
+    },
   ], [kpiStats]);
 
   const hasAnyRecords = topUpRows.length > 0;
@@ -874,7 +917,43 @@ export default function SendMoneyTopUpPage() {
         isRefreshing={spinning}
         onRefresh={fetchData}
       />
-      <SettlementSummary items={kpiItems} isScrolled={isScrolled} loading={loading} />
+      <div className={`w-full border-t border-border bg-[#f4f6fb] px-4 py-3 transition-shadow duration-150 ease-out dark:bg-[#1c1c1e] md:px-6 ${isScrolled ? TABLE_STICKY_HEADER_SHADOW_CLASS : ''}`}>
+        <div className="flex gap-2">
+          {loading ? (
+            Array.from({ length: 4 }).map((_, i) => (
+              <div key={i} className="h-[80.5px] flex-1 min-w-[200px] rounded-xl border border-border bg-white p-2.5 dark:bg-[#2a2a2d]">
+                <div className="flex h-full items-center gap-3">
+                  <div className="h-8 w-8 shrink-0 animate-pulse rounded-full bg-slate-200 dark:bg-slate-700" />
+                  <div className="min-w-0 flex-1">
+                    <div className="h-3 w-20 animate-pulse rounded-md bg-slate-200 dark:bg-slate-700" />
+                    <div className="mt-1.5 h-6 w-24 animate-pulse rounded-md bg-slate-200 dark:bg-slate-700" />
+                  </div>
+                </div>
+              </div>
+            ))
+          ) : (
+            kpis.map((kpi) => (
+              <div
+                key={kpi.label}
+                className="h-[80.5px] flex-1 min-w-[200px] rounded-xl border border-border bg-white p-2.5 transition-[transform,box-shadow,border-color] duration-150 ease-out hover:-translate-y-px hover:border-foreground/20 hover:shadow-sm dark:bg-[#2a2a2d]"
+              >
+                <div className="flex h-full items-center gap-3">
+                  <div className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-full ${kpi.iconBg}`}>
+                    <kpi.icon size={16} className={kpi.accent} />
+                  </div>
+                  <div className="min-w-0 flex-1">
+                    <p className="text-[11px] font-medium leading-snug text-muted-foreground truncate">{kpi.label}</p>
+                    <FadeValue value={kpi.bigValue} className={`font-bold leading-tight text-foreground ${kpi.subtitle ? 'text-[21px]' : 'text-[28px]'}`} />
+                    {kpi.subtitle && (
+                      <p className="mt-0.5 text-[11px] leading-snug text-muted-foreground truncate">{kpi.subtitle}</p>
+                    )}
+                  </div>
+                </div>
+              </div>
+            ))
+          )}
+        </div>
+      </div>
 
       <main className="flex-1 flex flex-col overflow-hidden px-6 pb-6 pt-1">
 

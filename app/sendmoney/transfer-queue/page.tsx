@@ -1065,9 +1065,11 @@ export default function SendMoneyTransferQueue() {
                       <th
                         key={col.key}
                         className={headerCellClasses(col.align)}>
-                        {loading ? (
-                          <div className="dt-skeleton h-3 w-16 rounded-md" />
-                        ) : col.key === 'brand' ? (
+                        {/* Header always renders its real label/sort control,
+                            loading or not — only data rows shimmer (premium
+                            skeleton spec: headers are never placeholders,
+                            matching Settlement/Top Up's own convention). */}
+                        {col.key === 'brand' ? (
                           // A mirrored INVISIBLE copy of the button sits on the
                           // opposite side of the label, same width as the real
                           // one — this "balanced spacer" trick centers the

@@ -5,7 +5,6 @@ import { createPortal } from 'react-dom';
 import { Search, ChevronUp, ChevronDown, ChevronsUpDown, Columns3, Download, ArrowLeftRight, RefreshCw, MoreVertical, Copy, Pencil, Eye, Trash2, Inbox, Hash, Banknote } from 'lucide-react';
 import * as XLSX from 'xlsx';
 import SettlementHeader from '@/app/components/SettlementHeader';
-import SettlementSummary, { type SettlementKpiItem } from '@/app/components/SettlementSummary';
 import Toolbar from '@/app/components/Toolbar';
 import DataTable from '@/app/components/DataTable';
 import TableFooter from '@/app/components/TableFooter';
@@ -16,7 +15,8 @@ import AddRecordDropdown from '@/app/components/AddRecordDropdown';
 import BulkImportModal from '@/app/components/BulkImportModal';
 import BulkEditModal, { type BulkEditUpdates } from '@/app/components/BulkEditModal';
 import { classifyFetchError, type ClassifiedError } from '@/app/lib/errors';
-import { rawVal, displayNum, parseAmount } from '@/app/lib/format';
+import { rawVal, displayNum, parseAmount, fmtAbbrev, fmt } from '@/app/lib/format';
+import { TABLE_STICKY_HEADER_SHADOW_CLASS } from '@/app/design-system/shadows';
 import { BRAND_CODES as CASHOUT_BRAND_CODES } from '@/app/lib/transferQueueCount';
 import { isToday, isYesterday } from '@/app/lib/businessDate';
 import { getPreference, setPreference } from '@/app/lib/preferences';
@@ -126,6 +126,29 @@ function formatDateDisplay(dateStr: string): string {
   return `${MONTH_ABBR[m - 1]} ${d}, ${y}`;
 }
 
+// Re-triggers a short opacity+translateY fade whenever `value` changes,
+// matching Cashout Settlement's own (app/stlm/page.tsx) bespoke FadeValue —
+// duplicated here since these KPI cards are bespoke, not SettlementSummary.
+function FadeValue({ value, className }: { value: string; className: string }) {
+  const [visible, setVisible] = useState(false);
+
+  useEffect(() => {
+    setVisible(false);
+    const raf = requestAnimationFrame(() => setVisible(true));
+    return () => cancelAnimationFrame(raf);
+  }, [value]);
+
+  return (
+    <p
+      className={`${className} transition-[opacity,transform] duration-200 ease-out ${
+        visible ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-[5px]'
+      }`}
+    >
+      {value}
+    </p>
+  );
+}
+
 // Permanent column identifiers — same Enterprise Table V2 pattern as
 // app/stlm/page.tsx (the canonical reference); this page gets its own
 // COLUMN_IDS rather than sharing Settlement's.
@@ -178,74 +201,81 @@ const COLUMN_VISIBILITY_STORAGE_KEY = 'sendMoneySettlementColumnVisibility';
 
 const columns: { key: ColumnKey; label: string }[] = DEFAULT_COLUMNS.map((col) => ({ key: col.key, label: col.label }));
 
-// Column width shifts, each ~N px worth of width (converted to percentage
-// points at this table's typical rendered width) moved from one column to
-// another, per explicit request. Send Money Settlement only — Cashout
-// Settlement's own column widths are untouched.
-//   Agent Name -> Wallet: 30px (2.3 points)
-//   Agent Name -> Brand: 30px (2.3 points)
-//   Remarks -> Amount: 40px (3.0 points)
-//   Remarks -> Brand: 30px (2.3 points)
-//   Remarks -> Date: 25px (1.9 points)
-//   Date -> Remarks: 50px (3.8 points)
-//   Date -> Remarks: 50px (3.8 points) again
-//   Remarks -> Amount: 20px (1.5 points), Remarks -> Wallet: 20px (1.5 points)
-//   Brand -> Actions: 30px (2.3 points) — real numbers (this split alone
-//   can't fix the checkbox-column overflow — see the calc() reserved
-//   directly on Brand's <col> width above for that part).
-//   Brand -> Agent Name: 1.3 points, Wallet -> Agent Name: 1.3 points —
-//   per explicit request, to reduce (not fully eliminate — see
-//   TABLE_MIN_WIDTH_PX above) real Agent Name truncation at ordinary,
-//   non-zoomed widths. Brand/Wallet both render as short fixed-content
-//   badges (a 2-char code; NAGAD/ROCKET/UPAY/BKASH) with real slack at
-//   their old share — Brand already has its own 90px hard floor via the
-//   calc() above regardless of this reduction, and Wallet's badge only
-//   ever needs ~90-110px, well under even its new, smaller share. At this
-//   table's typical ~1309px rendered width (1440px viewport), Agent Name's
-//   new 19% share gives ~217px of text space — enough for every real
-//   Settlement wallet name measured live, including the single longest
-//   outlier (23 chars, "D-J1BD-COLOMBO006-NAGAD", needs ~213px). Narrower
-//   common widths (1366/1280px) still occasionally clip the longest 1-2
-//   outliers — not fully eliminated, an accepted residual per explicit
-//   direction to bump width rather than guarantee zero truncation via
-//   scroll-at-normal-zoom.
-const columnWidths: Record<ColumnKey, string> = {
-  brand: '10.0%',
-  agentName: '19.0%',
-  wallet: '14.5%',
-  amount: '18.5%',
-  remarks: '18.4%',
-  date: '11.3%',
-  actions: '8.3%',
+// Exact px sizing model copied from Cashout Settlement (app/stlm/page.tsx's
+// DEFAULT_COLUMNS + toFlexColumnStyle) — by explicit instruction, this
+// page's columns must render at the SAME position as Cashout's, not just an
+// approximation. Cashout is a real CSS flexbox row (flexGrow:1 on every
+// column except Remarks, which stays pinned to its own preferredWidth), so
+// a fixed-% <table> can only match it at one coincidental reference width —
+// at any other width the two diverge, since flexGrow distributes leftover
+// space as an equal ABSOLUTE bonus per growable column, not a fixed ratio.
+// This page can't use real flexbox (native <table> + table-fixed), so
+// computeColumnWidthsPx below replicates the same algorithm in JS: growth
+// splits the leftover width equally across every column but Remarks;
+// shrink distributes proportional to each column's own preferredWidth
+// (flexbox's flex-shrink:1 default weighting), floored at minWidth with a
+// multi-pass freeze/redistribute once a column hits its floor — mirrors
+// the CSS flex algorithm instead of approximating it.
+const CASHOUT_COLUMN_SIZING: Record<ColumnKey, { minWidth: number; preferredWidth: number; grow: boolean }> = {
+  brand: { minWidth: 90, preferredWidth: 149, grow: true },
+  agentName: { minWidth: 140, preferredWidth: 216, grow: true },
+  wallet: { minWidth: 90, preferredWidth: 208, grow: true },
+  amount: { minWidth: 115, preferredWidth: 244, grow: true },
+  remarks: { minWidth: 160, preferredWidth: 243, grow: false },
+  date: { minWidth: 110, preferredWidth: 149, grow: true },
+  actions: { minWidth: 56, preferredWidth: 109, grow: true },
 };
 
-// Real Agent Name (wallet name) values were getting ellipsis-truncated
-// ("D-B2BD-DELTA07…") at high browser zoom, since table-layout:fixed's %
-// <col> widths keep shrinking with the container, with nothing to stop
-// them. table-layout:fixed still distributes % widths exactly as before —
-// a `min-width` on the <table> element itself is a plain box-model
-// constraint that applies BEFORE that distribution, so every column's own
-// floor comes along for free once the table can't shrink past this point,
-// without needing a per-<col> override (which fixed layout ignores) or
-// changing any column's own % share.
-//
-// The floor is 1024px — deliberately BELOW the table's own natural
-// (unconstrained) width at every common desktop viewport tested live
-// (1920/1440/1366/1280px all render naturally wider than this), so normal
-// zoom is provably unchanged: this constraint is already satisfied without
-// even engaging at any of those sizes. It only starts holding the table
-// steady once the container shrinks past 1024px — genuine high zoom, not
-// ordinary use — at which point the wrapping div's own overflow-x-auto
-// (already relied on elsewhere for this exact fallback) picks up the
-// difference as horizontal scroll instead of letting columns keep
-// shrinking indefinitely. This does not guarantee zero truncation for the
-// longest real names at every zoom level (a stricter floor sized for that
-// was measured to require ~1335-1524px, which starts clipping into normal
-// 1440px/1366px viewports too — rejected per explicit direction to favor
-// "no change at normal zoom" over "zero truncation ever") — it guarantees
-// truncation never gets WORSE than viewing at a comfortable 1024px-wide
-// table, no matter how far zoom pushes the effective container below that.
-const TABLE_MIN_WIDTH_PX = 1024;
+// The 44px checkbox <col> is a separate fixed-width sibling in Cashout's
+// real flex row (flex-shrink:0, never shrinks/grows) — never a slice out of
+// Brand's own share. `availableWidth` passed in must already have 44
+// subtracted so the 7 data columns split exactly what Cashout's flex row
+// would give them.
+function computeColumnWidthsPx(availableWidth: number): Record<ColumnKey, number> {
+  const entries = (Object.keys(CASHOUT_COLUMN_SIZING) as ColumnKey[]).map((key) => ({
+    key,
+    ...CASHOUT_COLUMN_SIZING[key],
+  }));
+  const totalPreferred = entries.reduce((sum, e) => sum + e.preferredWidth, 0);
+
+  if (availableWidth >= totalPreferred) {
+    const growable = entries.filter((e) => e.grow);
+    const bonus = growable.length ? (availableWidth - totalPreferred) / growable.length : 0;
+    const result = {} as Record<ColumnKey, number>;
+    for (const e of entries) result[e.key] = e.preferredWidth + (e.grow ? bonus : 0);
+    return result;
+  }
+
+  const state = entries.map((e) => ({ ...e, width: e.preferredWidth, frozen: false }));
+  let deficit = totalPreferred - availableWidth;
+  for (let pass = 0; pass < 6 && deficit > 0.5; pass++) {
+    const active = state.filter((e) => !e.frozen);
+    const basisSum = active.reduce((sum, e) => sum + e.preferredWidth, 0);
+    if (basisSum <= 0) break;
+    let applied = 0;
+    for (const e of active) {
+      const share = deficit * (e.preferredWidth / basisSum);
+      const next = e.width - share;
+      if (next <= e.minWidth) {
+        applied += e.width - e.minWidth;
+        e.width = e.minWidth;
+        e.frozen = true;
+      } else {
+        applied += share;
+        e.width = next;
+      }
+    }
+    deficit -= applied;
+  }
+  const result = {} as Record<ColumnKey, number>;
+  for (const e of state) result[e.key] = e.width;
+  return result;
+}
+
+// Table's own floor — matches Cashout's summed minWidth (761px) plus the
+// 44px checkbox column, so this page's horizontal-scroll fallback engages
+// at the same point Cashout's per-column CSS minWidth floors would.
+const TABLE_MIN_WIDTH_PX = 761 + 44;
 
 // Typography/padding copied verbatim from Cashout Settlement's own
 // headerCellClasses (app/stlm/page.tsx) — no flex/justify here, since
@@ -622,6 +652,14 @@ export default function SendMoneySettlementPage() {
   const [atScrollEnd, setAtScrollEnd] = useState(true);
   const tableScrollRef = useRef<HTMLDivElement>(null);
 
+  // Live column widths, recomputed from the scroll container's own rendered
+  // width — see computeColumnWidthsPx above. Initial value (before the
+  // first measurement) uses the table's own min-width floor as a
+  // reasonable SSR-safe default.
+  const [colWidthsPx, setColWidthsPx] = useState<Record<ColumnKey, number>>(
+    () => computeColumnWidthsPx(TABLE_MIN_WIDTH_PX - 44)
+  );
+
   useEffect(() => {
     const el = tableScrollRef.current;
     if (!el) return;
@@ -629,6 +667,7 @@ export default function SendMoneySettlementPage() {
       setIsScrolled(el.scrollTop > 0);
       setAtScrollStart(el.scrollLeft <= 1);
       setAtScrollEnd(el.scrollLeft >= el.scrollWidth - el.offsetWidth - 1);
+      setColWidthsPx(computeColumnWidthsPx(Math.max(el.clientWidth, TABLE_MIN_WIDTH_PX) - 44));
     };
     handleScroll();
     el.addEventListener('scroll', handleScroll, { passive: true });
@@ -970,11 +1009,31 @@ export default function SendMoneySettlementPage() {
   // distinction and copy as Cashout Settlement (app/stlm/page.tsx), keyed
   // off stlmRows (the unfiltered set) so an active search returning zero
   // rows out of a real dataset is never mistaken for "no records exist."
-  const kpiItems: SettlementKpiItem[] = useMemo(() => [
-    { icon: Hash, label: "Today's Total Count", value: kpiStats.todayCount.toLocaleString('en-US') },
-    { icon: Banknote, label: "Today's Total Amount", value: displayNum(kpiStats.todayAmount) },
-    { icon: Hash, label: "Yesterday's Total Count", value: kpiStats.yesterdayCount.toLocaleString('en-US') },
-    { icon: Banknote, label: "Yesterday's Total Amount", value: displayNum(kpiStats.yesterdayAmount) },
+  // Balance-style KPI cards (bespoke, not SettlementSummary), matching
+  // Cashout Settlement (app/stlm/page.tsx) exactly. Count metrics have no
+  // subtitle (would just duplicate the big value); amount metrics get an
+  // abbreviated big value + full-figure subtitle.
+  const kpis = useMemo(() => [
+    {
+      label: "Today's Total Count", icon: Hash,
+      accent: 'text-indigo-600 dark:text-indigo-400', iconBg: 'bg-indigo-50 dark:bg-indigo-500/10',
+      bigValue: kpiStats.todayCount.toLocaleString('en-US'), subtitle: undefined as string | undefined,
+    },
+    {
+      label: "Today's Total Amount", icon: Banknote,
+      accent: 'text-emerald-600 dark:text-emerald-400', iconBg: 'bg-emerald-50 dark:bg-emerald-500/10',
+      bigValue: fmtAbbrev(kpiStats.todayAmount), subtitle: fmt(kpiStats.todayAmount) as string | undefined,
+    },
+    {
+      label: "Yesterday's Total Count", icon: Hash,
+      accent: 'text-slate-500 dark:text-slate-400', iconBg: 'bg-slate-100 dark:bg-slate-500/10',
+      bigValue: kpiStats.yesterdayCount.toLocaleString('en-US'), subtitle: undefined as string | undefined,
+    },
+    {
+      label: "Yesterday's Total Amount", icon: Banknote,
+      accent: 'text-orange-500 dark:text-orange-400', iconBg: 'bg-orange-50 dark:bg-orange-500/10',
+      bigValue: fmtAbbrev(kpiStats.yesterdayAmount), subtitle: fmt(kpiStats.yesterdayAmount) as string | undefined,
+    },
   ], [kpiStats]);
 
   const hasAnyRecords = stlmRows.length > 0;
@@ -1009,10 +1068,46 @@ export default function SendMoneySettlementPage() {
         isRefreshing={spinning}
         onRefresh={fetchData}
       />
-      <SettlementSummary items={kpiItems} isScrolled={isScrolled} loading={loading} />
+      <div className={`w-full border-t border-border bg-[#f4f6fb] px-4 py-3 transition-shadow duration-150 ease-out dark:bg-[#1c1c1e] md:px-6 ${isScrolled ? TABLE_STICKY_HEADER_SHADOW_CLASS : ''}`}>
+        <div className="flex gap-2">
+          {loading ? (
+            Array.from({ length: 4 }).map((_, i) => (
+              <div key={i} className="h-[80.5px] flex-1 min-w-[200px] rounded-xl border border-border bg-white p-2.5 dark:bg-[#2a2a2d]">
+                <div className="flex h-full items-center gap-3">
+                  <div className="h-8 w-8 shrink-0 animate-pulse rounded-full bg-slate-200 dark:bg-slate-700" />
+                  <div className="min-w-0 flex-1">
+                    <div className="h-3 w-20 animate-pulse rounded-md bg-slate-200 dark:bg-slate-700" />
+                    <div className="mt-1.5 h-6 w-24 animate-pulse rounded-md bg-slate-200 dark:bg-slate-700" />
+                  </div>
+                </div>
+              </div>
+            ))
+          ) : (
+            kpis.map((kpi) => (
+              <div
+                key={kpi.label}
+                className="h-[80.5px] flex-1 min-w-[200px] rounded-xl border border-border bg-white p-2.5 transition-[transform,box-shadow,border-color] duration-150 ease-out hover:-translate-y-px hover:border-foreground/20 hover:shadow-sm dark:bg-[#2a2a2d]"
+              >
+                <div className="flex h-full items-center gap-3">
+                  <div className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-full ${kpi.iconBg}`}>
+                    <kpi.icon size={16} className={kpi.accent} />
+                  </div>
+                  <div className="min-w-0 flex-1">
+                    <p className="text-[11px] font-medium leading-snug text-muted-foreground truncate">{kpi.label}</p>
+                    <FadeValue value={kpi.bigValue} className={`font-bold leading-tight text-foreground ${kpi.subtitle ? 'text-[21px]' : 'text-[28px]'}`} />
+                    {kpi.subtitle && (
+                      <p className="mt-0.5 text-[11px] leading-snug text-muted-foreground truncate">{kpi.subtitle}</p>
+                    )}
+                  </div>
+                </div>
+              </div>
+            ))
+          )}
+        </div>
+      </div>
 
       {/* pt-4 (16px) instead of the uniform p-6's 24px top — explicit
-          breathing room between SettlementSummary and the toolbar below,
+          breathing room between the KPI strip and the toolbar below,
           tuned to spec (12-16px) rather than left at the larger default. */}
       <main className="flex-1 flex flex-col overflow-hidden px-6 pb-6 pt-1">
 
@@ -1180,34 +1275,15 @@ export default function SendMoneySettlementPage() {
               <table className="w-full table-fixed text-sm" style={{ minWidth: TABLE_MIN_WIDTH_PX }}>
                 <colgroup>
                   <col style={{ width: '44px' }} />
-                  {/* Every column's width is a % of the table, so they
-                      always sum to exactly 100% no matter how columnWidths
-                      is split between them — shuffling numbers between
-                      Brand and Actions can't change that total. The 44px
-                      checkbox <col> above is a separate fixed-width column
-                      outside this whole percentage system, so without this
-                      it always overflows the table by its own 44px
-                      regardless of Brand/Actions' relative sizes. Reserving
-                      that 44px directly out of Brand's own width via
-                      calc() — not a shared/hidden total — is what actually,
-                      exactly (at any table width, not just one reference
-                      size) removes the horizontal scroll.
-
-                      Browser zoom shrinks the table's *effective* CSS px
-                      width the same way a narrower viewport would, so the
-                      % above shrinks too — at 150%+ zoom the calc() alone
-                      could compute below Brand's own real badge width
-                      (reported live: the Brand pill visibly clipped to a
-                      single clipped letter). max(90px, ...) puts a hard
-                      floor under it — past that floor the table overflows
-                      instead and the wrapping div's own overflow-x-auto
-                      picks it up as horizontal scroll, the correct
-                      fallback at extreme zoom. */}
+                  {/* colWidthsPx already has 44px reserved for the checkbox
+                      column above (see computeColumnWidthsPx's
+                      `availableWidth` param, passed as
+                      clientWidth - 44) — no per-column calc() needed, each
+                      column just gets its own computed px width directly,
+                      same as Cashout's real flex row where the checkbox is
+                      a separate fixed sibling. */}
                   {visibleColumns.map((col) => (
-                    <col
-                      key={col.key}
-                      style={{ width: col.key === COLUMN_IDS.BRAND ? `max(90px, calc(${columnWidths[col.key]} - 44px))` : columnWidths[col.key] }}
-                    />
+                    <col key={col.key} style={{ width: `${colWidthsPx[col.key]}px` }} />
                   ))}
                 </colgroup>
                 <thead className={`sticky top-0 z-[50] bg-[#FAFAFB] dark:bg-[#252528] border-b border-[#E2E8F0] dark:border-[#3a3a3d] transition-shadow duration-150 ease-out ${
@@ -1228,7 +1304,7 @@ export default function SendMoneySettlementPage() {
                     {visibleColumns.map((col) => (
                       <th
                         key={col.key}
-                        style={{ width: columnWidths[col.key] }}
+                        style={{ width: `${colWidthsPx[col.key]}px` }}
                         className={headerCellClasses(col.align, 'px-4')}>
                         {/* Header always renders its real label/sort control,
                             loading or not — only data rows shimmer (premium
