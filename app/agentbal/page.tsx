@@ -1377,7 +1377,7 @@ export default function AgentBalance() {
           <DataTable>
             <Toolbar>
               <Toolbar.Left>
-                <div className="flex h-10 w-full min-w-[200px] items-center gap-2 rounded-[10px] border border-[#E5E7EB] bg-white px-[14px] transition-colors focus-within:border-[#2563EB] focus-within:ring-2 focus-within:ring-[#2563EB]/20 dark:border-[#3a3a3d] dark:bg-[#2a2a2d] sm:w-[400px]">
+                <div className="flex h-10 w-full min-w-[200px] items-center gap-2 rounded-[10px] border border-[#E5E7EB] bg-white px-[14px] transition-colors focus-within:border-[#2563EB] focus-within:ring-2 focus-within:ring-[#2563EB]/20 dark:border-[#3a3a3d] dark:bg-[#2a2a2d] sm:w-[40%] sm:max-w-[400px]">
                   {loading ? (
                     <div className="h-3 w-32 dt-skeleton rounded-md" />
                   ) : (
@@ -1387,7 +1387,7 @@ export default function AgentBalance() {
                         value={searchTerm}
                         onChange={(event) => setSearchTerm(event.target.value)}
                         className="flex-1 bg-transparent text-[13px] font-normal text-[#111827] placeholder:text-[#94A3B8] outline-none border-none dark:text-[#E5E7EB]"
-                        placeholder="Search shops or brands..."
+                        placeholder="Search for anything"
                       />
                     </>
                   )}
