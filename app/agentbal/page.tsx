@@ -5,13 +5,12 @@ import { createPortal } from 'react-dom';
 import {
   ChevronDown, Columns3, Download, RefreshCw, Search, Wallet,
   TrendingUp, ArrowDownToLine, ArrowUpFromLine, Shield, ArrowUpDown,
-  Tag, User, CreditCard,
+  Tag, User,
 } from 'lucide-react';
 import * as XLSX from 'xlsx';
 import SettlementHeader from '../components/SettlementHeader';
 import ConnectionErrorState from '../components/ConnectionErrorState';
 import DataTable from '../components/DataTable';
-import Toolbar from '../components/Toolbar';
 import TableFooter from '../components/TableFooter';
 import EmptyState from '../components/EmptyState';
 import FilterDropdown from '../components/FilterDropdown';
@@ -340,6 +339,11 @@ function computeColumnWidthsPx(rows: MergedRow[], columns: ColumnDef[]): Partial
 const GHOST_BUTTON =
   'inline-flex h-9 items-center gap-1.5 rounded-[8px] border border-[#E2E8F0] px-3 text-[13px] font-medium text-[#475569] transition-[color,background-color,transform] duration-150 ease-[var(--ease-out-strong)] hover:bg-[#E2E8F0] active:scale-[0.97] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#2563EB] dark:border-[#3a3a3d] dark:text-[#9CA3AF] dark:hover:bg-white/5';
 
+// Icon-only 40x40 action buttons (Refresh/Export/Columns) — premium compact
+// toolbar redesign, native `title` tooltip replaces the old icon+text label.
+const ICON_BUTTON =
+  'flex h-10 w-10 shrink-0 items-center justify-center rounded-[12px] border border-[#E2E8F0] bg-white text-[#475569] transition-[color,background-color,transform] duration-150 ease-[var(--ease-out-strong)] hover:bg-[#F1F5F9] active:scale-[0.97] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#2563EB] dark:border-[#3a3a3d] dark:bg-[#2a2a2d] dark:text-[#9CA3AF] dark:hover:bg-white/5';
+
 const PAGE_SIZE_OPTIONS = [50, 100, 250, 500];
 
 // Fixed display order for the mobile card's balances grid.
@@ -366,12 +370,15 @@ function headerCellClasses(colKey: ColumnKey, _isSorted: boolean) {
 }
 
 // Toolbar filter trigger — Brand/Leader/Wallet Type/Wallet Status. This is
-// the pill button only; the panel beneath it is the shared, cross-page
+// the trigger button only; the panel beneath it is the shared, cross-page
 // FilterDropdown component (app/components/FilterDropdown.tsx). Keeping the
 // trigger page-local (rather than folding it into the shared component)
 // lets other pages migrate to FilterDropdown later without being forced
-// into this exact pill shape — the shared piece is the premium multi-select
-// panel itself, not the button that opens it.
+// into this exact shape — the shared piece is the premium multi-select
+// panel itself, not the button that opens it. Base style is always neutral
+// (light border, white bg) per the compact-toolbar redesign spec — active
+// state is communicated by the small count badge only, not a whole-button
+// color tint, so the row stays visually calm even with filters applied.
 function FilterTriggerButton({
   label,
   icon: Icon,
@@ -394,13 +401,10 @@ function FilterTriggerButton({
       type="button"
       ref={buttonRef}
       onClick={onClick}
-      className={`inline-flex h-9 shrink-0 items-center gap-1.5 rounded-full border px-3 text-[13px] font-medium transition-[color,background-color,border-color,transform] duration-150 ease-[var(--ease-out-strong)] active:scale-[0.97] ${
-        anyUnchecked
-          ? 'border-indigo-200 bg-indigo-50 text-indigo-700 dark:border-indigo-900/50 dark:bg-indigo-500/10 dark:text-indigo-300'
-          : 'border-[#E5E7EB] bg-white text-[#475569] hover:bg-[#E2E8F0] dark:border-[#3a3a3d] dark:bg-[#2a2a2d] dark:text-[#9CA3AF] dark:hover:bg-white/5'
-      }`}
+      title={label}
+      className="inline-flex h-10 shrink-0 items-center gap-1.5 rounded-[12px] border border-[#E2E8F0] bg-white px-3 text-[13px] font-medium text-[#475569] transition-[color,background-color,border-color,transform] duration-150 ease-[var(--ease-out-strong)] hover:bg-[#F1F5F9] active:scale-[0.97] dark:border-[#3a3a3d] dark:bg-[#2a2a2d] dark:text-[#9CA3AF] dark:hover:bg-white/5"
     >
-      <Icon size={14} className={`transition-colors duration-150 ${anyUnchecked ? 'text-indigo-600 dark:text-indigo-400' : 'text-[#475569] dark:text-[#9CA3AF]'}`} />
+      <Icon size={15} className="text-[#475569] dark:text-[#9CA3AF]" />
       <span>{label}</span>
       {anyUnchecked && (
         <span className="flex h-4 min-w-[16px] animate-[dt-badge-pop_150ms_var(--ease-out-strong)] items-center justify-center rounded-full bg-indigo-600 px-1 text-[10px] font-semibold text-white">
@@ -409,7 +413,7 @@ function FilterTriggerButton({
       )}
       <ChevronDown
         size={14}
-        className={`transition-[transform,color] duration-150 ease-[var(--ease-in-out-strong)] ${menuOpen ? 'rotate-180' : ''} ${anyUnchecked ? 'text-indigo-600 dark:text-indigo-400' : 'text-[#475569] dark:text-[#9CA3AF]'}`}
+        className={`text-[#475569] transition-transform duration-150 ease-[var(--ease-in-out-strong)] dark:text-[#9CA3AF] ${menuOpen ? 'rotate-180' : ''}`}
       />
     </button>
   );
@@ -1374,160 +1378,158 @@ export default function AgentBalance() {
         {error && <ConnectionErrorState error={error} onRetry={fetchData} />}
 
         {!error && (
-          <DataTable>
-            <Toolbar>
-              <Toolbar.Left>
-                <div className="flex h-10 w-full min-w-[200px] items-center gap-2 rounded-[10px] border border-[#E5E7EB] bg-white px-[14px] transition-colors focus-within:border-[#2563EB] focus-within:ring-2 focus-within:ring-[#2563EB]/20 dark:border-[#3a3a3d] dark:bg-[#2a2a2d] sm:w-[400px]">
-                  {loading ? (
-                    <div className="h-3 w-32 dt-skeleton rounded-md" />
-                  ) : (
-                    <>
-                      <Search size={14} className="shrink-0 text-[#475569] dark:text-[#9CA3AF]" />
-                      <input
-                        value={searchTerm}
-                        onChange={(event) => setSearchTerm(event.target.value)}
-                        className="flex-1 bg-transparent text-[13px] font-normal text-[#111827] placeholder:text-[#94A3B8] outline-none border-none dark:text-[#E5E7EB]"
-                        placeholder="Search for anything"
-                      />
-                    </>
-                  )}
+          <>
+            {/* Standalone toolbar card — deliberately NOT inside <DataTable>,
+                per the compact-toolbar redesign: the toolbar must read as its
+                own separate surface, with the table's own header starting
+                only after a visible gap, not sharing one continuous card. */}
+            <div className="mb-4 flex flex-nowrap items-center overflow-x-auto rounded-[16px] border border-[#E5E7EB] bg-white p-4 shadow-[0_6px_18px_rgba(15,23,42,0.04)] dark:border-[#3a3a3d] dark:bg-[#2a2a2d]">
+              <div className="mr-5 flex h-10 w-[320px] min-w-[200px] shrink items-center gap-2 rounded-[12px] border border-[#E5E7EB] bg-white px-[14px] transition-colors focus-within:border-[#2563EB] focus-within:ring-2 focus-within:ring-[#2563EB]/20 dark:border-[#3a3a3d] dark:bg-[#2a2a2d]">
+                {loading ? (
+                  <div className="h-3 w-32 dt-skeleton rounded-md" />
+                ) : (
+                  <>
+                    <Search size={16} className="shrink-0 text-[#475569] dark:text-[#9CA3AF]" />
+                    <input
+                      value={searchTerm}
+                      onChange={(event) => setSearchTerm(event.target.value)}
+                      className="flex-1 bg-transparent text-[13px] font-normal text-[#111827] placeholder:text-[#94A3B8] outline-none border-none dark:text-[#E5E7EB]"
+                      placeholder="Search for anything"
+                    />
+                  </>
+                )}
+              </div>
+
+              {loading ? (
+                <div className="flex shrink-0 items-center gap-3">
+                  <div className="h-10 w-[92px] shrink-0 dt-skeleton rounded-[12px]" />
+                  <div className="h-10 w-[98px] shrink-0 dt-skeleton rounded-[12px]" />
+                  <div className="h-10 w-[130px] shrink-0 dt-skeleton rounded-[12px]" />
+                  <div className="h-10 w-[140px] shrink-0 dt-skeleton rounded-[12px]" />
                 </div>
-                {loading && (
-                  <>
-                    <div className="h-9 w-[92px] shrink-0 dt-skeleton rounded-full" />
-                    <div className="h-9 w-[98px] shrink-0 dt-skeleton rounded-full" />
-                    <div className="h-9 w-[130px] shrink-0 dt-skeleton rounded-full" />
-                    <div className="h-9 w-[140px] shrink-0 dt-skeleton rounded-full" />
-                  </>
-                )}
-                {!loading && (
-                  <>
-                    <div className="relative">
-                      <FilterTriggerButton
-                        label="Brand"
-                        icon={Tag}
-                        anyUnchecked={anyBrandUnchecked}
-                        selectedCount={selectedBrandCount}
-                        menuOpen={brandMenuOpen}
-                        buttonRef={brandButtonRef}
-                        onClick={() => setBrandMenuOpen((current) => !current)}
-                      />
-                      <FilterDropdown
-                        open={brandMenuOpen}
-                        onOpenChange={setBrandMenuOpen}
-                        anchorRef={brandButtonRef}
-                        options={brandFilterOptions}
-                        selected={brandFilter}
-                        onChange={setBrandFilter}
-                      />
-                    </div>
-                    <div className="relative">
-                      <FilterTriggerButton
-                        label="Leader"
-                        icon={User}
-                        anyUnchecked={anyLeaderUnchecked}
-                        selectedCount={selectedLeaderCount}
-                        menuOpen={leaderMenuOpen}
-                        buttonRef={leaderButtonRef}
-                        onClick={() => setLeaderMenuOpen((current) => !current)}
-                      />
-                      <FilterDropdown
-                        open={leaderMenuOpen}
-                        onOpenChange={setLeaderMenuOpen}
-                        anchorRef={leaderButtonRef}
-                        options={leaderFilterOptions}
-                        selected={leaderFilter}
-                        onChange={setLeaderFilter}
-                      />
-                    </div>
-                    <div className="relative">
-                      <FilterTriggerButton
-                        label="Wallet Type"
-                        icon={CreditCard}
-                        anyUnchecked={anyWalletTypeUnchecked}
-                        selectedCount={selectedWalletTypeCount}
-                        menuOpen={walletTypeMenuOpen}
-                        buttonRef={walletTypeButtonRef}
-                        onClick={() => setWalletTypeMenuOpen((current) => !current)}
-                      />
-                      <FilterDropdown
-                        open={walletTypeMenuOpen}
-                        onOpenChange={setWalletTypeMenuOpen}
-                        anchorRef={walletTypeButtonRef}
-                        options={walletTypeFilterOptions}
-                        selected={walletTypeFilter}
-                        onChange={setWalletTypeFilter}
-                      />
-                    </div>
-                    <div className="relative">
-                      <FilterTriggerButton
-                        label="Wallet Status"
-                        icon={Shield}
-                        anyUnchecked={anyWalletStatusUnchecked}
-                        selectedCount={selectedWalletStatusCount}
-                        menuOpen={walletStatusMenuOpen}
-                        buttonRef={walletStatusButtonRef}
-                        onClick={() => setWalletStatusMenuOpen((current) => !current)}
-                      />
-                      <FilterDropdown
-                        open={walletStatusMenuOpen}
-                        onOpenChange={setWalletStatusMenuOpen}
-                        anchorRef={walletStatusButtonRef}
-                        options={walletStatusFilterOptions}
-                        selected={walletStatusFilter}
-                        onChange={setWalletStatusFilter}
-                      />
-                    </div>
-                  </>
-                )}
-              </Toolbar.Left>
-              <Toolbar.Right>
-                {loading && (
-                  <>
-                    <div className="h-9 w-[92px] shrink-0 dt-skeleton rounded-[8px]" />
-                    <div className="h-9 w-[88px] shrink-0 dt-skeleton rounded-[8px]" />
-                    <div className="h-9 w-[108px] shrink-0 dt-skeleton rounded-[8px]" />
-                  </>
-                )}
-                {!loading && (
-                  <>
-                    <button type="button" onClick={fetchData} aria-label="Refresh" className={GHOST_BUTTON}>
-                      <RefreshCw size={14} className={spinning ? 'animate-spin' : ''} />
-                      <span>Refresh</span>
+              ) : (
+                <div className="flex shrink-0 items-center gap-3">
+                  <div className="relative">
+                    <FilterTriggerButton
+                      label="Brand"
+                      icon={Tag}
+                      anyUnchecked={anyBrandUnchecked}
+                      selectedCount={selectedBrandCount}
+                      menuOpen={brandMenuOpen}
+                      buttonRef={brandButtonRef}
+                      onClick={() => setBrandMenuOpen((current) => !current)}
+                    />
+                    <FilterDropdown
+                      open={brandMenuOpen}
+                      onOpenChange={setBrandMenuOpen}
+                      anchorRef={brandButtonRef}
+                      options={brandFilterOptions}
+                      selected={brandFilter}
+                      onChange={setBrandFilter}
+                    />
+                  </div>
+                  <div className="relative">
+                    <FilterTriggerButton
+                      label="Leader"
+                      icon={User}
+                      anyUnchecked={anyLeaderUnchecked}
+                      selectedCount={selectedLeaderCount}
+                      menuOpen={leaderMenuOpen}
+                      buttonRef={leaderButtonRef}
+                      onClick={() => setLeaderMenuOpen((current) => !current)}
+                    />
+                    <FilterDropdown
+                      open={leaderMenuOpen}
+                      onOpenChange={setLeaderMenuOpen}
+                      anchorRef={leaderButtonRef}
+                      options={leaderFilterOptions}
+                      selected={leaderFilter}
+                      onChange={setLeaderFilter}
+                    />
+                  </div>
+                  <div className="relative">
+                    <FilterTriggerButton
+                      label="Wallet Type"
+                      icon={Wallet}
+                      anyUnchecked={anyWalletTypeUnchecked}
+                      selectedCount={selectedWalletTypeCount}
+                      menuOpen={walletTypeMenuOpen}
+                      buttonRef={walletTypeButtonRef}
+                      onClick={() => setWalletTypeMenuOpen((current) => !current)}
+                    />
+                    <FilterDropdown
+                      open={walletTypeMenuOpen}
+                      onOpenChange={setWalletTypeMenuOpen}
+                      anchorRef={walletTypeButtonRef}
+                      options={walletTypeFilterOptions}
+                      selected={walletTypeFilter}
+                      onChange={setWalletTypeFilter}
+                    />
+                  </div>
+                  <div className="relative">
+                    <FilterTriggerButton
+                      label="Wallet Status"
+                      icon={Shield}
+                      anyUnchecked={anyWalletStatusUnchecked}
+                      selectedCount={selectedWalletStatusCount}
+                      menuOpen={walletStatusMenuOpen}
+                      buttonRef={walletStatusButtonRef}
+                      onClick={() => setWalletStatusMenuOpen((current) => !current)}
+                    />
+                    <FilterDropdown
+                      open={walletStatusMenuOpen}
+                      onOpenChange={setWalletStatusMenuOpen}
+                      anchorRef={walletStatusButtonRef}
+                      options={walletStatusFilterOptions}
+                      selected={walletStatusFilter}
+                      onChange={setWalletStatusFilter}
+                    />
+                  </div>
+                </div>
+              )}
+
+              {loading ? (
+                <div className="ml-auto flex shrink-0 items-center gap-3">
+                  <div className="h-10 w-10 shrink-0 dt-skeleton rounded-[12px]" />
+                  <div className="h-10 w-10 shrink-0 dt-skeleton rounded-[12px]" />
+                  <div className="h-10 w-10 shrink-0 dt-skeleton rounded-[12px]" />
+                </div>
+              ) : (
+                <div className="ml-auto flex shrink-0 items-center gap-3">
+                  <button type="button" onClick={fetchData} aria-label="Refresh" title="Refresh" className={ICON_BUTTON}>
+                    <RefreshCw size={16} className={spinning ? 'animate-spin' : ''} />
+                  </button>
+                  <button type="button" onClick={handleExport} aria-label="Export to Excel" title="Export" className={ICON_BUTTON}>
+                    <Download size={16} />
+                  </button>
+                  <div className="relative">
+                    <button
+                      type="button"
+                      ref={columnsButtonRef}
+                      onClick={() => setColumnsMenuOpen((current) => !current)}
+                      aria-haspopup="true"
+                      aria-expanded={columnsMenuOpen}
+                      aria-controls="agentbal-columns-popover"
+                      aria-label="Columns"
+                      title="Columns"
+                      className={ICON_BUTTON}
+                    >
+                      <Columns3 size={16} />
                     </button>
-                    <button type="button" onClick={handleExport} aria-label="Export to Excel" className={GHOST_BUTTON}>
-                      <Download size={14} />
-                      <span>Export</span>
-                    </button>
-                    <div className="relative">
-                      <button
-                        type="button"
-                        ref={columnsButtonRef}
-                        onClick={() => setColumnsMenuOpen((current) => !current)}
-                        aria-haspopup="true"
-                        aria-expanded={columnsMenuOpen}
-                        aria-controls="agentbal-columns-popover"
-                        aria-label="Columns"
-                        className={GHOST_BUTTON}
-                      >
-                        <Columns3 size={14} />
-                        <span>Columns</span>
-                        <ChevronDown size={14} className={`transition-transform duration-150 ease-[var(--ease-in-out-strong)] ${columnsMenuOpen ? 'rotate-180' : ''}`} />
-                      </button>
-                      <ColumnsDropdown
-                        id="agentbal-columns-popover"
-                        open={columnsMenuOpen}
-                        onOpenChange={setColumnsMenuOpen}
-                        anchorRef={columnsButtonRef}
-                        columns={columnDefs}
-                        onToggle={(key) => setColumnDefs((current) => current.map((c) => (c.key === key ? { ...c, visible: !c.visible } : c)))}
-                        onRestoreDefaults={() => setColumnDefs(DEFAULT_COLUMNS.map((col) => ({ ...col })))}
-                      />
-                    </div>
-                  </>
-                )}
-              </Toolbar.Right>
-            </Toolbar>
+                    <ColumnsDropdown
+                      id="agentbal-columns-popover"
+                      open={columnsMenuOpen}
+                      onOpenChange={setColumnsMenuOpen}
+                      anchorRef={columnsButtonRef}
+                      columns={columnDefs}
+                      onToggle={(key) => setColumnDefs((current) => current.map((c) => (c.key === key ? { ...c, visible: !c.visible } : c)))}
+                      onRestoreDefaults={() => setColumnDefs(DEFAULT_COLUMNS.map((col) => ({ ...col })))}
+                    />
+                  </div>
+                </div>
+              )}
+            </div>
+          <DataTable>
             <div className="relative hidden flex-1 min-h-0 sm:block">
               <div
                 ref={tableScrollRef}
@@ -1773,6 +1775,7 @@ export default function AgentBalance() {
               />
             )}
           </DataTable>
+          </>
         )}
       </main>
     </div>
