@@ -150,6 +150,17 @@ function stripBrandSuffix(name: string): string {
   return name;
 }
 
+// Leader names come from the sheet in ALL CAPS — same helper as
+// Settlement/Top Up's own toProperCase, display-only (sorting/filtering/
+// export all still key off the raw value).
+function toProperCase(str: string): string {
+  return str
+    .toLowerCase()
+    .split(/([\s-]+)/)
+    .map((part) => (/^[\s-]+$/.test(part) ? part : part.charAt(0).toUpperCase() + part.slice(1)))
+    .join('');
+}
+
 // Permanent column identifiers — same Enterprise Table V2 pattern as
 // app/stlm/page.tsx (the canonical reference); this page gets its own
 // COLUMN_IDS rather than sharing Settlement's, per that file's own note.
@@ -275,7 +286,7 @@ const EXTRA_BREATHING_ROOM_PX = 8;
 function getColumnDisplayText(row: MergedRow, key: ColumnKey): string {
   switch (key) {
     case 'brand': return row.brand;
-    case 'leader': return row.leader;
+    case 'leader': return toProperCase(row.leader);
     case 'walletName': return row.agentName;
     case 'walletType': return row.walletType;
     case 'sdp': return displayNum(row.sdp);
@@ -546,7 +557,7 @@ function renderCell(row: MergedRow, key: ColumnKey, colWidthsPx?: Partial<Record
     case 'brand':
       return <td key={key} style={cellStyle} className={base}><BrandBadge>{row.brand}</BrandBadge></td>;
     case 'leader':
-      return <td key={key} style={cellStyle} className={base}>{row.leader}</td>;
+      return <td key={key} style={cellStyle} className={base}>{toProperCase(row.leader)}</td>;
     case 'walletName':
       return <td key={key} style={cellStyle} className={base}>{row.agentName}</td>;
     case 'walletType':
@@ -1088,7 +1099,7 @@ export default function AgentBalance() {
     for (const row of leaderFacetRows) {
       counts.set(row.leader, (counts.get(row.leader) ?? 0) + 1);
     }
-    return leaderOptions.map((name) => ({ value: name, label: name, count: counts.get(name) ?? 0 }));
+    return leaderOptions.map((name) => ({ value: name, label: toProperCase(name), count: counts.get(name) ?? 0 }));
   }, [leaderFacetRows, leaderOptions]);
 
   const brandFacetRows = useMemo(() => {
@@ -1460,7 +1471,7 @@ export default function AgentBalance() {
                         anchorRef={brandButtonRef}
                         options={brandFilterOptions}
                         selected={brandFilter}
-                        onApply={setBrandFilter}
+                        onChange={setBrandFilter}
                       />
                     </div>
                     <div className="relative">
@@ -1479,7 +1490,7 @@ export default function AgentBalance() {
                         anchorRef={leaderButtonRef}
                         options={leaderFilterOptions}
                         selected={leaderFilter}
-                        onApply={setLeaderFilter}
+                        onChange={setLeaderFilter}
                       />
                     </div>
                     <div className="relative">
@@ -1498,7 +1509,7 @@ export default function AgentBalance() {
                         anchorRef={walletTypeButtonRef}
                         options={walletTypeFilterOptions}
                         selected={walletTypeFilter}
-                        onApply={setWalletTypeFilter}
+                        onChange={setWalletTypeFilter}
                       />
                     </div>
                     <div className="relative">
@@ -1517,7 +1528,7 @@ export default function AgentBalance() {
                         anchorRef={walletStatusButtonRef}
                         options={walletStatusFilterOptions}
                         selected={walletStatusFilter}
-                        onApply={setWalletStatusFilter}
+                        onChange={setWalletStatusFilter}
                       />
                     </div>
                   </>
@@ -1787,7 +1798,7 @@ export default function AgentBalance() {
                     const showStatus = columnVisibility.walletStatus;
                     const showBalance = columnVisibility.companyBalance;
                     const subtitle = [
-                      columnVisibility.leader ? row.leader : null,
+                      columnVisibility.leader ? toProperCase(row.leader) : null,
                       columnVisibility.walletType && row.walletType !== '−' ? row.walletType : null,
                     ].filter(Boolean).join(' · ');
                     const hasHeader = showName || showBrand || showStatus || !!subtitle;

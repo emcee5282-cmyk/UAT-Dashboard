@@ -15,32 +15,30 @@ interface FilterDropdownProps {
   onOpenChange: (open: boolean) => void;
   anchorRef: React.RefObject<HTMLElement | null>;
   options: FilterDropdownOption[];
-  /** Currently APPLIED (committed) selection — what's actually filtering the table right now. */
+  /** Currently applied selection — every toggle here takes effect immediately. */
   selected: Record<string, boolean>;
-  onApply: (next: Record<string, boolean>) => void;
+  onChange: (next: Record<string, boolean>) => void;
 }
 
 const PANEL_WIDTH = 320;
 
-// Premium multi-select filter panel — search, counts, staged Apply/Clear All,
+// Premium multi-select filter panel — search, counts, live/instant apply
+// (every click re-filters the table right away, no separate Apply step),
 // keyboard nav. This is the panel only; each page keeps its own trigger
 // button (toolbar pill, header icon, whatever fits that page's layout) and
-// just renders this beneath it via `anchorRef`. Selection is staged in a
-// local `draft` and only committed to the caller via `onApply` — outside-
-// click/Escape discard the draft, matching Linear/Stripe-style filter menus.
+// just renders this beneath it via `anchorRef`.
 export default function FilterDropdown({
   open,
   onOpenChange,
   anchorRef,
   options,
   selected,
-  onApply,
+  onChange,
 }: FilterDropdownProps) {
   const panelRef = useRef<HTMLDivElement>(null);
   const searchInputRef = useRef<HTMLInputElement>(null);
   const optionRefs = useRef<(HTMLDivElement | null)[]>([]);
   const [pos, setPos] = useState({ top: 0, left: 0 });
-  const [draft, setDraft] = useState<Record<string, boolean>>(selected);
   const [searchQuery, setSearchQuery] = useState('');
   // -1 = nothing keyboard-highlighted yet (search box still has focus).
   const [highlightedIndex, setHighlightedIndex] = useState(-1);
@@ -52,9 +50,6 @@ export default function FilterDropdown({
 
   useEffect(() => {
     if (open) {
-      // Reseed the draft from the last-applied selection and reposition
-      // against the trigger every time the panel opens.
-      setDraft(selected);
       setSearchQuery('');
       setHighlightedIndex(-1);
       setRendered(true);
@@ -67,8 +62,7 @@ export default function FilterDropdown({
       const timeout = setTimeout(() => setRendered(false), 160);
       return () => clearTimeout(timeout);
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [open]);
+  }, [open, anchorRef]);
 
   useEffect(() => {
     if (!open) return;
@@ -91,7 +85,7 @@ export default function FilterDropdown({
     // which happens a render pass after `open` first flips true (see the
     // rendered/mount-delay effect above). Focusing on `open` alone raced
     // the mount and silently no-op'd, which also meant keydown (Escape,
-    // arrows) never reached this panel's onKeyDown at all.
+    // arrows) never reached this panel at all.
     if (open && rendered) searchInputRef.current?.focus();
   }, [open, rendered]);
 
@@ -105,27 +99,27 @@ export default function FilterDropdown({
     setHighlightedIndex(-1);
   }, [searchQuery]);
 
+  const isChecked = (value: string) => selected[value] !== false;
+  const allChecked = options.every((opt) => isChecked(opt.value));
+
   const toggleValue = (value: string) => {
-    setDraft((current) => ({ ...current, [value]: !(current[value] !== false) }));
+    onChange({ ...selected, [value]: !isChecked(value) });
   };
 
-  const isChecked = (value: string) => draft[value] !== false;
-
-  const applyAndClose = () => {
-    onApply(draft);
-    onOpenChange(false);
-  };
-
-  const clearAll = () => {
-    setDraft(Object.fromEntries(options.map((opt) => [opt.value, false])));
+  // Single toggling button, same as the app's original filter menus: reads
+  // "Clear All" when everything is checked (click empties the selection),
+  // "Select All" when anything is unchecked (click restores it) — takes
+  // effect immediately, no separate Apply step.
+  const toggleAll = () => {
+    const nextValue = !allChecked;
+    onChange(Object.fromEntries(options.map((opt) => [opt.value, nextValue])));
   };
 
   // A document-level listener (gated on `open`), not a React onKeyDown on
   // the panel — clicking a row (a plain non-focusable div, per spec: the
   // checkbox itself has no separate behavior) blurs the search input to
   // <body>, and keydown on <body> would never bubble into the panel's own
-  // subtree. Space only toggles when focus isn't in the search box, so
-  // typing still works normally.
+  // subtree. Space only toggles when a row is keyboard-highlighted.
   useEffect(() => {
     if (!open) return;
     const handleKeyDown = (event: KeyboardEvent) => {
@@ -136,7 +130,7 @@ export default function FilterDropdown({
       }
       if (event.key === 'Enter') {
         event.preventDefault();
-        applyAndClose();
+        onOpenChange(false);
         return;
       }
       if (event.key === 'ArrowDown') {
@@ -162,7 +156,7 @@ export default function FilterDropdown({
     document.addEventListener('keydown', handleKeyDown);
     return () => document.removeEventListener('keydown', handleKeyDown);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [open, filteredOptions, highlightedIndex, draft]);
+  }, [open, filteredOptions, highlightedIndex, selected]);
 
   if (!rendered || typeof document === 'undefined') return null;
 
@@ -233,20 +227,13 @@ export default function FilterDropdown({
         )}
       </div>
 
-      <div className="flex shrink-0 items-center justify-between gap-2 border-t border-[#F1F5F9] p-3 dark:border-[#2f2f32]">
+      <div className="flex shrink-0 items-center justify-center border-t border-[#F1F5F9] p-3 dark:border-[#2f2f32]">
         <button
           type="button"
-          onClick={clearAll}
-          className="flex h-9 items-center rounded-[10px] px-3 text-[13px] font-medium text-[#475569] transition-colors duration-150 hover:bg-[#F1F5F9] dark:text-[#9CA3AF] dark:hover:bg-white/5"
+          onClick={toggleAll}
+          className="flex h-9 w-full items-center justify-center rounded-[10px] text-[13px] font-medium text-[#2563EB] transition-[background-color,transform] duration-150 ease-[var(--ease-out-strong)] hover:bg-[#EFF6FF] active:scale-[0.97] dark:text-[#60A5FA] dark:hover:bg-white/5"
         >
-          Clear All
-        </button>
-        <button
-          type="button"
-          onClick={applyAndClose}
-          className="flex h-9 items-center rounded-[10px] bg-[#2563EB] px-4 text-[13px] font-medium text-white transition-[background-color,transform] duration-150 ease-[var(--ease-out-strong)] hover:bg-[#1D4ED8] active:scale-[0.97]"
-        >
-          Apply
+          {allChecked ? 'Clear All' : 'Select All'}
         </button>
       </div>
     </div>,
