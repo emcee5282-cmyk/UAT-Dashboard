@@ -509,9 +509,21 @@ export async function writeCashoutEstimatedOpening(
 // ~9,983-row roster, separate from Cashout's own A-D) and "PS BD STLM +
 // TOPUP" (this reset period's Top Up/Settlement, cutoff-date filtered) — so
 // writeSendMoneyEstimatedOpening's Assumed Balance formula can substitute the
-// upload's Total DP/Total WD the same way Cashout's does. Unlike Cashout's
-// "AG BD STLM + TOPUP", Send Money's own agent names here need no brand-
-// suffix stripping (app/sendmoney/balances/page.tsx reads them raw).
+// upload's Total DP/Total WD the same way Cashout's does.
+//
+// Most Send Money agent names read raw with no brand-suffix stripping
+// (app/sendmoney/balances/page.tsx does the same) — BUT the "BD" wallet
+// naming convention (e.g. roster "D-B1BD-DELTA065-NG") is the exception:
+// its own STLM/TopUp "To Agent" values carry a trailing "-<brand>" suffix
+// not present in the roster (e.g. "D-B1BD-DELTA065-NG-M2"), so an exact
+// match against the un-stripped roster key silently fails. Confirmed live
+// on 2026-07-31: ALL 92 of that day's matched Settlement rows used this BD
+// convention and were silently dropped (100% miss), inflating the stored
+// Assumed Balance by the full −₱24.2M that should have been subtracted —
+// stripBrandSuffix (same helper Cashout's own fetchLiveShopFigures uses) is
+// a no-op for the normal "PS"-wallet names (their own trailing segment is a
+// wallet-type code, never a BRAND_CODES entry), so applying it
+// unconditionally here fixes the BD case without affecting anything else.
 //
 // The TopUp/Settlement cutoff here is Send Money's own "Opening AG" col I
 // "Updated Time" card (e.g. "July 16 - 7:46 AM") — NOT getBusinessToday()'s
@@ -550,7 +562,7 @@ async function fetchLiveSendMoneyShopFigures(): Promise<LiveShopFigures> {
   const stlmByShop = new Map<string, number>();
   stlmRows.slice(1).forEach((row) => {
     // Top Up cols B-F (idx 1-5): idx1=agent, idx2=amount, idx3=date.
-    const topUpAgent = (row[1] ?? '').trim().toUpperCase();
+    const topUpAgent = stripBrandSuffix((row[1] ?? '').trim()).toUpperCase();
     const topUpAmount = (row[2] ?? '').trim();
     const topUpDate = reportCutoffDate ? parseStlmRowDate((row[3] ?? '').trim()) : null;
     if (
@@ -564,7 +576,7 @@ async function fetchLiveSendMoneyShopFigures(): Promise<LiveShopFigures> {
     }
 
     // Settlement cols H-L (idx 7-11): idx7=agent, idx8=amount, idx9=date.
-    const stlmAgent = (row[7] ?? '').trim().toUpperCase();
+    const stlmAgent = stripBrandSuffix((row[7] ?? '').trim()).toUpperCase();
     const stlmAmount = (row[8] ?? '').trim();
     const stlmDate = reportCutoffDate ? parseStlmRowDate((row[9] ?? '').trim()) : null;
     if (
