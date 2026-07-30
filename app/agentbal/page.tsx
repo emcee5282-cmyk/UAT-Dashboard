@@ -405,10 +405,10 @@ function FilterTriggerButton({
       ref={buttonRef}
       onClick={onClick}
       title={label}
-      className="inline-flex h-10 shrink-0 items-center gap-1.5 rounded-[12px] border border-[#E2E8F0] bg-white px-3 text-[13px] font-medium text-[#475569] transition-[color,background-color,border-color,transform] duration-150 ease-[var(--ease-out-strong)] hover:bg-[#F1F5F9] active:scale-[0.97] dark:border-[#3a3a3d] dark:bg-[#2a2a2d] dark:text-[#9CA3AF] dark:hover:bg-white/5"
+      className="inline-flex h-10 w-10 xl:w-auto shrink-0 items-center justify-center xl:justify-start gap-1.5 rounded-[12px] border border-[#E2E8F0] bg-white px-0 xl:px-3 text-[13px] font-medium text-[#475569] transition-[color,background-color,border-color,transform] duration-150 ease-[var(--ease-out-strong)] hover:bg-[#F1F5F9] active:scale-[0.97] dark:border-[#3a3a3d] dark:bg-[#2a2a2d] dark:text-[#9CA3AF] dark:hover:bg-white/5"
     >
       <Icon size={15} className="text-[#475569] dark:text-[#9CA3AF]" />
-      <span>{label}</span>
+      <span className="hidden xl:inline">{label}</span>
       {anyUnchecked && (
         <span className="flex h-4 min-w-[16px] animate-[dt-badge-pop_150ms_var(--ease-out-strong)] items-center justify-center rounded-full bg-indigo-600 px-1 text-[10px] font-semibold text-white">
           {selectedCount}
@@ -416,7 +416,7 @@ function FilterTriggerButton({
       )}
       <ChevronDown
         size={14}
-        className={`text-[#475569] transition-transform duration-150 ease-[var(--ease-in-out-strong)] dark:text-[#9CA3AF] ${menuOpen ? 'rotate-180' : ''}`}
+        className={`hidden text-[#475569] transition-transform duration-150 ease-[var(--ease-in-out-strong)] dark:text-[#9CA3AF] xl:inline ${menuOpen ? 'rotate-180' : ''}`}
       />
     </button>
   );
@@ -1404,10 +1404,10 @@ export default function AgentBalance() {
 
               {loading ? (
                 <div className="flex shrink-0 items-center gap-3">
-                  <div className="h-10 w-[92px] shrink-0 dt-skeleton rounded-[12px]" />
-                  <div className="h-10 w-[98px] shrink-0 dt-skeleton rounded-[12px]" />
-                  <div className="h-10 w-[130px] shrink-0 dt-skeleton rounded-[12px]" />
-                  <div className="h-10 w-[140px] shrink-0 dt-skeleton rounded-[12px]" />
+                  <div className="h-10 w-10 shrink-0 dt-skeleton rounded-[12px] xl:w-[92px]" />
+                  <div className="h-10 w-10 shrink-0 dt-skeleton rounded-[12px] xl:w-[98px]" />
+                  <div className="h-10 w-10 shrink-0 dt-skeleton rounded-[12px] xl:w-[130px]" />
+                  <div className="h-10 w-10 shrink-0 dt-skeleton rounded-[12px] xl:w-[140px]" />
                 </div>
               ) : (
                 <div className="flex shrink-0 items-center gap-3">
