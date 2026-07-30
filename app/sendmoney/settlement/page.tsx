@@ -96,16 +96,41 @@ type StlmRow = {
 
 // Col M's gateway label ("MCW SSP GATEWAY" etc.) identifies which system
 // processed the settlement, not the wallet's own brand — so unlike Cashout's
-// mapBrand(), brand here is derived straight from the wallet name itself
-// (e.g. "D-B2BD-DELTA073-NG" -> segment "B2BD" -> "B2"), same pattern as
-// app/lib/sendMoneyOpening.ts.
+// mapBrand(), brand here is derived straight from the wallet name itself.
+// Names now carry an extra trailing brand tag beyond the older 4-segment
+// format (e.g. "D-B1BD-DELTA065-NG-M2" — the rightmost "M2", not "B1BD"'s
+// "B1", is the real brand per explicit confirmation), so the rightmost
+// segment is checked first; older names without that trailing tag (e.g.
+// "D-B2BD-DELTA073-NG") fall back to the segment right after the first
+// hyphen, same pattern as app/lib/sendMoneyOpening.ts.
 const BRAND_CODES = [...CASHOUT_BRAND_CODES, 'SH'];
 const BRAND_DISPLAY_LABELS: Record<string, string> = { SH: 'Sharing' };
 
 function resolveBrandFromWalletName(walletName: string): string {
-  const segment = (walletName.split('-')[1] ?? '').toUpperCase();
-  const code = BRAND_CODES.find((c) => segment.startsWith(c));
+  const segments = walletName.split('-');
+  const last = (segments[segments.length - 1] ?? '').toUpperCase();
+  const trailing = BRAND_CODES.find((c) => c === last);
+  if (trailing) return trailing;
+  const afterFirst = (segments[1] ?? '').toUpperCase();
+  const code = BRAND_CODES.find((c) => afterFirst.startsWith(c));
   return code ?? '−';
+}
+
+// Display-only: strips a recognized trailing "-<code>" segment (brand code
+// or NG/RK/UP/BK network suffix) so Agent Name reads as the shop name, not
+// the full raw wallet string — same treatment as /sendmoney/topup. Loops
+// since names can carry the tag twice (network suffix + brand tag). Brand
+// itself still resolves from the untouched raw walletName above.
+const AGENT_NAME_TRAILING_CODES = [...BRAND_CODES, 'NG', 'RK', 'UP', 'BK'];
+
+function stripAgentNameSuffix(walletName: string): string {
+  let result = walletName;
+  let parts = result.split('-');
+  while (parts.length >= 2 && AGENT_NAME_TRAILING_CODES.includes(parts[parts.length - 1].toUpperCase())) {
+    result = parts.slice(0, -1).join('-');
+    parts = result.split('-');
+  }
+  return result;
 }
 
 function displayBrand(code: string): string {
@@ -737,7 +762,7 @@ export default function SendMoneySettlementPage() {
           const walletName = rawVal(cols[7]);
           if (walletName && walletName !== '-' && walletName !== '0') {
             stlm.push({
-              agentName: walletName,
+              agentName: stripAgentNameSuffix(walletName),
               amount: String(Math.abs(parseAmount(rawVal(cols[8])))),
               remarks: rawVal(cols[11]),
               date: rawVal(cols[9]),
