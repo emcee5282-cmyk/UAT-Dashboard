@@ -333,7 +333,7 @@ function mobileCardFieldValue(row: MergedRow, key: ColumnKey): { value: string; 
     case 'totalWD':
       return { value: displayNum(row.agentTotalWD), className: 'text-rose-600 dark:text-rose-400' };
     case 'topUp':
-      return { value: displayNum(row.totalTopUp), className: 'text-teal-600 dark:text-teal-400' };
+      return { value: displayNum(row.totalTopUp), className: 'text-foreground' };
     case 'settlement':
       return { value: displayNum(row.totalStlm), className: 'text-orange-500 dark:text-orange-400' };
     case 'balanceInside':
@@ -369,7 +369,7 @@ function renderCell(row: MergedRow, key: ColumnKey) {
     case 'totalWD':
       return <td key={key} className={`${base} text-center tabular-nums font-medium text-rose-600 dark:text-rose-400`}>{displayNum(row.agentTotalWD)}</td>;
     case 'topUp':
-      return <td key={key} className={`${base} text-center tabular-nums text-teal-600 dark:text-teal-400`}>{displayNum(row.totalTopUp)}</td>;
+      return <td key={key} className={`${base} text-center tabular-nums text-foreground`}>{displayNum(row.totalTopUp)}</td>;
     case 'settlement':
       return <td key={key} className={`${base} text-center tabular-nums text-orange-500 dark:text-orange-400`}>{displayNum(row.totalStlm)}</td>;
     case 'balanceInside':

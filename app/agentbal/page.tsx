@@ -633,7 +633,7 @@ function mobileCardFieldValue(row: MergedRow, key: ColumnKey): { value: string; 
     }
     case 'topUp': {
       const formatted = displayNum(row.totalTopUp);
-      return { value: formatted, className: formatted === '−' ? 'text-foreground' : 'text-emerald-600 dark:text-emerald-400' };
+      return { value: formatted, className: 'text-foreground' };
     }
     case 'settlement': {
       const formatted = displayNum(row.totalStlm);
@@ -656,11 +656,14 @@ function renderCell(row: MergedRow, key: ColumnKey, colWidthsPx?: Partial<Record
   // Neutral text scheme matches Settlement's own renderCell base exactly
   // (app/stlm/page.tsx:686) — plain values carry no semantic color; only
   // Brand and Wallet Status stay as their own badge components. Total DP/
-  // Total WD/Top Up/Settlement are the explicit exception (re-added per
-  // later instruction): green for inflows (DP, Top Up), red + a leading
-  // "-" for outflows (WD, Settlement — stored as positive magnitudes but
-  // read as deductions), neutral whenever the value is zero/blank (the
-  // em-dash). Company Balance stays fully neutral, no exception.
+  // Total WD/Settlement are the explicit exception: green for inflow (DP),
+  // red + a leading "-" for outflows (WD, Settlement — stored as positive
+  // magnitudes but read as deductions), neutral whenever the value is
+  // zero/blank (the em-dash). Top Up is neutral (no color), matching the
+  // Amount column's own plain styling on the actual Top Up tab
+  // (app/topup/page.tsx) — same convention applied to Send Money's own
+  // Balance page (app/sendmoney/balances/page.tsx). Company Balance stays
+  // fully neutral, no exception.
   const baseNoColor = `whitespace-nowrap px-5 py-[12px] text-${COLUMN_ALIGN[key]} text-[13px] leading-[20px] font-normal`;
   const base = `${baseNoColor} text-[#111827] dark:text-[#E5E7EB]`;
   // Every column gets the same fixed width treatment (see
@@ -694,8 +697,7 @@ function renderCell(row: MergedRow, key: ColumnKey, colWidthsPx?: Partial<Record
     }
     case 'topUp': {
       const formatted = displayNum(row.totalTopUp);
-      const color = formatted === '−' ? 'text-[#111827] dark:text-[#E5E7EB]' : 'text-emerald-600 dark:text-emerald-400';
-      return <td key={key} style={cellStyle} className={`${baseNoColor} tabular-nums ${color}`}>{formatted}</td>;
+      return <td key={key} style={cellStyle} className={`${base} tabular-nums`}>{formatted}</td>;
     }
     case 'settlement': {
       const formatted = displayNum(row.totalStlm);
