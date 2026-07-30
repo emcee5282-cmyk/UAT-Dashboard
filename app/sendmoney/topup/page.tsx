@@ -79,6 +79,23 @@ function resolveBrandFromWalletName(walletName: string): string {
   return code ?? '−';
 }
 
+// Agent Name should read as just the shop name, not the full raw wallet
+// string — strip a recognized trailing "-<code>" segment (brand code for
+// simple two-segment names like "CALAMARI008-M1", or the NG/RK/UP/BK network
+// suffix for full four-segment names like "T-B5AG-BURMA001-NG"). The code
+// itself is never lost — Brand still resolves from the untouched raw
+// walletName via resolveBrandFromWalletName above.
+const AGENT_NAME_TRAILING_CODES = [...BRAND_CODES, 'NG', 'RK', 'UP', 'BK'];
+
+function stripAgentNameSuffix(walletName: string): string {
+  const parts = walletName.split('-');
+  const last = parts[parts.length - 1]?.toUpperCase();
+  if (parts.length >= 2 && AGENT_NAME_TRAILING_CODES.includes(last)) {
+    return parts.slice(0, -1).join('-');
+  }
+  return walletName;
+}
+
 function displayBrand(code: string): string {
   return BRAND_DISPLAY_LABELS[code] ?? code;
 }
@@ -608,13 +625,14 @@ export default function SendMoneyTopUpPage() {
           const cols = line.split(',');
           const walletName = rawVal(cols[1]);
           if (walletName && walletName !== '-') {
+            const bareAgentName = stripAgentNameSuffix(walletName);
             topUp.push({
-              agentName: walletName,
+              agentName: bareAgentName,
               wallet: rawVal(cols[4]),
               amount: rawVal(cols[2]),
               date: rawVal(cols[3]),
               type: rawVal(cols[5]),
-              leader: leaderMap[walletName.toUpperCase()] || '−',
+              leader: leaderMap[bareAgentName.toUpperCase()] || '−',
               brand: resolveBrandFromWalletName(walletName),
               _id: index,
             });
