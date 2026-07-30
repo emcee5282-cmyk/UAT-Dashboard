@@ -79,13 +79,15 @@ function resolveBrandFromWalletName(walletName: string): string {
   return code ?? '−';
 }
 
-// Agent Name should read as just the shop name, not the full raw wallet
-// string — strip a recognized trailing "-<code>" segment (brand code for
-// simple two-segment names like "CALAMARI008-M1", or the NG/RK/UP/BK network
-// suffix for full four-segment names like "T-B5AG-BURMA001-NG"). The code
-// itself is never lost — Brand still resolves from the untouched raw
-// walletName via resolveBrandFromWalletName above.
-const AGENT_NAME_TRAILING_CODES = [...BRAND_CODES, 'NG', 'RK', 'UP', 'BK'];
+// Agent Name should read as just the shop name — strip a recognized
+// trailing "-<brand code>" tag only (e.g. "N-B2PS3-NAVY054-NG-B3" ->
+// "N-B2PS3-NAVY054-NG"). The NG/RK/UP/BK network suffix is NOT stripped:
+// it's part of the shop's real identity (the "Opening AG" roster's own
+// agentName keys — used for the Leader lookup below — always keep it, e.g.
+// "N-B2PS1-KYAR001-RK"), not a redundant tag like the brand code is. The
+// brand code itself is never lost either way — Brand still resolves from
+// the untouched raw walletName via resolveBrandFromWalletName above.
+const AGENT_NAME_TRAILING_CODES = [...BRAND_CODES];
 
 function stripAgentNameSuffix(walletName: string): string {
   const parts = walletName.split('-');
