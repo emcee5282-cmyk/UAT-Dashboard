@@ -480,16 +480,28 @@ function computeSendMoneyWalletTopUpStlm(text: string, cutoff: Date | null): Map
 
 // Send Money's own brand resolution — unlike Cashout's (which cross-
 // references "SSP AG BalanceLimit"'s Group column), Send Money's brand is
-// embedded directly in the wallet name itself, e.g. "D-B2BD-DELTA073-NG" ->
-// segment "B2BD" -> "B2" — same convention already used by
-// app/sendmoney/settlement/page.tsx and app/sendmoney/topup/page.tsx (and
-// app/lib/sendMoneyOpening.ts). Includes 'SH' (Sharing), a brand Cashout's
-// own roster doesn't have.
+// embedded directly in the wallet name itself. Names now carry an extra
+// trailing brand tag beyond the older format (e.g. "D-B2BD-DELTA073-NG-B3"
+// — the rightmost "B3", not "B2BD"'s "B2", is the real brand — confirmed:
+// the same physical shop shows up with different trailing tags across
+// different transactions, so it's a per-transaction tag, not a per-shop
+// one), so the rightmost segment is checked first; older names without
+// that trailing tag (or ones whose trailing segment is something else
+// entirely, e.g. "-SS") fall back to the segment right after the first
+// hyphen. Same fix already applied to app/sendmoney/settlement/page.tsx,
+// app/sendmoney/topup/page.tsx, app/balance-overview/page.tsx, and
+// app/shadcn-demo/balance-overview/page.tsx — this table's per-brand Top
+// Up/Settlement totals must resolve brand identically to those tabs.
+// Includes 'SH' (Sharing), a brand Cashout's own roster doesn't have.
 const SSP_LINE1_SENDMONEY_BRAND_CODES = [...SSP_LINE1_BRAND_PRIORITY, 'SH'];
 
 function resolveSendMoneyBrandFromWalletName(walletName: string): string {
-  const segment = (walletName.split('-')[1] ?? '').toUpperCase();
-  const code = SSP_LINE1_SENDMONEY_BRAND_CODES.find((c) => segment.startsWith(c));
+  const segments = walletName.split('-');
+  const last = (segments[segments.length - 1] ?? '').toUpperCase();
+  const trailing = SSP_LINE1_SENDMONEY_BRAND_CODES.find((c) => c === last);
+  if (trailing) return trailing;
+  const afterFirst = (segments[1] ?? '').toUpperCase();
+  const code = SSP_LINE1_SENDMONEY_BRAND_CODES.find((c) => afterFirst.startsWith(c));
   return code ?? '−';
 }
 
