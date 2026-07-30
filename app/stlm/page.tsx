@@ -736,7 +736,7 @@ function RowActionsCell({ row, onEdit }: { row: StlmRow; onEdit: (row: StlmRow) 
       `Agent Name: ${toProperCase(row.agentName)}`,
       `Wallet: ${toProperCase(row.wallet)}`,
       `Amount: ${displayNum(row.amount)}`,
-      `Type: ${row.remarks}`,
+      `Type: ${toProperCase(row.remarks)}`,
       `Date: ${formatDateDisplay(row.date)}`,
     ].join('\n');
     navigator.clipboard?.writeText(text).catch(() => {});
@@ -944,7 +944,7 @@ function renderCell(row: StlmRow, col: ColumnDef, style: CSSProperties, onEdit: 
       // rawVal() never returns '' — blanks come through as '-', which reads
       // like a typo next to real remarks. Normalize to the project's own
       // empty-cell convention (U+2212) instead of leaving it ambiguous.
-      const remarksText = row.remarks && row.remarks !== '-' ? row.remarks : '−';
+      const remarksText = row.remarks && row.remarks !== '-' ? toProperCase(row.remarks) : '−';
       return <div key={key} role="cell" style={style} title={remarksText} className={base}>{highlightMatch(remarksText, searchTerm)}</div>;
     }
     case COLUMN_IDS.DATE: {
@@ -1978,7 +1978,7 @@ export default function StlmPage() {
                       </div>
 
                       <div className="mt-2.5 flex items-baseline justify-between border-t border-border pt-2.5">
-                        <span className="text-[11px] font-normal text-muted-foreground">{row.remarks}</span>
+                        <span className="text-[11px] font-normal text-muted-foreground">{row.remarks && row.remarks !== '-' ? toProperCase(row.remarks) : '−'}</span>
                         <span className="text-lg font-bold tabular-nums text-foreground">{displayNum(row.amount)}</span>
                       </div>
                     </div>

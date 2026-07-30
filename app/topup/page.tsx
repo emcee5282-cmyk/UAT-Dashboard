@@ -546,7 +546,7 @@ function RowActionsCell({ row, onEdit }: { row: TopUpRow; onEdit: (row: TopUpRow
       `Agent Name: ${toProperCase(row.agentName)}`,
       `Wallet: ${toProperCase(row.wallet)}`,
       `Amount: ${displayNum(row.amount)}`,
-      `Type: ${row.type}`,
+      `Type: ${toProperCase(row.type)}`,
       `Date: ${formatDateDisplay(row.date)}`,
     ].join('\n');
     navigator.clipboard?.writeText(text).catch(() => {});
