@@ -1760,7 +1760,7 @@ export default function AgentBalance() {
                         <td
                           key={col.key}
                           style={colWidthsPx[col.key] ? { width: colWidthsPx[col.key], minWidth: colWidthsPx[col.key] } : undefined}
-                          className="px-5 py-[12px]"
+                          className={`px-5 py-[12px] text-${COLUMN_ALIGN[col.key]}`}
                         >
                           {col.key === 'brand' ? (
                             <div className="h-[26px] w-12 dt-skeleton rounded-md" />
@@ -1773,7 +1773,14 @@ export default function AgentBalance() {
                           ) : col.key === 'walletType' ? (
                             <div className="h-2.5 dt-skeleton rounded-md" style={{ width: `${TYPE_SKELETON_WIDTHS[i % TYPE_SKELETON_WIDTHS.length]}%` }} />
                           ) : (
-                            <div className="h-2.5 dt-skeleton rounded-md" style={{ width: `${AMOUNT_SKELETON_WIDTHS[i % AMOUNT_SKELETON_WIDTHS.length]}%` }} />
+                            // Every column reaching this fallback (SDP, Opening,
+                            // Total DP/WD, Top Up, Settlement, Company Balance,
+                            // Balance Inside, Agent Withdrawal, SDP VS Balance) is
+                            // right-aligned (see DEFAULT_COLUMNS) — ml-auto pushes
+                            // the bar to match, since a block-level skeleton <div>
+                            // doesn't respond to the <td>'s own text-align the way
+                            // real inline text/numbers do.
+                            <div className="ml-auto h-2.5 dt-skeleton rounded-md" style={{ width: `${AMOUNT_SKELETON_WIDTHS[i % AMOUNT_SKELETON_WIDTHS.length]}%` }} />
                           )}
                         </td>
                       ))}
