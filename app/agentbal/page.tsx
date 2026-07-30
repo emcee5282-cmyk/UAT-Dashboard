@@ -1695,7 +1695,7 @@ export default function AgentBalance() {
             <div className="relative hidden flex-1 min-h-0 sm:block">
               <div
                 ref={tableScrollRef}
-                className={`dt-scroll agentbal-scroll h-full ${
+                className={`dt-scroll h-full ${
                   loading ? 'overflow-hidden pointer-events-none' : 'overflow-y-auto overflow-x-auto pointer-events-auto'
                 }`}
               >
