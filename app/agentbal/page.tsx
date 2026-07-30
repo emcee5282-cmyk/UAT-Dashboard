@@ -978,13 +978,23 @@ export default function AgentBalance() {
       // stored positive. Settlement lives in cols H-L (indices 7-11), same
       // field order, amounts stored negative (money leaving) so they're
       // abs()'d. Cols Q-AA are a last-month archive and are not read.
+      // Top Up/Settlement keys are normalized (uppercased, all whitespace
+      // stripped) before every set/get on these two maps — the "AG BD STLM +
+      // TOPUP" sheet's own "To Agent" columns aren't always cased/spaced the
+      // same as the Opening roster's agent names (e.g. "Konan001 " vs
+      // "KONAN001"), which silently dropped that agent's Top Up/Settlement
+      // from its sum since the Map key never matched. Scoped to just these
+      // two lookups — opening.agentName itself is left untouched for every
+      // other map below, since those sheets haven't shown this mismatch.
+      const normalizeAgentKey = (name: string): string => name.toUpperCase().replace(/\s+/g, '');
+
       const topUpTotals = new Map<string, number>();
       const stlmTotals = new Map<string, number>();
       parseCsvLines(stlmText)
         .slice(1)
         .filter((row) => row.some((cell) => cell.trim() !== ''))
         .forEach((row) => {
-          const topUpAgent = stripBrandSuffix(rawVal(row[1]));
+          const topUpAgent = normalizeAgentKey(stripBrandSuffix(rawVal(row[1])));
           const topUpAmount = rawVal(row[2]);
           const topUpDate = parseSheetDate(rawVal(row[3]));
           if (
@@ -995,7 +1005,7 @@ export default function AgentBalance() {
             topUpTotals.set(topUpAgent, (topUpTotals.get(topUpAgent) ?? 0) + amount);
           }
 
-          const stlmAgent = stripBrandSuffix(rawVal(row[7]));
+          const stlmAgent = normalizeAgentKey(stripBrandSuffix(rawVal(row[7])));
           const stlmAmount = rawVal(row[8]);
           const stlmDate = parseSheetDate(rawVal(row[9]));
           if (
@@ -1009,8 +1019,8 @@ export default function AgentBalance() {
 
       const merged: MergedRow[] = openingRows.map((opening) => {
         const totals = balanceTotals.get(opening.agentName) ?? { dp: 0, wd: 0 };
-        const totalTopUp = topUpTotals.get(opening.agentName) ?? 0;
-        const totalStlm = stlmTotals.get(opening.agentName) ?? 0;
+        const totalTopUp = topUpTotals.get(normalizeAgentKey(opening.agentName)) ?? 0;
+        const totalStlm = stlmTotals.get(normalizeAgentKey(opening.agentName)) ?? 0;
         const balanceInside = balanceInsideTotals.get(opening.agentName) ?? 0;
         const runningBalance = computeCompanyBalance(parseNumber(opening.openingBal), totals.dp, totalTopUp, totals.wd, totalStlm);
         const sdpNum = parseNumber(opening.sdp);
