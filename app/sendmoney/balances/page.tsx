@@ -2,17 +2,21 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { ChevronDown, ChevronUp, Columns3, Download, RefreshCw, Search, Wallet } from 'lucide-react';
+import {
+  ChevronDown, Columns3, Download, RefreshCw, Search, Wallet,
+  TrendingUp, ArrowDownToLine, ArrowUpFromLine, Shield, ArrowUpDown,
+  Tag, User, FilterX,
+} from 'lucide-react';
 import * as XLSX from 'xlsx';
 import PageHeader from '@/app/components/PageHeader';
 import ProductSwitchTabs from '@/app/components/ProductSwitchTabs';
 import ThemeToggle from '@/app/components/ThemeToggle';
-import Toolbar from '@/app/components/Toolbar';
-import ColumnsDropdown from '@/app/components/ColumnsDropdown';
+import ConnectionErrorState from '@/app/components/ConnectionErrorState';
 import DataTable from '@/app/components/DataTable';
 import TableFooter from '@/app/components/TableFooter';
 import EmptyState from '@/app/components/EmptyState';
-import ConnectionErrorState from '@/app/components/ConnectionErrorState';
+import FilterDropdown from '@/app/components/FilterDropdown';
+import ColumnsDropdown from '@/app/components/ColumnsDropdown';
 import { classifyFetchError, type ClassifiedError, assertAllOk } from '@/app/lib/errors';
 import { rawVal, fmt, fmtAbbrev } from '@/app/lib/format';
 import { parseCsvLines } from '@/app/lib/csv';
@@ -27,8 +31,6 @@ import {
   computeSdpVsBalance,
   resolveBrand,
 } from '@/app/lib/balanceEngine';
-import { TABLE_STICKY_HEADER_CLASS, TABLE_HEADER_CELL_CLASS, TOOLBAR_ROW_CLASS, TOOLBAR_LEFT_CLASS, TOOLBAR_RIGHT_CLASS } from '@/app/design-system/table';
-import { PAGE_MAIN_PADDING_CLASS, KPI_CARD_CLASS } from '@/app/design-system/spacing';
 import { getPreference, setPreference } from '@/app/lib/preferences';
 
 // "Opening AG" sheet col I — Send Money's own "UPDATED TIME" card (Cashout's
@@ -95,7 +97,6 @@ function parseNumber(val: string): number {
   return isNaN(num) ? 0 : num;
 }
 
-
 // Stlm Top Up sheet dates are formatted "M/D/YYYY".
 function parseSheetDate(dateStr: string): Date | null {
   const parts = (dateStr ?? '').trim().split('/');
@@ -146,9 +147,9 @@ function displayBrand(code: string): string {
   return BRAND_DISPLAY_LABELS[code] ?? code;
 }
 
-// Source data comes in as raw uppercase (e.g. "AIMAN") — proper-cased for
-// display only (Leader), copied verbatim from Cashout Balance's own
-// toProperCase (app/agentbal/page.tsx).
+// Leader names come from the sheet in ALL CAPS — same helper as Cashout
+// Balance's own toProperCase (app/agentbal/page.tsx), display-only
+// (sorting/filtering/export all still key off the raw value).
 function toProperCase(str: string): string {
   return str
     .toLowerCase()
@@ -157,39 +158,8 @@ function toProperCase(str: string): string {
     .join('');
 }
 
-// Per-code tint map — same scheme as Cashout Balance's own BrandBadge
-// (app/agentbal/page.tsx), applied here too. Unknown codes (e.g. 'SH') fall
-// back to a neutral slate. This page had no dedicated BrandBadge component
-// before (brand was plain text on desktop, a separate ad-hoc pill on
-// mobile) — both now route through this same helper.
-const BRAND_BADGE_TINTS: Record<string, string> = {
-  M1: 'bg-blue-50 text-blue-700 border-blue-200 dark:bg-blue-500/10 dark:text-blue-400 dark:border-blue-900/50',
-  M2: 'bg-cyan-50 text-cyan-700 border-cyan-200 dark:bg-cyan-500/10 dark:text-cyan-400 dark:border-cyan-900/50',
-  B1: 'bg-purple-50 text-purple-700 border-purple-200 dark:bg-purple-500/10 dark:text-purple-400 dark:border-purple-900/50',
-  B2: 'bg-violet-50 text-violet-700 border-violet-200 dark:bg-violet-500/10 dark:text-violet-400 dark:border-violet-900/50',
-  B3: 'bg-fuchsia-50 text-fuchsia-700 border-fuchsia-200 dark:bg-fuchsia-500/10 dark:text-fuchsia-400 dark:border-fuchsia-900/50',
-  B4: 'bg-indigo-50 text-indigo-700 border-indigo-200 dark:bg-indigo-500/10 dark:text-indigo-400 dark:border-indigo-900/50',
-  B5: 'bg-sky-50 text-sky-700 border-sky-200 dark:bg-sky-500/10 dark:text-sky-400 dark:border-sky-900/50',
-  K1: 'bg-orange-50 text-orange-700 border-orange-200 dark:bg-orange-500/10 dark:text-orange-400 dark:border-orange-900/50',
-  J1: 'bg-amber-50 text-amber-700 border-amber-200 dark:bg-amber-500/10 dark:text-amber-400 dark:border-amber-900/50',
-  T1: 'bg-teal-50 text-teal-700 border-teal-200 dark:bg-teal-500/10 dark:text-teal-400 dark:border-teal-900/50',
-};
-
-function brandBadgeClasses(brand: string): string {
-  return BRAND_BADGE_TINTS[brand] ?? 'bg-slate-100 text-slate-600 border-slate-200 dark:bg-slate-500/10 dark:text-slate-400 dark:border-slate-700';
-}
-
-function BrandBadge({ children, brand }: { children: React.ReactNode; brand: string }) {
-  return (
-    <span className={`inline-flex h-[28px] items-center rounded-[999px] border px-[10px] text-[12px] font-semibold transition-[filter] duration-150 hover:brightness-95 dark:hover:brightness-110 ${brandBadgeClasses(brand)}`}>
-      {children}
-    </span>
-  );
-}
-
 // Permanent column identifiers — same Enterprise Table V2 pattern as
-// app/stlm/page.tsx (the canonical reference); this page gets its own
-// COLUMN_IDS rather than sharing Settlement's.
+// app/agentbal/page.tsx (the canonical reference for this whole page).
 const COLUMN_IDS = {
   BRAND: 'brand',
   LEADER: 'leader',
@@ -210,10 +180,6 @@ const COLUMN_IDS = {
 
 type ColumnKey = typeof COLUMN_IDS[keyof typeof COLUMN_IDS];
 
-// Column model matches Settlement's ColumnDef shape (`key` kept instead of
-// Settlement's `id` since every existing reference on this page already
-// reads `col.key`). No protected Actions-style column exists here, so all
-// columns are hideable; DEFAULT_HIDDEN below seeds which start hidden.
 type ColumnDef = {
   key: ColumnKey;
   label: string;
@@ -223,87 +189,266 @@ type ColumnDef = {
   align: 'left' | 'right' | 'center';
 };
 
-const DEFAULT_HIDDEN: ColumnKey[] = ['brand', 'sdp', 'settlement', 'topUp', 'sdpVsBalance'];
+// All columns visible by default, alignment matching Cashout Balance's own
+// convention exactly (text left, numbers right) — per explicit instruction
+// that this page should match app/agentbal/page.tsx in every respect.
+const DEFAULT_HIDDEN: ColumnKey[] = [];
 
 const DEFAULT_COLUMNS: ColumnDef[] = [
-  { key: COLUMN_IDS.BRAND, label: 'Brand', visible: !DEFAULT_HIDDEN.includes(COLUMN_IDS.BRAND), sortable: false, hideable: true, align: 'center' },
-  { key: COLUMN_IDS.LEADER, label: 'Leader', visible: !DEFAULT_HIDDEN.includes(COLUMN_IDS.LEADER), sortable: false, hideable: true, align: 'center' },
-  { key: COLUMN_IDS.WALLET_NAME, label: 'Shop Name', visible: !DEFAULT_HIDDEN.includes(COLUMN_IDS.WALLET_NAME), sortable: true, hideable: true, align: 'center' },
-  { key: COLUMN_IDS.WALLET_TYPE, label: 'Type', visible: !DEFAULT_HIDDEN.includes(COLUMN_IDS.WALLET_TYPE), sortable: false, hideable: true, align: 'center' },
-  { key: COLUMN_IDS.SDP, label: 'SDP', visible: !DEFAULT_HIDDEN.includes(COLUMN_IDS.SDP), sortable: true, hideable: true, align: 'center' },
-  { key: COLUMN_IDS.OPENING, label: 'Opening', visible: !DEFAULT_HIDDEN.includes(COLUMN_IDS.OPENING), sortable: true, hideable: true, align: 'center' },
-  { key: COLUMN_IDS.TOTAL_DP, label: 'Total DP', visible: !DEFAULT_HIDDEN.includes(COLUMN_IDS.TOTAL_DP), sortable: true, hideable: true, align: 'center' },
-  { key: COLUMN_IDS.TOTAL_WD, label: 'Total WD', visible: !DEFAULT_HIDDEN.includes(COLUMN_IDS.TOTAL_WD), sortable: true, hideable: true, align: 'center' },
-  { key: COLUMN_IDS.TOP_UP, label: 'Top Up', visible: !DEFAULT_HIDDEN.includes(COLUMN_IDS.TOP_UP), sortable: true, hideable: true, align: 'center' },
-  { key: COLUMN_IDS.SETTLEMENT, label: 'Settlement', visible: !DEFAULT_HIDDEN.includes(COLUMN_IDS.SETTLEMENT), sortable: true, hideable: true, align: 'center' },
-  { key: COLUMN_IDS.COMPANY_BALANCE, label: 'Company Balance', visible: !DEFAULT_HIDDEN.includes(COLUMN_IDS.COMPANY_BALANCE), sortable: true, hideable: true, align: 'center' },
-  { key: COLUMN_IDS.BALANCE_INSIDE, label: 'Balance Inside', visible: !DEFAULT_HIDDEN.includes(COLUMN_IDS.BALANCE_INSIDE), sortable: true, hideable: true, align: 'center' },
-  { key: COLUMN_IDS.AGENT_WITHDRAWAL, label: 'Agent Withdrawal', visible: !DEFAULT_HIDDEN.includes(COLUMN_IDS.AGENT_WITHDRAWAL), sortable: true, hideable: true, align: 'center' },
-  { key: COLUMN_IDS.SDP_VS_BALANCE, label: 'SDP VS Balance', visible: !DEFAULT_HIDDEN.includes(COLUMN_IDS.SDP_VS_BALANCE), sortable: true, hideable: true, align: 'center' },
-  { key: COLUMN_IDS.WALLET_STATUS, label: 'Wallet Status', visible: !DEFAULT_HIDDEN.includes(COLUMN_IDS.WALLET_STATUS), sortable: false, hideable: true, align: 'center' },
+  { key: COLUMN_IDS.BRAND, label: 'Brand', visible: !DEFAULT_HIDDEN.includes(COLUMN_IDS.BRAND), sortable: true, hideable: true, align: 'left' },
+  { key: COLUMN_IDS.LEADER, label: 'Leader', visible: !DEFAULT_HIDDEN.includes(COLUMN_IDS.LEADER), sortable: true, hideable: true, align: 'left' },
+  { key: COLUMN_IDS.WALLET_NAME, label: 'Shop Name', visible: !DEFAULT_HIDDEN.includes(COLUMN_IDS.WALLET_NAME), sortable: true, hideable: true, align: 'left' },
+  { key: COLUMN_IDS.WALLET_TYPE, label: 'Type', visible: !DEFAULT_HIDDEN.includes(COLUMN_IDS.WALLET_TYPE), sortable: true, hideable: true, align: 'left' },
+  { key: COLUMN_IDS.SDP, label: 'SDP', visible: !DEFAULT_HIDDEN.includes(COLUMN_IDS.SDP), sortable: true, hideable: true, align: 'right' },
+  { key: COLUMN_IDS.OPENING, label: 'Opening', visible: !DEFAULT_HIDDEN.includes(COLUMN_IDS.OPENING), sortable: true, hideable: true, align: 'right' },
+  { key: COLUMN_IDS.TOTAL_DP, label: 'Total DP', visible: !DEFAULT_HIDDEN.includes(COLUMN_IDS.TOTAL_DP), sortable: true, hideable: true, align: 'right' },
+  { key: COLUMN_IDS.TOTAL_WD, label: 'Total WD', visible: !DEFAULT_HIDDEN.includes(COLUMN_IDS.TOTAL_WD), sortable: true, hideable: true, align: 'right' },
+  { key: COLUMN_IDS.TOP_UP, label: 'Top Up', visible: !DEFAULT_HIDDEN.includes(COLUMN_IDS.TOP_UP), sortable: true, hideable: true, align: 'right' },
+  { key: COLUMN_IDS.SETTLEMENT, label: 'Settlement', visible: !DEFAULT_HIDDEN.includes(COLUMN_IDS.SETTLEMENT), sortable: true, hideable: true, align: 'right' },
+  { key: COLUMN_IDS.COMPANY_BALANCE, label: 'Company Balance', visible: !DEFAULT_HIDDEN.includes(COLUMN_IDS.COMPANY_BALANCE), sortable: true, hideable: true, align: 'right' },
+  { key: COLUMN_IDS.BALANCE_INSIDE, label: 'Balance Inside', visible: !DEFAULT_HIDDEN.includes(COLUMN_IDS.BALANCE_INSIDE), sortable: true, hideable: true, align: 'right' },
+  { key: COLUMN_IDS.AGENT_WITHDRAWAL, label: 'Agent Withdrawal', visible: !DEFAULT_HIDDEN.includes(COLUMN_IDS.AGENT_WITHDRAWAL), sortable: true, hideable: true, align: 'right' },
+  { key: COLUMN_IDS.SDP_VS_BALANCE, label: 'SDP VS Balance', visible: !DEFAULT_HIDDEN.includes(COLUMN_IDS.SDP_VS_BALANCE), sortable: true, hideable: true, align: 'right' },
+  { key: COLUMN_IDS.WALLET_STATUS, label: 'Wallet Status', visible: !DEFAULT_HIDDEN.includes(COLUMN_IDS.WALLET_STATUS), sortable: true, hideable: true, align: 'left' },
 ];
 
 const COLUMN_VISIBILITY_STORAGE_KEY = 'sendMoneyBalancesColumnVisibility';
 
-const columnWidths: Record<ColumnKey, string> = {
-  brand: '70px',
-  leader: '90px',
-  walletName: '140px',
-  walletType: '110px',
-  sdp: '105px',
-  opening: '105px',
-  totalDP: '105px',
-  totalWD: '105px',
-  topUp: '105px',
-  settlement: '105px',
-  companyBalance: '130px',
-  balanceInside: '120px',
-  agentWithdrawal: '135px',
-  sdpVsBalance: '130px',
-  walletStatus: '125px',
-};
+const COLUMN_ALIGN: Record<ColumnKey, 'left' | 'right' | 'center'> = Object.fromEntries(
+  DEFAULT_COLUMNS.map((col) => [col.key, col.align])
+) as Record<ColumnKey, 'left' | 'right' | 'center'>;
 
-const TABLE_MIN_WIDTH = '1680px';
-
-// Loading-skeleton bar widths — cycled by row index (not one fixed width
-// for every row) so consecutive rows read as varied, natural content
-// rather than a repeated bar, matching Settlement/Top Up's own convention
-// (AGENT_NAME_SKELETON_WIDTHS etc. in app/stlm/page.tsx) and Cashout
-// Balance's own (app/agentbal/page.tsx). brand/walletStatus render their
-// own pill-shaped skeleton instead (see the loading branch in the table
-// body) since those are badges, not text/numbers.
 const LEADER_SKELETON_WIDTHS = [55, 70, 85];
 const SHOP_NAME_SKELETON_WIDTHS = [50, 65, 80];
 const TYPE_SKELETON_WIDTHS = [40, 55, 70];
 const AMOUNT_SKELETON_WIDTHS = [50, 60, 45, 55];
 
-const STICKY_COLS: ColumnKey[] = [];
+// This table is plain `table-auto` with no <colgroup> — every column is
+// purely content-driven, none has an explicit width. Fixing every column's
+// own width to its longest real value across the FULL dataset (rows, not
+// just the current page) keeps every column stable no matter which rows are
+// on screen — same approach and reasoning as app/agentbal/page.tsx.
+let measureCanvas: HTMLCanvasElement | null = null;
+function measureTextWidthPx(text: string, font: string): number {
+  if (typeof document === 'undefined') return 0;
+  if (!measureCanvas) measureCanvas = document.createElement('canvas');
+  const ctx = measureCanvas.getContext('2d');
+  if (!ctx) return 0;
+  ctx.font = font;
+  return ctx.measureText(text).width;
+}
 
-// Fixed display order for the mobile card's balances grid.
+const BODY_TEXT_FONT = '400 13px Inter, sans-serif';
+const HEADER_TEXT_FONT = '600 13px Inter, sans-serif';
+const BRAND_BADGE_FONT = '600 11px Inter, sans-serif';
+const WALLET_STATUS_BADGE_FONT = '500 11px Inter, sans-serif';
+
+const CELL_PADDING_PX = 40;
+const HEADER_SORT_ICON_RESERVE_PX = 20;
+const BRAND_BADGE_CHROME_PX = 22;
+const WALLET_STATUS_BADGE_CHROME_PX = 30;
+const EXTRA_BREATHING_ROOM_PX = 8;
+
+function getColumnDisplayText(row: MergedRow, key: ColumnKey): string {
+  switch (key) {
+    case 'brand': return displayBrand(row.brand);
+    case 'leader': return toProperCase(row.leader);
+    case 'walletName': return row.agentName;
+    case 'walletType': return row.walletType;
+    case 'sdp': return displayNum(row.sdp);
+    case 'opening': return displayNum(row.openingBal);
+    case 'totalDP': return displayNum(row.agentTotalDP);
+    case 'totalWD': return displayNum(row.agentTotalWD);
+    case 'topUp': return displayNum(row.totalTopUp);
+    case 'settlement': return displayNum(row.totalStlm);
+    case 'balanceInside': return displayNum(String(row.balanceInside ?? 0));
+    case 'agentWithdrawal': return displayNum(String(row.agentWithdrawal));
+    case 'sdpVsBalance': return row.sdpVsBalance > 0 ? displayNum(String(Math.abs(row.sdpVsBalance))) : '−';
+    case 'walletStatus': return row.walletStatus;
+    case 'companyBalance':
+    default: return displayNum(row.runningBalance);
+  }
+}
+
+function computeColumnWidthsPx(rows: MergedRow[], columns: ColumnDef[]): Partial<Record<ColumnKey, number>> {
+  const result: Partial<Record<ColumnKey, number>> = {};
+  for (const col of columns) {
+    const font = col.key === 'brand' ? BRAND_BADGE_FONT
+      : col.key === 'walletStatus' ? WALLET_STATUS_BADGE_FONT
+      : BODY_TEXT_FONT;
+    const chrome = col.key === 'brand' ? BRAND_BADGE_CHROME_PX
+      : col.key === 'walletStatus' ? WALLET_STATUS_BADGE_CHROME_PX
+      : 0;
+
+    let maxTextWidth = 0;
+    for (const row of rows) {
+      const w = measureTextWidthPx(getColumnDisplayText(row, col.key) ?? '', font);
+      if (w > maxTextWidth) maxTextWidth = w;
+    }
+    const dataWidth = maxTextWidth > 0 ? Math.ceil(maxTextWidth) + chrome + CELL_PADDING_PX + EXTRA_BREATHING_ROOM_PX : 0;
+
+    const headerWidth = Math.ceil(measureTextWidthPx(col.label, HEADER_TEXT_FONT))
+      + CELL_PADDING_PX
+      + (col.sortable ? HEADER_SORT_ICON_RESERVE_PX : 0);
+
+    const width = Math.max(dataWidth, headerWidth);
+    if (width > 0) result[col.key] = width;
+  }
+  return result;
+}
+
+const GHOST_BUTTON =
+  'inline-flex h-9 items-center gap-1.5 rounded-[8px] border border-[#E2E8F0] px-3 text-[13px] font-medium text-[#475569] transition-[color,background-color,transform] duration-150 ease-[var(--ease-out-strong)] hover:bg-[#E2E8F0] active:scale-[0.97] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#2563EB] dark:border-[#3a3a3d] dark:text-[#9CA3AF] dark:hover:bg-white/5';
+
+const ICON_BUTTON =
+  'flex h-10 w-10 xl:w-auto shrink-0 items-center justify-center xl:justify-start gap-1.5 rounded-[12px] border border-[#E2E8F0] bg-white px-0 xl:px-3 text-[13px] font-medium text-[#475569] transition-[color,background-color,border-color,box-shadow,transform] duration-150 ease-[var(--ease-out-strong)] hover:border-[#2563EB] hover:bg-[#F1F5F9] hover:ring-2 hover:ring-[#2563EB]/20 active:scale-[0.97] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#2563EB] dark:border-[#3a3a3d] dark:bg-[#2a2a2d] dark:text-[#9CA3AF] dark:hover:bg-white/5';
+
+const PAGE_SIZE_OPTIONS = [50, 100, 250, 500];
+
 const BALANCE_GRID_ORDER: ColumnKey[] = [
   'balanceInside', 'agentWithdrawal', 'opening',
   'totalWD', 'topUp', 'totalDP',
   'settlement', 'sdp', 'sdpVsBalance',
 ];
 
-function SortIcon({ active, direction }: { active: boolean; direction: 'asc' | 'desc' }) {
-  if (!active) {
-    return (
-      <span className="flex flex-col items-center justify-center leading-none text-slate-400 opacity-40">
-        <ChevronUp size={10} className="-mb-0.5" />
-        <ChevronDown size={10} />
-      </span>
-    );
-  }
-  return direction === 'asc' ? (
-    <ChevronUp size={10} className="text-[color:var(--product-accent)]" />
-  ) : (
-    <ChevronDown size={10} className="text-[color:var(--product-accent)]" />
+function SortIcon({ active }: { active: boolean; direction: 'asc' | 'desc' }) {
+  return (
+    <ArrowUpDown
+      size={12}
+      className={active ? 'text-indigo-600 dark:text-indigo-400' : 'text-slate-400 dark:text-slate-500'}
+    />
   );
 }
 
-function headerCellClasses(_colKey: ColumnKey, _isSorted: boolean) {
-  return TABLE_HEADER_CELL_CLASS;
+function headerCellClasses(colKey: ColumnKey, _isSorted: boolean) {
+  return `group overflow-hidden whitespace-nowrap px-5 text-${COLUMN_ALIGN[colKey]} text-[13px] font-semibold text-[#475569] dark:text-[#9CA3AF]`;
+}
+
+function useTooltip(triggerRef: React.RefObject<HTMLElement | null>) {
+  const [open, setOpen] = useState(false);
+  const [rendered, setRendered] = useState(false);
+  const [pos, setPos] = useState({ top: 0, left: 0 });
+
+  useEffect(() => {
+    if (open) {
+      const rect = triggerRef.current?.getBoundingClientRect();
+      if (rect) setPos({ top: rect.top - 8, left: rect.left + rect.width / 2 });
+      setRendered(true);
+    } else {
+      const timeout = setTimeout(() => setRendered(false), 150);
+      return () => clearTimeout(timeout);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open]);
+
+  return {
+    open,
+    rendered,
+    pos,
+    handlers: {
+      onMouseEnter: () => setOpen(true),
+      onMouseLeave: () => setOpen(false),
+      onFocus: () => setOpen(true),
+      onBlur: () => setOpen(false),
+    },
+  };
+}
+
+function Tooltip({
+  label,
+  open,
+  pos,
+  onlyWhenCompact = false,
+}: {
+  label: string;
+  open: boolean;
+  pos: { top: number; left: number };
+  onlyWhenCompact?: boolean;
+}) {
+  if (typeof document === 'undefined') return null;
+  return createPortal(
+    <div
+      style={{ position: 'fixed', top: pos.top, left: pos.left, transform: 'translate(-50%, -100%)' }}
+      className={`pointer-events-none z-[9999] whitespace-nowrap rounded-md bg-[#1F2937] px-2.5 py-1.5 text-[12px] text-white transition-opacity duration-150 ease-out ${
+        open ? 'opacity-100' : 'opacity-0'
+      } ${onlyWhenCompact ? 'xl:hidden' : ''}`}
+    >
+      {label}
+      <span className="absolute left-1/2 top-full h-2 w-2 -translate-x-1/2 -translate-y-1/2 rotate-45 bg-[#1F2937]" />
+    </div>,
+    document.body
+  );
+}
+
+function FilterTriggerButton({
+  label,
+  icon: Icon,
+  anyUnchecked,
+  selectedCount,
+  menuOpen,
+  buttonRef,
+  onClick,
+}: {
+  label: string;
+  icon: React.ComponentType<{ size?: number; className?: string }>;
+  anyUnchecked: boolean;
+  selectedCount: number;
+  menuOpen: boolean;
+  buttonRef: React.RefObject<HTMLButtonElement | null>;
+  onClick: () => void;
+}) {
+  const tooltip = useTooltip(buttonRef);
+  return (
+    <div className="relative">
+      <button
+        type="button"
+        ref={buttonRef}
+        onClick={onClick}
+        aria-label={label}
+        {...tooltip.handlers}
+        className="inline-flex h-10 w-10 xl:w-auto shrink-0 items-center justify-center xl:justify-start gap-1.5 rounded-[12px] border border-[#E2E8F0] bg-white px-0 xl:px-3 text-[13px] font-medium text-[#475569] transition-[color,background-color,border-color,box-shadow,transform] duration-150 ease-[var(--ease-out-strong)] hover:border-[#2563EB] hover:bg-[#F1F5F9] hover:ring-2 hover:ring-[#2563EB]/20 active:scale-[0.97] dark:border-[#3a3a3d] dark:bg-[#2a2a2d] dark:text-[#9CA3AF] dark:hover:bg-white/5"
+      >
+        <Icon size={15} className="text-[#475569] dark:text-[#9CA3AF]" />
+        <span className="hidden xl:inline">{label}</span>
+        {anyUnchecked && (
+          <span className="flex h-4 min-w-[16px] animate-[dt-badge-pop_150ms_var(--ease-out-strong)] items-center justify-center rounded-full bg-indigo-600 px-1 text-[10px] font-semibold text-white">
+            {selectedCount}
+          </span>
+        )}
+        <ChevronDown
+          size={14}
+          className={`hidden text-[#475569] transition-transform duration-150 ease-[var(--ease-in-out-strong)] dark:text-[#9CA3AF] xl:inline ${menuOpen ? 'rotate-180' : ''}`}
+        />
+      </button>
+      {tooltip.rendered && <Tooltip label={label} open={tooltip.open} pos={tooltip.pos} onlyWhenCompact />}
+    </div>
+  );
+}
+
+function ResetFiltersButton({ anyFilterActive, onClick }: { anyFilterActive: boolean; onClick: () => void }) {
+  const buttonRef = useRef<HTMLButtonElement>(null);
+  const tooltip = useTooltip(buttonRef);
+
+  return (
+    <div className="relative">
+      <button
+        ref={buttonRef}
+        type="button"
+        onClick={() => { if (anyFilterActive) onClick(); }}
+        {...tooltip.handlers}
+        aria-label="Reset all filters"
+        aria-disabled={!anyFilterActive}
+        className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-[12px] border transition-[color,background-color,border-color,transform] duration-150 ease-[var(--ease-out-strong)] ${
+          anyFilterActive
+            ? 'cursor-pointer border-[#E2E8F0] bg-white text-indigo-600 hover:border-[#FCA5A5] hover:bg-[#FEF2F2] hover:text-[#DC2626] active:scale-[0.97] active:border-[#FCA5A5] active:bg-[#FEF2F2] active:text-[#DC2626] dark:border-[#3a3a3d] dark:bg-[#2a2a2d] dark:text-indigo-400'
+            : 'cursor-default border-[#E2E8F0] bg-white text-[#475569] opacity-40 dark:border-[#3a3a3d] dark:bg-[#2a2a2d] dark:text-[#9CA3AF]'
+        }`}
+      >
+        <FilterX size={20} fill={anyFilterActive ? 'currentColor' : 'none'} />
+      </button>
+      {tooltip.rendered && <Tooltip label="Reset all filters" open={tooltip.open} pos={tooltip.pos} />}
+    </div>
+  );
 }
 
 function walletStatusBadgeClasses(status: string): string {
@@ -314,9 +459,7 @@ function walletStatusBadgeClasses(status: string): string {
     case 'WD Only':
       return 'bg-amber-50 text-amber-700 border-amber-200 dark:bg-amber-500/10 dark:text-amber-400 dark:border-amber-900/50';
     case 'Top Up Acc.':
-      // Sky, not the teal product accent — this is a status-category color
-      // (like the emerald/amber/rose others here), not brand identity.
-      return 'bg-sky-50 text-sky-700 border-sky-200 dark:bg-sky-500/10 dark:text-sky-400 dark:border-sky-900/50';
+      return 'bg-indigo-50 text-indigo-700 border-indigo-200 dark:bg-indigo-500/10 dark:text-indigo-400 dark:border-indigo-900/50';
     case 'Wallet With Issue':
     case 'Account Problem':
       return 'bg-rose-50 text-rose-700 border-rose-200 dark:bg-rose-500/10 dark:text-rose-400 dark:border-rose-900/50';
@@ -325,8 +468,62 @@ function walletStatusBadgeClasses(status: string): string {
   }
 }
 
-// Mobile card grid fields — mirrors renderCell's data + colors, minus the
-// columns (walletName, walletStatus, companyBalance) shown in the card header/hero.
+function WalletStatusBadge({ status }: { status: string }) {
+  return (
+    <span className={`inline-flex items-center gap-1.5 rounded-md border px-2 py-0.5 text-[11px] font-medium transition-[filter] duration-150 hover:brightness-95 dark:hover:brightness-110 ${walletStatusBadgeClasses(status)}`}>
+      <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-current" />
+      {status}
+    </span>
+  );
+}
+
+// Per-code tint map — same scheme as Cashout Balance's own BrandBadge, plus
+// 'SH', a brand Cashout's own roster doesn't have.
+const BRAND_BADGE_TINTS: Record<string, string> = {
+  M1: 'bg-blue-50 text-blue-700 border-blue-200 dark:bg-blue-500/10 dark:text-blue-400 dark:border-blue-900/50',
+  M2: 'bg-cyan-50 text-cyan-700 border-cyan-200 dark:bg-cyan-500/10 dark:text-cyan-400 dark:border-cyan-900/50',
+  B1: 'bg-purple-50 text-purple-700 border-purple-200 dark:bg-purple-500/10 dark:text-purple-400 dark:border-purple-900/50',
+  B2: 'bg-violet-50 text-violet-700 border-violet-200 dark:bg-violet-500/10 dark:text-violet-400 dark:border-violet-900/50',
+  B3: 'bg-fuchsia-50 text-fuchsia-700 border-fuchsia-200 dark:bg-fuchsia-500/10 dark:text-fuchsia-400 dark:border-fuchsia-900/50',
+  B4: 'bg-indigo-50 text-indigo-700 border-indigo-200 dark:bg-indigo-500/10 dark:text-indigo-400 dark:border-indigo-900/50',
+  B5: 'bg-sky-50 text-sky-700 border-sky-200 dark:bg-sky-500/10 dark:text-sky-400 dark:border-sky-900/50',
+  K1: 'bg-orange-50 text-orange-700 border-orange-200 dark:bg-orange-500/10 dark:text-orange-400 dark:border-orange-900/50',
+  J1: 'bg-amber-50 text-amber-700 border-amber-200 dark:bg-amber-500/10 dark:text-amber-400 dark:border-amber-900/50',
+  T1: 'bg-teal-50 text-teal-700 border-teal-200 dark:bg-teal-500/10 dark:text-teal-400 dark:border-teal-900/50',
+};
+
+function brandBadgeClasses(brand: string): string {
+  return BRAND_BADGE_TINTS[brand] ?? 'bg-slate-100 text-slate-600 border-slate-200 dark:bg-slate-500/10 dark:text-slate-400 dark:border-slate-700';
+}
+
+function BrandBadge({ children, brand }: { children: React.ReactNode; brand: string }) {
+  return (
+    <span className={`inline-flex h-[26px] items-center rounded-md border px-2.5 text-[11px] font-semibold transition-[filter] duration-150 hover:brightness-95 dark:hover:brightness-110 ${brandBadgeClasses(brand)}`}>
+      {children}
+    </span>
+  );
+}
+
+function FadeValue({ value, className }: { value: string; className: string }) {
+  const [visible, setVisible] = useState(false);
+
+  useEffect(() => {
+    setVisible(false);
+    const raf = requestAnimationFrame(() => setVisible(true));
+    return () => cancelAnimationFrame(raf);
+  }, [value]);
+
+  return (
+    <p
+      className={`${className} transition-[opacity,transform] duration-200 ease-out ${
+        visible ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-[5px]'
+      }`}
+    >
+      {value}
+    </p>
+  );
+}
+
 function mobileCardFieldValue(row: MergedRow, key: ColumnKey): { value: string; className: string } {
   switch (key) {
     case 'brand':
@@ -339,14 +536,24 @@ function mobileCardFieldValue(row: MergedRow, key: ColumnKey): { value: string; 
       return { value: displayNum(row.sdp), className: 'text-foreground' };
     case 'opening':
       return { value: displayNum(row.openingBal), className: 'text-foreground' };
-    case 'totalDP':
-      return { value: displayNum(row.agentTotalDP), className: 'text-emerald-600 dark:text-emerald-400' };
-    case 'totalWD':
-      return { value: displayNum(row.agentTotalWD), className: 'text-rose-600 dark:text-rose-400' };
-    case 'topUp':
-      return { value: displayNum(row.totalTopUp), className: 'text-foreground' };
-    case 'settlement':
-      return { value: displayNum(row.totalStlm), className: 'text-orange-500 dark:text-orange-400' };
+    case 'totalDP': {
+      const formatted = displayNum(row.agentTotalDP);
+      return { value: formatted, className: formatted === '−' ? 'text-foreground' : 'text-emerald-600 dark:text-emerald-400' };
+    }
+    case 'totalWD': {
+      const formatted = displayNum(row.agentTotalWD);
+      const isZero = formatted === '−';
+      return { value: isZero ? formatted : `-${formatted}`, className: isZero ? 'text-foreground' : 'text-rose-600 dark:text-rose-400' };
+    }
+    case 'topUp': {
+      const formatted = displayNum(row.totalTopUp);
+      return { value: formatted, className: 'text-foreground' };
+    }
+    case 'settlement': {
+      const formatted = displayNum(row.totalStlm);
+      const isZero = formatted === '−';
+      return { value: isZero ? formatted : `-${formatted}`, className: isZero ? 'text-foreground' : 'text-rose-600 dark:text-rose-400' };
+    }
     case 'balanceInside':
       return { value: displayNum(String(row.balanceInside ?? 0)), className: 'text-foreground' };
     case 'agentWithdrawal':
@@ -358,54 +565,80 @@ function mobileCardFieldValue(row: MergedRow, key: ColumnKey): { value: string; 
   }
 }
 
-function renderCell(row: MergedRow, key: ColumnKey) {
-
-  const base = 'whitespace-nowrap overflow-hidden text-ellipsis px-3 py-1.5 text-[11px]';
+function renderCell(row: MergedRow, key: ColumnKey, colWidthsPx?: Partial<Record<ColumnKey, number>>) {
+  const baseNoColor = `whitespace-nowrap px-5 py-[12px] text-${COLUMN_ALIGN[key]} text-[13px] leading-[20px] font-normal`;
+  const base = `${baseNoColor} text-[#111827] dark:text-[#E5E7EB]`;
+  const width = colWidthsPx?.[key];
+  const cellStyle = width ? { width, minWidth: width } : undefined;
 
   switch (key) {
     case 'brand':
-      return <td key={key} className={`${base} text-center`}><BrandBadge brand={row.brand}>{displayBrand(row.brand)}</BrandBadge></td>;
+      return <td key={key} style={cellStyle} className={base}><BrandBadge brand={row.brand}>{displayBrand(row.brand)}</BrandBadge></td>;
     case 'leader':
-      return <td key={key} className={`${base} text-center text-muted-foreground`}>{toProperCase(row.leader)}</td>;
+      return <td key={key} style={cellStyle} className={base}>{toProperCase(row.leader)}</td>;
     case 'walletName':
-      return <td key={key} className={`${base} text-center font-semibold text-foreground`}>{row.agentName}</td>;
+      return <td key={key} style={cellStyle} className={base}>{row.agentName}</td>;
     case 'walletType':
-      return <td key={key} className={`${base} text-center text-muted-foreground`}>{row.walletType}</td>;
+      return <td key={key} style={cellStyle} className={base}>{row.walletType}</td>;
     case 'sdp':
-      return <td key={key} className={`${base} text-center tabular-nums text-foreground`}>{displayNum(row.sdp)}</td>;
+      return <td key={key} style={cellStyle} className={`${base} tabular-nums`}>{displayNum(row.sdp)}</td>;
     case 'opening':
-      return <td key={key} className={`${base} text-center tabular-nums text-foreground`}>{displayNum(row.openingBal)}</td>;
-    case 'totalDP':
-      return <td key={key} className={`${base} text-center tabular-nums font-medium text-emerald-600 dark:text-emerald-400`}>{displayNum(row.agentTotalDP)}</td>;
-    case 'totalWD':
-      return <td key={key} className={`${base} text-center tabular-nums font-medium text-rose-600 dark:text-rose-400`}>{displayNum(row.agentTotalWD)}</td>;
-    case 'topUp':
-      return <td key={key} className={`${base} text-center tabular-nums text-foreground`}>{displayNum(row.totalTopUp)}</td>;
-    case 'settlement':
-      return <td key={key} className={`${base} text-center tabular-nums text-orange-500 dark:text-orange-400`}>{displayNum(row.totalStlm)}</td>;
+      return <td key={key} style={cellStyle} className={`${base} tabular-nums`}>{displayNum(row.openingBal)}</td>;
+    case 'totalDP': {
+      const formatted = displayNum(row.agentTotalDP);
+      const color = formatted === '−' ? 'text-[#111827] dark:text-[#E5E7EB]' : 'text-emerald-600 dark:text-emerald-400';
+      return <td key={key} style={cellStyle} className={`${baseNoColor} tabular-nums ${color}`}>{formatted}</td>;
+    }
+    case 'totalWD': {
+      const formatted = displayNum(row.agentTotalWD);
+      const isZero = formatted === '−';
+      const color = isZero ? 'text-[#111827] dark:text-[#E5E7EB]' : 'text-rose-600 dark:text-rose-400';
+      return <td key={key} style={cellStyle} className={`${baseNoColor} tabular-nums ${color}`}>{isZero ? formatted : `-${formatted}`}</td>;
+    }
+    case 'topUp': {
+      const formatted = displayNum(row.totalTopUp);
+      return <td key={key} style={cellStyle} className={`${base} tabular-nums`}>{formatted}</td>;
+    }
+    case 'settlement': {
+      const formatted = displayNum(row.totalStlm);
+      const isZero = formatted === '−';
+      const color = isZero ? 'text-[#111827] dark:text-[#E5E7EB]' : 'text-rose-600 dark:text-rose-400';
+      return <td key={key} style={cellStyle} className={`${baseNoColor} tabular-nums ${color}`}>{isZero ? formatted : `-${formatted}`}</td>;
+    }
     case 'balanceInside':
-      return <td key={key} className={`${base} text-center tabular-nums text-foreground`}>{displayNum(String(row.balanceInside ?? 0))}</td>;
+      return <td key={key} style={cellStyle} className={`${base} tabular-nums`}>{displayNum(String(row.balanceInside ?? 0))}</td>;
     case 'agentWithdrawal':
-      return <td key={key} className={`${base} text-center tabular-nums text-foreground`}>{displayNum(String(row.agentWithdrawal))}</td>;
+      return <td key={key} style={cellStyle} className={`${base} tabular-nums`}>{displayNum(String(row.agentWithdrawal))}</td>;
     case 'sdpVsBalance':
-      return <td key={key} className={`${base} text-center tabular-nums text-foreground`}>{row.sdpVsBalance > 0 ? displayNum(String(Math.abs(row.sdpVsBalance))) : '−'}</td>;
+      return <td key={key} style={cellStyle} className={`${base} tabular-nums`}>{row.sdpVsBalance > 0 ? displayNum(String(Math.abs(row.sdpVsBalance))) : '−'}</td>;
     case 'walletStatus':
-      return <td key={key} className={`${base} text-center text-foreground`}>{row.walletStatus}</td>;
+      return <td key={key} style={cellStyle} className={base}><WalletStatusBadge status={row.walletStatus} /></td>;
     case 'companyBalance':
     default: {
-      const v = displayNum(row.runningBalance);
-      const color = v !== '−' && row.runningBalance < 0 ? 'text-rose-600 dark:text-rose-400' : 'text-foreground';
-      return <td key={key} className={`${base} text-center tabular-nums font-bold ${color}`}>{v}</td>;
+      const color = row.runningBalance < 0 ? 'text-rose-600 dark:text-rose-400' : 'text-[#111827] dark:text-[#E5E7EB]';
+      return <td key={key} style={cellStyle} className={`${baseNoColor} tabular-nums ${color}`}>{displayNum(row.runningBalance)}</td>;
     }
   }
 }
 
 export default function SendMoneyAgentBalance() {
   const [rows, setRows] = useState<MergedRow[]>([]);
+
+  const colWidthsPx = useMemo(() => computeColumnWidthsPx(rows, DEFAULT_COLUMNS), [rows]);
+
   const [loading, setLoading] = useState(true);
+  const [rowsPhase, setRowsPhase] = useState<'skeleton' | 'fadingOut' | 'table'>('skeleton');
+  useEffect(() => {
+    if (loading) {
+      setRowsPhase('skeleton');
+      return;
+    }
+    setRowsPhase('fadingOut');
+    const timeout = setTimeout(() => setRowsPhase('table'), 120);
+    return () => clearTimeout(timeout);
+  }, [loading]);
   const [error, setError] = useState<ClassifiedError | null>(null);
   const [spinning, setSpinning] = useState(false);
-  const [cardsExpanded, setCardsExpanded] = useState(false);
   const [searchTerm, setSearchTerm] = useState('');
   const [leaderFilter, setLeaderFilter] = useState<Record<string, boolean>>({});
   const [brandFilter, setBrandFilter] = useState<Record<string, boolean>>({});
@@ -413,46 +646,39 @@ export default function SendMoneyAgentBalance() {
   const [sortColumn, setSortColumn] = useState<ColumnKey>('companyBalance');
   const [sortDirection, setSortDirection] = useState<'asc' | 'desc'>('desc');
   const [brandMenuOpen, setBrandMenuOpen] = useState(false);
-  const [brandMenuPos, setBrandMenuPos] = useState({ top: 0, left: 0 });
   const [leaderMenuOpen, setLeaderMenuOpen] = useState(false);
-  const [leaderMenuPos, setLeaderMenuPos] = useState({ top: 0, left: 0 });
   const [walletTypeMenuOpen, setWalletTypeMenuOpen] = useState(false);
-  const [walletTypeMenuPos, setWalletTypeMenuPos] = useState({ top: 0, left: 0 });
   const [walletStatusMenuOpen, setWalletStatusMenuOpen] = useState(false);
-  const [walletStatusMenuPos, setWalletStatusMenuPos] = useState({ top: 0, left: 0 });
 
-  // Column Visibility (Enterprise Table V2) — same model/persistence as
-  // app/stlm/page.tsx: read saved preference once on mount (gated by
-  // `mounted`), written on every change thereafter.
   const [columnDefs, setColumnDefs] = useState<ColumnDef[]>(DEFAULT_COLUMNS);
   const [columnsMenuOpen, setColumnsMenuOpen] = useState(false);
   const [mounted, setMounted] = useState(false);
   const columnsButtonRef = useRef<HTMLButtonElement>(null);
+  const refreshButtonRef = useRef<HTMLButtonElement>(null);
+  const exportButtonRef = useRef<HTMLButtonElement>(null);
+  const refreshTooltip = useTooltip(refreshButtonRef);
+  const exportTooltip = useTooltip(exportButtonRef);
+  const columnsTooltip = useTooltip(columnsButtonRef);
 
   const [walletStatusFilter, setWalletStatusFilter] = useState<Record<string, boolean>>(
     () => Object.fromEntries(WALLET_STATUS_OPTIONS.map((status) => [status, true]))
   );
   const [page, setPage] = useState(1);
-  const rowsPerPage = 50;
+  const [rowsPerPage, setRowsPerPage] = useState(50);
   const brandButtonRef = useRef<HTMLButtonElement>(null);
-  const brandDropdownRef = useRef<HTMLDivElement>(null);
   const leaderButtonRef = useRef<HTMLButtonElement>(null);
-  const leaderDropdownRef = useRef<HTMLDivElement>(null);
   const walletTypeButtonRef = useRef<HTMLButtonElement>(null);
-  const walletTypeDropdownRef = useRef<HTMLDivElement>(null);
   const walletStatusButtonRef = useRef<HTMLButtonElement>(null);
-  const walletStatusDropdownRef = useRef<HTMLDivElement>(null);
   const scrollRef = useRef<number>(0);
-  const [atScrollStart, setAtScrollStart] = useState(true);
-  const [atScrollEnd, setAtScrollEnd] = useState(true);
   const tableScrollRef = useRef<HTMLDivElement>(null);
+  const [isScrolled, setIsScrolled] = useState(false);
+  const [selectedRows, setSelectedRows] = useState<Set<string>>(new Set());
 
   useEffect(() => {
     const el = tableScrollRef.current;
     if (!el) return;
     const handleScroll = () => {
-      setAtScrollStart(el.scrollLeft <= 1);
-      setAtScrollEnd(el.scrollLeft >= el.scrollWidth - el.offsetWidth - 1);
+      setIsScrolled(el.scrollTop > 0);
     };
     handleScroll();
     el.addEventListener('scroll', handleScroll, { passive: true });
@@ -462,6 +688,42 @@ export default function SendMoneyAgentBalance() {
       el.removeEventListener('scroll', handleScroll);
       resizeObserver.disconnect();
     };
+  }, []);
+
+  const toggleRowSelection = useCallback((agentName: string) => {
+    setSelectedRows((current) => {
+      const next = new Set(current);
+      if (next.has(agentName)) {
+        next.delete(agentName);
+      } else {
+        next.add(agentName);
+      }
+      return next;
+    });
+  }, []);
+
+  const handlePageSizeChange = useCallback((size: number) => {
+    setRowsPerPage(size);
+    setPage(1);
+  }, []);
+
+  const clearAllFilters = useCallback(() => {
+    setSearchTerm('');
+    setLeaderFilter({});
+    setBrandFilter({});
+    setWalletTypeFilter({});
+    setWalletStatusFilter(Object.fromEntries(WALLET_STATUS_OPTIONS.map((status) => [status, true])));
+  }, []);
+
+  const resetAllFilters = useCallback(() => {
+    setBrandFilter({});
+    setLeaderFilter({});
+    setWalletTypeFilter({});
+    setWalletStatusFilter(Object.fromEntries(WALLET_STATUS_OPTIONS.map((status) => [status, true])));
+    setBrandMenuOpen(false);
+    setLeaderMenuOpen(false);
+    setWalletTypeMenuOpen(false);
+    setWalletStatusMenuOpen(false);
   }, []);
 
   const fetchData = useCallback(async () => {
@@ -475,10 +737,9 @@ export default function SendMoneyAgentBalance() {
       // sheet) as-is for the roster, plus two Send Money-specific routes:
       // /api/sendmoney/balances ("SSP PS BalanceLimit") and
       // /api/sendmoney/stlmtopup ("PS BD STLM + TOPUP", Send Money's own
-      // dedicated Settlement + Top Up sheet — replaces the old shared
-      // "Stlm Top Up" source) — plus the Send Money Estimated Opening upload,
-      // same Assumed Balance substitution app/agentbal/page.tsx already does
-      // for Cashout.
+      // dedicated Settlement + Top Up sheet) — plus the Send Money Estimated
+      // Opening upload, same Assumed Balance substitution
+      // app/agentbal/page.tsx already does for Cashout.
       const [openingRes, balRes, stlmRes, estimatedRes] = await Promise.all([
         fetch(`/api/opening?t=${Date.now()}`),
         fetch(`/api/sendmoney/balances?t=${Date.now()}`),
@@ -494,26 +755,9 @@ export default function SendMoneyAgentBalance() {
       const estimatedData: { balances: Record<string, number>; uploadedAt: string | null } = await estimatedRes.json();
 
       const openingRawRows = parseCsvLines(openingText);
-      // Opening's own "UPDATED TIME" card — Send Money's own, col I (Cashout's
-      // equivalent is col G, see parseReportCutoffDate in app/agentbal/page.tsx)
-      // — kept separate from the Top Up/Settlement cutoff below (purely
-      // clock-based). Needed to detect whether Opening AG has been manually
-      // refreshed yet, for the Assumed Balance validity check further down.
       const reportCutoffDate = parseSendMoneyReportCutoffDate(openingRawRows);
-      // Top Up/Settlement totals reset at the 2AM business-day rollover
-      // (see app/lib/businessDate.ts) — clock-based, not gated on whether
-      // Opening's own "Updated Time" card has been manually refreshed yet.
       const topUpSettlementCutoff = getBusinessToday();
 
-      // Assumed Balance (uploaded via Send Money Opening's "Upload Excel
-      // Data") only takes over when BOTH hold — same two conditions as
-      // Cashout's own check in app/agentbal/page.tsx:
-      // 1. Opening's own "UPDATED TIME" card (col I) is still showing the
-      //    PREVIOUS business day — the real Opening reset for today hasn't
-      //    happened yet.
-      // 2. The upload's OWN "Last Updated" timestamp is itself from TODAY's
-      //    business day — a stale leftover upload from a prior day must not
-      //    keep being applied.
       const estimatedUploadedAt = estimatedData.uploadedAt ? new Date(estimatedData.uploadedAt) : null;
       const estimatedOpeningValid =
         reportCutoffDate !== null &&
@@ -592,36 +836,43 @@ export default function SendMoneyAgentBalance() {
         }
       });
 
-      // "PS BD STLM + TOPUP" is Send Money's own dedicated sheet (replaces
-      // the old shared "Stlm Top Up" cols A-G source, and finally provides a
-      // verified Top Up source). Top Up lives in cols B-F (indices 1-5):
-      // To Agent/Amount/Date/Wallet/TYPE, amounts stored positive. Settlement
-      // lives in cols H-L (indices 7-11), same field order, amounts stored
-      // negative (money leaving) so they're abs()'d before accumulating.
-      // Cols Q-AA on this same sheet are a last-month archive and are not read.
+      // "PS BD STLM + TOPUP" is Send Money's own dedicated sheet. Top Up
+      // lives in cols B-F (indices 1-5): To Agent/Amount/Date/Wallet/TYPE,
+      // amounts stored positive. Settlement lives in cols H-L (indices
+      // 7-11), same field order, amounts stored negative (money leaving) so
+      // they're abs()'d before accumulating. Cols Q-AA are a last-month
+      // archive and are not read.
+      // Top Up/Settlement keys are normalized (uppercased, all whitespace
+      // stripped) before every set/get on these two maps — same fix applied
+      // to app/agentbal/page.tsx: the sheet's own "To Agent" values aren't
+      // always cased/spaced the same as the roster's agent names, which
+      // would otherwise silently drop that agent's Top Up/Settlement from
+      // its sum since the Map key never matched.
+      const normalizeAgentKey = (name: string): string => name.toUpperCase().replace(/\s+/g, '');
+
       const topUpTotals = new Map<string, number>();
       const stlmTotals = new Map<string, number>();
       parseCsvLines(stlmText)
         .slice(1)
         .filter((row) => row.some((cell) => cell.trim() !== ''))
         .forEach((row) => {
-          const topUpAgent = rawVal(row[1]);
+          const topUpAgent = normalizeAgentKey(rawVal(row[1]));
           const topUpAmount = rawVal(row[2]);
-          const topUpDate = topUpSettlementCutoff ? parseSheetDate(rawVal(row[3])) : null;
+          const topUpDate = parseSheetDate(rawVal(row[3]));
           if (
             topUpAgent && topUpAgent !== '-' && topUpAmount && topUpAmount !== '-' &&
-            (!topUpSettlementCutoff || (topUpDate && topUpDate >= topUpSettlementCutoff))
+            topUpDate && topUpDate >= topUpSettlementCutoff
           ) {
             const amount = Math.abs(parseFloat(topUpAmount.replace(/,/g, '')) || 0);
             topUpTotals.set(topUpAgent, (topUpTotals.get(topUpAgent) ?? 0) + amount);
           }
 
-          const stlmAgent = rawVal(row[7]);
+          const stlmAgent = normalizeAgentKey(rawVal(row[7]));
           const stlmAmount = rawVal(row[8]);
-          const stlmDate = topUpSettlementCutoff ? parseSheetDate(rawVal(row[9])) : null;
+          const stlmDate = parseSheetDate(rawVal(row[9]));
           if (
             stlmAgent && stlmAgent !== '-' && stlmAmount && stlmAmount !== '-' &&
-            (!topUpSettlementCutoff || (stlmDate && stlmDate >= topUpSettlementCutoff))
+            stlmDate && stlmDate >= topUpSettlementCutoff
           ) {
             const amount = Math.abs(parseFloat(stlmAmount.replace(/,/g, '')) || 0);
             stlmTotals.set(stlmAgent, (stlmTotals.get(stlmAgent) ?? 0) + amount);
@@ -630,8 +881,8 @@ export default function SendMoneyAgentBalance() {
 
       const merged: MergedRow[] = openingRows.map((opening) => {
         const totals = balanceTotals.get(opening.agentName) ?? { dp: 0, wd: 0 };
-        const totalTopUp = topUpTotals.get(opening.agentName) ?? 0;
-        const totalStlm = stlmTotals.get(opening.agentName) ?? 0;
+        const totalTopUp = topUpTotals.get(normalizeAgentKey(opening.agentName)) ?? 0;
+        const totalStlm = stlmTotals.get(normalizeAgentKey(opening.agentName)) ?? 0;
         const balanceInside = balanceInsideTotals.get(opening.agentName) ?? 0;
         const runningBalance = computeCompanyBalance(parseNumber(opening.openingBal), totals.dp, totalTopUp, totals.wd, totalStlm);
         const sdpNum = parseNumber(opening.sdp);
@@ -693,74 +944,6 @@ export default function SendMoneyAgentBalance() {
     setPreference(COLUMN_VISIBILITY_STORAGE_KEY, visibility);
   }, [columnDefs, mounted]);
 
-  useEffect(() => {
-    if (!brandMenuOpen) return;
-
-    const handlePointerDown = (event: MouseEvent) => {
-      const target = event.target as Node;
-      if (
-        brandButtonRef.current && !brandButtonRef.current.contains(target) &&
-        brandDropdownRef.current && !brandDropdownRef.current.contains(target)
-      ) {
-        setBrandMenuOpen(false);
-      }
-    };
-
-    document.addEventListener('mousedown', handlePointerDown);
-    return () => document.removeEventListener('mousedown', handlePointerDown);
-  }, [brandMenuOpen]);
-
-  useEffect(() => {
-    if (!leaderMenuOpen) return;
-
-    const handlePointerDown = (event: MouseEvent) => {
-      const target = event.target as Node;
-      if (
-        leaderButtonRef.current && !leaderButtonRef.current.contains(target) &&
-        leaderDropdownRef.current && !leaderDropdownRef.current.contains(target)
-      ) {
-        setLeaderMenuOpen(false);
-      }
-    };
-
-    document.addEventListener('mousedown', handlePointerDown);
-    return () => document.removeEventListener('mousedown', handlePointerDown);
-  }, [leaderMenuOpen]);
-
-  useEffect(() => {
-    if (!walletTypeMenuOpen) return;
-
-    const handlePointerDown = (event: MouseEvent) => {
-      const target = event.target as Node;
-      if (
-        walletTypeButtonRef.current && !walletTypeButtonRef.current.contains(target) &&
-        walletTypeDropdownRef.current && !walletTypeDropdownRef.current.contains(target)
-      ) {
-        setWalletTypeMenuOpen(false);
-      }
-    };
-
-    document.addEventListener('mousedown', handlePointerDown);
-    return () => document.removeEventListener('mousedown', handlePointerDown);
-  }, [walletTypeMenuOpen]);
-
-  useEffect(() => {
-    if (!walletStatusMenuOpen) return;
-
-    const handlePointerDown = (event: MouseEvent) => {
-      const target = event.target as Node;
-      if (
-        walletStatusButtonRef.current && !walletStatusButtonRef.current.contains(target) &&
-        walletStatusDropdownRef.current && !walletStatusDropdownRef.current.contains(target)
-      ) {
-        setWalletStatusMenuOpen(false);
-      }
-    };
-
-    document.addEventListener('mousedown', handlePointerDown);
-    return () => document.removeEventListener('mousedown', handlePointerDown);
-  }, [walletStatusMenuOpen]);
-
   const visibleColumns = useMemo(
     () => (mounted ? columnDefs : []).filter((col) => col.visible),
     [columnDefs, mounted]
@@ -770,24 +953,11 @@ export default function SendMoneyAgentBalance() {
     [columnDefs]
   );
 
-  const stickyLeft = useMemo(() => {
-    const result: Partial<Record<ColumnKey, number>> = {};
-    let offset = 0;
-    for (const col of visibleColumns) {
-      if (STICKY_COLS.includes(col.key)) {
-        result[col.key] = offset;
-        offset += parseInt(columnWidths[col.key], 10);
-      }
-    }
-    return result;
-  }, [visibleColumns]);
-
   const walletStatusOptions = useMemo(() => {
     const present = new Set(rows.map((row) => row.walletStatus));
     return WALLET_STATUS_OPTIONS.filter((status) => present.has(status));
   }, [rows]);
 
-  const allWalletStatusesChecked = walletStatusOptions.every((status) => walletStatusFilter[status]);
   const anyWalletStatusUnchecked = walletStatusOptions.some((status) => !walletStatusFilter[status]);
   const selectedWalletStatusCount = walletStatusOptions.filter((status) => walletStatusFilter[status]).length;
 
@@ -797,7 +967,6 @@ export default function SendMoneyAgentBalance() {
   }, [rows]);
 
   const isLeaderChecked = (name: string) => leaderFilter[name] !== false;
-  const allLeadersChecked = leaderOptions.every((name) => isLeaderChecked(name));
   const anyLeaderUnchecked = leaderOptions.some((name) => !isLeaderChecked(name));
   const selectedLeaderCount = leaderOptions.filter((name) => isLeaderChecked(name)).length;
 
@@ -807,16 +976,16 @@ export default function SendMoneyAgentBalance() {
   }, [rows]);
 
   const isBrandChecked = (name: string) => brandFilter[name] !== false;
-  const allBrandsChecked = brandOptions.every((name) => isBrandChecked(name));
   const anyBrandUnchecked = brandOptions.some((name) => !isBrandChecked(name));
   const selectedBrandCount = brandOptions.filter((name) => isBrandChecked(name)).length;
 
   const walletTypeOptions = WALLET_TYPE_FILTER_LABELS;
 
   const isWalletTypeChecked = (name: string) => walletTypeFilter[name] !== false;
-  const allWalletTypesChecked = walletTypeOptions.every((name) => isWalletTypeChecked(name));
   const anyWalletTypeUnchecked = walletTypeOptions.some((name) => !isWalletTypeChecked(name));
   const selectedWalletTypeCount = walletTypeOptions.filter((name) => isWalletTypeChecked(name)).length;
+
+  const anyFilterActive = anyBrandUnchecked || anyLeaderUnchecked || anyWalletTypeUnchecked || anyWalletStatusUnchecked;
 
   const searchedRows = useMemo(() => {
     const query = searchTerm.toLowerCase();
@@ -849,70 +1018,172 @@ export default function SendMoneyAgentBalance() {
     return list;
   }, [leaderFilter, leaderOptions, brandFilter, brandOptions, walletStatusFilter, walletTypeFilter, walletTypeOptions, searchedRows]);
 
-  const summaryCards = useMemo(() => {
+  // Faceted option counts for the 4 filter dropdowns — same "other filters +
+  // search" composition as filteredRows above, each omitting its own facet's
+  // clause so unchecking an option doesn't shrink its own list toward zero.
+  const leaderFacetRows = useMemo(() => {
+    let list = searchedRows;
+    if (brandOptions.some((name) => brandFilter[name] === false)) {
+      list = list.filter((row) => brandFilter[row.brand] !== false);
+    }
+    if (walletStatusOptions.some((status) => !walletStatusFilter[status])) {
+      list = list.filter((row) => walletStatusFilter[row.walletStatus]);
+    }
+    if (walletTypeOptions.some((name) => walletTypeFilter[name] === false)) {
+      list = list.filter((row) => {
+        if (row.walletType === '−') return isWalletTypeChecked('—');
+        const opt = WALLET_TYPE_FILTER_OPTIONS.find((o) => o.abbreviation === row.walletType);
+        return opt ? isWalletTypeChecked(opt.label) : isWalletTypeChecked('—');
+      });
+    }
+    return list;
+  }, [searchedRows, brandFilter, brandOptions, walletStatusFilter, walletStatusOptions, walletTypeFilter, walletTypeOptions]);
+
+  const leaderFilterOptions = useMemo(() => {
+    const counts = new Map<string, number>();
+    for (const row of leaderFacetRows) {
+      counts.set(row.leader, (counts.get(row.leader) ?? 0) + 1);
+    }
+    return leaderOptions.map((name) => ({ value: name, label: toProperCase(name), count: counts.get(name) ?? 0 }));
+  }, [leaderFacetRows, leaderOptions]);
+
+  const brandFacetRows = useMemo(() => {
+    let list = searchedRows;
+    if (leaderOptions.some((name) => leaderFilter[name] === false)) {
+      list = list.filter((row) => leaderFilter[row.leader] !== false);
+    }
+    if (walletStatusOptions.some((status) => !walletStatusFilter[status])) {
+      list = list.filter((row) => walletStatusFilter[row.walletStatus]);
+    }
+    if (walletTypeOptions.some((name) => walletTypeFilter[name] === false)) {
+      list = list.filter((row) => {
+        if (row.walletType === '−') return isWalletTypeChecked('—');
+        const opt = WALLET_TYPE_FILTER_OPTIONS.find((o) => o.abbreviation === row.walletType);
+        return opt ? isWalletTypeChecked(opt.label) : isWalletTypeChecked('—');
+      });
+    }
+    return list;
+  }, [searchedRows, leaderFilter, leaderOptions, walletStatusFilter, walletStatusOptions, walletTypeFilter, walletTypeOptions]);
+
+  const brandFilterOptions = useMemo(() => {
+    const counts = new Map<string, number>();
+    for (const row of brandFacetRows) {
+      counts.set(row.brand, (counts.get(row.brand) ?? 0) + 1);
+    }
+    return brandOptions.map((name) => ({ value: name, label: displayBrand(name), count: counts.get(name) ?? 0 }));
+  }, [brandFacetRows, brandOptions]);
+
+  const walletStatusFacetRows = useMemo(() => {
+    let list = searchedRows;
+    if (leaderOptions.some((name) => leaderFilter[name] === false)) {
+      list = list.filter((row) => leaderFilter[row.leader] !== false);
+    }
+    if (brandOptions.some((name) => brandFilter[name] === false)) {
+      list = list.filter((row) => brandFilter[row.brand] !== false);
+    }
+    if (walletTypeOptions.some((name) => walletTypeFilter[name] === false)) {
+      list = list.filter((row) => {
+        if (row.walletType === '−') return isWalletTypeChecked('—');
+        const opt = WALLET_TYPE_FILTER_OPTIONS.find((o) => o.abbreviation === row.walletType);
+        return opt ? isWalletTypeChecked(opt.label) : isWalletTypeChecked('—');
+      });
+    }
+    return list;
+  }, [searchedRows, leaderFilter, leaderOptions, brandFilter, brandOptions, walletTypeFilter, walletTypeOptions]);
+
+  const walletStatusFilterOptions = useMemo(() => {
+    const counts = new Map<string, number>();
+    for (const row of walletStatusFacetRows) {
+      counts.set(row.walletStatus, (counts.get(row.walletStatus) ?? 0) + 1);
+    }
+    return walletStatusOptions.map((status) => ({ value: status, label: status, count: counts.get(status) ?? 0 }));
+  }, [walletStatusFacetRows, walletStatusOptions]);
+
+  const walletTypeFacetRows = useMemo(() => {
+    let list = searchedRows;
+    if (leaderOptions.some((name) => leaderFilter[name] === false)) {
+      list = list.filter((row) => leaderFilter[row.leader] !== false);
+    }
+    if (brandOptions.some((name) => brandFilter[name] === false)) {
+      list = list.filter((row) => brandFilter[row.brand] !== false);
+    }
+    if (walletStatusOptions.some((status) => !walletStatusFilter[status])) {
+      list = list.filter((row) => walletStatusFilter[row.walletStatus]);
+    }
+    return list;
+  }, [searchedRows, leaderFilter, leaderOptions, brandFilter, brandOptions, walletStatusFilter, walletStatusOptions]);
+
+  const walletTypeFilterOptions = useMemo(() => {
+    const counts = new Map<string, number>();
+    for (const row of walletTypeFacetRows) {
+      if (row.walletType === '−') {
+        counts.set('—', (counts.get('—') ?? 0) + 1);
+        continue;
+      }
+      const opt = WALLET_TYPE_FILTER_OPTIONS.find((o) => o.abbreviation === row.walletType);
+      if (opt) counts.set(opt.label, (counts.get(opt.label) ?? 0) + 1);
+    }
+    return walletTypeOptions.map((name) => ({ value: name, label: name, count: counts.get(name) ?? 0 }));
+  }, [walletTypeFacetRows, walletTypeOptions]);
+
+  // Unified 5-card KPI row — same shape as Cashout Balance's own (Total DP,
+  // Total WD, SDP, Actual Balance, Running Balance).
+  const kpis = useMemo(() => {
     const totalDP = filteredRows.reduce((sum, row) => sum + row.agentTotalDP, 0);
     const totalWD = filteredRows.reduce((sum, row) => sum + row.agentTotalWD, 0);
     const totalSdp = filteredRows.reduce((sum, row) => sum + parseNumber(row.sdp), 0);
-    const totalSettlement = filteredRows.reduce((sum, row) => sum + row.totalStlm, 0);
     const totalBalanceInside = filteredRows.reduce((sum, row) => sum + row.balanceInside, 0);
     const totalRunningBalance = filteredRows.reduce((sum, row) => sum + row.runningBalance, 0);
     const totalOpening = filteredRows.reduce((sum, row) => sum + parseNumber(row.openingBal), 0);
     const runningVsOpening = totalRunningBalance - totalOpening;
 
-    const cards: Array<{
-      label: string;
-      bigValue: string;
-      subAmount: string;
-      subSuffix?: string;
-      subPositive: boolean;
-      showArrow: boolean;
-    }> = [
+    return [
       {
         label: 'Total DP',
+        icon: ArrowDownToLine,
+        accent: 'text-emerald-600 dark:text-emerald-400',
+        iconBg: 'bg-emerald-50 dark:bg-emerald-500/10',
         bigValue: fmtAbbrev(totalDP),
-        subAmount: fmt(totalDP),
-        subPositive: false,
-        showArrow: false,
+        subtitle: fmt(totalDP),
+        trend: undefined as 'up' | 'down' | undefined,
       },
       {
         label: 'Total WD',
+        icon: ArrowUpFromLine,
+        accent: 'text-rose-600 dark:text-rose-400',
+        iconBg: 'bg-rose-50 dark:bg-rose-500/10',
         bigValue: fmtAbbrev(totalWD),
-        subAmount: fmt(totalWD),
-        subPositive: false,
-        showArrow: false,
+        subtitle: fmt(totalWD),
+        trend: undefined as 'up' | 'down' | undefined,
       },
       {
         label: 'SDP',
+        icon: Shield,
+        accent: 'text-slate-500 dark:text-slate-400',
+        iconBg: 'bg-slate-100 dark:bg-slate-500/10',
         bigValue: fmtAbbrev(totalSdp),
-        subAmount: fmt(totalSdp),
-        subPositive: false,
-        showArrow: false,
-      },
-      {
-        label: 'Total Settlement',
-        bigValue: fmtAbbrev(totalSettlement),
-        subAmount: fmt(totalSettlement),
-        subPositive: false,
-        showArrow: false,
+        subtitle: fmt(totalSdp),
+        trend: undefined as 'up' | 'down' | undefined,
       },
       {
         label: 'Actual Balance',
+        icon: Wallet,
+        accent: 'text-blue-600 dark:text-blue-400',
+        iconBg: 'bg-blue-50 dark:bg-blue-500/10',
         bigValue: fmtAbbrev(totalBalanceInside),
-        subAmount: fmt(totalBalanceInside),
-        subPositive: false,
-        showArrow: false,
+        subtitle: 'Current available balance',
+        trend: undefined as 'up' | 'down' | undefined,
       },
       {
         label: 'Running Balance',
+        icon: TrendingUp,
+        accent: 'text-emerald-600 dark:text-emerald-400',
+        iconBg: 'bg-emerald-50 dark:bg-emerald-500/10',
         bigValue: fmtAbbrev(totalRunningBalance),
-        subAmount: fmt(runningVsOpening),
-        subSuffix: 'vs opening',
-        subPositive: runningVsOpening >= 0,
-        showArrow: true,
+        subtitle: `${runningVsOpening >= 0 ? '+' : '-'}${fmtAbbrev(Math.abs(runningVsOpening))} vs Opening`,
+        trend: (runningVsOpening >= 0 ? 'up' : 'down') as 'up' | 'down' | undefined,
       },
     ];
-
-    return cards;
   }, [filteredRows]);
 
   const sortedRows = useMemo(() => {
@@ -921,7 +1192,7 @@ export default function SendMoneyAgentBalance() {
       const getValue = (row: typeof a, column: ColumnKey) => {
         switch (column) {
           case 'brand':
-            return row.brand.toLowerCase();
+            return displayBrand(row.brand).toLowerCase();
           case 'leader':
             return row.leader.toLowerCase();
           case 'walletName':
@@ -1038,112 +1309,187 @@ export default function SendMoneyAgentBalance() {
         icon={Wallet}
         title="Balance"
         centerSlot={<ProductSwitchTabs />}
-        actions={
-          <>
-            <button
-              type="button"
-              onClick={() => setCardsExpanded((current) => !current)}
-              title={cardsExpanded ? 'Hide summary cards' : 'Show summary cards'}
-              className="flex h-8 w-8 items-center justify-center rounded-lg border border-border bg-muted/60 text-muted-foreground transition-colors hover:bg-muted"
-            >
-              {cardsExpanded ? <ChevronUp size={13} /> : <ChevronDown size={13} />}
-            </button>
-            <ThemeToggle />
-          </>
-        }
+        actions={<ThemeToggle />}
       />
 
-      <main className={PAGE_MAIN_PADDING_CLASS}>
+      {!error && (
+        <div className="w-full border-t border-border bg-[#f4f6fb] px-4 py-3 dark:bg-[#1c1c1e] md:px-6">
+          <div className="flex gap-2">
+            {loading ? (
+              Array.from({ length: 5 }).map((_, i) => (
+                <div key={i} className="flex-1 min-w-[200px] rounded-xl border border-border bg-white p-2.5 dark:bg-[#2a2a2d]">
+                  <div className="flex items-center gap-3">
+                    <div className="h-8 w-8 shrink-0 dt-skeleton rounded-full" />
+                    <div className="min-w-0 flex-1">
+                      <div className="h-3 w-20 dt-skeleton rounded-md" />
+                      <div className="mt-1.5 h-6 w-24 dt-skeleton rounded-md" />
+                      <div className="mt-1 h-3 w-28 dt-skeleton rounded-md" />
+                    </div>
+                  </div>
+                </div>
+              ))
+            ) : (
+              kpis.map((kpi, i) => (
+                <div
+                  key={kpi.label}
+                  style={{ animationDelay: `${i * 25}ms`, animationFillMode: 'backwards' }}
+                  className="dt-step-fade-in flex-1 min-w-[200px] rounded-xl border border-border bg-white p-2.5 transition-[transform,box-shadow,border-color] duration-150 ease-out hover:-translate-y-px hover:border-foreground/20 hover:shadow-sm dark:bg-[#2a2a2d]"
+                >
+                  <div className="flex items-center gap-3">
+                    <div className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-full ${kpi.iconBg}`}>
+                      <kpi.icon size={16} className={kpi.accent} />
+                    </div>
+                    <div className="min-w-0 flex-1">
+                      <p className="text-[11px] font-medium leading-snug text-muted-foreground truncate">{kpi.label}</p>
+                      <FadeValue value={kpi.bigValue} className={`font-bold leading-tight text-foreground ${kpi.subtitle ? 'text-[21px]' : 'text-[28px]'}`} />
+                      <p className="mt-0.5 flex items-center gap-1 text-[11px] leading-snug text-muted-foreground truncate">
+                        {kpi.trend === 'up' && <span className="text-emerald-600 dark:text-emerald-400">▲</span>}
+                        {kpi.trend === 'down' && <span className="text-rose-600 dark:text-rose-400">▼</span>}
+                        {kpi.subtitle}
+                      </p>
+                    </div>
+                  </div>
+                </div>
+              ))
+            )}
+          </div>
+        </div>
+      )}
+
+      <main className="flex-1 flex flex-col overflow-hidden px-6 pb-6 pt-1">
         {error && <ConnectionErrorState error={error} onRetry={fetchData} />}
 
         {!error && (
-          <div className={`shrink-0 overflow-hidden transition-all duration-300 ease-in-out ${cardsExpanded ? 'h-[102px] opacity-100 mb-1' : 'h-0 opacity-0 mb-0'}`}>
-            <div className="flex gap-2 overflow-x-auto pb-3">
+          <DataTable>
+            <div className="flex shrink-0 flex-nowrap items-center overflow-x-auto border-b border-[#E5E7EB] px-4 py-3 dark:border-[#3a3a3d]">
               {loading ? (
-                Array.from({ length: 6 }).map((_, i) => (
-                  <div key={i} className={KPI_CARD_CLASS}>
-                    <div className="h-3 w-12 dt-skeleton rounded-md" />
-                    <div className="mt-1.5 h-6 w-16 dt-skeleton rounded-md" />
-                    <div className="mt-1 h-5 w-16 dt-skeleton rounded-md" />
-                  </div>
-                ))
-              ) : (
-                summaryCards.map((card) => (
-                  <div key={card.label} className={`${KPI_CARD_CLASS} hover:shadow-md`}>
-                    <p className="text-[10px] font-semibold text-muted-foreground truncate">{card.label}</p>
-                    <p className="mt-1 text-[15px] font-bold leading-tight text-foreground">{card.bigValue}</p>
-                    <div className={`mt-0.5 text-[9px] font-medium ${
-                      card.label === 'Total DP' ? 'text-emerald-600 dark:text-emerald-400' :
-                      card.label === 'Total WD' ? 'text-rose-600 dark:text-rose-400' :
-                      card.label === 'Running Balance' ? (card.subPositive ? 'text-emerald-600 dark:text-emerald-400' : 'text-rose-600 dark:text-rose-400') :
-                      'text-muted-foreground'
-                    }`}>
-                      <div className="flex items-center gap-0.5">
-                        {card.showArrow && <span>{card.subPositive ? '▲' : '▼'}</span>}
-                        <span className="tabular-nums">{card.subAmount}</span>
-                      </div>
-                      {card.subSuffix && <span className="block font-normal text-muted-foreground">{card.subSuffix}</span>}
-                    </div>
-                  </div>
-                ))
-              )}
-            </div>
-          </div>
-        )}
-
-        {!error && (
-          <DataTable className="mt-3">
-            <Toolbar className={TOOLBAR_ROW_CLASS}>
-              <Toolbar.Left className={TOOLBAR_LEFT_CLASS}>
-                {loading ? (
-                  <div className="h-5 w-28 dt-skeleton rounded-md" />
-                ) : (
-                  <div className="flex items-center gap-1.5 rounded-md bg-[color:var(--product-accent-soft)] px-2.5 py-1">
-                    <span className="text-[10px] font-medium text-[color:var(--product-accent)]">Accounts</span>
-                    <span className="text-[11px] font-bold tabular-nums text-[color:var(--product-accent)]">{sortedRows.length.toLocaleString('en-PH')}</span>
-                  </div>
-                )}
-                <div className="flex w-full min-w-[140px] flex-1 items-center gap-2 rounded-lg border border-border bg-white px-3 py-1.5 dark:bg-[#2a2a2d] sm:w-52 sm:flex-none">
-                  {loading ? (
-                    <div className="h-3 w-32 dt-skeleton rounded-md" />
-                  ) : (
-                    <>
-                      <Search size={13} className="shrink-0 text-muted-foreground" />
-                      <input
-                        value={searchTerm}
-                        onChange={(event) => setSearchTerm(event.target.value)}
-                        className="flex-1 bg-transparent text-[10px] text-foreground placeholder:text-muted-foreground outline-none border-none"
-                        placeholder="Search shops or brands..."
-                      />
-                    </>
-                  )}
+                <div className="mr-3 flex shrink-0 items-center gap-3">
+                  <div className="h-10 w-10 shrink-0 dt-skeleton rounded-[12px] xl:w-[92px]" />
+                  <div className="h-10 w-10 shrink-0 dt-skeleton rounded-[12px] xl:w-[98px]" />
+                  <div className="h-10 w-10 shrink-0 dt-skeleton rounded-[12px] xl:w-[130px]" />
+                  <div className="h-10 w-10 shrink-0 dt-skeleton rounded-[12px] xl:w-[140px]" />
+                  <div className="h-10 w-10 shrink-0 dt-skeleton rounded-[12px]" />
                 </div>
-              </Toolbar.Left>
-              <Toolbar.Right className={TOOLBAR_RIGHT_CLASS}>
-                {loading && <div className="h-7 w-7 dt-skeleton rounded-lg" />}
-                {!loading && (
-                  <button
-                    type="button"
-                    onClick={fetchData}
-                    title="Refresh"
-                    className="rounded-lg border border-border bg-white p-1.5 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground dark:bg-transparent"
-                  >
-                    <RefreshCw size={13} className={spinning ? 'animate-spin' : ''} />
-                  </button>
+              ) : (
+                <div className="mr-3 flex shrink-0 items-center gap-3">
+                  <div className="relative">
+                    <FilterTriggerButton
+                      label="Brand"
+                      icon={Tag}
+                      anyUnchecked={anyBrandUnchecked}
+                      selectedCount={selectedBrandCount}
+                      menuOpen={brandMenuOpen}
+                      buttonRef={brandButtonRef}
+                      onClick={() => setBrandMenuOpen((current) => !current)}
+                    />
+                    <FilterDropdown
+                      open={brandMenuOpen}
+                      onOpenChange={setBrandMenuOpen}
+                      anchorRef={brandButtonRef}
+                      options={brandFilterOptions}
+                      selected={brandFilter}
+                      onChange={setBrandFilter}
+                    />
+                  </div>
+                  <div className="relative">
+                    <FilterTriggerButton
+                      label="Leader"
+                      icon={User}
+                      anyUnchecked={anyLeaderUnchecked}
+                      selectedCount={selectedLeaderCount}
+                      menuOpen={leaderMenuOpen}
+                      buttonRef={leaderButtonRef}
+                      onClick={() => setLeaderMenuOpen((current) => !current)}
+                    />
+                    <FilterDropdown
+                      open={leaderMenuOpen}
+                      onOpenChange={setLeaderMenuOpen}
+                      anchorRef={leaderButtonRef}
+                      options={leaderFilterOptions}
+                      selected={leaderFilter}
+                      onChange={setLeaderFilter}
+                    />
+                  </div>
+                  <div className="relative">
+                    <FilterTriggerButton
+                      label="Wallet Type"
+                      icon={Wallet}
+                      anyUnchecked={anyWalletTypeUnchecked}
+                      selectedCount={selectedWalletTypeCount}
+                      menuOpen={walletTypeMenuOpen}
+                      buttonRef={walletTypeButtonRef}
+                      onClick={() => setWalletTypeMenuOpen((current) => !current)}
+                    />
+                    <FilterDropdown
+                      open={walletTypeMenuOpen}
+                      onOpenChange={setWalletTypeMenuOpen}
+                      anchorRef={walletTypeButtonRef}
+                      options={walletTypeFilterOptions}
+                      selected={walletTypeFilter}
+                      onChange={setWalletTypeFilter}
+                    />
+                  </div>
+                  <div className="relative">
+                    <FilterTriggerButton
+                      label="Wallet Status"
+                      icon={Shield}
+                      anyUnchecked={anyWalletStatusUnchecked}
+                      selectedCount={selectedWalletStatusCount}
+                      menuOpen={walletStatusMenuOpen}
+                      buttonRef={walletStatusButtonRef}
+                      onClick={() => setWalletStatusMenuOpen((current) => !current)}
+                    />
+                    <FilterDropdown
+                      open={walletStatusMenuOpen}
+                      onOpenChange={setWalletStatusMenuOpen}
+                      anchorRef={walletStatusButtonRef}
+                      options={walletStatusFilterOptions}
+                      selected={walletStatusFilter}
+                      onChange={setWalletStatusFilter}
+                    />
+                  </div>
+                  <ResetFiltersButton anyFilterActive={anyFilterActive} onClick={resetAllFilters} />
+                </div>
+              )}
+
+              <div className="flex h-10 flex-1 min-w-[200px] items-center gap-2 rounded-full border border-[#E5E7EB] bg-white px-[16px] transition-colors focus-within:border-[#2563EB] focus-within:ring-2 focus-within:ring-[#2563EB]/20 dark:border-[#3a3a3d] dark:bg-[#2a2a2d]">
+                {loading ? (
+                  <div className="h-3 w-32 dt-skeleton rounded-md" />
+                ) : (
+                  <>
+                    <Search size={16} className="shrink-0 text-[#475569] dark:text-[#9CA3AF]" />
+                    <input
+                      value={searchTerm}
+                      onChange={(event) => setSearchTerm(event.target.value)}
+                      className="flex-1 bg-transparent text-[13px] font-normal text-[#111827] placeholder:text-[#94A3B8] outline-none border-none dark:text-[#E5E7EB]"
+                      placeholder="Search for anything"
+                    />
+                  </>
                 )}
-                {loading && <div className="h-7 w-20 dt-skeleton rounded-lg" />}
-                {!loading && (
-                  <button
-                    type="button"
-                    onClick={handleExport}
-                    title="Export to Excel"
-                    className="rounded-lg border border-border bg-white p-1.5 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground dark:bg-transparent"
-                  >
-                    <Download size={13} />
-                  </button>
-                )}
-                {loading && <div className="h-7 w-7 dt-skeleton rounded-lg" />}
-                {!loading && (
+              </div>
+
+              {loading ? (
+                <div className="ml-3 flex shrink-0 items-center gap-3">
+                  <div className="h-10 w-10 shrink-0 dt-skeleton rounded-[12px] xl:w-[92px]" />
+                  <div className="h-10 w-10 shrink-0 dt-skeleton rounded-[12px] xl:w-[88px]" />
+                  <div className="h-10 w-10 shrink-0 dt-skeleton rounded-[12px] xl:w-[108px]" />
+                </div>
+              ) : (
+                <div className="ml-3 flex shrink-0 items-center gap-3">
+                  <div className="relative">
+                    <button type="button" ref={refreshButtonRef} onClick={fetchData} aria-label="Refresh" {...refreshTooltip.handlers} className={ICON_BUTTON}>
+                      <RefreshCw size={16} className={spinning ? 'animate-spin' : ''} />
+                      <span className="hidden xl:inline">Refresh</span>
+                    </button>
+                    {refreshTooltip.rendered && <Tooltip label="Refresh" open={refreshTooltip.open} pos={refreshTooltip.pos} onlyWhenCompact />}
+                  </div>
+                  <div className="relative">
+                    <button type="button" ref={exportButtonRef} onClick={handleExport} aria-label="Export to Excel" {...exportTooltip.handlers} className={ICON_BUTTON}>
+                      <Download size={16} />
+                      <span className="hidden xl:inline">Export</span>
+                    </button>
+                    {exportTooltip.rendered && <Tooltip label="Export" open={exportTooltip.open} pos={exportTooltip.pos} onlyWhenCompact />}
+                  </div>
                   <div className="relative">
                     <button
                       type="button"
@@ -1153,11 +1499,13 @@ export default function SendMoneyAgentBalance() {
                       aria-expanded={columnsMenuOpen}
                       aria-controls="sendmoney-balances-columns-popover"
                       aria-label="Columns"
-                      title="Columns"
-                      className="rounded-lg border border-border bg-white p-1.5 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground dark:bg-transparent"
+                      {...columnsTooltip.handlers}
+                      className={ICON_BUTTON}
                     >
-                      <Columns3 size={13} />
+                      <Columns3 size={16} />
+                      <span className="hidden xl:inline">Columns</span>
                     </button>
+                    {columnsTooltip.rendered && <Tooltip label="Columns" open={columnsTooltip.open} pos={columnsTooltip.pos} onlyWhenCompact />}
                     <ColumnsDropdown
                       id="sendmoney-balances-columns-popover"
                       open={columnsMenuOpen}
@@ -1168,297 +1516,27 @@ export default function SendMoneyAgentBalance() {
                       onRestoreDefaults={() => setColumnDefs(DEFAULT_COLUMNS.map((col) => ({ ...col })))}
                     />
                   </div>
-                )}
-              </Toolbar.Right>
-            </Toolbar>
+                </div>
+              )}
+            </div>
             <div className="relative hidden flex-1 min-h-0 sm:block">
-            <div ref={tableScrollRef} className="h-full overflow-y-auto overflow-x-auto">
-              <table className="w-full table-fixed text-xs" style={{ minWidth: TABLE_MIN_WIDTH }}>
-                <colgroup>
-                  {visibleColumns.map((col) => (
-                    <col key={col.key} style={{ width: columnWidths[col.key] }} />
-                  ))}
-                </colgroup>
-                <thead className={TABLE_STICKY_HEADER_CLASS}>
-                  <tr>
+              <div
+                ref={tableScrollRef}
+                className={`dt-scroll h-full ${
+                  loading ? 'overflow-hidden pointer-events-none' : 'overflow-y-auto overflow-x-auto pointer-events-auto'
+                }`}
+              >
+              <table className="w-full text-xs">
+                <thead className={`sticky top-0 z-[50] bg-[#FAFBFC] dark:bg-[#1C1F26] border-b border-[#E2E8F0] dark:border-[#3a3a3d] transition-shadow duration-150 ease-out ${
+                  isScrolled ? 'shadow-[0_2px_4px_rgba(15,23,42,0.1)] dark:shadow-[0_2px_4px_rgba(0,0,0,0.35)]' : ''
+                }`}>
+                  <tr className="h-[48px]">
                     {visibleColumns.map((col) => (
                       <th
                         key={col.key}
-                        style={stickyLeft[col.key] !== undefined ? { position: 'sticky' as const, left: `${stickyLeft[col.key]}px`, zIndex: 52 } : undefined}
+                        style={colWidthsPx[col.key] ? { width: colWidthsPx[col.key], minWidth: colWidthsPx[col.key] } : undefined}
                         className={headerCellClasses(col.key, sortColumn === col.key)}>
-                        {/* Header always renders its real label/sort control,
-                            loading or not — only data rows shimmer (premium
-                            skeleton spec: headers are never placeholders,
-                            matching Settlement/Top Up's own convention). */}
-                        {col.key === 'brand' ? (
-                          <div className="relative flex items-center justify-center gap-1">
-                            <span className="normal-case font-semibold text-foreground">{col.label}</span>
-                            <button
-                              type="button"
-                              ref={brandButtonRef}
-                              onClick={(event) => {
-                                event.stopPropagation();
-                                const rect = brandButtonRef.current?.getBoundingClientRect();
-                                if (rect) {
-                                  const dropdownWidth = 176;
-                                  const left = Math.min(rect.left, window.innerWidth - dropdownWidth - 8);
-                                  setBrandMenuPos({ top: rect.bottom + 8, left: Math.max(8, left) });
-                                }
-                                setBrandMenuOpen((current) => !current);
-                              }}
-                              className={`flex items-center justify-center rounded-full p-1 transition ${anyBrandUnchecked ? 'bg-[color:var(--product-accent-soft)] text-[color:var(--product-accent)]' : 'text-[#6b7280] hover:bg-slate-200 dark:text-[#a0a0a0] dark:hover:bg-white/10'}`}
-                            >
-                              {anyBrandUnchecked ? (
-                                <span className="flex h-3 min-w-[12px] items-center justify-center px-0.5 text-[10px] font-semibold leading-none">
-                                  {selectedBrandCount}
-                                </span>
-                              ) : (
-                                <ChevronUp
-                                  size={12}
-                                  className={`transition-transform duration-150 ease-in-out ${brandMenuOpen ? 'rotate-180' : ''} opacity-70`}
-                                />
-                              )}
-                            </button>
-                            {brandMenuOpen && typeof document !== 'undefined' && createPortal(
-                              <div
-                                ref={brandDropdownRef}
-                                style={{ position: 'fixed', top: brandMenuPos.top, left: brandMenuPos.left }}
-                                className="z-[9999] w-44 rounded-xl border border-[#e5e5e7] bg-white p-2 shadow-xl dark:border-[#3a3a3d] dark:bg-[#2a2a2d]"
-                                onClick={(event) => event.stopPropagation()}
-                              >
-                                <div className="px-2 py-1.5 text-left text-[10px] font-semibold uppercase tracking-[0.24em] text-[#6b7280] dark:text-[#a0a0a0]">Brand</div>
-                                <div className="max-h-56 overflow-y-auto">
-                                  <label className="flex w-full items-center justify-start gap-2 rounded-xl px-3 py-1.5 text-left text-[10px] text-[#6b7280] hover:bg-[#f5f5f7] dark:text-[#a0a0a0] dark:hover:bg-slate-800">
-                                    <input
-                                      type="checkbox"
-                                      checked={allBrandsChecked}
-                                      onChange={() => {
-                                        const nextValue = !allBrandsChecked;
-                                        setBrandFilter(
-                                          Object.fromEntries(brandOptions.map((name) => [name, nextValue]))
-                                        );
-                                      }}
-                                    />
-                                    <span>All</span>
-                                  </label>
-                                  {brandOptions.map((brand) => (
-                                    <label key={brand} className="flex w-full items-center justify-start gap-2 rounded-xl px-3 py-1.5 text-left text-[10px] text-[#6b7280] hover:bg-[#f5f5f7] dark:text-[#a0a0a0] dark:hover:bg-slate-800">
-                                      <input
-                                        type="checkbox"
-                                        checked={isBrandChecked(brand)}
-                                        onChange={() => {
-                                          setBrandFilter((current) => ({ ...current, [brand]: !isBrandChecked(brand) }));
-                                        }}
-                                      />
-                                      <span>{displayBrand(brand)}</span>
-                                    </label>
-                                  ))}
-                                </div>
-                              </div>,
-                              document.body
-                            )}
-                          </div>
-                        ) : col.key === 'leader' ? (
-                          <div className="relative flex items-center justify-center gap-1">
-                            <span className="normal-case font-semibold text-foreground">{col.label}</span>
-                            <button
-                              type="button"
-                              ref={leaderButtonRef}
-                              onClick={(event) => {
-                                event.stopPropagation();
-                                const rect = leaderButtonRef.current?.getBoundingClientRect();
-                                if (rect) {
-                                  const dropdownWidth = 176;
-                                  const left = Math.min(rect.left, window.innerWidth - dropdownWidth - 8);
-                                  setLeaderMenuPos({ top: rect.bottom + 8, left: Math.max(8, left) });
-                                }
-                                setLeaderMenuOpen((current) => !current);
-                              }}
-                              className={`flex items-center justify-center rounded-full p-1 transition ${anyLeaderUnchecked ? 'bg-[color:var(--product-accent-soft)] text-[color:var(--product-accent)]' : 'text-[#6b7280] hover:bg-slate-200 dark:text-[#a0a0a0] dark:hover:bg-white/10'}`}
-                            >
-                              {anyLeaderUnchecked ? (
-                                <span className="flex h-3 min-w-[12px] items-center justify-center px-0.5 text-[10px] font-semibold leading-none">
-                                  {selectedLeaderCount}
-                                </span>
-                              ) : (
-                                <ChevronUp
-                                  size={12}
-                                  className={`transition-transform duration-150 ease-in-out ${leaderMenuOpen ? 'rotate-180' : ''} opacity-70`}
-                                />
-                              )}
-                            </button>
-                            {leaderMenuOpen && typeof document !== 'undefined' && createPortal(
-                              <div
-                                ref={leaderDropdownRef}
-                                style={{ position: 'fixed', top: leaderMenuPos.top, left: leaderMenuPos.left }}
-                                className="z-[9999] w-44 rounded-xl border border-[#e5e5e7] bg-white p-2 shadow-xl dark:border-[#3a3a3d] dark:bg-[#2a2a2d]"
-                                onClick={(event) => event.stopPropagation()}
-                              >
-                                <div className="px-2 py-1.5 text-left text-[10px] font-semibold uppercase tracking-[0.24em] text-[#6b7280] dark:text-[#a0a0a0]">Leader</div>
-                                <div className="max-h-56 overflow-y-auto">
-                                  <label className="flex w-full items-center justify-start gap-2 rounded-xl px-3 py-1.5 text-left text-[10px] text-[#6b7280] hover:bg-[#f5f5f7] dark:text-[#a0a0a0] dark:hover:bg-slate-800">
-                                    <input
-                                      type="checkbox"
-                                      checked={allLeadersChecked}
-                                      onChange={() => {
-                                        const nextValue = !allLeadersChecked;
-                                        setLeaderFilter(
-                                          Object.fromEntries(leaderOptions.map((name) => [name, nextValue]))
-                                        );
-                                      }}
-                                    />
-                                    <span>All</span>
-                                  </label>
-                                  {leaderOptions.map((leader) => (
-                                    <label key={leader} className="flex w-full items-center justify-start gap-2 rounded-xl px-3 py-1.5 text-left text-[10px] text-[#6b7280] hover:bg-[#f5f5f7] dark:text-[#a0a0a0] dark:hover:bg-slate-800">
-                                      <input
-                                        type="checkbox"
-                                        checked={isLeaderChecked(leader)}
-                                        onChange={() => {
-                                          setLeaderFilter((current) => ({ ...current, [leader]: !isLeaderChecked(leader) }));
-                                        }}
-                                      />
-                                      <span>{leader}</span>
-                                    </label>
-                                  ))}
-                                </div>
-                              </div>,
-                              document.body
-                            )}
-                          </div>
-                        ) : col.key === 'walletType' ? (
-                          <div className="relative flex items-center justify-center gap-1">
-                            <span className="normal-case font-semibold text-foreground">{col.label}</span>
-                            <button
-                              type="button"
-                              ref={walletTypeButtonRef}
-                              onClick={(event) => {
-                                event.stopPropagation();
-                                const rect = walletTypeButtonRef.current?.getBoundingClientRect();
-                                if (rect) {
-                                  const dropdownWidth = 176;
-                                  const left = Math.min(rect.left, window.innerWidth - dropdownWidth - 8);
-                                  setWalletTypeMenuPos({ top: rect.bottom + 8, left: Math.max(8, left) });
-                                }
-                                setWalletTypeMenuOpen((current) => !current);
-                              }}
-                              className={`flex items-center justify-center rounded-full p-1 transition ${anyWalletTypeUnchecked ? 'bg-[color:var(--product-accent-soft)] text-[color:var(--product-accent)]' : 'text-[#6b7280] hover:bg-slate-200 dark:text-[#a0a0a0] dark:hover:bg-white/10'}`}
-                            >
-                              {anyWalletTypeUnchecked ? (
-                                <span className="flex h-3 min-w-[12px] items-center justify-center px-0.5 text-[10px] font-semibold leading-none">
-                                  {selectedWalletTypeCount}
-                                </span>
-                              ) : (
-                                <ChevronUp
-                                  size={12}
-                                  className={`transition-transform duration-150 ease-in-out ${walletTypeMenuOpen ? 'rotate-180' : ''} opacity-70`}
-                                />
-                              )}
-                            </button>
-                            {walletTypeMenuOpen && typeof document !== 'undefined' && createPortal(
-                              <div
-                                ref={walletTypeDropdownRef}
-                                style={{ position: 'fixed', top: walletTypeMenuPos.top, left: walletTypeMenuPos.left }}
-                                className="z-[9999] w-44 rounded-xl border border-[#e5e5e7] bg-white p-2 shadow-xl dark:border-[#3a3a3d] dark:bg-[#2a2a2d]"
-                                onClick={(event) => event.stopPropagation()}
-                              >
-                                <div className="px-2 py-1.5 text-left text-[10px] font-semibold uppercase tracking-[0.24em] text-[#6b7280] dark:text-[#a0a0a0]">Wallet Type</div>
-                                <div className="max-h-56 overflow-y-auto">
-                                  <label className="flex w-full items-center justify-start gap-2 whitespace-nowrap rounded-xl px-3 py-1.5 text-left text-[10px] text-[#6b7280] hover:bg-[#f5f5f7] dark:text-[#a0a0a0] dark:hover:bg-slate-800">
-                                    <input
-                                      type="checkbox"
-                                      checked={allWalletTypesChecked}
-                                      onChange={() => {
-                                        const nextValue = !allWalletTypesChecked;
-                                        setWalletTypeFilter(Object.fromEntries(walletTypeOptions.map((name) => [name, nextValue])));
-                                      }}
-                                    />
-                                    <span>All</span>
-                                  </label>
-                                  {walletTypeOptions.map((type) => (
-                                    <label key={type} className="flex w-full items-center justify-start gap-2 whitespace-nowrap rounded-xl px-3 py-1.5 text-left text-[10px] text-[#6b7280] hover:bg-[#f5f5f7] dark:text-[#a0a0a0] dark:hover:bg-slate-800">
-                                      <input
-                                        type="checkbox"
-                                        checked={isWalletTypeChecked(type)}
-                                        onChange={() => {
-                                          setWalletTypeFilter((current) => ({ ...current, [type]: !isWalletTypeChecked(type) }));
-                                        }}
-                                      />
-                                      <span>{type}</span>
-                                    </label>
-                                  ))}
-                                </div>
-                              </div>,
-                              document.body
-                            )}
-                          </div>
-                        ) : col.key === 'walletStatus' ? (
-                          <div className="relative flex items-center justify-center gap-1">
-                            <span className="normal-case font-semibold text-foreground">{col.label}</span>
-                            <button
-                              type="button"
-                              ref={walletStatusButtonRef}
-                              onClick={(event) => {
-                                event.stopPropagation();
-                                const rect = walletStatusButtonRef.current?.getBoundingClientRect();
-                                if (rect) {
-                                  const dropdownWidth = 176;
-                                  const left = Math.min(rect.left, window.innerWidth - dropdownWidth - 8);
-                                  setWalletStatusMenuPos({ top: rect.bottom + 8, left: Math.max(8, left) });
-                                }
-                                setWalletStatusMenuOpen((current) => !current);
-                              }}
-                              className={`flex items-center justify-center rounded-full p-1 transition ${anyWalletStatusUnchecked ? 'bg-[color:var(--product-accent-soft)] text-[color:var(--product-accent)]' : 'text-[#6b7280] hover:bg-slate-200 dark:text-[#a0a0a0] dark:hover:bg-white/10'}`}
-                            >
-                              {anyWalletStatusUnchecked ? (
-                                <span className="flex h-3 min-w-[12px] items-center justify-center px-0.5 text-[10px] font-semibold leading-none">
-                                  {selectedWalletStatusCount}
-                                </span>
-                              ) : (
-                                <ChevronUp
-                                  size={12}
-                                  className={`transition-transform duration-150 ease-in-out ${walletStatusMenuOpen ? 'rotate-180' : ''} opacity-70`}
-                                />
-                              )}
-                            </button>
-                            {walletStatusMenuOpen && typeof document !== 'undefined' && createPortal(
-                              <div
-                                ref={walletStatusDropdownRef}
-                                style={{ position: 'fixed', top: walletStatusMenuPos.top, left: walletStatusMenuPos.left }}
-                                className="z-[9999] w-44 rounded-xl border border-[#e5e5e7] bg-white p-2 shadow-xl dark:border-[#3a3a3d] dark:bg-[#2a2a2d]"
-                                onClick={(event) => event.stopPropagation()}
-                              >
-                                <div className="px-2 py-1.5 text-left text-[10px] font-semibold uppercase tracking-[0.24em] text-[#6b7280] dark:text-[#a0a0a0]">Wallet Status</div>
-                                <div className="max-h-56 overflow-y-auto">
-                                  <label className="flex w-full items-center justify-start gap-2 whitespace-nowrap rounded-xl px-3 py-1.5 text-left text-[10px] text-[#6b7280] hover:bg-[#f5f5f7] dark:text-[#a0a0a0] dark:hover:bg-slate-800">
-                                    <input
-                                      type="checkbox"
-                                      checked={allWalletStatusesChecked}
-                                      onChange={() => {
-                                        const nextValue = !allWalletStatusesChecked;
-                                        setWalletStatusFilter(Object.fromEntries(walletStatusOptions.map((status) => [status, nextValue])));
-                                      }}
-                                    />
-                                    <span>All</span>
-                                  </label>
-                                  {walletStatusOptions.map((status) => (
-                                    <label key={status} className="flex w-full items-center justify-start gap-2 whitespace-nowrap rounded-xl px-3 py-1.5 text-left text-[10px] text-[#6b7280] hover:bg-[#f5f5f7] dark:text-[#a0a0a0] dark:hover:bg-slate-800">
-                                      <input
-                                        type="checkbox"
-                                        checked={!!walletStatusFilter[status]}
-                                        onChange={() => {
-                                          setWalletStatusFilter((current) => ({ ...current, [status]: !current[status] }));
-                                        }}
-                                      />
-                                      <span>{status}</span>
-                                    </label>
-                                  ))}
-                                </div>
-                              </div>,
-                              document.body
-                            )}
-                          </div>
-                        ) : col.sortable ? (
+                        {col.sortable ? (
                           <button
                             type="button"
                             onClick={() => {
@@ -1469,10 +1547,25 @@ export default function SendMoneyAgentBalance() {
                                 setSortDirection('asc');
                               }
                             }}
-                            className="flex w-full items-center justify-center gap-1 transition hover:opacity-80"
+                            className={`group/sort flex w-full items-center whitespace-nowrap transition-[opacity,transform] duration-150 ease-out hover:opacity-80 active:scale-[0.98] ${
+                              col.align === 'right' ? 'justify-end' : col.align === 'center' ? 'justify-center' : 'justify-start gap-1.5'
+                            }`}
                           >
-                            <span>{col.label}</span>
-                            <SortIcon active={sortColumn === col.key} direction={sortDirection} />
+                            {col.align === 'right' || col.align === 'center' ? (
+                              <span className="relative inline-flex items-center">
+                                {col.label}
+                                <span className={`absolute left-full ml-1.5 flex items-center ${sortColumn === col.key ? '' : 'opacity-60 transition-opacity duration-150 group-hover/sort:opacity-100'}`}>
+                                  <SortIcon active={sortColumn === col.key} direction={sortDirection} />
+                                </span>
+                              </span>
+                            ) : (
+                              <>
+                                <span>{col.label}</span>
+                                <span className={sortColumn === col.key ? '' : 'opacity-60 transition-opacity duration-150 group-hover/sort:opacity-100'}>
+                                  <SortIcon active={sortColumn === col.key} direction={sortDirection} />
+                                </span>
+                              </>
+                            )}
                           </button>
                         ) : (
                           col.label
@@ -1481,51 +1574,75 @@ export default function SendMoneyAgentBalance() {
                     ))}
                   </tr>
                 </thead>
-                <tbody>
-                  {loading ? Array.from({ length: 18 }).map((_, i) => (
+                <tbody
+                  className={
+                    rowsPhase === 'table'
+                      ? 'opacity-100 transition-opacity duration-200 ease-out'
+                      : rowsPhase === 'fadingOut'
+                      ? 'opacity-0 transition-opacity duration-[120ms] ease-out'
+                      : 'opacity-100'
+                  }
+                >
+                  {rowsPhase !== 'table' ? Array.from({ length: 18 }).map((_, i) => (
                     <tr key={i}>
                       {visibleColumns.map((col) => (
-                        <td key={col.key} className="px-3 py-1.5">
+                        <td
+                          key={col.key}
+                          style={colWidthsPx[col.key] ? { width: colWidthsPx[col.key], minWidth: colWidthsPx[col.key] } : undefined}
+                          className={`px-5 py-[12px] text-${COLUMN_ALIGN[col.key]}`}
+                        >
                           {col.key === 'brand' ? (
-                            <div className="mx-auto h-[28px] w-12 dt-skeleton rounded-[999px]" />
+                            <div className="h-[26px] w-12 dt-skeleton rounded-md" />
+                          ) : col.key === 'walletStatus' ? (
+                            <div className="h-5 w-20 dt-skeleton rounded-md" />
                           ) : col.key === 'leader' ? (
-                            <div className="mx-auto h-2.5 dt-skeleton rounded-md" style={{ width: `${LEADER_SKELETON_WIDTHS[i % LEADER_SKELETON_WIDTHS.length]}%` }} />
+                            <div className="h-2.5 dt-skeleton rounded-md" style={{ width: `${LEADER_SKELETON_WIDTHS[i % LEADER_SKELETON_WIDTHS.length]}%` }} />
                           ) : col.key === 'walletName' ? (
-                            <div className="mx-auto h-2.5 dt-skeleton rounded-md" style={{ width: `${SHOP_NAME_SKELETON_WIDTHS[i % SHOP_NAME_SKELETON_WIDTHS.length]}%` }} />
-                          ) : col.key === 'walletType' || col.key === 'walletStatus' ? (
-                            <div className="mx-auto h-2.5 dt-skeleton rounded-md" style={{ width: `${TYPE_SKELETON_WIDTHS[i % TYPE_SKELETON_WIDTHS.length]}%` }} />
+                            <div className="h-2.5 dt-skeleton rounded-md" style={{ width: `${SHOP_NAME_SKELETON_WIDTHS[i % SHOP_NAME_SKELETON_WIDTHS.length]}%` }} />
+                          ) : col.key === 'walletType' ? (
+                            <div className="h-2.5 dt-skeleton rounded-md" style={{ width: `${TYPE_SKELETON_WIDTHS[i % TYPE_SKELETON_WIDTHS.length]}%` }} />
                           ) : (
-                            <div className="mx-auto h-2.5 dt-skeleton rounded-md" style={{ width: `${AMOUNT_SKELETON_WIDTHS[i % AMOUNT_SKELETON_WIDTHS.length]}%` }} />
+                            <div className="ml-auto h-2.5 dt-skeleton rounded-md" style={{ width: `${AMOUNT_SKELETON_WIDTHS[i % AMOUNT_SKELETON_WIDTHS.length]}%` }} />
                           )}
                         </td>
                       ))}
                     </tr>
-                  )) : pagedRows.length > 0 ? pagedRows.map((row, i) => (
-                    <tr
-                      key={row.agentName || i}
-                      className={`border-b border-border last:border-0 transition-colors hover:bg-muted/10 ${i % 2 === 1 ? 'bg-muted/5' : ''}`}
-                    >
-                      {visibleColumns.map((col) => renderCell(row, col.key))}
-                    </tr>
-                  )) : (
+                  )) : pagedRows.length > 0 ? pagedRows.map((row, i) => {
+                    const isSelected = selectedRows.has(row.agentName);
+                    return (
+                      <tr
+                        key={row.agentName || i}
+                        onClick={() => toggleRowSelection(row.agentName)}
+                        className={`border-b border-[#ECEFF3] last:border-0 dark:border-[#2f2f32] transition-colors duration-150 ease-out ${
+                          isSelected
+                            ? 'bg-[color:var(--product-accent-soft)] shadow-[inset_4px_0_0_var(--product-accent)]'
+                            : 'hover:bg-slate-50 dark:hover:bg-slate-800'
+                        }`}
+                      >
+                        {visibleColumns.map((col) => renderCell(row, col.key, colWidthsPx))}
+                      </tr>
+                    );
+                  }) : (
                     <tr>
                       <td colSpan={Math.max(visibleColumns.length, 1)}>
                         <EmptyState
                           title="No matching accounts found"
                           description="Try adjusting your search or filters."
+                          action={
+                            <button type="button" onClick={clearAllFilters} className={GHOST_BUTTON}>
+                              Clear Filters
+                            </button>
+                          }
                         />
                       </td>
                     </tr>
                   )}
                 </tbody>
               </table>
-            </div>
-            {!atScrollStart && (
-              <div className="pointer-events-none absolute inset-y-0 left-0 z-[55] w-6 bg-gradient-to-r from-white to-transparent dark:from-[#2a2a2d]" />
-            )}
-            {!atScrollEnd && (
-              <div className="pointer-events-none absolute inset-y-0 right-0 z-[55] w-6 bg-gradient-to-l from-white to-transparent dark:from-[#2a2a2d]" />
-            )}
+              </div>
+              {!loading && (
+                <div className="pointer-events-none absolute inset-y-0 left-0 z-[55] w-6 bg-gradient-to-r from-white to-transparent dark:from-[#2a2a2d]" />
+              )}
             </div>
 
             <div className="flex-1 min-h-0 overflow-y-auto sm:hidden">
@@ -1545,7 +1662,7 @@ export default function SendMoneyAgentBalance() {
                     const showStatus = columnVisibility.walletStatus;
                     const showBalance = columnVisibility.companyBalance;
                     const subtitle = [
-                      columnVisibility.leader ? row.leader : null,
+                      columnVisibility.leader ? toProperCase(row.leader) : null,
                       columnVisibility.walletType && row.walletType !== '−' ? row.walletType : null,
                     ].filter(Boolean).join(' · ');
                     const hasHeader = showName || showBrand || showStatus || !!subtitle;
@@ -1576,7 +1693,7 @@ export default function SendMoneyAgentBalance() {
                         {showBalance && (
                           <div className={`flex items-center justify-between ${hasHeader ? 'pt-3' : ''}`}>
                             <span className="text-[12px] text-muted-foreground">Company Balance</span>
-                            <span className="text-xl font-bold tabular-nums text-foreground">{displayNum(row.runningBalance)}</span>
+                            <span className={`text-xl font-bold tabular-nums ${row.runningBalance < 0 ? 'text-rose-600 dark:text-rose-400' : 'text-foreground'}`}>{displayNum(row.runningBalance)}</span>
                           </div>
                         )}
 
@@ -1601,6 +1718,11 @@ export default function SendMoneyAgentBalance() {
                   <EmptyState
                     title="No matching accounts found"
                     description="Try adjusting your search or filters."
+                    action={
+                      <button type="button" onClick={clearAllFilters} className={GHOST_BUTTON}>
+                        Clear Filters
+                      </button>
+                    }
                   />
                 )}
               </div>
@@ -1616,6 +1738,11 @@ export default function SendMoneyAgentBalance() {
                 currentPage={currentPage}
                 totalPages={totalPages}
                 onPageChange={setPage}
+                pageSize={rowsPerPage}
+                pageSizeOptions={PAGE_SIZE_OPTIONS}
+                onPageSizeChange={handlePageSizeChange}
+                totalRecords={sortedRows.length}
+                variant="premium"
               />
             )}
           </DataTable>
