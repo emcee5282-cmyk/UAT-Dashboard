@@ -615,7 +615,7 @@ function mobileCardFieldValue(row: MergedRow, key: ColumnKey): { value: string; 
     case 'brand':
       return { value: row.brand, className: 'text-foreground' };
     case 'leader':
-      return { value: row.leader, className: 'text-muted-foreground' };
+      return { value: toProperCase(row.leader), className: 'text-muted-foreground' };
     case 'walletType':
       return { value: row.walletType, className: 'text-muted-foreground' };
     case 'sdp':

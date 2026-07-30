@@ -146,6 +146,17 @@ function displayBrand(code: string): string {
   return BRAND_DISPLAY_LABELS[code] ?? code;
 }
 
+// Source data comes in as raw uppercase (e.g. "AIMAN") — proper-cased for
+// display only (Leader), copied verbatim from Cashout Balance's own
+// toProperCase (app/agentbal/page.tsx).
+function toProperCase(str: string): string {
+  return str
+    .toLowerCase()
+    .split(/([\s-]+)/)
+    .map((part) => (/^[\s-]+$/.test(part) ? part : part.charAt(0).toUpperCase() + part.slice(1)))
+    .join('');
+}
+
 // Per-code tint map — same scheme as Cashout Balance's own BrandBadge
 // (app/agentbal/page.tsx), applied here too. Unknown codes (e.g. 'SH') fall
 // back to a neutral slate. This page had no dedicated BrandBadge component
@@ -321,7 +332,7 @@ function mobileCardFieldValue(row: MergedRow, key: ColumnKey): { value: string; 
     case 'brand':
       return { value: displayBrand(row.brand), className: 'text-foreground' };
     case 'leader':
-      return { value: row.leader, className: 'text-muted-foreground' };
+      return { value: toProperCase(row.leader), className: 'text-muted-foreground' };
     case 'walletType':
       return { value: row.walletType, className: 'text-muted-foreground' };
     case 'sdp':
@@ -355,7 +366,7 @@ function renderCell(row: MergedRow, key: ColumnKey) {
     case 'brand':
       return <td key={key} className={`${base} text-center`}><BrandBadge brand={row.brand}>{displayBrand(row.brand)}</BrandBadge></td>;
     case 'leader':
-      return <td key={key} className={`${base} text-center text-muted-foreground`}>{row.leader}</td>;
+      return <td key={key} className={`${base} text-center text-muted-foreground`}>{toProperCase(row.leader)}</td>;
     case 'walletName':
       return <td key={key} className={`${base} text-center font-semibold text-foreground`}>{row.agentName}</td>;
     case 'walletType':

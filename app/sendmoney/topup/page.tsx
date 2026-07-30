@@ -324,7 +324,10 @@ function BrandBadge({ children, brand }: { children: React.ReactNode; brand: str
 // BrandBadge's tint map. Unknown values fall back to the same neutral slate
 // this badge used exclusively before.
 const WALLET_BADGE_TINTS: Record<string, string> = {
-  NAGAD: 'bg-orange-50 text-orange-700 border-orange-200 dark:bg-orange-500/10 dark:text-orange-400 dark:border-orange-900/50',
+  // Was orange, same hue as K1's own Brand badge — changed to yellow, a
+  // color not used anywhere in the Brand tint palette, so a Nagad wallet
+  // pill never gets confused for a K1 brand pill at a glance.
+  NAGAD: 'bg-yellow-50 text-yellow-700 border-yellow-200 dark:bg-yellow-500/10 dark:text-yellow-400 dark:border-yellow-900/50',
   ROCKET: 'bg-purple-50 text-purple-700 border-purple-200 dark:bg-purple-500/10 dark:text-purple-400 dark:border-purple-900/50',
   BKASH: 'bg-pink-50 text-pink-700 border-pink-200 dark:bg-pink-500/10 dark:text-pink-400 dark:border-pink-900/50',
   UPAY: 'bg-red-50 text-red-700 border-red-200 dark:bg-red-500/10 dark:text-red-400 dark:border-red-900/50',
@@ -383,7 +386,7 @@ function RowActionsCell({ row, onEdit }: { row: TopUpRow; onEdit: (row: TopUpRow
   const copyRow = () => {
     const text = [
       `Brand: ${displayBrand(row.brand)}`,
-      `Leader: ${row.leader}`,
+      `Leader: ${toProperCase(row.leader)}`,
       `Agent Name: ${row.agentName}`,
       `Wallet: ${row.wallet}`,
       `Amount: ${displayNum(row.amount)}`,
@@ -552,7 +555,7 @@ function renderCell(row: TopUpRow, key: ColumnKey, onEdit: (row: TopUpRow) => vo
     case 'brand':
       return <td key={key} className={`${cellCls} py-3`}><BrandBadge brand={row.brand}>{highlightMatch(displayBrand(row.brand), searchTerm)}</BrandBadge></td>;
     case 'leader': {
-      const leaderText = row.leader && row.leader !== '-' ? row.leader : '−';
+      const leaderText = row.leader && row.leader !== '-' ? toProperCase(row.leader) : '−';
       return <td key={key} title={leaderText} className={base}>{highlightMatch(leaderText, searchTerm)}</td>;
     }
     case 'agentName':
@@ -1247,7 +1250,7 @@ export default function SendMoneyTopUpPage() {
                       <div className="flex items-start justify-between gap-2">
                         <div className="min-w-0">
                           <p className="truncate text-sm font-bold text-foreground">{row.agentName}</p>
-                          <p className="truncate text-[12px] font-normal text-muted-foreground">{displayBrand(row.brand)} · {row.wallet}{row.leader && row.leader !== '−' ? ` · ${row.leader}` : ''}</p>
+                          <p className="truncate text-[12px] font-normal text-muted-foreground">{displayBrand(row.brand)} · {row.wallet}{row.leader && row.leader !== '−' ? ` · ${toProperCase(row.leader)}` : ''}</p>
                         </div>
                         <span className="shrink-0 text-[12px] font-normal text-muted-foreground">{formatDateDisplay(row.date)}</span>
                       </div>

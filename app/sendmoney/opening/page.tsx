@@ -57,6 +57,17 @@ function highlightMatch(text: string, query: string): React.ReactNode {
   );
 }
 
+// Source data comes in as raw uppercase (e.g. "AIMAN") — proper-cased for
+// display only (Leader), copied verbatim from Cashout Balance's own
+// toProperCase (app/agentbal/page.tsx).
+function toProperCase(str: string): string {
+  return str
+    .toLowerCase()
+    .split(/([\s-]+)/)
+    .map((part) => (/^[\s-]+$/.test(part) ? part : part.charAt(0).toUpperCase() + part.slice(1)))
+    .join('');
+}
+
 // Zero and "not set" (blank/null source cell) both render as the same dash —
 // visually identical to Cashout's fmt(), but null stays a distinct value
 // upstream (see app/lib/sendMoneyOpening.ts) for counts/sums that need to
@@ -201,7 +212,7 @@ function RowActionsCell({ row, onEdit }: { row: Row; onEdit: (row: Row) => void 
   const copyRow = () => {
     const text = [
       `Brand: ${row.brand ?? '—'}`,
-      `Leader: ${row.leader}`,
+      `Leader: ${toProperCase(row.leader)}`,
       `Agent Name: ${row.agentName}`,
       `Opening Balance: ${fmt(row.openingBalance)}`,
       `Security Deposit: ${fmt(row.securityDeposit)}`,
@@ -298,7 +309,7 @@ function renderCell(row: Row, key: ColumnKey, onEdit: (row: Row) => void, search
     case 'brand':
       return <td key={key} className={`${cellCls} py-3`}><BrandBadge brand={row.brand ?? '—'}>{highlightMatch(row.brand ?? '—', searchTerm)}</BrandBadge></td>;
     case 'leader':
-      return <td key={key} title={row.leader} className={base}>{highlightMatch(row.leader, searchTerm)}</td>;
+      return <td key={key} title={toProperCase(row.leader)} className={base}>{highlightMatch(toProperCase(row.leader), searchTerm)}</td>;
     case 'agentName':
       return <td key={key} title={row.agentName} className={base}>{highlightMatch(row.agentName, searchTerm)}</td>;
     // Extra right padding (pr-9 instead of the shared px-4's pr-4) shifts the
@@ -887,7 +898,7 @@ export default function SendMoneyOpeningPage() {
                       <div className="flex items-start justify-between gap-2">
                         <div className="min-w-0">
                           <p className="truncate text-sm font-bold text-foreground">{row.agentName}</p>
-                          <p className="truncate text-[12px] font-normal text-muted-foreground">{row.leader}{row.brand ? ` · ${row.brand}` : ''}</p>
+                          <p className="truncate text-[12px] font-normal text-muted-foreground">{toProperCase(row.leader)}{row.brand ? ` · ${row.brand}` : ''}</p>
                         </div>
                       </div>
 
