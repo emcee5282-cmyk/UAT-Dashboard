@@ -17,7 +17,6 @@ import BulkImportModal from '@/app/components/BulkImportModal';
 import BulkEditModal, { type BulkEditUpdates } from '@/app/components/BulkEditModal';
 import { classifyFetchError, type ClassifiedError } from '@/app/lib/errors';
 import { rawVal, displayNum, parseAmount, fmtAbbrev, fmt } from '@/app/lib/format';
-import { TABLE_STICKY_HEADER_SHADOW_CLASS } from '@/app/design-system/shadows';
 import { BRAND_CODES as CASHOUT_BRAND_CODES } from '@/app/lib/transferQueueCount';
 import { isToday, isYesterday } from '@/app/lib/businessDate';
 import { getPreference, setPreference } from '@/app/lib/preferences';
@@ -1370,7 +1369,7 @@ export default function SendMoneySettlementPage() {
         isRefreshing={spinning}
         onRefresh={fetchData}
       />
-      <div className={`w-full border-t border-border bg-[#f4f6fb] px-4 py-3 transition-shadow duration-150 ease-out dark:bg-[#1c1c1e] md:px-6 ${isScrolled ? TABLE_STICKY_HEADER_SHADOW_CLASS : ''}`}>
+      <div className="w-full border-t border-border bg-[#f4f6fb] px-4 py-3 dark:bg-[#1c1c1e] md:px-6">
         <div className="flex gap-2">
           {loading ? (
             Array.from({ length: 4 }).map((_, i) => (

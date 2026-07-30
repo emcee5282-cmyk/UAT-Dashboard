@@ -41,7 +41,6 @@ import { classifyFetchError, type ClassifiedError } from '../lib/errors';
 import { rawVal, displayNum, parseAmount, fmt, fmtAbbrev } from '@/app/lib/format';
 import { isToday, isYesterday } from '../lib/businessDate';
 import { getPreference, setPreference } from '../lib/preferences';
-import { TABLE_STICKY_HEADER_SHADOW_CLASS } from '../design-system/shadows';
 import { calculateColumnLayout, type ColumnLayout } from '../lib/columnLayout';
 
 // Responsive action buttons (Refresh/Export/Columns) — icon+text when the
@@ -970,10 +969,6 @@ export default function StlmPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<ClassifiedError | null>(null);
   const [spinning, setSpinning] = useState(false);
-  // Lifted from DataTable.ScrollArea's own scroll listener so SettlementSummary
-  // (which sits above <main>, outside that component's children) can show the
-  // same "shadow while scrolling" the table's own sticky column header uses.
-  const [tableScrolled, setTableScrolled] = useState(false);
   // SettlementSummary's KPI row — real counts/totals computed in fetchData
   // from the SAME "AG BD STLM + TOPUP" sheet the table itself reads (it
   // carries several weeks of rows, not just today's; isToday()/isYesterday()
@@ -1598,7 +1593,7 @@ export default function StlmPage() {
         isRefreshing={spinning}
         onRefresh={fetchData}
       />
-      <div className={`w-full border-t border-border bg-[#f4f6fb] px-4 py-3 transition-shadow duration-150 ease-out dark:bg-[#1c1c1e] md:px-6 ${tableScrolled ? TABLE_STICKY_HEADER_SHADOW_CLASS : ''}`}>
+      <div className="w-full border-t border-border bg-[#f4f6fb] px-4 py-3 dark:bg-[#1c1c1e] md:px-6">
         <div className="flex gap-2">
           {loading ? (
             Array.from({ length: 4 }).map((_, i) => (
@@ -1814,7 +1809,7 @@ export default function StlmPage() {
                 separating from; the mobile card list below has no such
                 header to separate from. */}
             <div className="hidden h-1.5 shrink-0 sm:block" />
-            <DataTable.ScrollArea className="hidden sm:block" onScrolledChange={setTableScrolled}>
+            <DataTable.ScrollArea className="hidden sm:block">
               {(isScrolled) => (
                 <>
                   <DataTable.StickyHeader isScrolled={isScrolled}>
