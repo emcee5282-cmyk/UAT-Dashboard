@@ -1621,7 +1621,7 @@ export default function AgentBalance() {
                 </div>
               )}
 
-              <div className="flex h-10 flex-1 min-w-[200px] items-center gap-2 rounded-[12px] border border-[#E5E7EB] bg-white px-[14px] transition-colors focus-within:border-[#2563EB] focus-within:ring-2 focus-within:ring-[#2563EB]/20 dark:border-[#3a3a3d] dark:bg-[#2a2a2d]">
+              <div className="flex h-10 flex-1 min-w-[200px] items-center gap-2 rounded-full border border-[#E5E7EB] bg-white px-[16px] transition-colors focus-within:border-[#2563EB] focus-within:ring-2 focus-within:ring-[#2563EB]/20 dark:border-[#3a3a3d] dark:bg-[#2a2a2d]">
                 {loading ? (
                   <div className="h-3 w-32 dt-skeleton rounded-md" />
                 ) : (
