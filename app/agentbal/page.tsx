@@ -372,6 +372,62 @@ function headerCellClasses(colKey: ColumnKey, _isSorted: boolean) {
   return `group overflow-hidden whitespace-nowrap px-5 text-${COLUMN_ALIGN[colKey]} text-[13px] font-semibold text-[#475569] dark:text-[#9CA3AF]`;
 }
 
+// Shared hover/focus-driven tooltip state — portal-rendered (see Tooltip
+// below) so it's never clipped by the toolbar's overflow-x-auto (per the
+// CSS overflow spec, a non-visible x-axis forces the y-axis to clip too).
+// Takes the trigger's OWN ref rather than creating one, so callers that
+// already need that ref for something else (FilterDropdown/ColumnsDropdown
+// anchoring) can share a single ref instead of juggling two.
+function useTooltip(triggerRef: React.RefObject<HTMLElement | null>) {
+  const [open, setOpen] = useState(false);
+  const [rendered, setRendered] = useState(false);
+  const [pos, setPos] = useState({ top: 0, left: 0 });
+
+  useEffect(() => {
+    if (open) {
+      const rect = triggerRef.current?.getBoundingClientRect();
+      if (rect) setPos({ top: rect.top - 8, left: rect.left + rect.width / 2 });
+      setRendered(true);
+    } else {
+      const timeout = setTimeout(() => setRendered(false), 150);
+      return () => clearTimeout(timeout);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open]);
+
+  return {
+    open,
+    rendered,
+    pos,
+    handlers: {
+      onMouseEnter: () => setOpen(true),
+      onMouseLeave: () => setOpen(false),
+      onFocus: () => setOpen(true),
+      onBlur: () => setOpen(false),
+    },
+  };
+}
+
+// Dark, arrow-tipped, fade-in tooltip — same visual language everywhere it's
+// used (all 4 filter triggers + Refresh/Export/Columns/Reset), replacing
+// each button's native `title` attribute (which can't be styled and looks
+// inconsistent across browsers).
+function Tooltip({ label, open, pos }: { label: string; open: boolean; pos: { top: number; left: number } }) {
+  if (typeof document === 'undefined') return null;
+  return createPortal(
+    <div
+      style={{ position: 'fixed', top: pos.top, left: pos.left, transform: 'translate(-50%, -100%)' }}
+      className={`pointer-events-none z-[9999] whitespace-nowrap rounded-md bg-[#1F2937] px-2.5 py-1.5 text-[12px] text-white transition-opacity duration-150 ease-out ${
+        open ? 'opacity-100' : 'opacity-0'
+      }`}
+    >
+      {label}
+      <span className="absolute left-1/2 top-full h-2 w-2 -translate-x-1/2 -translate-y-1/2 rotate-45 bg-[#1F2937]" />
+    </div>,
+    document.body
+  );
+}
+
 // Toolbar filter trigger — Brand/Leader/Wallet Type/Wallet Status. This is
 // the trigger button only; the panel beneath it is the shared, cross-page
 // FilterDropdown component (app/components/FilterDropdown.tsx). Keeping the
@@ -399,54 +455,39 @@ function FilterTriggerButton({
   buttonRef: React.RefObject<HTMLButtonElement | null>;
   onClick: () => void;
 }) {
+  const tooltip = useTooltip(buttonRef);
   return (
-    <button
-      type="button"
-      ref={buttonRef}
-      onClick={onClick}
-      title={label}
-      className="inline-flex h-10 w-10 xl:w-auto shrink-0 items-center justify-center xl:justify-start gap-1.5 rounded-[12px] border border-[#E2E8F0] bg-white px-0 xl:px-3 text-[13px] font-medium text-[#475569] transition-[color,background-color,border-color,transform] duration-150 ease-[var(--ease-out-strong)] hover:bg-[#F1F5F9] active:scale-[0.97] dark:border-[#3a3a3d] dark:bg-[#2a2a2d] dark:text-[#9CA3AF] dark:hover:bg-white/5"
-    >
-      <Icon size={15} className="text-[#475569] dark:text-[#9CA3AF]" />
-      <span className="hidden xl:inline">{label}</span>
-      {anyUnchecked && (
-        <span className="flex h-4 min-w-[16px] animate-[dt-badge-pop_150ms_var(--ease-out-strong)] items-center justify-center rounded-full bg-indigo-600 px-1 text-[10px] font-semibold text-white">
-          {selectedCount}
-        </span>
-      )}
-      <ChevronDown
-        size={14}
-        className={`hidden text-[#475569] transition-transform duration-150 ease-[var(--ease-in-out-strong)] dark:text-[#9CA3AF] xl:inline ${menuOpen ? 'rotate-180' : ''}`}
-      />
-    </button>
+    <div className="relative">
+      <button
+        type="button"
+        ref={buttonRef}
+        onClick={onClick}
+        aria-label={label}
+        {...tooltip.handlers}
+        className="inline-flex h-10 w-10 xl:w-auto shrink-0 items-center justify-center xl:justify-start gap-1.5 rounded-[12px] border border-[#E2E8F0] bg-white px-0 xl:px-3 text-[13px] font-medium text-[#475569] transition-[color,background-color,border-color,transform] duration-150 ease-[var(--ease-out-strong)] hover:bg-[#F1F5F9] active:scale-[0.97] dark:border-[#3a3a3d] dark:bg-[#2a2a2d] dark:text-[#9CA3AF] dark:hover:bg-white/5"
+      >
+        <Icon size={15} className="text-[#475569] dark:text-[#9CA3AF]" />
+        <span className="hidden xl:inline">{label}</span>
+        {anyUnchecked && (
+          <span className="flex h-4 min-w-[16px] animate-[dt-badge-pop_150ms_var(--ease-out-strong)] items-center justify-center rounded-full bg-indigo-600 px-1 text-[10px] font-semibold text-white">
+            {selectedCount}
+          </span>
+        )}
+        <ChevronDown
+          size={14}
+          className={`hidden text-[#475569] transition-transform duration-150 ease-[var(--ease-in-out-strong)] dark:text-[#9CA3AF] xl:inline ${menuOpen ? 'rotate-180' : ''}`}
+        />
+      </button>
+      {tooltip.rendered && <Tooltip label={label} open={tooltip.open} pos={tooltip.pos} />}
+    </div>
   );
 }
 
-// "Reset All Filters" trigger — its tooltip is portal-rendered (not a plain
-// group-hover absolute div) because the toolbar has overflow-x-auto for the
-// no-wrap/scroll responsive behavior, and per the CSS overflow spec, once
-// one axis is non-visible the other axis is forced to `auto` too — meaning
-// a tooltip popping out the TOP of the toolbar was getting silently clipped
-// by the toolbar's own bounding box (only the small arrow, sitting right at
-// the edge, was surviving). Portaling to document.body sidesteps that
-// entirely. Same mount-delay pattern as FilterDropdown/ColumnsDropdown so
-// the 150ms fade actually gets to play on both open and close.
+// "Reset All Filters" trigger — uses the same shared useTooltip/Tooltip as
+// every other toolbar button now.
 function ResetFiltersButton({ anyFilterActive, onClick }: { anyFilterActive: boolean; onClick: () => void }) {
   const buttonRef = useRef<HTMLButtonElement>(null);
-  const [open, setOpen] = useState(false);
-  const [rendered, setRendered] = useState(false);
-  const [pos, setPos] = useState({ top: 0, left: 0 });
-
-  useEffect(() => {
-    if (open) {
-      const rect = buttonRef.current?.getBoundingClientRect();
-      if (rect) setPos({ top: rect.top - 8, left: rect.left + rect.width / 2 });
-      setRendered(true);
-    } else {
-      const timeout = setTimeout(() => setRendered(false), 150);
-      return () => clearTimeout(timeout);
-    }
-  }, [open]);
+  const tooltip = useTooltip(buttonRef);
 
   return (
     <div className="relative">
@@ -454,10 +495,7 @@ function ResetFiltersButton({ anyFilterActive, onClick }: { anyFilterActive: boo
         ref={buttonRef}
         type="button"
         onClick={() => { if (anyFilterActive) onClick(); }}
-        onMouseEnter={() => setOpen(true)}
-        onMouseLeave={() => setOpen(false)}
-        onFocus={() => setOpen(true)}
-        onBlur={() => setOpen(false)}
+        {...tooltip.handlers}
         aria-label="Reset all filters"
         aria-disabled={!anyFilterActive}
         className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-[12px] border transition-[color,background-color,border-color,transform] duration-150 ease-[var(--ease-out-strong)] ${
@@ -468,18 +506,7 @@ function ResetFiltersButton({ anyFilterActive, onClick }: { anyFilterActive: boo
       >
         <FilterX size={20} />
       </button>
-      {rendered && typeof document !== 'undefined' && createPortal(
-        <div
-          style={{ position: 'fixed', top: pos.top, left: pos.left, transform: 'translate(-50%, -100%)' }}
-          className={`pointer-events-none z-[9999] whitespace-nowrap rounded-md bg-[#1F2937] px-2.5 py-1.5 text-[12px] text-white transition-opacity duration-150 ease-out ${
-            open ? 'opacity-100' : 'opacity-0'
-          }`}
-        >
-          Reset all filters
-          <span className="absolute left-1/2 top-full h-2 w-2 -translate-x-1/2 -translate-y-1/2 rotate-45 bg-[#1F2937]" />
-        </div>,
-        document.body
-      )}
+      {tooltip.rendered && <Tooltip label="Reset all filters" open={tooltip.open} pos={tooltip.pos} />}
     </div>
   );
 }
@@ -723,6 +750,11 @@ export default function AgentBalance() {
   const [columnsMenuOpen, setColumnsMenuOpen] = useState(false);
   const [mounted, setMounted] = useState(false);
   const columnsButtonRef = useRef<HTMLButtonElement>(null);
+  const refreshButtonRef = useRef<HTMLButtonElement>(null);
+  const exportButtonRef = useRef<HTMLButtonElement>(null);
+  const refreshTooltip = useTooltip(refreshButtonRef);
+  const exportTooltip = useTooltip(exportButtonRef);
+  const columnsTooltip = useTooltip(columnsButtonRef);
 
   const [walletStatusFilter, setWalletStatusFilter] = useState<Record<string, boolean>>(
     () => Object.fromEntries(WALLET_STATUS_OPTIONS.map((status) => [status, true]))
@@ -1579,14 +1611,20 @@ export default function AgentBalance() {
                 </div>
               ) : (
                 <div className="ml-auto flex shrink-0 items-center gap-3">
-                  <button type="button" onClick={fetchData} aria-label="Refresh" title="Refresh" className={ICON_BUTTON}>
-                    <RefreshCw size={16} className={spinning ? 'animate-spin' : ''} />
-                    <span className="hidden xl:inline">Refresh</span>
-                  </button>
-                  <button type="button" onClick={handleExport} aria-label="Export to Excel" title="Export" className={ICON_BUTTON}>
-                    <Download size={16} />
-                    <span className="hidden xl:inline">Export</span>
-                  </button>
+                  <div className="relative">
+                    <button type="button" ref={refreshButtonRef} onClick={fetchData} aria-label="Refresh" {...refreshTooltip.handlers} className={ICON_BUTTON}>
+                      <RefreshCw size={16} className={spinning ? 'animate-spin' : ''} />
+                      <span className="hidden xl:inline">Refresh</span>
+                    </button>
+                    {refreshTooltip.rendered && <Tooltip label="Refresh" open={refreshTooltip.open} pos={refreshTooltip.pos} />}
+                  </div>
+                  <div className="relative">
+                    <button type="button" ref={exportButtonRef} onClick={handleExport} aria-label="Export to Excel" {...exportTooltip.handlers} className={ICON_BUTTON}>
+                      <Download size={16} />
+                      <span className="hidden xl:inline">Export</span>
+                    </button>
+                    {exportTooltip.rendered && <Tooltip label="Export" open={exportTooltip.open} pos={exportTooltip.pos} />}
+                  </div>
                   <div className="relative">
                     <button
                       type="button"
@@ -1596,12 +1634,13 @@ export default function AgentBalance() {
                       aria-expanded={columnsMenuOpen}
                       aria-controls="agentbal-columns-popover"
                       aria-label="Columns"
-                      title="Columns"
+                      {...columnsTooltip.handlers}
                       className={ICON_BUTTON}
                     >
                       <Columns3 size={16} />
                       <span className="hidden xl:inline">Columns</span>
                     </button>
+                    {columnsTooltip.rendered && <Tooltip label="Columns" open={columnsTooltip.open} pos={columnsTooltip.pos} />}
                     <ColumnsDropdown
                       id="agentbal-columns-popover"
                       open={columnsMenuOpen}
