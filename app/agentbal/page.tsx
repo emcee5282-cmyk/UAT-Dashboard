@@ -1672,13 +1672,14 @@ export default function AgentBalance() {
                 </div>
               )}
 
-              {/* Base width extended 320px -> 360px; min-w-[200px] is the
-                  floor it can shrink into under zoom/narrow viewports before
-                  the toolbar's own overflow-x-auto takes over — same "give
-                  up space" behavior as before, just from a wider starting
-                  point. ml-auto (was on the Actions group) now pushes this
-                  to the far right instead. */}
-              <div className="ml-auto flex h-10 w-[360px] min-w-[200px] shrink items-center gap-2 rounded-[12px] border border-[#E5E7EB] bg-white px-[14px] transition-colors focus-within:border-[#2563EB] focus-within:ring-2 focus-within:ring-[#2563EB]/20 dark:border-[#3a3a3d] dark:bg-[#2a2a2d]">
+              {/* flex-1 instead of a fixed width: grows to fill whatever
+                  space Actions+Filters leave behind (stretches wider on a
+                  roomy toolbar), and shrinks the same way under zoom/narrow
+                  viewports — min-w-[200px] is the floor either direction
+                  stops at before the toolbar's own overflow-x-auto takes
+                  over. No ml-auto needed anymore — flex-1 already claims all
+                  the leftover row width on its own. */}
+              <div className="flex h-10 flex-1 min-w-[200px] items-center gap-2 rounded-[12px] border border-[#E5E7EB] bg-white px-[14px] transition-colors focus-within:border-[#2563EB] focus-within:ring-2 focus-within:ring-[#2563EB]/20 dark:border-[#3a3a3d] dark:bg-[#2a2a2d]">
                 {loading ? (
                   <div className="h-3 w-32 dt-skeleton rounded-md" />
                 ) : (
