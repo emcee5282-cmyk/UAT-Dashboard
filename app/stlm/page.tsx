@@ -96,6 +96,7 @@ type StlmRow = {
   date: string;
   wallet: string;
   brand: string;
+  leader: string;
   // Sequential index assigned once at fetch time — the row-selection
   // checkbox system's only stable identity, since nothing in the sheet
   // itself provides one. Survives sort/search/pagination (those only
@@ -201,6 +202,7 @@ function formatDateDisplay(dateStr: string): string {
 // gets its own COLUMN_IDS rather than sharing one.
 const COLUMN_IDS = {
   BRAND: 'brand',
+  LEADER: 'leader',
   AGENT_NAME: 'agentName',
   WALLET: 'wallet',
   AMOUNT: 'amount',
@@ -335,6 +337,7 @@ const DEFAULT_COLUMNS: ColumnDef[] = [
   // alone can't fix the checkbox-column overflow — see the calc() reserved
   // directly on Brand's flexBasis in flexStyleById below for that part).
   { id: COLUMN_IDS.BRAND, label: 'Brand', visible: true, sortable: true, hideable: true, align: 'left', minWidth: 90, preferredWidth: 149, grow: 0 },
+  { id: COLUMN_IDS.LEADER, label: 'Leader', visible: true, sortable: true, hideable: true, align: 'left', minWidth: 100, preferredWidth: 150, grow: 1 },
   { id: COLUMN_IDS.AGENT_NAME, label: 'Agent Name', visible: true, sortable: true, hideable: true, align: 'left', minWidth: 140, preferredWidth: 216, grow: 1 },
   { id: COLUMN_IDS.WALLET, label: 'Wallet', visible: true, sortable: true, hideable: true, align: 'center', minWidth: 90, preferredWidth: 208, grow: 0 },
   { id: COLUMN_IDS.AMOUNT, label: 'Amount', visible: true, sortable: true, hideable: true, align: 'center', minWidth: 115, preferredWidth: 244, grow: 0 },
@@ -582,6 +585,7 @@ function RowActionsCell({ row, onEdit }: { row: StlmRow; onEdit: (row: StlmRow) 
   const copyRow = () => {
     const text = [
       `Brand: ${row.brand}`,
+      `Leader: ${row.leader}`,
       `Agent Name: ${toProperCase(row.agentName)}`,
       `Wallet: ${toProperCase(row.wallet)}`,
       `Amount: ${displayNum(row.amount)}`,
@@ -698,6 +702,12 @@ function renderSkeletonCell(col: ColumnDef, rowIndex: number, style: CSSProperti
           <div className="dt-skeleton h-[28px] w-9 rounded-full" />
         </div>
       );
+    case COLUMN_IDS.LEADER:
+      return (
+        <div key={key} role="cell" style={style} className={base}>
+          <div className="dt-skeleton h-3 w-2/3 rounded-md" />
+        </div>
+      );
     case COLUMN_IDS.AGENT_NAME:
       return (
         <div key={key} role="cell" style={style} className={base}>
@@ -765,6 +775,10 @@ function renderCell(row: StlmRow, col: ColumnDef, style: CSSProperties, onEdit: 
   switch (key) {
     case COLUMN_IDS.BRAND:
       return <div key={key} role="cell" style={style} className={base}><BrandBadge brand={row.brand}>{highlightMatch(row.brand, searchTerm)}</BrandBadge></div>;
+    case COLUMN_IDS.LEADER: {
+      const leaderText = row.leader && row.leader !== '-' ? row.leader : '−';
+      return <div key={key} role="cell" style={style} title={leaderText} className={base}>{highlightMatch(leaderText, searchTerm)}</div>;
+    }
     case COLUMN_IDS.AGENT_NAME: {
       // Uppercased for display (kept from the earlier "capitalize Agent
       // Name" request — not part of this column-sizing revert).
@@ -938,16 +952,22 @@ export default function StlmPage() {
 
       // Agent Name roster — col A of "Opening AG" (same column
       // app/summary/page.tsx reads for its own Agent Name), the real
-      // Balance Shop master list rather than a today-only stand-in.
+      // Balance Shop master list rather than a today-only stand-in. Leader
+      // (col D) is read from the same rows — same pattern as
+      // app/topup/page.tsx's own leaderMap.
       const openingNames = new Set<string>();
+      const leaderMap: Record<string, string> = {};
       openingText.trim().split('\n').slice(1).forEach(line => {
-        const name = rawVal(line.split(',')[0]);
+        const cols = line.split(',');
+        const name = rawVal(cols[0]);
+        const leader = rawVal(cols[3]);
         // Uppercased before adding — the real table always displays Agent
         // Name via .toUpperCase() (see renderCell below), so the roster
         // feeding Add/Edit's combobox and Bulk Import's validation should
         // match that same canonical casing regardless of how the sheet
         // itself has it stored.
         if (name && name !== '-' && name !== 'OLD') openingNames.add(name.toUpperCase());
+        if (name && leader) leaderMap[name.toUpperCase()] = leader;
       });
       setOpeningAgentNames(Array.from(openingNames).sort((a, b) => a.localeCompare(b)));
 
@@ -1017,6 +1037,7 @@ export default function StlmPage() {
               date: rawVal(cols[9]),
               wallet: rawVal(cols[10]),
               brand: agentBrandOverride[bareAgentKey] ?? resolveBrand(brandGroups[bareAgentKey] ?? [], agentRight),
+              leader: leaderMap[bareAgentKey] || '−',
               _id: stlm.length,
             });
           }
@@ -1059,7 +1080,7 @@ export default function StlmPage() {
   }, [searchTerm, sortColumn, sortDirection, rowsPerPage]);
 
   const searchedRows = stlmRows.filter((row) => {
-    const haystack = `${row.agentName} ${row.amount} ${row.remarks} ${row.date} ${row.wallet} ${row.brand}`.toLowerCase();
+    const haystack = `${row.agentName} ${row.amount} ${row.remarks} ${row.date} ${row.wallet} ${row.brand} ${row.leader}`.toLowerCase();
     return haystack.includes(searchTerm.toLowerCase());
   });
 
@@ -1071,6 +1092,8 @@ export default function StlmPage() {
         switch (sortColumn) {
           case COLUMN_IDS.BRAND:
             return row.brand.toLowerCase();
+          case COLUMN_IDS.LEADER:
+            return row.leader.toLowerCase();
           case COLUMN_IDS.AGENT_NAME:
             return row.agentName.toLowerCase();
           case COLUMN_IDS.WALLET:
@@ -1191,6 +1214,8 @@ export default function StlmPage() {
       switch (key) {
         case COLUMN_IDS.BRAND:
           return row.brand;
+        case COLUMN_IDS.LEADER:
+          return row.leader;
         case COLUMN_IDS.AGENT_NAME:
           return row.agentName;
         case COLUMN_IDS.WALLET:
@@ -1605,7 +1630,7 @@ export default function StlmPage() {
                       <div className="flex items-start justify-between gap-2">
                         <div className="min-w-0">
                           <p className="truncate text-sm font-bold text-foreground">{row.agentName.toUpperCase()}</p>
-                          <p className="truncate text-[12px] font-normal text-muted-foreground">{row.brand} · {toProperCase(row.wallet)}</p>
+                          <p className="truncate text-[12px] font-normal text-muted-foreground">{row.brand} · {toProperCase(row.wallet)}{row.leader && row.leader !== '−' ? ` · ${row.leader}` : ''}</p>
                         </div>
                         <span className="shrink-0 text-[12px] font-normal text-muted-foreground">{formatDateDisplay(row.date)}</span>
                       </div>
