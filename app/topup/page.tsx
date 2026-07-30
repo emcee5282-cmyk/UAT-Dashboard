@@ -677,6 +677,15 @@ export default function TopUpPage() {
       const agentText = agentRes.ok ? await agentRes.text() : '';
       const balText = balRes.ok ? await balRes.text() : '';
 
+      // Keys into leaderMap/brandGroups/agentBrandOverride below are
+      // normalized (uppercase + all whitespace stripped), not just
+      // uppercased — same fix already applied to app/agentbal/page.tsx's
+      // Top Up/Settlement sums: the sheets' own agent-name columns aren't
+      // always cased/spaced the same as each other (e.g. "Konan001 " vs
+      // "KONAN001"), which silently dropped that agent's Leader/Brand
+      // lookup since the plain-uppercase key never matched.
+      const normalizeAgentKey = (name: string): string => name.toUpperCase().replace(/\s+/g, '');
+
       // build agentName → leader lookup from opening sheet
       const leaderMap: Record<string, string> = {};
       const openingNames = new Set<string>();
@@ -690,7 +699,7 @@ export default function TopUpPage() {
           // combobox and Bulk Import's validation should match that same
           // canonical casing regardless of how the sheet itself has it stored.
           if (name && name !== '-' && name !== 'OLD') openingNames.add(name.toUpperCase());
-          if (name && leader) leaderMap[name.toUpperCase()] = leader;
+          if (name && leader) leaderMap[normalizeAgentKey(name)] = leader;
         });
       }
       setOpeningAgentNames(Array.from(openingNames).sort((a, b) => a.localeCompare(b)));
@@ -705,7 +714,7 @@ export default function TopUpPage() {
           const name = rawVal(cols[1]);
           const group = rawVal(cols[6]);
           if (name && group && group !== '-') {
-            (brandGroups[name.toUpperCase()] ??= []).push(group);
+            (brandGroups[normalizeAgentKey(name)] ??= []).push(group);
           }
         });
       }
@@ -731,7 +740,7 @@ export default function TopUpPage() {
           if (!toAgent || toAgent === '-') return;
           const suffixBrand = extractBrandSuffix(toAgent);
           if (suffixBrand) {
-            agentBrandOverride[stripBrandSuffix(toAgent).toUpperCase()] = suffixBrand;
+            agentBrandOverride[normalizeAgentKey(stripBrandSuffix(toAgent))] = suffixBrand;
           }
         });
 
@@ -742,7 +751,7 @@ export default function TopUpPage() {
           const toAgent = rawVal(cols[1]);
           if (toAgent && toAgent !== '-') {
             const bareAgent = stripBrandSuffix(toAgent);
-            const bareAgentKey = bareAgent.toUpperCase();
+            const bareAgentKey = normalizeAgentKey(bareAgent);
             topUp.push({
               agentName: bareAgent,
               wallet: rawVal(cols[4]),

@@ -765,7 +765,13 @@ export default function SendMoneySettlementPage() {
 
       // Agent Name roster — same "Opening AG" L:O range /sendmoney/opening
       // reads, the real Balance Shop master list rather than a today-only
-      // stand-in. Leader comes from the same parsed rows.
+      // stand-in. Leader comes from the same parsed rows. Keys are
+      // normalized (uppercase + all whitespace stripped), not just
+      // uppercased — same fix already applied to app/agentbal/page.tsx's Top
+      // Up/Settlement sums: the sheets' own agent-name columns aren't always
+      // cased/spaced the same as each other, which silently dropped that
+      // agent's Leader lookup since the plain-uppercase key never matched.
+      const normalizeAgentKey = (name: string): string => name.toUpperCase().replace(/\s+/g, '');
       const leaderMap: Record<string, string> = {};
       if (openingRes.ok) {
         const openingText = await openingRes.text();
@@ -777,7 +783,7 @@ export default function SendMoneySettlementPage() {
         const openingNames = Array.from(new Set(openingRows.map((row) => row.agentName.toUpperCase()))).sort((a, b) => a.localeCompare(b));
         setOpeningAgentNames(openingNames);
         openingRows.forEach((row) => {
-          if (row.agentName && row.leader) leaderMap[row.agentName.toUpperCase()] = row.leader;
+          if (row.agentName && row.leader) leaderMap[normalizeAgentKey(row.agentName)] = row.leader;
         });
       }
 
@@ -806,7 +812,7 @@ export default function SendMoneySettlementPage() {
               date: rawVal(cols[9]),
               wallet: rawVal(cols[10]),
               brand: resolveBrandFromWalletName(walletName),
-              leader: leaderMap[bareAgentName.toUpperCase()] || '−',
+              leader: leaderMap[normalizeAgentKey(bareAgentName)] || '−',
               _id: stlm.length,
             });
           }

@@ -953,6 +953,15 @@ export default function StlmPage() {
       const balText = balRes.ok ? await balRes.text() : '';
       const openingText = openingRes.ok ? await openingRes.text() : '';
 
+      // Keys into leaderMap/brandGroups/agentBrandOverride below are
+      // normalized (uppercase + all whitespace stripped), not just
+      // uppercased — same fix already applied to this page's own Top
+      // Up/Settlement sums (agentbal): the sheets' own agent-name columns
+      // aren't always cased/spaced the same as each other (e.g.
+      // "Konan001 " vs "KONAN001"), which silently dropped that agent's
+      // Leader/Brand lookup since the plain-uppercase key never matched.
+      const normalizeAgentKey = (name: string): string => name.toUpperCase().replace(/\s+/g, '');
+
       // Agent Name roster — col A of "Opening AG" (same column
       // app/summary/page.tsx reads for its own Agent Name), the real
       // Balance Shop master list rather than a today-only stand-in. Leader
@@ -970,7 +979,7 @@ export default function StlmPage() {
         // match that same canonical casing regardless of how the sheet
         // itself has it stored.
         if (name && name !== '-' && name !== 'OLD') openingNames.add(name.toUpperCase());
-        if (name && leader) leaderMap[name.toUpperCase()] = leader;
+        if (name && leader) leaderMap[normalizeAgentKey(name)] = leader;
       });
       setOpeningAgentNames(Array.from(openingNames).sort((a, b) => a.localeCompare(b)));
 
@@ -984,7 +993,7 @@ export default function StlmPage() {
           const name = rawVal(cols[1]);
           const group = rawVal(cols[6]);
           if (name && group && group !== '-') {
-            (brandGroups[name.toUpperCase()] ??= []).push(group);
+            (brandGroups[normalizeAgentKey(name)] ??= []).push(group);
           }
         });
       }
@@ -1013,7 +1022,7 @@ export default function StlmPage() {
           if (!agentRight || agentRight === '-' || agentRight === '0') return;
           const marker = extractBrandSuffix(agentRight) ?? extractBrandAltFormat(agentRight);
           if (marker) {
-            agentBrandOverride[stripBrandSuffix(agentRight).toUpperCase()] = marker;
+            agentBrandOverride[normalizeAgentKey(stripBrandSuffix(agentRight))] = marker;
           }
         });
 
@@ -1032,7 +1041,7 @@ export default function StlmPage() {
           const agentRight = rawVal(cols[7]);
           if (agentRight && agentRight !== '-' && agentRight !== '0') {
             const bareAgent = stripBrandSuffix(agentRight);
-            const bareAgentKey = bareAgent.toUpperCase();
+            const bareAgentKey = normalizeAgentKey(bareAgent);
             stlm.push({
               agentName: bareAgent,
               amount: String(Math.abs(parseAmount(rawVal(cols[8])))),

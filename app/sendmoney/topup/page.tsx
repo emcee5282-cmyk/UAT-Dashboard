@@ -659,6 +659,12 @@ export default function SendMoneyTopUpPage() {
 
       // Send Money's own roster/leader lookup lives in cols L-O (indices
       // 11-14) of "Opening AG" — same shift used on /sendmoney/balances.
+      // Keys are normalized (uppercase + all whitespace stripped), not just
+      // uppercased — same fix already applied to app/agentbal/page.tsx's Top
+      // Up/Settlement sums: the sheets' own agent-name columns aren't always
+      // cased/spaced the same as each other, which silently dropped that
+      // agent's Leader lookup since the plain-uppercase key never matched.
+      const normalizeAgentKey = (name: string): string => name.toUpperCase().replace(/\s+/g, '');
       const leaderMap: Record<string, string> = {};
       const openingNames = new Set<string>();
       if (agentText) {
@@ -671,7 +677,7 @@ export default function SendMoneyTopUpPage() {
           // combobox and Bulk Import's validation should match that same
           // canonical casing regardless of how the sheet itself has it stored.
           if (name && name !== '-' && name !== 'OLD') openingNames.add(name.toUpperCase());
-          if (name && leader) leaderMap[name.toUpperCase()] = leader;
+          if (name && leader) leaderMap[normalizeAgentKey(name)] = leader;
         });
       }
       setOpeningAgentNames(Array.from(openingNames).sort((a, b) => a.localeCompare(b)));
@@ -697,7 +703,7 @@ export default function SendMoneyTopUpPage() {
               amount: rawVal(cols[2]),
               date: rawVal(cols[3]),
               type: rawVal(cols[5]),
-              leader: leaderMap[bareAgentName.toUpperCase()] || '−',
+              leader: leaderMap[normalizeAgentKey(bareAgentName)] || '−',
               brand: resolveBrandFromWalletName(walletName),
               _id: index,
             });
