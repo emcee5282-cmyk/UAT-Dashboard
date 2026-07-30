@@ -5,7 +5,7 @@ import { createPortal } from 'react-dom';
 import {
   ChevronDown, Columns3, Download, RefreshCw, Search, Wallet,
   TrendingUp, ArrowDownToLine, ArrowUpFromLine, Shield, ArrowUpDown,
-  Tag, User,
+  Tag, User, FilterX,
 } from 'lucide-react';
 import * as XLSX from 'xlsx';
 import SettlementHeader from '../components/SettlementHeader';
@@ -717,6 +717,21 @@ export default function AgentBalance() {
     setWalletStatusFilter(Object.fromEntries(WALLET_STATUS_OPTIONS.map((status) => [status, true])));
   }, []);
 
+  // Toolbar's own "Reset All Filters" button — filters only, deliberately
+  // leaves searchTerm untouched (unlike clearAllFilters above, used by the
+  // empty-state's "Clear Filters" action where clearing search too makes
+  // sense). Also closes any open filter dropdown, per spec.
+  const resetAllFilters = useCallback(() => {
+    setBrandFilter({});
+    setLeaderFilter({});
+    setWalletTypeFilter({});
+    setWalletStatusFilter(Object.fromEntries(WALLET_STATUS_OPTIONS.map((status) => [status, true])));
+    setBrandMenuOpen(false);
+    setLeaderMenuOpen(false);
+    setWalletTypeMenuOpen(false);
+    setWalletStatusMenuOpen(false);
+  }, []);
+
   const fetchData = useCallback(async () => {
     scrollRef.current = window.scrollY;
     try {
@@ -989,6 +1004,8 @@ export default function AgentBalance() {
   const isWalletTypeChecked = (name: string) => walletTypeFilter[name] !== false;
   const anyWalletTypeUnchecked = walletTypeOptions.some((name) => !isWalletTypeChecked(name));
   const selectedWalletTypeCount = walletTypeOptions.filter((name) => isWalletTypeChecked(name)).length;
+
+  const anyFilterActive = anyBrandUnchecked || anyLeaderUnchecked || anyWalletTypeUnchecked || anyWalletStatusUnchecked;
 
   const searchedRows = useMemo(() => {
     const query = searchTerm.toLowerCase();
@@ -1408,6 +1425,7 @@ export default function AgentBalance() {
                   <div className="h-10 w-10 shrink-0 dt-skeleton rounded-[12px] xl:w-[98px]" />
                   <div className="h-10 w-10 shrink-0 dt-skeleton rounded-[12px] xl:w-[130px]" />
                   <div className="h-10 w-10 shrink-0 dt-skeleton rounded-[12px] xl:w-[140px]" />
+                  <div className="h-10 w-10 shrink-0 dt-skeleton rounded-[12px]" />
                 </div>
               ) : (
                 <div className="flex shrink-0 items-center gap-3">
@@ -1486,6 +1504,25 @@ export default function AgentBalance() {
                       selected={walletStatusFilter}
                       onChange={setWalletStatusFilter}
                     />
+                  </div>
+                  <div className="group relative">
+                    <button
+                      type="button"
+                      onClick={() => { if (anyFilterActive) resetAllFilters(); }}
+                      aria-label="Reset all filters"
+                      aria-disabled={!anyFilterActive}
+                      className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-[12px] border transition-[color,background-color,border-color,transform] duration-150 ease-[var(--ease-out-strong)] ${
+                        anyFilterActive
+                          ? 'cursor-pointer border-[#E2E8F0] bg-white text-[#475569] hover:border-[#FCA5A5] hover:bg-[#FEF2F2] hover:text-[#DC2626] active:scale-[0.97] active:border-[#FCA5A5] active:bg-[#FEF2F2] active:text-[#DC2626] dark:border-[#3a3a3d] dark:bg-[#2a2a2d] dark:text-[#9CA3AF]'
+                          : 'cursor-default border-[#E2E8F0] bg-white text-[#475569] opacity-40 dark:border-[#3a3a3d] dark:bg-[#2a2a2d] dark:text-[#9CA3AF]'
+                      }`}
+                    >
+                      <FilterX size={20} />
+                    </button>
+                    <div className="pointer-events-none absolute bottom-full left-1/2 z-[60] mb-2 -translate-x-1/2 whitespace-nowrap rounded-md bg-[#1F2937] px-2.5 py-1.5 text-[12px] text-white opacity-0 transition-opacity duration-150 ease-out group-hover:opacity-100">
+                      Reset all filters
+                      <span className="absolute left-1/2 top-full h-2 w-2 -translate-x-1/2 -translate-y-1/2 rotate-45 bg-[#1F2937]" />
+                    </div>
                   </div>
                 </div>
               )}
