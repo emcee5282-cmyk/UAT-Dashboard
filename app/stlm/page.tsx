@@ -596,11 +596,20 @@ function SortIcon({ active, direction }: { active: boolean; direction: 'asc' | '
 // whitespace/hyphens so compound names like "N-B4AG-A2-FRANCH001-BK" still
 // read sensibly ("N-B4ag-A2-Franch001-Bk") instead of one long capitalized
 // blob.
+// Acronyms that must stay fully uppercase even when the rest of the string
+// gets proper-cased (e.g. "STLM To MC", not "Stlm To Mc") — per explicit
+// instruction after Settlement's own "STLM TO MC" remarks value got mangled.
+const PROPER_CASE_UPPERCASE_EXCEPTIONS = new Set(['SDP', 'STLM', 'MC']);
+
 function toProperCase(str: string): string {
   return str
     .toLowerCase()
     .split(/([\s-]+)/)
-    .map((part) => (/^[\s-]+$/.test(part) ? part : part.charAt(0).toUpperCase() + part.slice(1)))
+    .map((part) => {
+      if (/^[\s-]+$/.test(part)) return part;
+      if (PROPER_CASE_UPPERCASE_EXCEPTIONS.has(part.toUpperCase())) return part.toUpperCase();
+      return part.charAt(0).toUpperCase() + part.slice(1);
+    })
     .join('');
 }
 
