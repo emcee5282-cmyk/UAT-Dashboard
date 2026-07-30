@@ -422,6 +422,68 @@ function FilterTriggerButton({
   );
 }
 
+// "Reset All Filters" trigger — its tooltip is portal-rendered (not a plain
+// group-hover absolute div) because the toolbar has overflow-x-auto for the
+// no-wrap/scroll responsive behavior, and per the CSS overflow spec, once
+// one axis is non-visible the other axis is forced to `auto` too — meaning
+// a tooltip popping out the TOP of the toolbar was getting silently clipped
+// by the toolbar's own bounding box (only the small arrow, sitting right at
+// the edge, was surviving). Portaling to document.body sidesteps that
+// entirely. Same mount-delay pattern as FilterDropdown/ColumnsDropdown so
+// the 150ms fade actually gets to play on both open and close.
+function ResetFiltersButton({ anyFilterActive, onClick }: { anyFilterActive: boolean; onClick: () => void }) {
+  const buttonRef = useRef<HTMLButtonElement>(null);
+  const [open, setOpen] = useState(false);
+  const [rendered, setRendered] = useState(false);
+  const [pos, setPos] = useState({ top: 0, left: 0 });
+
+  useEffect(() => {
+    if (open) {
+      const rect = buttonRef.current?.getBoundingClientRect();
+      if (rect) setPos({ top: rect.top - 8, left: rect.left + rect.width / 2 });
+      setRendered(true);
+    } else {
+      const timeout = setTimeout(() => setRendered(false), 150);
+      return () => clearTimeout(timeout);
+    }
+  }, [open]);
+
+  return (
+    <div className="relative">
+      <button
+        ref={buttonRef}
+        type="button"
+        onClick={() => { if (anyFilterActive) onClick(); }}
+        onMouseEnter={() => setOpen(true)}
+        onMouseLeave={() => setOpen(false)}
+        onFocus={() => setOpen(true)}
+        onBlur={() => setOpen(false)}
+        aria-label="Reset all filters"
+        aria-disabled={!anyFilterActive}
+        className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-[12px] border transition-[color,background-color,border-color,transform] duration-150 ease-[var(--ease-out-strong)] ${
+          anyFilterActive
+            ? 'cursor-pointer border-[#E2E8F0] bg-white text-[#475569] hover:border-[#FCA5A5] hover:bg-[#FEF2F2] hover:text-[#DC2626] active:scale-[0.97] active:border-[#FCA5A5] active:bg-[#FEF2F2] active:text-[#DC2626] dark:border-[#3a3a3d] dark:bg-[#2a2a2d] dark:text-[#9CA3AF]'
+            : 'cursor-default border-[#E2E8F0] bg-white text-[#475569] opacity-40 dark:border-[#3a3a3d] dark:bg-[#2a2a2d] dark:text-[#9CA3AF]'
+        }`}
+      >
+        <FilterX size={20} />
+      </button>
+      {rendered && typeof document !== 'undefined' && createPortal(
+        <div
+          style={{ position: 'fixed', top: pos.top, left: pos.left, transform: 'translate(-50%, -100%)' }}
+          className={`pointer-events-none z-[9999] whitespace-nowrap rounded-md bg-[#1F2937] px-2.5 py-1.5 text-[12px] text-white transition-opacity duration-150 ease-out ${
+            open ? 'opacity-100' : 'opacity-0'
+          }`}
+        >
+          Reset all filters
+          <span className="absolute left-1/2 top-full h-2 w-2 -translate-x-1/2 -translate-y-1/2 rotate-45 bg-[#1F2937]" />
+        </div>,
+        document.body
+      )}
+    </div>
+  );
+}
+
 function walletStatusBadgeClasses(status: string): string {
   switch (status) {
     case 'DP + WD':
@@ -1505,25 +1567,7 @@ export default function AgentBalance() {
                       onChange={setWalletStatusFilter}
                     />
                   </div>
-                  <div className="group relative">
-                    <button
-                      type="button"
-                      onClick={() => { if (anyFilterActive) resetAllFilters(); }}
-                      aria-label="Reset all filters"
-                      aria-disabled={!anyFilterActive}
-                      className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-[12px] border transition-[color,background-color,border-color,transform] duration-150 ease-[var(--ease-out-strong)] ${
-                        anyFilterActive
-                          ? 'cursor-pointer border-[#E2E8F0] bg-white text-[#475569] hover:border-[#FCA5A5] hover:bg-[#FEF2F2] hover:text-[#DC2626] active:scale-[0.97] active:border-[#FCA5A5] active:bg-[#FEF2F2] active:text-[#DC2626] dark:border-[#3a3a3d] dark:bg-[#2a2a2d] dark:text-[#9CA3AF]'
-                          : 'cursor-default border-[#E2E8F0] bg-white text-[#475569] opacity-40 dark:border-[#3a3a3d] dark:bg-[#2a2a2d] dark:text-[#9CA3AF]'
-                      }`}
-                    >
-                      <FilterX size={20} />
-                    </button>
-                    <div className="pointer-events-none absolute bottom-full left-1/2 z-[60] mb-2 -translate-x-1/2 whitespace-nowrap rounded-md bg-[#1F2937] px-2.5 py-1.5 text-[12px] text-white opacity-0 transition-opacity duration-150 ease-out group-hover:opacity-100">
-                      Reset all filters
-                      <span className="absolute left-1/2 top-full h-2 w-2 -translate-x-1/2 -translate-y-1/2 rotate-45 bg-[#1F2937]" />
-                    </div>
-                  </div>
+                  <ResetFiltersButton anyFilterActive={anyFilterActive} onClick={resetAllFilters} />
                 </div>
               )}
 
