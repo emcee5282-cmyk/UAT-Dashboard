@@ -1313,7 +1313,7 @@ export default function SendMoneyAgentBalance() {
       />
 
       {!error && (
-        <div className="w-full border-t border-border bg-[#f4f6fb] px-4 py-3 dark:bg-[#1c1c1e] md:px-6">
+        <div className="mt-4 w-full border-t border-border bg-[#f4f6fb] px-4 py-3 dark:bg-[#1c1c1e] md:px-6">
           <div className="flex gap-2">
             {loading ? (
               Array.from({ length: 5 }).map((_, i) => (
