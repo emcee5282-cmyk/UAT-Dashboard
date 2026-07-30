@@ -83,6 +83,7 @@ type StlmRow = {
   date: string;
   wallet: string;
   brand: string;
+  leader: string;
   // Sequential index assigned once at fetch time — the row-selection
   // checkbox system's only stable identity, since nothing in the sheet
   // itself provides one. Survives sort/search/pagination (those only
@@ -116,12 +117,14 @@ function resolveBrandFromWalletName(walletName: string): string {
   return code ?? '−';
 }
 
-// Display-only: strips a recognized trailing "-<code>" segment (brand code
-// or NG/RK/UP/BK network suffix) so Agent Name reads as the shop name, not
-// the full raw wallet string — same treatment as /sendmoney/topup. Loops
-// since names can carry the tag twice (network suffix + brand tag). Brand
+// Display-only: strips a recognized trailing "-<brand code>" tag (e.g.
+// "D-B2BD-DELTA073-NG-B4" -> "D-B2BD-DELTA073-NG") so Agent Name doesn't
+// duplicate what Brand already shows — same treatment as /sendmoney/topup.
+// The NG/RK/UP/BK network suffix is NOT stripped: it's part of the shop's
+// real identity (the "Opening AG" roster's own agentName keys — used for
+// the Leader lookup below — always keep it), not a redundant tag. Brand
 // itself still resolves from the untouched raw walletName above.
-const AGENT_NAME_TRAILING_CODES = [...BRAND_CODES, 'NG', 'RK', 'UP', 'BK'];
+const AGENT_NAME_TRAILING_CODES = [...BRAND_CODES];
 
 function stripAgentNameSuffix(walletName: string): string {
   let result = walletName;
@@ -180,6 +183,7 @@ function FadeValue({ value, className }: { value: string; className: string }) {
 // COLUMN_IDS rather than sharing Settlement's.
 const COLUMN_IDS = {
   BRAND: 'brand',
+  LEADER: 'leader',
   AGENT_NAME: 'agentName',
   WALLET: 'wallet',
   AMOUNT: 'amount',
@@ -211,6 +215,7 @@ type ColumnDef = {
 // row" menu, not present here before.
 const DEFAULT_COLUMNS: ColumnDef[] = [
   { key: COLUMN_IDS.BRAND, label: 'Brand', visible: true, sortable: true, hideable: true, align: 'left' },
+  { key: COLUMN_IDS.LEADER, label: 'Leader', visible: true, sortable: true, hideable: true, align: 'left' },
   { key: COLUMN_IDS.AGENT_NAME, label: 'Agent Name', visible: true, sortable: true, hideable: true, align: 'left' },
   { key: COLUMN_IDS.WALLET, label: 'Wallet', visible: true, sortable: true, hideable: true, align: 'center' },
   { key: COLUMN_IDS.AMOUNT, label: 'Amount', visible: true, sortable: true, hideable: true, align: 'center' },
@@ -244,6 +249,7 @@ const columns: { key: ColumnKey; label: string }[] = DEFAULT_COLUMNS.map((col) =
 // the CSS flex algorithm instead of approximating it.
 const CASHOUT_COLUMN_SIZING: Record<ColumnKey, { minWidth: number; preferredWidth: number; grow: boolean }> = {
   brand: { minWidth: 90, preferredWidth: 149, grow: true },
+  leader: { minWidth: 100, preferredWidth: 150, grow: true },
   agentName: { minWidth: 140, preferredWidth: 216, grow: true },
   wallet: { minWidth: 90, preferredWidth: 208, grow: true },
   amount: { minWidth: 115, preferredWidth: 244, grow: true },
@@ -298,10 +304,11 @@ function computeColumnWidthsPx(availableWidth: number): Record<ColumnKey, number
   return result;
 }
 
-// Table's own floor — matches Cashout's summed minWidth (761px) plus the
-// 44px checkbox column, so this page's horizontal-scroll fallback engages
-// at the same point Cashout's per-column CSS minWidth floors would.
-const TABLE_MIN_WIDTH_PX = 761 + 44;
+// Table's own floor — matches Cashout's summed minWidth (861px, 761 plus
+// Leader's own 100px) plus the 44px checkbox column, so this page's
+// horizontal-scroll fallback engages at the same point Cashout's per-column
+// CSS minWidth floors would.
+const TABLE_MIN_WIDTH_PX = 861 + 44;
 
 // Typography/padding copied verbatim from Cashout Settlement's own
 // headerCellClasses (app/stlm/page.tsx) — no flex/justify here, since
@@ -410,6 +417,7 @@ function RowActionsCell({ row, onEdit }: { row: StlmRow; onEdit: (row: StlmRow) 
   const copyRow = () => {
     const text = [
       `Brand: ${displayBrand(row.brand)}`,
+      `Leader: ${row.leader}`,
       `Agent Name: ${row.agentName}`,
       `Wallet: ${row.wallet}`,
       `Amount: ${displayNum(row.amount)}`,
@@ -524,6 +532,10 @@ function renderCell(row: StlmRow, key: ColumnKey, onEdit: (row: StlmRow) => void
       // not a cap like Cashout's own Flex row, so the 28px badge + full
       // padding would grow the row past 52px; py-3 lands it exactly there.
       return <td key={key} className={`${cellCls} py-3`}><BrandBadge brand={row.brand}>{highlightMatch(displayBrand(row.brand), searchTerm)}</BrandBadge></td>;
+    case 'leader': {
+      const leaderText = row.leader && row.leader !== '-' ? row.leader : '−';
+      return <td key={key} title={leaderText} className={base}>{highlightMatch(leaderText, searchTerm)}</td>;
+    }
     case 'agentName':
       return <td key={key} title={row.agentName} className={base}>{highlightMatch(row.agentName, searchTerm)}</td>;
     case 'wallet':
@@ -577,6 +589,12 @@ function renderSkeletonCell(col: ColumnDef, rowIndex: number) {
       return (
         <td key={col.key} className="px-4 py-3">
           <div className="dt-skeleton h-[28px] w-9 rounded-full" />
+        </td>
+      );
+    case 'leader':
+      return (
+        <td key={col.key} className="px-4 py-[14px]">
+          <div className="dt-skeleton h-3 w-2/3 rounded-md" />
         </td>
       );
     case 'agentName':
@@ -733,15 +751,20 @@ export default function SendMoneySettlementPage() {
 
       // Agent Name roster — same "Opening AG" L:O range /sendmoney/opening
       // reads, the real Balance Shop master list rather than a today-only
-      // stand-in.
+      // stand-in. Leader comes from the same parsed rows.
+      const leaderMap: Record<string, string> = {};
       if (openingRes.ok) {
         const openingText = await openingRes.text();
+        const openingRows = parseSendMoneyOpeningCsv(openingText);
         // Uppercased before dedup — the real table always displays Agent
         // Name via .toUpperCase(), so the roster feeding Add/Edit's
         // combobox and Bulk Import's validation should match that same
         // canonical casing regardless of how the sheet itself has it stored.
-        const openingNames = Array.from(new Set(parseSendMoneyOpeningCsv(openingText).map((row) => row.agentName.toUpperCase()))).sort((a, b) => a.localeCompare(b));
+        const openingNames = Array.from(new Set(openingRows.map((row) => row.agentName.toUpperCase()))).sort((a, b) => a.localeCompare(b));
         setOpeningAgentNames(openingNames);
+        openingRows.forEach((row) => {
+          if (row.agentName && row.leader) leaderMap[row.agentName.toUpperCase()] = row.leader;
+        });
       }
 
       const stlm: StlmRow[] = [];
@@ -761,13 +784,15 @@ export default function SendMoneySettlementPage() {
           const cols = line.split(',');
           const walletName = rawVal(cols[7]);
           if (walletName && walletName !== '-' && walletName !== '0') {
+            const bareAgentName = stripAgentNameSuffix(walletName);
             stlm.push({
-              agentName: stripAgentNameSuffix(walletName),
+              agentName: bareAgentName,
               amount: String(Math.abs(parseAmount(rawVal(cols[8])))),
               remarks: rawVal(cols[11]),
               date: rawVal(cols[9]),
               wallet: rawVal(cols[10]),
               brand: resolveBrandFromWalletName(walletName),
+              leader: leaderMap[bareAgentName.toUpperCase()] || '−',
               _id: stlm.length,
             });
           }
@@ -834,7 +859,7 @@ export default function SendMoneySettlementPage() {
   );
 
   const searchedRows = stlmRows.filter((row) => {
-    const haystack = `${row.agentName} ${row.amount} ${row.remarks} ${row.date} ${row.wallet} ${row.brand}`.toLowerCase();
+    const haystack = `${row.agentName} ${row.amount} ${row.remarks} ${row.date} ${row.wallet} ${row.brand} ${row.leader}`.toLowerCase();
     return haystack.includes(searchTerm.toLowerCase());
   });
 
@@ -846,6 +871,8 @@ export default function SendMoneySettlementPage() {
         switch (sortColumn) {
           case 'brand':
             return displayBrand(row.brand).toLowerCase();
+          case 'leader':
+            return row.leader.toLowerCase();
           case 'agentName':
             return row.agentName.toLowerCase();
           case 'wallet':
@@ -965,6 +992,8 @@ export default function SendMoneySettlementPage() {
       switch (key) {
         case 'brand':
           return displayBrand(row.brand);
+        case 'leader':
+          return row.leader;
         case 'agentName':
           return row.agentName;
         case 'wallet':
@@ -1363,7 +1392,7 @@ export default function SendMoneySettlementPage() {
                       <div className="flex items-start justify-between gap-2">
                         <div className="min-w-0">
                           <p className="truncate text-sm font-bold text-foreground">{row.agentName}</p>
-                          <p className="truncate text-[11px] text-muted-foreground">{displayBrand(row.brand)} · {row.wallet}</p>
+                          <p className="truncate text-[11px] text-muted-foreground">{displayBrand(row.brand)} · {row.wallet}{row.leader && row.leader !== '−' ? ` · ${row.leader}` : ''}</p>
                         </div>
                         <span className="shrink-0 text-[11px] text-muted-foreground">{formatDateDisplay(row.date)}</span>
                       </div>
