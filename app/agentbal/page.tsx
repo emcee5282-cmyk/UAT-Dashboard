@@ -518,11 +518,15 @@ function ResetFiltersButton({ anyFilterActive, onClick }: { anyFilterActive: boo
         aria-disabled={!anyFilterActive}
         className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-[12px] border transition-[color,background-color,border-color,transform] duration-150 ease-[var(--ease-out-strong)] ${
           anyFilterActive
-            ? 'cursor-pointer border-[#E2E8F0] bg-white text-[#475569] hover:border-[#FCA5A5] hover:bg-[#FEF2F2] hover:text-[#DC2626] active:scale-[0.97] active:border-[#FCA5A5] active:bg-[#FEF2F2] active:text-[#DC2626] dark:border-[#3a3a3d] dark:bg-[#2a2a2d] dark:text-[#9CA3AF]'
+            ? 'cursor-pointer border-[#E2E8F0] bg-white text-indigo-600 hover:border-[#FCA5A5] hover:bg-[#FEF2F2] hover:text-[#DC2626] active:scale-[0.97] active:border-[#FCA5A5] active:bg-[#FEF2F2] active:text-[#DC2626] dark:border-[#3a3a3d] dark:bg-[#2a2a2d] dark:text-indigo-400'
             : 'cursor-default border-[#E2E8F0] bg-white text-[#475569] opacity-40 dark:border-[#3a3a3d] dark:bg-[#2a2a2d] dark:text-[#9CA3AF]'
         }`}
       >
-        <FilterX size={20} />
+        {/* Filled (not just outlined) once a filter is actually active — the
+            icon's fill tracks currentColor, so it goes indigo at rest and
+            red on hover/active along with the text color above. Stays
+            fill="none" (plain Lucide outline) while disabled. */}
+        <FilterX size={20} fill={anyFilterActive ? 'currentColor' : 'none'} />
       </button>
       {tooltip.rendered && <Tooltip label="Reset all filters" open={tooltip.open} pos={tooltip.pos} />}
     </div>
