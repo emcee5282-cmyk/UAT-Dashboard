@@ -1527,63 +1527,12 @@ export default function AgentBalance() {
                 border/rounded corners via a bottom divider), per explicit
                 instruction — not a separate detached card. */}
             <div className="flex shrink-0 flex-nowrap items-center overflow-x-auto border-b border-[#E5E7EB] px-4 py-3 dark:border-[#3a3a3d]">
-              {/* Actions group moved to the far left (was ml-auto on the far
-                  right); Search moved to the far right (was fixed-width on
-                  the far left) — per explicit instruction, swapping the two
-                  groups' positions. Filters stay in the middle, unchanged. */}
+              {/* Filters first (left), then Search (flex-1, fills the
+                  middle), then Actions last (right) — Actions moved back to
+                  the right per explicit instruction; Search keeps its
+                  flex-1 grow/shrink behavior from the previous change. */}
               {loading ? (
                 <div className="mr-3 flex shrink-0 items-center gap-3">
-                  <div className="h-10 w-10 shrink-0 dt-skeleton rounded-[12px] xl:w-[92px]" />
-                  <div className="h-10 w-10 shrink-0 dt-skeleton rounded-[12px] xl:w-[88px]" />
-                  <div className="h-10 w-10 shrink-0 dt-skeleton rounded-[12px] xl:w-[108px]" />
-                </div>
-              ) : (
-                <div className="mr-3 flex shrink-0 items-center gap-3">
-                  <div className="relative">
-                    <button type="button" ref={refreshButtonRef} onClick={fetchData} aria-label="Refresh" {...refreshTooltip.handlers} className={ICON_BUTTON}>
-                      <RefreshCw size={16} className={spinning ? 'animate-spin' : ''} />
-                      <span className="hidden xl:inline">Refresh</span>
-                    </button>
-                    {refreshTooltip.rendered && <Tooltip label="Refresh" open={refreshTooltip.open} pos={refreshTooltip.pos} onlyWhenCompact />}
-                  </div>
-                  <div className="relative">
-                    <button type="button" ref={exportButtonRef} onClick={handleExport} aria-label="Export to Excel" {...exportTooltip.handlers} className={ICON_BUTTON}>
-                      <Download size={16} />
-                      <span className="hidden xl:inline">Export</span>
-                    </button>
-                    {exportTooltip.rendered && <Tooltip label="Export" open={exportTooltip.open} pos={exportTooltip.pos} onlyWhenCompact />}
-                  </div>
-                  <div className="relative">
-                    <button
-                      type="button"
-                      ref={columnsButtonRef}
-                      onClick={() => setColumnsMenuOpen((current) => !current)}
-                      aria-haspopup="true"
-                      aria-expanded={columnsMenuOpen}
-                      aria-controls="agentbal-columns-popover"
-                      aria-label="Columns"
-                      {...columnsTooltip.handlers}
-                      className={ICON_BUTTON}
-                    >
-                      <Columns3 size={16} />
-                      <span className="hidden xl:inline">Columns</span>
-                    </button>
-                    {columnsTooltip.rendered && <Tooltip label="Columns" open={columnsTooltip.open} pos={columnsTooltip.pos} onlyWhenCompact />}
-                    <ColumnsDropdown
-                      id="agentbal-columns-popover"
-                      open={columnsMenuOpen}
-                      onOpenChange={setColumnsMenuOpen}
-                      anchorRef={columnsButtonRef}
-                      columns={columnDefs}
-                      onToggle={(key) => setColumnDefs((current) => current.map((c) => (c.key === key ? { ...c, visible: !c.visible } : c)))}
-                      onRestoreDefaults={() => setColumnDefs(DEFAULT_COLUMNS.map((col) => ({ ...col })))}
-                    />
-                  </div>
-                </div>
-              )}
-
-              {loading ? (
-                <div className="flex shrink-0 items-center gap-3">
                   <div className="h-10 w-10 shrink-0 dt-skeleton rounded-[12px] xl:w-[92px]" />
                   <div className="h-10 w-10 shrink-0 dt-skeleton rounded-[12px] xl:w-[98px]" />
                   <div className="h-10 w-10 shrink-0 dt-skeleton rounded-[12px] xl:w-[130px]" />
@@ -1591,7 +1540,7 @@ export default function AgentBalance() {
                   <div className="h-10 w-10 shrink-0 dt-skeleton rounded-[12px]" />
                 </div>
               ) : (
-                <div className="flex shrink-0 items-center gap-3">
+                <div className="mr-3 flex shrink-0 items-center gap-3">
                   <div className="relative">
                     <FilterTriggerButton
                       label="Brand"
@@ -1672,13 +1621,6 @@ export default function AgentBalance() {
                 </div>
               )}
 
-              {/* flex-1 instead of a fixed width: grows to fill whatever
-                  space Actions+Filters leave behind (stretches wider on a
-                  roomy toolbar), and shrinks the same way under zoom/narrow
-                  viewports — min-w-[200px] is the floor either direction
-                  stops at before the toolbar's own overflow-x-auto takes
-                  over. No ml-auto needed anymore — flex-1 already claims all
-                  the leftover row width on its own. */}
               <div className="flex h-10 flex-1 min-w-[200px] items-center gap-2 rounded-[12px] border border-[#E5E7EB] bg-white px-[14px] transition-colors focus-within:border-[#2563EB] focus-within:ring-2 focus-within:ring-[#2563EB]/20 dark:border-[#3a3a3d] dark:bg-[#2a2a2d]">
                 {loading ? (
                   <div className="h-3 w-32 dt-skeleton rounded-md" />
@@ -1694,6 +1636,57 @@ export default function AgentBalance() {
                   </>
                 )}
               </div>
+
+              {loading ? (
+                <div className="ml-3 flex shrink-0 items-center gap-3">
+                  <div className="h-10 w-10 shrink-0 dt-skeleton rounded-[12px] xl:w-[92px]" />
+                  <div className="h-10 w-10 shrink-0 dt-skeleton rounded-[12px] xl:w-[88px]" />
+                  <div className="h-10 w-10 shrink-0 dt-skeleton rounded-[12px] xl:w-[108px]" />
+                </div>
+              ) : (
+                <div className="ml-3 flex shrink-0 items-center gap-3">
+                  <div className="relative">
+                    <button type="button" ref={refreshButtonRef} onClick={fetchData} aria-label="Refresh" {...refreshTooltip.handlers} className={ICON_BUTTON}>
+                      <RefreshCw size={16} className={spinning ? 'animate-spin' : ''} />
+                      <span className="hidden xl:inline">Refresh</span>
+                    </button>
+                    {refreshTooltip.rendered && <Tooltip label="Refresh" open={refreshTooltip.open} pos={refreshTooltip.pos} onlyWhenCompact />}
+                  </div>
+                  <div className="relative">
+                    <button type="button" ref={exportButtonRef} onClick={handleExport} aria-label="Export to Excel" {...exportTooltip.handlers} className={ICON_BUTTON}>
+                      <Download size={16} />
+                      <span className="hidden xl:inline">Export</span>
+                    </button>
+                    {exportTooltip.rendered && <Tooltip label="Export" open={exportTooltip.open} pos={exportTooltip.pos} onlyWhenCompact />}
+                  </div>
+                  <div className="relative">
+                    <button
+                      type="button"
+                      ref={columnsButtonRef}
+                      onClick={() => setColumnsMenuOpen((current) => !current)}
+                      aria-haspopup="true"
+                      aria-expanded={columnsMenuOpen}
+                      aria-controls="agentbal-columns-popover"
+                      aria-label="Columns"
+                      {...columnsTooltip.handlers}
+                      className={ICON_BUTTON}
+                    >
+                      <Columns3 size={16} />
+                      <span className="hidden xl:inline">Columns</span>
+                    </button>
+                    {columnsTooltip.rendered && <Tooltip label="Columns" open={columnsTooltip.open} pos={columnsTooltip.pos} onlyWhenCompact />}
+                    <ColumnsDropdown
+                      id="agentbal-columns-popover"
+                      open={columnsMenuOpen}
+                      onOpenChange={setColumnsMenuOpen}
+                      anchorRef={columnsButtonRef}
+                      columns={columnDefs}
+                      onToggle={(key) => setColumnDefs((current) => current.map((c) => (c.key === key ? { ...c, visible: !c.visible } : c)))}
+                      onRestoreDefaults={() => setColumnDefs(DEFAULT_COLUMNS.map((col) => ({ ...col })))}
+                    />
+                  </div>
+                </div>
+              )}
             </div>
             <div className="relative hidden flex-1 min-h-0 sm:block">
               <div
