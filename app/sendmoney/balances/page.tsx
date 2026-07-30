@@ -8,9 +8,7 @@ import {
   Tag, User, FilterX,
 } from 'lucide-react';
 import * as XLSX from 'xlsx';
-import PageHeader from '@/app/components/PageHeader';
-import ProductSwitchTabs from '@/app/components/ProductSwitchTabs';
-import ThemeToggle from '@/app/components/ThemeToggle';
+import SettlementHeader from '@/app/components/SettlementHeader';
 import ConnectionErrorState from '@/app/components/ConnectionErrorState';
 import DataTable from '@/app/components/DataTable';
 import TableFooter from '@/app/components/TableFooter';
@@ -1305,15 +1303,15 @@ export default function SendMoneyAgentBalance() {
 
   return (
     <div className="h-screen w-full flex flex-col overflow-hidden bg-background font-[Inter,sans-serif] text-foreground transition-colors duration-300 dark:bg-[#1c1c1e]">
-      <PageHeader
+      <SettlementHeader
         icon={Wallet}
         title="Balance"
-        centerSlot={<ProductSwitchTabs />}
-        actions={<ThemeToggle />}
+        isRefreshing={spinning}
+        onRefresh={fetchData}
       />
 
       {!error && (
-        <div className="mt-4 w-full border-t border-border bg-[#f4f6fb] px-4 py-3 dark:bg-[#1c1c1e] md:px-6">
+        <div className="w-full border-t border-border bg-[#f4f6fb] px-4 py-3 dark:bg-[#1c1c1e] md:px-6">
           <div className="flex gap-2">
             {loading ? (
               Array.from({ length: 5 }).map((_, i) => (
