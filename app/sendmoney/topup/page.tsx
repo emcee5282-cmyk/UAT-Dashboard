@@ -65,17 +65,23 @@ function highlightMatch(text: string, query: string): React.ReactNode {
   );
 }
 
-// Brand comes from the wallet name itself (segment after first "-", e.g.
-// "N-B4PS2-GYRO023-NG" -> "B4"), not Cashout's own last-segment convention —
-// same pattern as /sendmoney/settlement, since Send Money wallet names don't
-// carry brand in their last segment (that's the NG/RK/UP/BK type suffix).
-// Unchanged data logic from before this rewrite.
+// Brand comes from the wallet name itself. Names now carry an extra
+// trailing brand tag beyond the older format (e.g. "N-B2PS3-NAVY054-NG-B3"
+// — the rightmost "B3", not "B2PS3"'s "B2", is the real brand), matching
+// the same fix applied to /sendmoney/settlement — so the rightmost segment
+// is checked first; older names without that trailing tag (or ones whose
+// trailing segment is something else entirely, e.g. "-SS") fall back to the
+// segment right after the first hyphen.
 const BRAND_CODES = [...CASHOUT_BRAND_CODES, 'SH'];
 const BRAND_DISPLAY_LABELS: Record<string, string> = { SH: 'Sharing' };
 
 function resolveBrandFromWalletName(walletName: string): string {
-  const segment = (walletName.split('-')[1] ?? '').toUpperCase();
-  const code = BRAND_CODES.find((c) => segment.startsWith(c));
+  const segments = walletName.split('-');
+  const last = (segments[segments.length - 1] ?? '').toUpperCase();
+  const trailing = BRAND_CODES.find((c) => c === last);
+  if (trailing) return trailing;
+  const afterFirst = (segments[1] ?? '').toUpperCase();
+  const code = BRAND_CODES.find((c) => afterFirst.startsWith(c));
   return code ?? '−';
 }
 

@@ -118,15 +118,25 @@ function cleanSigned(val: string): number {
 
 // Send Money's own brand resolution — unlike Cashout's (which cross-
 // references "SSP AG BalanceLimit"'s Group column), Send Money's brand is
-// embedded directly in the wallet name itself, e.g. "D-B2BD-DELTA073-NG" ->
-// segment "B2BD" -> "B2" — same convention already used by
-// app/sendmoney/settlement/page.tsx. Includes 'SH' (Sharing), a brand
-// Cashout's own roster doesn't have.
+// embedded directly in the wallet name itself. Names now carry an extra
+// trailing brand tag beyond the older format (e.g. "D-B2BD-DELTA073-NG-B3"
+// — the rightmost "B3", not "B2BD"'s "B2", is the real brand), so the
+// rightmost segment is checked first; older names without that trailing tag
+// (or ones whose trailing segment is something else entirely, e.g. "-SS")
+// fall back to the segment right after the first hyphen. Same fix already
+// applied to app/sendmoney/settlement/page.tsx and app/sendmoney/topup/
+// page.tsx — this table's per-brand Top Up/Settlement totals must resolve
+// brand identically to those tabs, or the two disagree on the same money.
+// Includes 'SH' (Sharing), a brand Cashout's own roster doesn't have.
 const SENDMONEY_BRAND_CODES = [...BRAND_CODES, 'SH'];
 
 function resolveSendMoneyBrandFromWalletName(walletName: string): string {
-  const segment = (walletName.split('-')[1] ?? '').toUpperCase();
-  const code = SENDMONEY_BRAND_CODES.find((c) => segment.startsWith(c));
+  const segments = walletName.split('-');
+  const last = (segments[segments.length - 1] ?? '').toUpperCase();
+  const trailing = SENDMONEY_BRAND_CODES.find((c) => c === last);
+  if (trailing) return trailing;
+  const afterFirst = (segments[1] ?? '').toUpperCase();
+  const code = SENDMONEY_BRAND_CODES.find((c) => afterFirst.startsWith(c));
   return code ?? '−';
 }
 
