@@ -1752,34 +1752,57 @@ export default function BalanceOverviewPage() {
       });
       const sspLine1BrandTopUpStlm = computeCashoutBrandTopUpStlm(agstlmText, cutoff, sspLine1BrandGroups);
 
-      setSspLine1Rows(
-        parseSspLine1(sspLine1Text).map((row) => {
-          const brandTotals = sspLine1BrandTopUpStlm.get(row.brand.toUpperCase()) ?? { topUp: 0, stlm: 0 };
-          return { ...row, topUp: brandTotals.topUp, settlement: -brandTotals.stlm };
-        })
-      );
+      const sspLine1CashoutComputed = parseSspLine1(sspLine1Text).map((row) => {
+        const brandTotals = sspLine1BrandTopUpStlm.get(row.brand.toUpperCase()) ?? { topUp: 0, stlm: 0 };
+        return { ...row, topUp: brandTotals.topUp, settlement: -brandTotals.stlm };
+      });
+      setSspLine1Rows(sspLine1CashoutComputed);
 
       // Send Money's own SSP Line 1 table — same logic, sourced from "PS BD
       // STLM + TOPUP" (bundleText) with Send Money's own wallet-name-based
       // brand resolution (no cross-sheet lookup needed).
       const sspLine1SendMoneyBrandTopUpStlm = computeSendMoneyBrandTopUpStlm(bundleText, cutoff);
-      setSspLine1SendMoneyRows(
-        parseSspLine1(sspLine1SendMoneyText).map((row) => {
-          const brandTotals = sspLine1SendMoneyBrandTopUpStlm.get(row.brand.toUpperCase()) ?? { topUp: 0, stlm: 0 };
-          const settlement = -brandTotals.stlm;
-          // Total is computed live here (Cashout's own Total, above, is left
-          // reading the "Brand Balance" sheet's own static column — its
-          // brand attribution never changed, so it still reconciles). Send
-          // Money's static Total predates the brand-basis fix (rightmost-
-          // segment) and no longer agrees with the live per-brand Top Up/
-          // Settlement split it produces.
-          return { ...row, topUp: brandTotals.topUp, settlement, total: row.opening + row.deposit - row.withdrawal + brandTotals.topUp + settlement };
-        })
-      );
+      const sspLine1SendMoneyComputed = parseSspLine1(sspLine1SendMoneyText).map((row) => {
+        const brandTotals = sspLine1SendMoneyBrandTopUpStlm.get(row.brand.toUpperCase()) ?? { topUp: 0, stlm: 0 };
+        const settlement = -brandTotals.stlm;
+        // Total is computed live here (Cashout's own Total, above, is left
+        // reading the "Brand Balance" sheet's own static column — its
+        // brand attribution never changed, so it still reconciles). Send
+        // Money's static Total predates the brand-basis fix (rightmost-
+        // segment) and no longer agrees with the live per-brand Top Up/
+        // Settlement split it produces.
+        return { ...row, topUp: brandTotals.topUp, settlement, total: row.opening + row.deposit - row.withdrawal + brandTotals.topUp + settlement };
+      });
+      setSspLine1SendMoneyRows(sspLine1SendMoneyComputed);
 
+      // Brand Balance's own CashOut/SendMoney columns used to read a
+      // separate static "SSP AG"/"SSP PS" pair straight off the sheet — a
+      // second, independent source for the same figures SSP Line 1/Line 2
+      // (above) already compute live. Per explicit instruction, there must
+      // be exactly one source: CashOut/SendMoney here are now the SAME
+      // per-brand Total this page already computed for SSP Line 1/Line 2,
+      // keyed by brand, never re-derived from the sheet. Total CIH is
+      // likewise recomputed from these (now-live) CashOut/SendMoney values
+      // plus ESS/Autopay/Expay, instead of trusting the sheet's own "Total
+      // Brand CIH" column, so it can't silently drift from its own inputs.
+      const cashoutTotalByBrand = new Map(sspLine1CashoutComputed.map((row) => [row.brand.toUpperCase(), row.total]));
+      const sendMoneyTotalByBrand = new Map(sspLine1SendMoneyComputed.map((row) => [row.brand.toUpperCase(), row.total]));
       const brandCash = parseBrandCashInhand(brandCashText);
-      setBrandCashRows(brandCash.rows);
-      setBrandCashTotal(brandCash.total);
+      const brandCashRowsMerged = brandCash.rows.map((row) => {
+        const key = row.brand.toUpperCase();
+        const sspAg = cashoutTotalByBrand.get(key) ?? row.sspAg;
+        const sspPs = sendMoneyTotalByBrand.get(key) ?? row.sspPs;
+        return { ...row, sspAg, sspPs, totalBrandCIH: sspAg + sspPs + row.ess + row.autopay + row.expay };
+      });
+      setBrandCashRows(brandCashRowsMerged);
+      setBrandCashTotal(
+        brandCash.total && {
+          ...brandCash.total,
+          sspAg: brandCashRowsMerged.reduce((sum, row) => sum + row.sspAg, 0),
+          sspPs: brandCashRowsMerged.reduce((sum, row) => sum + row.sspPs, 0),
+          totalBrandCIH: brandCashRowsMerged.reduce((sum, row) => sum + row.totalBrandCIH, 0),
+        }
+      );
     } catch (err) {
       setError(classifyFetchError(err instanceof Error ? err.message : String(err)));
     } finally {
