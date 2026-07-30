@@ -206,57 +206,37 @@ type ColumnDef = {
   grow: number;
 };
 
-// Alignment convention copied from Settlement (app/stlm/page.tsx): plain
-// text left, badges/short-enum columns center, dates right, actions center.
-// Leader has no Settlement equivalent — treated as a plain text label, left
-// like Agent Name.
-//
-// preferredWidth values (px, at the same ~1317px reference width used
-// throughout) — Agent Name trimmed down and the freed-up space handed to
-// Leader and Wallet, per explicit request. Percentages: brand 9%, leader
-// 12.5%, agentName 17%, wallet 13.5%, amount 15%, type 15%, date 11%,
-// actions 7% — kept byte-identical to Send Money Top Up's own
-// `columnWidths` (app/sendmoney/topup/page.tsx) so both products render
-// with the same column proportions.
-//
-// grow is set to each column's own preferredWidth (not just Agent Name/
-// Type) — Send Money's table is a native <table> with % <col> widths,
-// which means EVERY column scales together as the container widens (a
-// %-based table can't grow just one column and leave the rest fixed).
-// Verified live via Puppeteer at 1920/1440/1366/1280px: with only Agent
-// Name/Type growing (the pattern copied from Settlement, where growth is
-// deliberately concentrated on 1-2 "important" columns), every other
-// column's real rendered position diverged further from Send Money's the
-// wider the viewport got (e.g. Wallet/Amount/Date all ~30-50px narrower
-// than Send Money's at 1920px, since those stayed pinned to preferredWidth
-// while Send Money's %-based equivalents kept scaling up). Setting
-// grow:preferredWidth on every column makes flex distribute any leftover
-// space in exact proportion to each column's own base size — the same
-// ratio a %-based table produces — so column positions now match at every
-// width, not just the one reference width these numbers were computed at.
+// Column sizing now matches Settlement's own arrangement exactly
+// (app/stlm/page.tsx's DEFAULT_COLUMNS + toFlexColumnStyle) — by explicit
+// instruction, Top Up and Settlement share the same 8 columns (Brand/
+// Leader/Agent Name/Wallet/Amount/Type/Date/Action, Type being Settlement's
+// own Remarks-turned-Type column) and should render with the same
+// proportions. minWidth/preferredWidth values below are copied verbatim
+// from Settlement.
 const DEFAULT_COLUMNS: ColumnDef[] = [
-  { id: COLUMN_IDS.BRAND, label: 'Brand', visible: true, sortable: true, hideable: true, align: 'left', minWidth: 90, preferredWidth: 119, grow: 119 },
-  { id: COLUMN_IDS.LEADER, label: 'Leader', visible: true, sortable: true, hideable: true, align: 'left', minWidth: 100, preferredWidth: 165, grow: 165 },
-  { id: COLUMN_IDS.AGENT_NAME, label: 'Agent Name', visible: true, sortable: true, hideable: true, align: 'left', minWidth: 140, preferredWidth: 220, grow: 220 },
-  { id: COLUMN_IDS.WALLET, label: 'Wallet', visible: true, sortable: true, hideable: true, align: 'center', minWidth: 90, preferredWidth: 180, grow: 180 },
-  { id: COLUMN_IDS.AMOUNT, label: 'Amount', visible: true, sortable: true, hideable: true, align: 'center', minWidth: 110, preferredWidth: 198, grow: 198 },
-  { id: COLUMN_IDS.TYPE, label: 'Type', visible: true, sortable: true, hideable: true, align: 'center', minWidth: 140, preferredWidth: 198, grow: 198 },
-  { id: COLUMN_IDS.DATE, label: 'Date', visible: true, sortable: true, hideable: true, align: 'right', minWidth: 110, preferredWidth: 145, grow: 145 },
-  { id: COLUMN_IDS.ACTIONS, label: 'Action', visible: true, sortable: false, hideable: false, align: 'center', minWidth: 56, preferredWidth: 92, grow: 92 },
+  { id: COLUMN_IDS.BRAND, label: 'Brand', visible: true, sortable: true, hideable: true, align: 'left', minWidth: 90, preferredWidth: 149, grow: 0 },
+  { id: COLUMN_IDS.LEADER, label: 'Leader', visible: true, sortable: true, hideable: true, align: 'left', minWidth: 100, preferredWidth: 150, grow: 1 },
+  { id: COLUMN_IDS.AGENT_NAME, label: 'Agent Name', visible: true, sortable: true, hideable: true, align: 'left', minWidth: 140, preferredWidth: 216, grow: 1 },
+  { id: COLUMN_IDS.WALLET, label: 'Wallet', visible: true, sortable: true, hideable: true, align: 'center', minWidth: 90, preferredWidth: 208, grow: 0 },
+  { id: COLUMN_IDS.AMOUNT, label: 'Amount', visible: true, sortable: true, hideable: true, align: 'center', minWidth: 115, preferredWidth: 244, grow: 0 },
+  { id: COLUMN_IDS.TYPE, label: 'Type', visible: true, sortable: true, hideable: true, align: 'center', minWidth: 160, preferredWidth: 243, grow: 1 },
+  { id: COLUMN_IDS.DATE, label: 'Date', visible: true, sortable: true, hideable: true, align: 'right', minWidth: 110, preferredWidth: 149, grow: 0 },
+  { id: COLUMN_IDS.ACTIONS, label: 'Action', visible: true, sortable: false, hideable: false, align: 'center', minWidth: 56, preferredWidth: 109, grow: 0 },
 ];
 
 const COLUMN_VISIBILITY_STORAGE_KEY = 'topUpColumnVisibility';
 
 // Adaptive Column Width Distribution — same Flex translation as Settlement
 // (app/stlm/page.tsx's toFlexColumnStyle): flex-basis starts at
-// preferredWidth, flex-grow distributes leftover space, minWidth is a hard
-// floor CSS itself enforces, flex-shrink lets every column give way before
-// any single one is singled out. Type (the free-form-ish enum column) and
-// Agent Name share the grow the same way Settlement splits it between
-// Agent Name and Remarks.
+// preferredWidth, flex-grow distributes leftover space equally across every
+// column except Type, which stays pinned to its own preferredWidth (same
+// reasoning as Settlement's own Remarks: short, plain enum text that reads
+// as an orphaned island if over-grown), minWidth is a hard floor CSS itself
+// enforces, flex-shrink lets every column give way before any single one is
+// singled out.
 function toFlexColumnStyle(layout: ColumnLayout<ColumnKey>): CSSProperties {
   return {
-    flexGrow: layout.grow,
+    flexGrow: layout.id === COLUMN_IDS.TYPE ? 0 : 1,
     flexShrink: 1,
     flexBasis: `${layout.preferredWidth}px`,
     minWidth: `${layout.minWidth}px`,

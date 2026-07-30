@@ -219,7 +219,7 @@ const DEFAULT_COLUMNS: ColumnDef[] = [
   { key: COLUMN_IDS.AGENT_NAME, label: 'Agent Name', visible: true, sortable: true, hideable: true, align: 'left' },
   { key: COLUMN_IDS.WALLET, label: 'Wallet', visible: true, sortable: true, hideable: true, align: 'center' },
   { key: COLUMN_IDS.AMOUNT, label: 'Amount', visible: true, sortable: true, hideable: true, align: 'center' },
-  { key: COLUMN_IDS.REMARKS, label: 'Remarks', visible: true, sortable: true, hideable: true, align: 'center' },
+  { key: COLUMN_IDS.REMARKS, label: 'Type', visible: true, sortable: true, hideable: true, align: 'center' },
   { key: COLUMN_IDS.DATE, label: 'Date', visible: true, sortable: true, hideable: true, align: 'right' },
   { key: COLUMN_IDS.ACTIONS, label: 'Action', visible: true, sortable: false, hideable: false, align: 'center' },
 ];
@@ -421,7 +421,7 @@ function RowActionsCell({ row, onEdit }: { row: StlmRow; onEdit: (row: StlmRow) 
       `Agent Name: ${row.agentName}`,
       `Wallet: ${row.wallet}`,
       `Amount: ${displayNum(row.amount)}`,
-      `Remarks: ${row.remarks}`,
+      `Type: ${row.remarks}`,
       `Date: ${formatDateDisplay(row.date)}`,
     ].join('\n');
     navigator.clipboard?.writeText(text).catch(() => {});
@@ -983,7 +983,7 @@ export default function SendMoneySettlementPage() {
     { key: 'agentName', label: 'Agent Name', kind: 'combobox', options: openingAgentNames, required: true },
     { key: 'wallet', label: 'Wallet', kind: 'combobox', options: SENDMONEY_WALLET_OPTIONS, required: true },
     { key: 'amount', label: 'Amount', kind: 'amount', required: true },
-    { key: 'remarks', label: 'Remarks', kind: 'combobox', options: SETTLEMENT_REMARKS_SUGGESTIONS, allowCustom: true },
+    { key: 'remarks', label: 'Type', kind: 'combobox', options: SETTLEMENT_REMARKS_SUGGESTIONS, allowCustom: true },
     { key: 'date', label: 'Date', kind: 'date', required: true },
   ], [openingAgentNames]);
 

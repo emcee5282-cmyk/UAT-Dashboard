@@ -205,29 +205,74 @@ const COLUMN_ALIGN: Record<ColumnKey, 'left' | 'right' | 'center'> = Object.from
 
 const COLUMN_VISIBILITY_STORAGE_KEY = 'sendMoneyTopUpColumnVisibility';
 
-// Percentages sum to 100%; Brand's own <col> reserves the 44px checkbox
-// column via calc(), same trick as /sendmoney/settlement. Agent Name
-// trimmed down, freed-up space handed to Leader and Wallet per explicit
-// request — kept byte-identical to Cashout Top Up's own DEFAULT_COLUMNS
-// preferredWidth ratios (app/topup/page.tsx) so both products render with
-// the same column proportions.
-const columnWidths: Record<ColumnKey, string> = {
-  brand: '9%',
-  leader: '12.5%',
-  agentName: '17%',
-  wallet: '13.5%',
-  amount: '15%',
-  type: '15%',
-  date: '11%',
-  actions: '7%',
+// Column sizing now matches Send Money Settlement's own arrangement exactly
+// (app/sendmoney/settlement/page.tsx's CASHOUT_COLUMN_SIZING +
+// computeColumnWidthsPx) — by explicit instruction, Top Up and Settlement
+// share the same 8 columns and should render with the same proportions.
+// minWidth/preferredWidth values below are copied verbatim from Settlement
+// (itself copied from Cashout Settlement's real flex row — see that file's
+// own extensive sizing notes). Type (Settlement's own Remarks-turned-Type
+// column) stays pinned to its own preferredWidth; every other column shares
+// any leftover space equally.
+const COLUMN_SIZING: Record<ColumnKey, { minWidth: number; preferredWidth: number; grow: boolean }> = {
+  brand: { minWidth: 90, preferredWidth: 149, grow: true },
+  leader: { minWidth: 100, preferredWidth: 150, grow: true },
+  agentName: { minWidth: 140, preferredWidth: 216, grow: true },
+  wallet: { minWidth: 90, preferredWidth: 208, grow: true },
+  amount: { minWidth: 115, preferredWidth: 244, grow: true },
+  type: { minWidth: 160, preferredWidth: 243, grow: false },
+  date: { minWidth: 110, preferredWidth: 149, grow: true },
+  actions: { minWidth: 56, preferredWidth: 109, grow: true },
 };
 
-// Same table-level min-width trick as /sendmoney/settlement: a floor below
-// the table's natural width at common desktop viewports (so normal zoom is
-// unchanged), engaging only past that point instead of letting columns
-// shrink indefinitely — the wrapping div's overflow-x-auto picks up the
-// difference as horizontal scroll past this floor.
-const TABLE_MIN_WIDTH_PX = 1024;
+// The 44px checkbox <col> is a separate fixed-width sibling, never a slice
+// out of Brand's own share. `availableWidth` passed in must already have 44
+// subtracted so the 7 data columns split exactly what's left.
+function computeColumnWidthsPx(availableWidth: number): Record<ColumnKey, number> {
+  const entries = (Object.keys(COLUMN_SIZING) as ColumnKey[]).map((key) => ({
+    key,
+    ...COLUMN_SIZING[key],
+  }));
+  const totalPreferred = entries.reduce((sum, e) => sum + e.preferredWidth, 0);
+
+  if (availableWidth >= totalPreferred) {
+    const growable = entries.filter((e) => e.grow);
+    const bonus = growable.length ? (availableWidth - totalPreferred) / growable.length : 0;
+    const result = {} as Record<ColumnKey, number>;
+    for (const e of entries) result[e.key] = e.preferredWidth + (e.grow ? bonus : 0);
+    return result;
+  }
+
+  const state = entries.map((e) => ({ ...e, width: e.preferredWidth, frozen: false }));
+  let deficit = totalPreferred - availableWidth;
+  for (let pass = 0; pass < 6 && deficit > 0.5; pass++) {
+    const active = state.filter((e) => !e.frozen);
+    const basisSum = active.reduce((sum, e) => sum + e.preferredWidth, 0);
+    if (basisSum <= 0) break;
+    let applied = 0;
+    for (const e of active) {
+      const share = deficit * (e.preferredWidth / basisSum);
+      const next = e.width - share;
+      if (next <= e.minWidth) {
+        applied += e.width - e.minWidth;
+        e.width = e.minWidth;
+        e.frozen = true;
+      } else {
+        applied += share;
+        e.width = next;
+      }
+    }
+    deficit -= applied;
+  }
+  const result = {} as Record<ColumnKey, number>;
+  for (const e of state) result[e.key] = e.width;
+  return result;
+}
+
+// Table's own floor — matches Settlement's summed minWidth (861px) plus the
+// 44px checkbox column, so this page's horizontal-scroll fallback engages
+// at the same point Settlement's own does.
+const TABLE_MIN_WIDTH_PX = 861 + 44;
 
 function headerCellClasses(align: 'left' | 'right' | 'center', paddingCls: string = 'px-4') {
   return `group ${paddingCls} text-[14px] leading-[20px] font-semibold text-[#475569] dark:text-[#9CA3AF] whitespace-nowrap text-${align}`;
@@ -568,6 +613,14 @@ export default function SendMoneyTopUpPage() {
   const [atScrollEnd, setAtScrollEnd] = useState(true);
   const tableScrollRef = useRef<HTMLDivElement>(null);
 
+  // Live column widths, recomputed from the scroll container's own rendered
+  // width — see computeColumnWidthsPx above. Initial value (before the
+  // first measurement) uses the table's own min-width floor as a
+  // reasonable SSR-safe default.
+  const [colWidthsPx, setColWidthsPx] = useState<Record<ColumnKey, number>>(
+    () => computeColumnWidthsPx(TABLE_MIN_WIDTH_PX - 44)
+  );
+
   useEffect(() => {
     const el = tableScrollRef.current;
     if (!el) return;
@@ -575,6 +628,7 @@ export default function SendMoneyTopUpPage() {
       setIsScrolled(el.scrollTop > 0);
       setAtScrollStart(el.scrollLeft <= 1);
       setAtScrollEnd(el.scrollLeft >= el.scrollWidth - el.offsetWidth - 1);
+      setColWidthsPx(computeColumnWidthsPx(Math.max(el.clientWidth, TABLE_MIN_WIDTH_PX) - 44));
     };
     handleScroll();
     el.addEventListener('scroll', handleScroll, { passive: true });
@@ -1054,11 +1108,13 @@ export default function SendMoneyTopUpPage() {
               <table className="w-full table-fixed text-sm" style={{ minWidth: TABLE_MIN_WIDTH_PX }}>
                 <colgroup>
                   <col style={{ width: '44px' }} />
+                  {/* colWidthsPx already has 44px reserved for the checkbox
+                      column above (see computeColumnWidthsPx's
+                      `availableWidth` param, passed as clientWidth - 44) —
+                      no per-column calc() needed, same as
+                      /sendmoney/settlement. */}
                   {visibleColumns.map((col) => (
-                    <col
-                      key={col.key}
-                      style={{ width: col.key === COLUMN_IDS.BRAND ? `max(90px, calc(${columnWidths[col.key]} - 44px))` : columnWidths[col.key] }}
-                    />
+                    <col key={col.key} style={{ width: `${colWidthsPx[col.key]}px` }} />
                   ))}
                 </colgroup>
                 <thead className={`sticky top-0 z-[50] bg-[#FAFAFB] dark:bg-[#252528] border-b border-[#E2E8F0] dark:border-[#3a3a3d] transition-shadow duration-150 ease-out ${
@@ -1079,7 +1135,7 @@ export default function SendMoneyTopUpPage() {
                     {visibleColumns.map((col) => (
                       <th
                         key={col.key}
-                        style={{ width: columnWidths[col.key] }}
+                        style={{ width: `${colWidthsPx[col.key]}px` }}
                         className={headerCellClasses(col.align, 'px-4')}>
                         {!col.sortable ? (
                           <span>{col.label}</span>
