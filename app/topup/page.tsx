@@ -142,13 +142,17 @@ function resolveBrand(groups: string[], agentName: string): string {
 
 // "To Agent" values sometimes carry a trailing "-<brand>" suffix (e.g.
 // "KONAN001-M1"), sometimes not (e.g. "YUJI024") — strip it so the bare
-// code matches "SSP AG BalanceLimit"'s own (always-bare) wallet names.
+// code matches "SSP AG BalanceLimit"'s own (always-bare) wallet names. Some
+// rows now carry the suffix twice (e.g. "KONAN001-M1-M1", "SUPER001-M2-B4")
+// so this strips every recognized trailing segment in a loop, not just one.
 function stripBrandSuffix(name: string): string {
-  const parts = name.split('-');
-  if (parts.length >= 2 && BRAND_CODES.includes(parts[parts.length - 1].toUpperCase())) {
-    return parts.slice(0, -1).join('-');
+  let result = name;
+  let parts = result.split('-');
+  while (parts.length >= 2 && BRAND_CODES.includes(parts[parts.length - 1].toUpperCase())) {
+    result = parts.slice(0, -1).join('-');
+    parts = result.split('-');
   }
-  return name;
+  return result;
 }
 
 // Same suffix this strips off for the lookup key — but here it's the brand
