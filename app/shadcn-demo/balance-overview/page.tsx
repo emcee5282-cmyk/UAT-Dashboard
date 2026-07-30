@@ -1766,7 +1766,14 @@ export default function BalanceOverviewPage() {
       setSspLine1SendMoneyRows(
         parseSspLine1(sspLine1SendMoneyText).map((row) => {
           const brandTotals = sspLine1SendMoneyBrandTopUpStlm.get(row.brand.toUpperCase()) ?? { topUp: 0, stlm: 0 };
-          return { ...row, topUp: brandTotals.topUp, settlement: -brandTotals.stlm };
+          const settlement = -brandTotals.stlm;
+          // Total is computed live here (Cashout's own Total, above, is left
+          // reading the "Brand Balance" sheet's own static column — its
+          // brand attribution never changed, so it still reconciles). Send
+          // Money's static Total predates the brand-basis fix (rightmost-
+          // segment) and no longer agrees with the live per-brand Top Up/
+          // Settlement split it produces.
+          return { ...row, topUp: brandTotals.topUp, settlement, total: row.opening + row.deposit - row.withdrawal + brandTotals.topUp + settlement };
         })
       );
 
