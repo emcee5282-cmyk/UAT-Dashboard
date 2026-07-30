@@ -373,13 +373,13 @@ export default function Sidebar() {
           {/* Brand — decorative logo, not a link. The chevron at the end is
               the ONLY open/close control now (replaces the old separate
               Menu/X toggle row). Fixed row height so collapsing/expanding
-              never changes its own size. Divider below (border-b on the
-              wrapper) separates it from the nav, per design-system spacing
-              rules. */}
+              never changes its own size. No divider below (removed per
+              explicit instruction) — this block just sits flush above the
+              nav now. */}
           {/* px-2.5 — matches every nav row and the footer avatar exactly,
               so the logo icon's left edge lines up with every icon below
               it. */}
-          <div className="mb-1 border-b border-border pb-3">
+          <div className="mb-1 pb-3">
             <div className="relative flex h-14 items-center gap-2.5 rounded-lg px-2.5">
               <div
                 className="relative flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-white ring-1 ring-border"
