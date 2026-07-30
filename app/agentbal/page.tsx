@@ -412,14 +412,32 @@ function useTooltip(triggerRef: React.RefObject<HTMLElement | null>) {
 // used (all 4 filter triggers + Refresh/Export/Columns/Reset), replacing
 // each button's native `title` attribute (which can't be styled and looks
 // inconsistent across browsers).
-function Tooltip({ label, open, pos }: { label: string; open: boolean; pos: { top: number; left: number } }) {
+//
+// `onlyWhenCompact` — the 4 filters + Refresh/Export/Columns already show
+// their own label as text once the toolbar has room (the `xl:` breakpoint);
+// a tooltip repeating that same word right underneath is redundant there,
+// so those callers pass true to force-hide it via `xl:hidden` once the
+// label is visible, showing it again only when the button falls back to
+// icon-only below `xl`. Reset never has a label (always icon-only), so it
+// omits this and keeps its tooltip visible at every width.
+function Tooltip({
+  label,
+  open,
+  pos,
+  onlyWhenCompact = false,
+}: {
+  label: string;
+  open: boolean;
+  pos: { top: number; left: number };
+  onlyWhenCompact?: boolean;
+}) {
   if (typeof document === 'undefined') return null;
   return createPortal(
     <div
       style={{ position: 'fixed', top: pos.top, left: pos.left, transform: 'translate(-50%, -100%)' }}
       className={`pointer-events-none z-[9999] whitespace-nowrap rounded-md bg-[#1F2937] px-2.5 py-1.5 text-[12px] text-white transition-opacity duration-150 ease-out ${
         open ? 'opacity-100' : 'opacity-0'
-      }`}
+      } ${onlyWhenCompact ? 'xl:hidden' : ''}`}
     >
       {label}
       <span className="absolute left-1/2 top-full h-2 w-2 -translate-x-1/2 -translate-y-1/2 rotate-45 bg-[#1F2937]" />
@@ -478,7 +496,7 @@ function FilterTriggerButton({
           className={`hidden text-[#475569] transition-transform duration-150 ease-[var(--ease-in-out-strong)] dark:text-[#9CA3AF] xl:inline ${menuOpen ? 'rotate-180' : ''}`}
         />
       </button>
-      {tooltip.rendered && <Tooltip label={label} open={tooltip.open} pos={tooltip.pos} />}
+      {tooltip.rendered && <Tooltip label={label} open={tooltip.open} pos={tooltip.pos} onlyWhenCompact />}
     </div>
   );
 }
@@ -1616,14 +1634,14 @@ export default function AgentBalance() {
                       <RefreshCw size={16} className={spinning ? 'animate-spin' : ''} />
                       <span className="hidden xl:inline">Refresh</span>
                     </button>
-                    {refreshTooltip.rendered && <Tooltip label="Refresh" open={refreshTooltip.open} pos={refreshTooltip.pos} />}
+                    {refreshTooltip.rendered && <Tooltip label="Refresh" open={refreshTooltip.open} pos={refreshTooltip.pos} onlyWhenCompact />}
                   </div>
                   <div className="relative">
                     <button type="button" ref={exportButtonRef} onClick={handleExport} aria-label="Export to Excel" {...exportTooltip.handlers} className={ICON_BUTTON}>
                       <Download size={16} />
                       <span className="hidden xl:inline">Export</span>
                     </button>
-                    {exportTooltip.rendered && <Tooltip label="Export" open={exportTooltip.open} pos={exportTooltip.pos} />}
+                    {exportTooltip.rendered && <Tooltip label="Export" open={exportTooltip.open} pos={exportTooltip.pos} onlyWhenCompact />}
                   </div>
                   <div className="relative">
                     <button
@@ -1640,7 +1658,7 @@ export default function AgentBalance() {
                       <Columns3 size={16} />
                       <span className="hidden xl:inline">Columns</span>
                     </button>
-                    {columnsTooltip.rendered && <Tooltip label="Columns" open={columnsTooltip.open} pos={columnsTooltip.pos} />}
+                    {columnsTooltip.rendered && <Tooltip label="Columns" open={columnsTooltip.open} pos={columnsTooltip.pos} onlyWhenCompact />}
                     <ColumnsDropdown
                       id="agentbal-columns-popover"
                       open={columnsMenuOpen}
