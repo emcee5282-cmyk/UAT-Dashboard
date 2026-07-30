@@ -339,10 +339,13 @@ function computeColumnWidthsPx(rows: MergedRow[], columns: ColumnDef[]): Partial
 const GHOST_BUTTON =
   'inline-flex h-9 items-center gap-1.5 rounded-[8px] border border-[#E2E8F0] px-3 text-[13px] font-medium text-[#475569] transition-[color,background-color,transform] duration-150 ease-[var(--ease-out-strong)] hover:bg-[#E2E8F0] active:scale-[0.97] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#2563EB] dark:border-[#3a3a3d] dark:text-[#9CA3AF] dark:hover:bg-white/5';
 
-// Icon-only 40x40 action buttons (Refresh/Export/Columns) — premium compact
-// toolbar redesign, native `title` tooltip replaces the old icon+text label.
+// Responsive action buttons (Refresh/Export/Columns) — icon+text when the
+// viewport has room, collapsing to icon-only (40x40, no padding) once space
+// gets tight, per explicit instruction. `xl:` is the "has room" breakpoint;
+// the label is `hidden` below it, `title` supplies a tooltip either way so
+// the icon-only state stays identifiable on hover.
 const ICON_BUTTON =
-  'flex h-10 w-10 shrink-0 items-center justify-center rounded-[12px] border border-[#E2E8F0] bg-white text-[#475569] transition-[color,background-color,transform] duration-150 ease-[var(--ease-out-strong)] hover:bg-[#F1F5F9] active:scale-[0.97] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#2563EB] dark:border-[#3a3a3d] dark:bg-[#2a2a2d] dark:text-[#9CA3AF] dark:hover:bg-white/5';
+  'flex h-10 w-10 xl:w-auto shrink-0 items-center justify-center xl:justify-start gap-1.5 rounded-[12px] border border-[#E2E8F0] bg-white px-0 xl:px-3 text-[13px] font-medium text-[#475569] transition-[color,background-color,transform] duration-150 ease-[var(--ease-out-strong)] hover:bg-[#F1F5F9] active:scale-[0.97] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#2563EB] dark:border-[#3a3a3d] dark:bg-[#2a2a2d] dark:text-[#9CA3AF] dark:hover:bg-white/5';
 
 const PAGE_SIZE_OPTIONS = [50, 100, 250, 500];
 
@@ -1378,12 +1381,11 @@ export default function AgentBalance() {
         {error && <ConnectionErrorState error={error} onRetry={fetchData} />}
 
         {!error && (
-          <>
-            {/* Standalone toolbar card — deliberately NOT inside <DataTable>,
-                per the compact-toolbar redesign: the toolbar must read as its
-                own separate surface, with the table's own header starting
-                only after a visible gap, not sharing one continuous card. */}
-            <div className="mb-4 flex flex-nowrap items-center overflow-x-auto rounded-[16px] border border-[#E5E7EB] bg-white p-4 shadow-[0_6px_18px_rgba(15,23,42,0.04)] dark:border-[#3a3a3d] dark:bg-[#2a2a2d]">
+          <DataTable>
+            {/* Toolbar merged back into the table's own card (shares its
+                border/rounded corners via a bottom divider), per explicit
+                instruction — not a separate detached card. */}
+            <div className="flex shrink-0 flex-nowrap items-center overflow-x-auto border-b border-[#E5E7EB] px-4 py-3 dark:border-[#3a3a3d]">
               <div className="mr-5 flex h-10 w-[320px] min-w-[200px] shrink items-center gap-2 rounded-[12px] border border-[#E5E7EB] bg-white px-[14px] transition-colors focus-within:border-[#2563EB] focus-within:ring-2 focus-within:ring-[#2563EB]/20 dark:border-[#3a3a3d] dark:bg-[#2a2a2d]">
                 {loading ? (
                   <div className="h-3 w-32 dt-skeleton rounded-md" />
@@ -1490,17 +1492,19 @@ export default function AgentBalance() {
 
               {loading ? (
                 <div className="ml-auto flex shrink-0 items-center gap-3">
-                  <div className="h-10 w-10 shrink-0 dt-skeleton rounded-[12px]" />
-                  <div className="h-10 w-10 shrink-0 dt-skeleton rounded-[12px]" />
-                  <div className="h-10 w-10 shrink-0 dt-skeleton rounded-[12px]" />
+                  <div className="h-10 w-10 shrink-0 dt-skeleton rounded-[12px] xl:w-[92px]" />
+                  <div className="h-10 w-10 shrink-0 dt-skeleton rounded-[12px] xl:w-[88px]" />
+                  <div className="h-10 w-10 shrink-0 dt-skeleton rounded-[12px] xl:w-[108px]" />
                 </div>
               ) : (
                 <div className="ml-auto flex shrink-0 items-center gap-3">
                   <button type="button" onClick={fetchData} aria-label="Refresh" title="Refresh" className={ICON_BUTTON}>
                     <RefreshCw size={16} className={spinning ? 'animate-spin' : ''} />
+                    <span className="hidden xl:inline">Refresh</span>
                   </button>
                   <button type="button" onClick={handleExport} aria-label="Export to Excel" title="Export" className={ICON_BUTTON}>
                     <Download size={16} />
+                    <span className="hidden xl:inline">Export</span>
                   </button>
                   <div className="relative">
                     <button
@@ -1515,6 +1519,7 @@ export default function AgentBalance() {
                       className={ICON_BUTTON}
                     >
                       <Columns3 size={16} />
+                      <span className="hidden xl:inline">Columns</span>
                     </button>
                     <ColumnsDropdown
                       id="agentbal-columns-popover"
@@ -1529,7 +1534,6 @@ export default function AgentBalance() {
                 </div>
               )}
             </div>
-          <DataTable>
             <div className="relative hidden flex-1 min-h-0 sm:block">
               <div
                 ref={tableScrollRef}
@@ -1775,7 +1779,6 @@ export default function AgentBalance() {
               />
             )}
           </DataTable>
-          </>
         )}
       </main>
     </div>
