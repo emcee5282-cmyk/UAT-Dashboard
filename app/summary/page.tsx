@@ -176,15 +176,16 @@ type ColumnDef = {
 };
 
 // Alignment matches Settlement's own convention: text left, numbers right,
-// actions center (was all-center before this port). Wallet Type reverted
-// back between Agent Name and Opening Balance — the further-right column
-// order was wrong; the intent was a narrower Wallet Type column (more
-// space handed to Agent Name instead), not a reorder. See columnWidths.
+// actions center (was all-center before this port). Wallet Type stays
+// between Agent Name and Opening Balance (the reorder attempt was
+// reverted) and is center-aligned per explicit instruction — the
+// Agent-Name-wider/Wallet-Type-narrower width change was also reverted
+// (see columnWidths), centering is the actual fix instead.
 const DEFAULT_COLUMNS: ColumnDef[] = [
   { key: COLUMN_IDS.BRAND, label: 'Brand', visible: true, sortable: true, hideable: true, align: 'left' },
   { key: COLUMN_IDS.LEADER, label: 'Leader', visible: true, sortable: true, hideable: true, align: 'left' },
   { key: COLUMN_IDS.AGENT_NAME, label: 'Agent Name', visible: true, sortable: true, hideable: true, align: 'left' },
-  { key: COLUMN_IDS.WALLET_TYPE, label: 'Wallet Type', visible: true, sortable: true, hideable: true, align: 'left' },
+  { key: COLUMN_IDS.WALLET_TYPE, label: 'Wallet Type', visible: true, sortable: true, hideable: true, align: 'center' },
   { key: COLUMN_IDS.OPENING_BAL, label: 'Opening Balance', visible: true, sortable: true, hideable: true, align: 'right' },
   { key: COLUMN_IDS.SDP, label: 'Security Deposit', visible: true, sortable: true, hideable: true, align: 'right' },
   { key: COLUMN_IDS.ACTIONS, label: 'Action', visible: true, sortable: false, hideable: false, align: 'center' },
@@ -192,16 +193,15 @@ const DEFAULT_COLUMNS: ColumnDef[] = [
 
 const COLUMN_VISIBILITY_STORAGE_KEY = 'openingBalanceColumnVisibility';
 
-// Agent Name widened, Wallet Type narrowed (still sum to 100%) per
-// explicit instruction — Wallet Type's own badges sit further right
-// (pushed by a wider Agent Name) without moving the column itself.
-// Brand's own <col> reserves the 44px checkbox column via calc(), same
-// trick as Settlement/Top Up's Send Money pages.
+// Reverted back to the original split (Agent Name/Wallet Type widths
+// undone) — centering Wallet Type's own content is the actual fix now,
+// not a width change. Brand's own <col> reserves the 44px checkbox
+// column via calc(), same trick as Settlement/Top Up's Send Money pages.
 const columnWidths: Record<ColumnKey, string> = {
   brand: '14%',
   leader: '16%',
-  agentName: '20%',
-  walletType: '8%',
+  agentName: '16%',
+  walletType: '12%',
   openingBal: '16%',
   sdp: '15%',
   actions: '11%',
@@ -274,7 +274,7 @@ function WalletTypeBadge({ walletType }: { walletType: string }) {
   }
   const codes = walletType.split(' | ');
   return (
-    <span className="dt-scroll flex flex-nowrap items-center gap-1 overflow-x-auto">
+    <span className="dt-scroll inline-flex max-w-full flex-nowrap items-center gap-1 overflow-x-auto">
       {codes.map((code) => (
         <span
           key={code}
