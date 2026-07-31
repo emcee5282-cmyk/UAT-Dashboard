@@ -62,7 +62,7 @@ export default function SettlementHeader({ icon: Icon, title, isRefreshing, onRe
             onClick={onRefresh}
             aria-label="Refresh"
             title="Refresh"
-            className="flex h-8 w-8 items-center justify-center rounded-lg border border-border bg-muted/60 text-foreground transition-colors hover:bg-muted"
+            className="flex h-8 w-8 items-center justify-center rounded-lg border border-border bg-muted/60 text-indigo-600 transition-colors hover:bg-muted dark:text-indigo-400"
           >
             <RefreshCw size={14} strokeWidth={1.75} className={isRefreshing ? 'animate-spin' : ''} />
           </button>
