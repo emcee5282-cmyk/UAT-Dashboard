@@ -93,10 +93,9 @@ export default function TableFooter({ recordCountText, currentPage, totalPages, 
                   aria-current={p === currentPage ? 'page' : undefined}
                   className={`flex h-8 w-8 items-center justify-center rounded-full text-[13px] font-medium transition-colors duration-150 ease-out ${
                     p === currentPage
-                      ? 'text-white shadow-[0_2px_8px_-1px_var(--product-accent)]'
+                      ? 'bg-[#4f46e5] text-white shadow-[0_2px_8px_-1px_rgba(79,70,229,0.5)]'
                       : 'text-muted-foreground hover:bg-white dark:hover:bg-white/10'
                   }`}
-                  style={p === currentPage ? { background: 'var(--product-accent)' } : undefined}
                 >
                   {p}
                 </button>
