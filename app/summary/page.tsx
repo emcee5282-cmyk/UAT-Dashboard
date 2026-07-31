@@ -5,17 +5,16 @@ import { createPortal } from 'react-dom';
 import {
   Search, Columns3, ChevronUp, ChevronDown, ChevronsUpDown, Download, BookOpen, RefreshCw,
   MoreVertical, Copy, Pencil, Eye, Trash2, Inbox, Users, Banknote, ShieldCheck, CircleSlash,
+  Upload, Plus, CheckSquare, X,
 } from 'lucide-react';
 import * as XLSX from 'xlsx';
 import SettlementHeader from '../components/SettlementHeader';
 import ConnectionErrorState from '../components/ConnectionErrorState';
 import DataTable from '../components/DataTable';
-import Toolbar from '../components/Toolbar';
 import ColumnsDropdown from '../components/ColumnsDropdown';
 import TableFooter from '../components/TableFooter';
 import EmptyState from '../components/EmptyState';
 import RecordFormModal, { type RecordFormField } from '../components/RecordFormModal';
-import AddRecordDropdown from '../components/AddRecordDropdown';
 import BulkImportModal from '../components/BulkImportModal';
 import BulkEditModal, { type BulkEditUpdates } from '../components/BulkEditModal';
 import { classifyFetchError, type ClassifiedError, assertAllOk } from '../lib/errors';
@@ -26,10 +25,195 @@ import { SETTLEMENT_BRAND_OPTIONS } from '../lib/topupOptions';
 import { fmtAbbrev } from '@/app/lib/format';
 import { TABLE_STICKY_HEADER_SHADOW_CLASS } from '../design-system/shadows';
 
-// Ghost button — copied verbatim from Settlement's own toolbar button style
-// (app/stlm/page.tsx), same as Top Up already adopted.
-const GHOST_BUTTON =
-  'inline-flex h-9 items-center gap-1.5 rounded-[8px] border border-[#E2E8F0] px-3 text-[13px] font-medium text-[#475569] transition-[color,background-color,transform] duration-150 ease-[var(--ease-out-strong)] hover:bg-[#E2E8F0] active:scale-[0.97] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#2563EB] dark:border-[#3a3a3d] dark:text-[#9CA3AF] dark:hover:bg-white/5';
+// Responsive action buttons (Upload/Export) — icon+text when the viewport
+// has room, collapsing to icon-only (40x40, no padding) once space gets
+// tight. Copied verbatim from Settlement (app/stlm/page.tsx) so this page's
+// toolbar matches its style/arrangement exactly, per explicit instruction.
+const ICON_BUTTON =
+  'flex h-10 w-10 xl:w-auto shrink-0 items-center justify-center xl:justify-start gap-1.5 rounded-[12px] border border-[#E2E8F0] bg-white px-0 xl:px-3 text-[13px] font-medium text-[#475569] transition-[color,background-color,border-color,box-shadow,transform] duration-150 ease-[var(--ease-out-strong)] hover:border-[#2563EB] hover:bg-[#F1F5F9] hover:ring-2 hover:ring-[#2563EB]/20 active:scale-[0.97] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#2563EB] dark:border-[#3a3a3d] dark:bg-[#2a2a2d] dark:text-[#9CA3AF] dark:hover:bg-white/5';
+
+// Always-icon-only variant (never shows a text label) — Refresh/Columns
+// per explicit instruction, tooltip carries the label instead.
+const ICON_ONLY_BUTTON =
+  'flex h-10 w-10 shrink-0 items-center justify-center rounded-[12px] border border-[#E2E8F0] bg-white text-[13px] font-medium text-[#475569] transition-[color,background-color,border-color,box-shadow,transform] duration-150 ease-[var(--ease-out-strong)] hover:border-[#2563EB] hover:bg-[#F1F5F9] hover:ring-2 hover:ring-[#2563EB]/20 active:scale-[0.97] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#2563EB] dark:border-[#3a3a3d] dark:bg-[#2a2a2d] dark:text-[#9CA3AF] dark:hover:bg-white/5';
+
+// Same shell as ICON_BUTTON — border, white bg, hover/active treatment all
+// identical — with only the text/icon color swapped to indigo. Replaces
+// the old solid-indigo-fill "+ Add" button per explicit instruction: no
+// more filled CTA, just a colored label on the same neutral button shell
+// as Refresh/Export/Columns.
+const NEW_BUTTON =
+  'flex h-10 w-10 xl:w-auto shrink-0 items-center justify-center xl:justify-start gap-1.5 rounded-[12px] border border-[#E2E8F0] bg-white px-0 xl:px-3 text-[13px] font-medium text-indigo-600 transition-[color,background-color,border-color,box-shadow,transform] duration-150 ease-[var(--ease-out-strong)] hover:border-[#2563EB] hover:bg-[#F1F5F9] hover:ring-2 hover:ring-[#2563EB]/20 active:scale-[0.97] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#2563EB] dark:border-[#3a3a3d] dark:bg-[#2a2a2d] dark:text-indigo-400 dark:hover:bg-white/5';
+
+// Shared hover/focus-driven tooltip state — portal-rendered so it's never
+// clipped by the toolbar's overflow-x-auto. Copied verbatim from Balance
+// (app/agentbal/page.tsx) — page-local by established project convention.
+function useTooltip(triggerRef: React.RefObject<HTMLElement | null>) {
+  const [open, setOpen] = useState(false);
+  const [rendered, setRendered] = useState(false);
+  const [pos, setPos] = useState({ top: 0, left: 0 });
+
+  useEffect(() => {
+    if (open) {
+      const rect = triggerRef.current?.getBoundingClientRect();
+      if (rect) setPos({ top: rect.top - 8, left: rect.left + rect.width / 2 });
+      setRendered(true);
+    } else {
+      const timeout = setTimeout(() => setRendered(false), 150);
+      return () => clearTimeout(timeout);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open]);
+
+  return {
+    open,
+    rendered,
+    pos,
+    handlers: {
+      onMouseEnter: () => setOpen(true),
+      onMouseLeave: () => setOpen(false),
+      onFocus: () => setOpen(true),
+      onBlur: () => setOpen(false),
+    },
+  };
+}
+
+// Dark, arrow-tipped, fade-in tooltip — same visual language as every
+// toolbar button. `onlyWhenCompact` hides it once the button's own text
+// label is visible (xl: breakpoint), showing it again only in icon-only mode.
+function Tooltip({
+  label,
+  open,
+  pos,
+  onlyWhenCompact = false,
+}: {
+  label: string;
+  open: boolean;
+  pos: { top: number; left: number };
+  onlyWhenCompact?: boolean;
+}) {
+  if (typeof document === 'undefined') return null;
+  return createPortal(
+    <div
+      style={{ position: 'fixed', top: pos.top, left: pos.left, transform: 'translate(-50%, -100%)' }}
+      className={`pointer-events-none z-[9999] whitespace-nowrap rounded-md bg-[#1F2937] px-2.5 py-1.5 text-[12px] text-white transition-opacity duration-150 ease-out ${
+        open ? 'opacity-100' : 'opacity-0'
+      } ${onlyWhenCompact ? 'xl:hidden' : ''}`}
+    >
+      {label}
+      <span className="absolute left-1/2 top-full h-2 w-2 -translate-x-1/2 -translate-y-1/2 rotate-45 bg-[#1F2937]" />
+    </div>,
+    document.body
+  );
+}
+
+// Bulk Actions dropdown — appears alongside (never instead of) the
+// standard toolbar per the bulk-selection spec: New/Upload/Export/Refresh/
+// Columns stay exactly where they are; this is purely an added segment
+// while 1+ rows are checked. Portal-rendered, same click-outside-close
+// pattern as RowActionsCell's own kebab menu. Copied verbatim from
+// Settlement (app/stlm/page.tsx).
+function BulkActionsMenu({
+  count,
+  onBulkEdit,
+  onExportSelected,
+  onClearSelection,
+}: {
+  count: number;
+  onBulkEdit: () => void;
+  onExportSelected: () => void;
+  onClearSelection: () => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const [pos, setPos] = useState({ top: 0, left: 0 });
+  const btnRef = useRef<HTMLButtonElement>(null);
+  const menuRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!open) return;
+    const handlePointerDown = (event: MouseEvent) => {
+      const target = event.target as Node;
+      if (
+        btnRef.current && !btnRef.current.contains(target) &&
+        menuRef.current && !menuRef.current.contains(target)
+      ) {
+        setOpen(false);
+      }
+    };
+    document.addEventListener('mousedown', handlePointerDown);
+    return () => document.removeEventListener('mousedown', handlePointerDown);
+  }, [open]);
+
+  return (
+    <div className="flex items-center gap-2 dt-bar-fade-in">
+      <span className="flex items-center gap-1.5 text-[13px] font-medium text-foreground">
+        <CheckSquare size={15} className="text-indigo-600 dark:text-indigo-400" />
+        {count} Selected
+      </span>
+      <div className="relative">
+        <button
+          type="button"
+          ref={btnRef}
+          onClick={() => {
+            const rect = btnRef.current?.getBoundingClientRect();
+            if (rect) setPos({ top: rect.bottom + 6, left: rect.left });
+            setOpen((current) => !current);
+          }}
+          aria-haspopup="true"
+          aria-expanded={open}
+          className="inline-flex h-9 items-center gap-1.5 rounded-[8px] bg-indigo-600 px-3 text-[13px] font-medium text-white transition-colors hover:bg-indigo-700 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#2563EB]"
+        >
+          Bulk Actions
+          <ChevronDown size={14} className={`transition-transform duration-150 ease-[var(--ease-in-out-strong)] ${open ? 'rotate-180' : ''}`} />
+        </button>
+        {open && typeof document !== 'undefined' && createPortal(
+          <div
+            ref={menuRef}
+            style={{ position: 'fixed', top: pos.top, left: pos.left }}
+            className="z-[9999] w-48 rounded-xl border border-[#e5e5e7] bg-white p-1 shadow-xl dark:border-[#3a3a3d] dark:bg-[#2a2a2d]"
+            onClick={(event) => event.stopPropagation()}
+          >
+            <button
+              type="button"
+              onClick={() => { setOpen(false); onBulkEdit(); }}
+              className="flex w-full items-center gap-2 rounded-lg px-2.5 py-1.5 text-left text-[12px] font-normal text-[#475569] transition-colors hover:bg-[#F1F5F9] dark:text-[#9CA3AF] dark:hover:bg-white/5"
+            >
+              <Pencil size={13} />
+              Bulk Edit
+            </button>
+            <button
+              type="button"
+              onClick={() => { setOpen(false); onExportSelected(); }}
+              className="flex w-full items-center gap-2 rounded-lg px-2.5 py-1.5 text-left text-[12px] font-normal text-[#475569] transition-colors hover:bg-[#F1F5F9] dark:text-[#9CA3AF] dark:hover:bg-white/5"
+            >
+              <Download size={13} />
+              Export Selected
+            </button>
+            <button
+              type="button"
+              disabled
+              title="Coming soon"
+              className="flex w-full cursor-not-allowed items-center gap-2 rounded-lg px-2.5 py-1.5 text-left text-[12px] font-normal text-[#b3b8c2] dark:text-[#5a5f66]"
+            >
+              <Trash2 size={13} />
+              Delete Selected
+            </button>
+            <div className="my-1 border-t border-[#F1F5F9] dark:border-[#2f2f32]" />
+            <button
+              type="button"
+              onClick={() => { setOpen(false); onClearSelection(); }}
+              className="flex w-full items-center gap-2 rounded-lg px-2.5 py-1.5 text-left text-[12px] font-normal text-[#475569] transition-colors hover:bg-[#F1F5F9] dark:text-[#9CA3AF] dark:hover:bg-white/5"
+            >
+              <X size={13} />
+              Clear Selection
+            </button>
+          </div>,
+          document.body
+        )}
+      </div>
+    </div>
+  );
+}
 
 // Row-skeleton bar widths, cycled by row+column index so loading rows read
 // as varied text lengths instead of one uniform bar repeated everywhere.
@@ -482,6 +666,15 @@ export default function Summary() {
   const [columnsMenuOpen, setColumnsMenuOpen] = useState(false);
   const [mounted, setMounted] = useState(false);
   const columnsButtonRef = useRef<HTMLButtonElement>(null);
+  const uploadButtonRef = useRef<HTMLButtonElement>(null);
+  const newButtonRef = useRef<HTMLButtonElement>(null);
+  const refreshButtonRef = useRef<HTMLButtonElement>(null);
+  const exportButtonRef = useRef<HTMLButtonElement>(null);
+  const uploadTooltip = useTooltip(uploadButtonRef);
+  const newTooltip = useTooltip(newButtonRef);
+  const refreshTooltip = useTooltip(refreshButtonRef);
+  const exportTooltip = useTooltip(exportButtonRef);
+  const columnsTooltip = useTooltip(columnsButtonRef);
 
   const [editingRow, setEditingRow] = useState<Row | null>(null);
   const [newRecordOpen, setNewRecordOpen] = useState(false);
@@ -718,7 +911,10 @@ export default function Summary() {
     { key: 'sdp', label: 'SDP', kind: 'amount' },
   ], []);
 
-  const handleExport = useCallback(() => {
+  // Optional `rowsOverride`/`fileTag` let the Bulk Actions dropdown's own
+  // "Export Selected" reuse this same export path against just the
+  // checked rows, instead of duplicating the worksheet-building logic.
+  const handleExport = useCallback((rowsOverride?: Row[], fileTag: string = 'OPENING_BALANCE') => {
     const getExportValue = (row: Row, key: ColumnKey) => {
       switch (key) {
         case 'brand':
@@ -740,7 +936,7 @@ export default function Summary() {
 
     const exportColumns = visibleColumns.filter((col) => col.key !== COLUMN_IDS.ACTIONS);
     const headers = exportColumns.map((col) => col.label);
-    const data = sortedRows.map((row) => exportColumns.map((col) => getExportValue(row, col.key)));
+    const data = (rowsOverride ?? sortedRows).map((row) => exportColumns.map((col) => getExportValue(row, col.key)));
 
     const worksheet = XLSX.utils.aoa_to_sheet([headers, ...data]);
     worksheet['!cols'] = headers.map(() => ({ wch: 16 }));
@@ -751,8 +947,13 @@ export default function Summary() {
     const now = new Date();
     const datePart = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
     const timePart = `${String(now.getHours()).padStart(2, '0')}${String(now.getMinutes()).padStart(2, '0')}`;
-    XLSX.writeFile(workbook, `SSP1_OPENING_BALANCE_${datePart}_${timePart}.xlsx`);
+    XLSX.writeFile(workbook, `SSP1_${fileTag}_${datePart}_${timePart}.xlsx`);
   }, [sortedRows, visibleColumns]);
+
+  const handleExportSelected = useCallback(() => {
+    const selectedRows = sortedRows.filter((row) => selectedIds.has(row._id));
+    handleExport(selectedRows, 'OPENING_BALANCE_SELECTED');
+  }, [sortedRows, selectedIds, handleExport]);
 
   const clearSearch = useCallback(() => {
     setSearchTerm('');
@@ -874,91 +1075,105 @@ export default function Summary() {
 
         {!error && (
           <DataTable>
-            <Toolbar>
-              <Toolbar.Left>
-                <div className="flex h-10 w-full min-w-[200px] items-center gap-2 rounded-[10px] border border-[#E5E7EB] bg-white px-[14px] transition-colors focus-within:border-[#2563EB] focus-within:ring-2 focus-within:ring-[#2563EB]/20 dark:border-[#3a3a3d] dark:bg-[#2a2a2d] sm:w-[380px]">
-                  {loading ? (
-                    <div className="dt-skeleton h-3 w-32 rounded-md" />
-                  ) : (
-                    <>
-                      <Search size={16} className="shrink-0 text-[#94A3B8]" />
-                      <input
-                        aria-label="Search shops or brands"
-                        value={searchTerm}
-                        onChange={(event) => setSearchTerm(event.target.value)}
-                        className="flex-1 bg-transparent text-[13px] font-normal text-[#111827] placeholder:text-[#94A3B8] outline-none border-none dark:text-[#E5E7EB]"
-                        placeholder="Search shops or brands..."
-                      />
-                    </>
-                  )}
+            <div className="flex shrink-0 flex-nowrap items-center overflow-x-auto border-b border-[#E5E7EB] px-4 py-3 dark:border-[#3a3a3d]">
+              <div className="flex h-10 flex-1 min-w-[200px] items-center gap-2 rounded-full border border-[#E5E7EB] bg-white px-[16px] transition-colors focus-within:border-[#2563EB] focus-within:ring-2 focus-within:ring-[#2563EB]/20 dark:border-[#3a3a3d] dark:bg-[#2a2a2d]">
+                {loading ? (
+                  <div className="h-3 w-32 dt-skeleton rounded-md" />
+                ) : (
+                  <>
+                    <Search size={16} className="shrink-0 text-[#475569] dark:text-[#9CA3AF]" />
+                    <input
+                      aria-label="Search shops or brands"
+                      value={searchTerm}
+                      onChange={(event) => setSearchTerm(event.target.value)}
+                      className="flex-1 bg-transparent text-[13px] font-normal text-[#111827] placeholder:text-[#94A3B8] outline-none border-none dark:text-[#E5E7EB]"
+                      placeholder="Search shops or brands..."
+                    />
+                  </>
+                )}
+              </div>
+
+              {/* Selection indicator + Bulk Actions — an ADDED segment, never
+                  a replacement. New/Upload/Export/Refresh/Columns below stay
+                  exactly where they are whether or not anything is selected,
+                  per the standard bulk-selection toolbar spec (no layout
+                  shift, no hidden primary actions). */}
+              {!loading && selectionBarRendered && (
+                <div className="ml-3 flex shrink-0 items-center">
+                  <BulkActionsMenu
+                    count={selectedIds.size}
+                    onBulkEdit={() => setBulkEditOpen(true)}
+                    onExportSelected={handleExportSelected}
+                    onClearSelection={() => setSelectedIds(new Set())}
+                  />
                 </div>
-              </Toolbar.Left>
-              <Toolbar.Right>
-                {loading && (
-                  <>
-                    <div className="dt-skeleton h-9 w-[76px] rounded-[8px]" />
-                    <div className="dt-skeleton h-8 w-8 rounded-[8px]" />
-                    <div className="dt-skeleton h-9 w-[88px] rounded-[8px]" />
-                    <div className="dt-skeleton h-9 w-[104px] rounded-[8px]" />
-                  </>
-                )}
-                {!loading && (
-                  <>
-                    {selectionBarRendered ? (
-                      <div className="flex flex-wrap items-center gap-3 dt-bar-fade-in">
-                        <span className="text-[13px] font-medium text-foreground">{selectedIds.size} Selected</span>
-                        <button
-                          type="button"
-                          onClick={() => setBulkEditOpen(true)}
-                          className="inline-flex h-9 items-center rounded-[8px] bg-indigo-600 px-3 text-[13px] font-medium text-white transition-colors hover:bg-indigo-700 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#2563EB]"
-                        >
-                          Bulk Edit
-                        </button>
-                      </div>
-                    ) : (
-                      <AddRecordDropdown
-                        templateModule="openingCashout"
-                        onNewRecord={() => setNewRecordOpen(true)}
-                        onBulkImport={() => setBulkImportOpen(true)}
-                        buttonClassName="bg-indigo-600 hover:bg-indigo-700"
-                      />
-                    )}
-                    <button type="button" onClick={fetchData} aria-label="Refresh" title="Refresh" className={GHOST_BUTTON}>
-                      <RefreshCw size={15} className={spinning ? 'animate-spin' : ''} />
+              )}
+
+              {loading ? (
+                <div className="ml-3 flex shrink-0 items-center gap-3">
+                  <div className="h-10 w-10 shrink-0 dt-skeleton rounded-[12px] xl:w-[92px]" />
+                  <div className="h-10 w-10 shrink-0 dt-skeleton rounded-[12px] xl:w-[92px]" />
+                  <div className="h-10 w-10 shrink-0 dt-skeleton rounded-[12px] xl:w-[88px]" />
+                  <div className="h-10 w-10 shrink-0 dt-skeleton rounded-[12px]" />
+                  <div className="h-10 w-10 shrink-0 dt-skeleton rounded-[12px]" />
+                </div>
+              ) : (
+                <div className="ml-3 flex shrink-0 items-center gap-3">
+                  <div className="relative">
+                    <button type="button" ref={newButtonRef} onClick={() => setNewRecordOpen(true)} aria-label="New" {...newTooltip.handlers} className={NEW_BUTTON}>
+                      <Plus size={16} />
+                      <span className="hidden xl:inline">New</span>
                     </button>
-                    <button type="button" onClick={handleExport} aria-label="Export to Excel" title="Export to Excel" className={GHOST_BUTTON}>
-                      <Download size={15} />
-                      Export
+                    {newTooltip.rendered && <Tooltip label="New" open={newTooltip.open} pos={newTooltip.pos} onlyWhenCompact />}
+                  </div>
+                  <div className="relative">
+                    <button type="button" ref={uploadButtonRef} onClick={() => setBulkImportOpen(true)} aria-label="Upload" {...uploadTooltip.handlers} className={ICON_BUTTON}>
+                      <Upload size={16} />
+                      <span className="hidden xl:inline">Upload</span>
                     </button>
-                    <div className="relative">
-                      <button
-                        type="button"
-                        ref={columnsButtonRef}
-                        onClick={() => setColumnsMenuOpen((current) => !current)}
-                        aria-haspopup="true"
-                        aria-expanded={columnsMenuOpen}
-                        aria-controls="opening-columns-popover"
-                        aria-label="Columns"
-                        title="Columns"
-                        className={GHOST_BUTTON}
-                      >
-                        <Columns3 size={15} />
-                        Columns
-                      </button>
-                      <ColumnsDropdown
-                        id="opening-columns-popover"
-                        open={columnsMenuOpen}
-                        onOpenChange={setColumnsMenuOpen}
-                        anchorRef={columnsButtonRef}
-                        columns={columnDefs}
-                        onToggle={(key) => setColumnDefs((current) => current.map((c) => (c.key === key ? { ...c, visible: !c.visible } : c)))}
-                        onRestoreDefaults={() => setColumnDefs(DEFAULT_COLUMNS.map((col) => ({ ...col })))}
-                      />
-                    </div>
-                  </>
-                )}
-              </Toolbar.Right>
-            </Toolbar>
+                    {uploadTooltip.rendered && <Tooltip label="Upload" open={uploadTooltip.open} pos={uploadTooltip.pos} onlyWhenCompact />}
+                  </div>
+                  <div className="relative">
+                    <button type="button" ref={exportButtonRef} onClick={() => handleExport()} aria-label="Export to Excel" {...exportTooltip.handlers} className={ICON_BUTTON}>
+                      <Download size={16} />
+                      <span className="hidden xl:inline">Export</span>
+                    </button>
+                    {exportTooltip.rendered && <Tooltip label="Export" open={exportTooltip.open} pos={exportTooltip.pos} onlyWhenCompact />}
+                  </div>
+                  <div className="relative">
+                    <button type="button" ref={refreshButtonRef} onClick={fetchData} aria-label="Refresh Data" {...refreshTooltip.handlers} className={ICON_ONLY_BUTTON}>
+                      <RefreshCw size={16} className={spinning ? 'animate-spin' : ''} />
+                    </button>
+                    {refreshTooltip.rendered && <Tooltip label="Refresh Data" open={refreshTooltip.open} pos={refreshTooltip.pos} />}
+                  </div>
+                  <div className="relative">
+                    <button
+                      type="button"
+                      ref={columnsButtonRef}
+                      onClick={() => setColumnsMenuOpen((current) => !current)}
+                      aria-haspopup="true"
+                      aria-expanded={columnsMenuOpen}
+                      aria-controls="opening-columns-popover"
+                      aria-label="Customize Columns"
+                      {...columnsTooltip.handlers}
+                      className={ICON_ONLY_BUTTON}
+                    >
+                      <Columns3 size={16} />
+                    </button>
+                    {columnsTooltip.rendered && <Tooltip label="Customize Columns" open={columnsTooltip.open} pos={columnsTooltip.pos} />}
+                    <ColumnsDropdown
+                      id="opening-columns-popover"
+                      open={columnsMenuOpen}
+                      onOpenChange={setColumnsMenuOpen}
+                      anchorRef={columnsButtonRef}
+                      columns={columnDefs}
+                      onToggle={(key) => setColumnDefs((current) => current.map((c) => (c.key === key ? { ...c, visible: !c.visible } : c)))}
+                      onRestoreDefaults={() => setColumnDefs(DEFAULT_COLUMNS.map((col) => ({ ...col })))}
+                    />
+                  </div>
+                </div>
+              )}
+            </div>
             <div className="hidden h-1.5 shrink-0 sm:block" />
             <div className="relative hidden flex-1 min-h-0 sm:block">
               <div ref={tableScrollRef} className="dt-scroll h-full overflow-y-auto overflow-x-auto">
