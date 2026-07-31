@@ -38,13 +38,14 @@ const ICON_ONLY_BUTTON =
   'flex h-10 w-10 shrink-0 items-center justify-center rounded-[12px] border border-[#E2E8F0] bg-white text-[13px] font-medium text-[#475569] transition-[color,background-color,border-color,box-shadow,transform] duration-150 ease-[var(--ease-out-strong)] hover:border-[#2563EB] hover:bg-[#F1F5F9] hover:ring-2 hover:ring-[#2563EB]/20 active:scale-[0.97] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#2563EB] dark:border-[#3a3a3d] dark:bg-[#2a2a2d] dark:text-[#9CA3AF] dark:hover:bg-white/5';
 
 // Same shell as ICON_BUTTON — border, white bg, hover/active treatment all
-// identical — with only the text/icon color swapped to Send Money's own
-// teal --product-accent (Cashout's equivalent uses indigo instead — see
-// app/summary/page.tsx). Replaces the old solid-fill "+ Add" button per
-// explicit instruction: no more filled CTA, just a colored label on the
-// same neutral button shell as Refresh/Export/Columns.
+// identical — with only the text/icon color swapped to indigo. Kept the
+// SAME indigo as Cashout (not Send Money's own teal --product-accent)
+// per explicit instruction: selected-row/Bulk Actions/New should read
+// identically across both products, not per-product themed. Replaces the
+// old solid-fill "+ Add" button: no more filled CTA, just a colored label
+// on the same neutral button shell as Refresh/Export/Columns.
 const NEW_BUTTON =
-  'flex h-10 w-10 xl:w-auto shrink-0 items-center justify-center xl:justify-start gap-1.5 rounded-[12px] border border-[#E2E8F0] bg-white px-0 xl:px-3 text-[13px] font-medium text-[color:var(--product-accent)] transition-[color,background-color,border-color,box-shadow,transform] duration-150 ease-[var(--ease-out-strong)] hover:border-[#2563EB] hover:bg-[#F1F5F9] hover:ring-2 hover:ring-[#2563EB]/20 active:scale-[0.97] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#2563EB] dark:border-[#3a3a3d] dark:bg-[#2a2a2d] dark:hover:bg-white/5';
+  'flex h-10 w-10 xl:w-auto shrink-0 items-center justify-center xl:justify-start gap-1.5 rounded-[12px] border border-[#E2E8F0] bg-white px-0 xl:px-3 text-[13px] font-medium text-indigo-600 transition-[color,background-color,border-color,box-shadow,transform] duration-150 ease-[var(--ease-out-strong)] hover:border-[#2563EB] hover:bg-[#F1F5F9] hover:ring-2 hover:ring-[#2563EB]/20 active:scale-[0.97] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#2563EB] dark:border-[#3a3a3d] dark:bg-[#2a2a2d] dark:text-indigo-400 dark:hover:bg-white/5';
 
 // Shared hover/focus-driven tooltip state — portal-rendered so it's never
 // clipped by the toolbar's overflow-x-auto. Copied verbatim from Balance
@@ -112,8 +113,9 @@ function Tooltip({
 // standard toolbar per the bulk-selection spec: New/Upload/Export/Refresh/
 // Columns stay exactly where they are; this is purely an added segment
 // while 1+ rows are checked. Portal-rendered, same click-outside-close
-// pattern as RowActionsCell's own kebab menu. Trigger uses Send Money's
-// own --product-accent (teal) instead of Cashout's hardcoded indigo.
+// pattern as RowActionsCell's own kebab menu. Uses the SAME indigo as
+// Cashout (not Send Money's own teal --product-accent) per explicit
+// instruction — selection UI should read identically across both products.
 function BulkActionsMenu({
   count,
   onBulkEdit,
@@ -148,7 +150,7 @@ function BulkActionsMenu({
   return (
     <div className="flex items-center gap-2 dt-bar-fade-in">
       <span className="flex items-center gap-1.5 text-[13px] font-medium text-foreground">
-        <CheckSquare size={15} className="text-[color:var(--product-accent)]" />
+        <CheckSquare size={15} className="text-indigo-600 dark:text-indigo-400" />
         {count} Selected
       </span>
       <div className="relative">
@@ -162,7 +164,7 @@ function BulkActionsMenu({
           }}
           aria-haspopup="true"
           aria-expanded={open}
-          className="inline-flex h-9 items-center gap-1.5 rounded-[8px] bg-[color:var(--product-accent)] px-3 text-[13px] font-medium text-white transition-colors hover:opacity-90 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#2563EB]"
+          className="inline-flex h-9 items-center gap-1.5 rounded-[8px] bg-indigo-600 px-3 text-[13px] font-medium text-white transition-colors hover:bg-indigo-700 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#2563EB]"
         >
           Bulk Actions
           <ChevronDown size={14} className={`transition-transform duration-150 ease-[var(--ease-in-out-strong)] ${open ? 'rotate-180' : ''}`} />
@@ -1386,7 +1388,7 @@ export default function SendMoneyOpeningPage() {
                         aria-selected={isChecked}
                         className={`h-[52px] cursor-pointer border-b border-[#ECEFF3] last:border-0 dark:border-[#2f2f32] transition-colors duration-150 ease-out focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-[#2563EB] ${
                           isChecked
-                            ? 'bg-[color:var(--product-accent-soft)]'
+                            ? 'bg-[rgba(79,70,229,0.08)] dark:bg-[rgba(129,140,248,0.12)]'
                             : 'hover:bg-black/[0.02] dark:hover:bg-white/[0.025]'
                         }`}
                       >
