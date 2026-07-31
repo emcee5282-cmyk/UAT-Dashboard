@@ -2,7 +2,7 @@
 
 import { useEffect, useState, useCallback, useMemo, useRef } from 'react';
 import { createPortal } from 'react-dom';
-import { Search, ChevronUp, ChevronDown, ChevronsUpDown, Columns3, Download, ArrowLeftRight, RefreshCw, MoreVertical, Copy, Pencil, Eye, Trash2, Inbox, Hash, Banknote, Tag, User, Wallet as WalletIcon, FilterX, Upload, Plus } from 'lucide-react';
+import { Search, ChevronUp, ChevronDown, ChevronsUpDown, Columns3, Download, ArrowLeftRight, RefreshCw, MoreVertical, Copy, Pencil, Eye, Trash2, Inbox, Hash, Banknote, Tag, User, Wallet as WalletIcon, FilterX, Upload, Plus, CheckSquare, X } from 'lucide-react';
 import * as XLSX from 'xlsx';
 import SettlementHeader from '@/app/components/SettlementHeader';
 import FilterDropdown from '@/app/components/FilterDropdown';
@@ -183,6 +183,115 @@ function ResetFiltersButton({ anyFilterActive, onClick }: { anyFilterActive: boo
         <FilterX size={20} fill={anyFilterActive ? 'currentColor' : 'none'} />
       </button>
       {tooltip.rendered && <Tooltip label="Reset all filters" open={tooltip.open} pos={tooltip.pos} />}
+    </div>
+  );
+}
+
+// Bulk Actions dropdown — appears alongside (never instead of) the
+// standard toolbar per the bulk-selection spec: New/Upload/Export/Refresh/
+// Columns stay exactly where they are; this is purely an added segment
+// while 1+ rows are checked. Portal-rendered, same click-outside-close
+// pattern as RowActionsCell's own kebab menu. Trigger uses Send Money's
+// own --product-accent (teal) instead of Cashout's hardcoded indigo — see
+// app/stlm/page.tsx for that version.
+function BulkActionsMenu({
+  count,
+  onBulkEdit,
+  onExportSelected,
+  onClearSelection,
+}: {
+  count: number;
+  onBulkEdit: () => void;
+  onExportSelected: () => void;
+  onClearSelection: () => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const [pos, setPos] = useState({ top: 0, left: 0 });
+  const btnRef = useRef<HTMLButtonElement>(null);
+  const menuRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!open) return;
+    const handlePointerDown = (event: MouseEvent) => {
+      const target = event.target as Node;
+      if (
+        btnRef.current && !btnRef.current.contains(target) &&
+        menuRef.current && !menuRef.current.contains(target)
+      ) {
+        setOpen(false);
+      }
+    };
+    document.addEventListener('mousedown', handlePointerDown);
+    return () => document.removeEventListener('mousedown', handlePointerDown);
+  }, [open]);
+
+  return (
+    <div className="flex items-center gap-2 dt-bar-fade-in">
+      <span className="flex items-center gap-1.5 text-[13px] font-medium text-foreground">
+        <CheckSquare size={15} className="text-[color:var(--product-accent)]" />
+        {count} Selected
+      </span>
+      <div className="relative">
+        <button
+          type="button"
+          ref={btnRef}
+          onClick={() => {
+            const rect = btnRef.current?.getBoundingClientRect();
+            if (rect) setPos({ top: rect.bottom + 6, left: rect.left });
+            setOpen((current) => !current);
+          }}
+          aria-haspopup="true"
+          aria-expanded={open}
+          className="inline-flex h-9 items-center gap-1.5 rounded-[8px] bg-[color:var(--product-accent)] px-3 text-[13px] font-medium text-white transition-colors hover:opacity-90 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#2563EB]"
+        >
+          Bulk Actions
+          <ChevronDown size={14} className={`transition-transform duration-150 ease-[var(--ease-in-out-strong)] ${open ? 'rotate-180' : ''}`} />
+        </button>
+        {open && typeof document !== 'undefined' && createPortal(
+          <div
+            ref={menuRef}
+            style={{ position: 'fixed', top: pos.top, left: pos.left }}
+            className="z-[9999] w-48 rounded-xl border border-[#e5e5e7] bg-white p-1 shadow-xl dark:border-[#3a3a3d] dark:bg-[#2a2a2d]"
+            onClick={(event) => event.stopPropagation()}
+          >
+            <button
+              type="button"
+              onClick={() => { setOpen(false); onBulkEdit(); }}
+              className="flex w-full items-center gap-2 rounded-lg px-2.5 py-1.5 text-left text-[12px] font-normal text-[#475569] transition-colors hover:bg-[#F1F5F9] dark:text-[#9CA3AF] dark:hover:bg-white/5"
+            >
+              <Pencil size={13} />
+              Bulk Edit
+            </button>
+            <button
+              type="button"
+              onClick={() => { setOpen(false); onExportSelected(); }}
+              className="flex w-full items-center gap-2 rounded-lg px-2.5 py-1.5 text-left text-[12px] font-normal text-[#475569] transition-colors hover:bg-[#F1F5F9] dark:text-[#9CA3AF] dark:hover:bg-white/5"
+            >
+              <Download size={13} />
+              Export Selected
+            </button>
+            <button
+              type="button"
+              disabled
+              title="Coming soon"
+              className="flex w-full cursor-not-allowed items-center gap-2 rounded-lg px-2.5 py-1.5 text-left text-[12px] font-normal text-[#b3b8c2] dark:text-[#5a5f66]"
+            >
+              <Trash2 size={13} />
+              Delete Selected
+            </button>
+            <div className="my-1 border-t border-[#F1F5F9] dark:border-[#2f2f32]" />
+            <button
+              type="button"
+              onClick={() => { setOpen(false); onClearSelection(); }}
+              className="flex w-full items-center gap-2 rounded-lg px-2.5 py-1.5 text-left text-[12px] font-normal text-[#475569] transition-colors hover:bg-[#F1F5F9] dark:text-[#9CA3AF] dark:hover:bg-white/5"
+            >
+              <X size={13} />
+              Clear Selection
+            </button>
+          </div>,
+          document.body
+        )}
+      </div>
     </div>
   );
 }
@@ -1276,7 +1385,10 @@ export default function SendMoneySettlementPage() {
     { key: 'date', label: 'Date', kind: 'date', required: true },
   ], [openingAgentNames]);
 
-  const handleExport = useCallback(() => {
+  // Optional `rowsOverride`/`fileTag` let the Bulk Actions dropdown's own
+  // "Export Selected" reuse this same export path against just the
+  // checked rows, instead of duplicating the worksheet-building logic.
+  const handleExport = useCallback((rowsOverride?: StlmRow[], fileTag: string = 'SETTLEMENT') => {
     const getExportValue = (row: StlmRow, key: ColumnKey) => {
       switch (key) {
         case 'brand':
@@ -1300,7 +1412,7 @@ export default function SendMoneySettlementPage() {
 
     const exportColumns = visibleColumns.filter((col) => col.key !== COLUMN_IDS.ACTIONS);
     const headers = exportColumns.map((col) => col.label);
-    const data = sortedRows.map((row) => exportColumns.map((col) => getExportValue(row, col.key)));
+    const data = (rowsOverride ?? sortedRows).map((row) => exportColumns.map((col) => getExportValue(row, col.key)));
 
     const worksheet = XLSX.utils.aoa_to_sheet([headers, ...data]);
     worksheet['!cols'] = headers.map(() => ({ wch: 16 }));
@@ -1311,8 +1423,13 @@ export default function SendMoneySettlementPage() {
     const now = new Date();
     const datePart = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
     const timePart = `${String(now.getHours()).padStart(2, '0')}${String(now.getMinutes()).padStart(2, '0')}`;
-    XLSX.writeFile(workbook, `SENDMONEY_SETTLEMENT_${datePart}_${timePart}.xlsx`);
+    XLSX.writeFile(workbook, `SENDMONEY_${fileTag}_${datePart}_${timePart}.xlsx`);
   }, [sortedRows, visibleColumns]);
+
+  const handleExportSelected = useCallback(() => {
+    const selectedRows = sortedRows.filter((row) => selectedIds.has(row._id));
+    handleExport(selectedRows, 'SETTLEMENT_SELECTED');
+  }, [sortedRows, selectedIds, handleExport]);
 
   // Clears the free-text search — matches Cashout Settlement's own "Clear
   // Search" behavior exactly.
@@ -1526,6 +1643,22 @@ export default function SendMoneySettlementPage() {
                 )}
               </div>
 
+              {/* Selection indicator + Bulk Actions — an ADDED segment, never
+                  a replacement. New/Upload/Export/Refresh/Columns below stay
+                  exactly where they are whether or not anything is selected,
+                  per the standard bulk-selection toolbar spec (no layout
+                  shift, no hidden primary actions). */}
+              {!loading && selectionBarRendered && (
+                <div className="ml-3 flex shrink-0 items-center">
+                  <BulkActionsMenu
+                    count={selectedIds.size}
+                    onBulkEdit={() => setBulkEditOpen(true)}
+                    onExportSelected={handleExportSelected}
+                    onClearSelection={() => setSelectedIds(new Set())}
+                  />
+                </div>
+              )}
+
               {loading ? (
                 <div className="ml-3 flex shrink-0 items-center gap-3">
                   <div className="h-10 w-10 shrink-0 dt-skeleton rounded-[12px] xl:w-[92px]" />
@@ -1536,37 +1669,22 @@ export default function SendMoneySettlementPage() {
                 </div>
               ) : (
                 <div className="ml-3 flex shrink-0 items-center gap-3">
-                  {selectionBarRendered ? (
-                    <div className="flex flex-wrap items-center gap-3 dt-bar-fade-in">
-                      <span className="text-[13px] font-medium text-foreground">{selectedIds.size} Selected</span>
-                      <button
-                        type="button"
-                        onClick={() => setBulkEditOpen(true)}
-                        className="inline-flex h-9 items-center rounded-[8px] bg-[color:var(--product-accent)] px-3 text-[13px] font-medium text-white transition-colors hover:opacity-90 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#2563EB]"
-                      >
-                        Bulk Edit
-                      </button>
-                    </div>
-                  ) : (
-                    <div className="relative">
-                      <button type="button" ref={newButtonRef} onClick={() => setNewRecordOpen(true)} aria-label="New" {...newTooltip.handlers} className={NEW_BUTTON}>
-                        <Plus size={16} />
-                        <span className="hidden xl:inline">New</span>
-                      </button>
-                      {newTooltip.rendered && <Tooltip label="New" open={newTooltip.open} pos={newTooltip.pos} onlyWhenCompact />}
-                    </div>
-                  )}
-                  {!selectionBarRendered && (
-                    <div className="relative">
-                      <button type="button" ref={uploadButtonRef} onClick={() => setBulkImportOpen(true)} aria-label="Upload" {...uploadTooltip.handlers} className={ICON_BUTTON}>
-                        <Upload size={16} />
-                        <span className="hidden xl:inline">Upload</span>
-                      </button>
-                      {uploadTooltip.rendered && <Tooltip label="Upload" open={uploadTooltip.open} pos={uploadTooltip.pos} onlyWhenCompact />}
-                    </div>
-                  )}
                   <div className="relative">
-                    <button type="button" ref={exportButtonRef} onClick={handleExport} aria-label="Export to Excel" {...exportTooltip.handlers} className={ICON_BUTTON}>
+                    <button type="button" ref={newButtonRef} onClick={() => setNewRecordOpen(true)} aria-label="New" {...newTooltip.handlers} className={NEW_BUTTON}>
+                      <Plus size={16} />
+                      <span className="hidden xl:inline">New</span>
+                    </button>
+                    {newTooltip.rendered && <Tooltip label="New" open={newTooltip.open} pos={newTooltip.pos} onlyWhenCompact />}
+                  </div>
+                  <div className="relative">
+                    <button type="button" ref={uploadButtonRef} onClick={() => setBulkImportOpen(true)} aria-label="Upload" {...uploadTooltip.handlers} className={ICON_BUTTON}>
+                      <Upload size={16} />
+                      <span className="hidden xl:inline">Upload</span>
+                    </button>
+                    {uploadTooltip.rendered && <Tooltip label="Upload" open={uploadTooltip.open} pos={uploadTooltip.pos} onlyWhenCompact />}
+                  </div>
+                  <div className="relative">
+                    <button type="button" ref={exportButtonRef} onClick={() => handleExport()} aria-label="Export to Excel" {...exportTooltip.handlers} className={ICON_BUTTON}>
                       <Download size={16} />
                       <span className="hidden xl:inline">Export</span>
                     </button>
