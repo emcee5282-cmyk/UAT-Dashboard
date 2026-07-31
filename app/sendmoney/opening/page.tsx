@@ -5,17 +5,17 @@ import { createPortal } from 'react-dom';
 import {
   Search, Columns3, ChevronUp, ChevronDown, ChevronsUpDown, Download, BookOpen, RefreshCw,
   MoreVertical, Copy, Pencil, Eye, Trash2, Inbox, Users, Banknote, ShieldCheck, CircleSlash,
+  Upload, Plus, CheckSquare, X, Tag, User, Wallet as WalletIcon, FilterX,
 } from 'lucide-react';
 import * as XLSX from 'xlsx';
 import SettlementHeader from '@/app/components/SettlementHeader';
-import Toolbar from '@/app/components/Toolbar';
+import FilterDropdown from '@/app/components/FilterDropdown';
 import ColumnsDropdown from '@/app/components/ColumnsDropdown';
 import DataTable from '@/app/components/DataTable';
 import TableFooter from '@/app/components/TableFooter';
 import EmptyState from '@/app/components/EmptyState';
 import ConnectionErrorState from '@/app/components/ConnectionErrorState';
 import RecordFormModal, { type RecordFormField } from '@/app/components/RecordFormModal';
-import AddRecordDropdown from '@/app/components/AddRecordDropdown';
 import BulkImportModal from '@/app/components/BulkImportModal';
 import BulkEditModal, { type BulkEditUpdates } from '@/app/components/BulkEditModal';
 import { classifyFetchError, type ClassifiedError } from '@/app/lib/errors';
@@ -24,11 +24,325 @@ import { extractSendMoneyShopName } from '@/app/lib/realShopName';
 import { getPreference, setPreference } from '@/app/lib/preferences';
 import { SETTLEMENT_BRAND_OPTIONS } from '@/app/lib/topupOptions';
 import { fmtAbbrev } from '@/app/lib/format';
-import { TABLE_STICKY_HEADER_SHADOW_CLASS } from '@/app/design-system/shadows';
 
-// Ghost button — copied verbatim from Settlement's own toolbar button style.
-const GHOST_BUTTON =
-  'inline-flex h-9 items-center gap-1.5 rounded-[8px] border border-[#E2E8F0] px-3 text-[13px] font-medium text-[#475569] transition-[color,background-color,transform] duration-150 ease-[var(--ease-out-strong)] hover:bg-[#E2E8F0] active:scale-[0.97] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#2563EB] dark:border-[#3a3a3d] dark:text-[#9CA3AF] dark:hover:bg-white/5';
+// Responsive action buttons (Upload/Export) — icon+text when the viewport
+// has room, collapsing to icon-only (40x40, no padding) once space gets
+// tight. Copied verbatim from Settlement (app/stlm/page.tsx) so this page's
+// toolbar matches its style/arrangement exactly, per explicit instruction.
+const ICON_BUTTON =
+  'flex h-10 w-10 xl:w-auto shrink-0 items-center justify-center xl:justify-start gap-1.5 rounded-[12px] border border-[#E2E8F0] bg-white px-0 xl:px-3 text-[13px] font-medium text-[#475569] transition-[color,background-color,border-color,box-shadow,transform] duration-150 ease-[var(--ease-out-strong)] hover:border-[#2563EB] hover:bg-[#F1F5F9] hover:ring-2 hover:ring-[#2563EB]/20 active:scale-[0.97] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#2563EB] dark:border-[#3a3a3d] dark:bg-[#2a2a2d] dark:text-[#9CA3AF] dark:hover:bg-white/5';
+
+// Always-icon-only variant (never shows a text label) — Refresh/Columns
+// per explicit instruction, tooltip carries the label instead.
+const ICON_ONLY_BUTTON =
+  'flex h-10 w-10 shrink-0 items-center justify-center rounded-[12px] border border-[#E2E8F0] bg-white text-[13px] font-medium text-[#475569] transition-[color,background-color,border-color,box-shadow,transform] duration-150 ease-[var(--ease-out-strong)] hover:border-[#2563EB] hover:bg-[#F1F5F9] hover:ring-2 hover:ring-[#2563EB]/20 active:scale-[0.97] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#2563EB] dark:border-[#3a3a3d] dark:bg-[#2a2a2d] dark:text-[#9CA3AF] dark:hover:bg-white/5';
+
+// Same shell as ICON_BUTTON — border, white bg, hover/active treatment all
+// identical — with only the text/icon color swapped to Send Money's own
+// teal --product-accent (Cashout's equivalent uses indigo instead — see
+// app/summary/page.tsx). Replaces the old solid-fill "+ Add" button per
+// explicit instruction: no more filled CTA, just a colored label on the
+// same neutral button shell as Refresh/Export/Columns.
+const NEW_BUTTON =
+  'flex h-10 w-10 xl:w-auto shrink-0 items-center justify-center xl:justify-start gap-1.5 rounded-[12px] border border-[#E2E8F0] bg-white px-0 xl:px-3 text-[13px] font-medium text-[color:var(--product-accent)] transition-[color,background-color,border-color,box-shadow,transform] duration-150 ease-[var(--ease-out-strong)] hover:border-[#2563EB] hover:bg-[#F1F5F9] hover:ring-2 hover:ring-[#2563EB]/20 active:scale-[0.97] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#2563EB] dark:border-[#3a3a3d] dark:bg-[#2a2a2d] dark:hover:bg-white/5';
+
+// Shared hover/focus-driven tooltip state — portal-rendered so it's never
+// clipped by the toolbar's overflow-x-auto. Copied verbatim from Balance
+// (app/agentbal/page.tsx) — page-local by established project convention.
+function useTooltip(triggerRef: React.RefObject<HTMLElement | null>) {
+  const [open, setOpen] = useState(false);
+  const [rendered, setRendered] = useState(false);
+  const [pos, setPos] = useState({ top: 0, left: 0 });
+
+  useEffect(() => {
+    if (open) {
+      const rect = triggerRef.current?.getBoundingClientRect();
+      if (rect) setPos({ top: rect.top - 8, left: rect.left + rect.width / 2 });
+      setRendered(true);
+    } else {
+      const timeout = setTimeout(() => setRendered(false), 150);
+      return () => clearTimeout(timeout);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open]);
+
+  return {
+    open,
+    rendered,
+    pos,
+    handlers: {
+      onMouseEnter: () => setOpen(true),
+      onMouseLeave: () => setOpen(false),
+      onFocus: () => setOpen(true),
+      onBlur: () => setOpen(false),
+    },
+  };
+}
+
+// Dark, arrow-tipped, fade-in tooltip — same visual language as every
+// toolbar button. `onlyWhenCompact` hides it once the button's own text
+// label is visible (xl: breakpoint), showing it again only in icon-only mode.
+function Tooltip({
+  label,
+  open,
+  pos,
+  onlyWhenCompact = false,
+}: {
+  label: string;
+  open: boolean;
+  pos: { top: number; left: number };
+  onlyWhenCompact?: boolean;
+}) {
+  if (typeof document === 'undefined') return null;
+  return createPortal(
+    <div
+      style={{ position: 'fixed', top: pos.top, left: pos.left, transform: 'translate(-50%, -100%)' }}
+      className={`pointer-events-none z-[9999] whitespace-nowrap rounded-md bg-[#1F2937] px-2.5 py-1.5 text-[12px] text-white transition-opacity duration-150 ease-out ${
+        open ? 'opacity-100' : 'opacity-0'
+      } ${onlyWhenCompact ? 'xl:hidden' : ''}`}
+    >
+      {label}
+      <span className="absolute left-1/2 top-full h-2 w-2 -translate-x-1/2 -translate-y-1/2 rotate-45 bg-[#1F2937]" />
+    </div>,
+    document.body
+  );
+}
+
+// Bulk Actions dropdown — appears alongside (never instead of) the
+// standard toolbar per the bulk-selection spec: New/Upload/Export/Refresh/
+// Columns stay exactly where they are; this is purely an added segment
+// while 1+ rows are checked. Portal-rendered, same click-outside-close
+// pattern as RowActionsCell's own kebab menu. Trigger uses Send Money's
+// own --product-accent (teal) instead of Cashout's hardcoded indigo.
+function BulkActionsMenu({
+  count,
+  onBulkEdit,
+  onExportSelected,
+  onClearSelection,
+}: {
+  count: number;
+  onBulkEdit: () => void;
+  onExportSelected: () => void;
+  onClearSelection: () => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const [pos, setPos] = useState({ top: 0, left: 0 });
+  const btnRef = useRef<HTMLButtonElement>(null);
+  const menuRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!open) return;
+    const handlePointerDown = (event: MouseEvent) => {
+      const target = event.target as Node;
+      if (
+        btnRef.current && !btnRef.current.contains(target) &&
+        menuRef.current && !menuRef.current.contains(target)
+      ) {
+        setOpen(false);
+      }
+    };
+    document.addEventListener('mousedown', handlePointerDown);
+    return () => document.removeEventListener('mousedown', handlePointerDown);
+  }, [open]);
+
+  return (
+    <div className="flex items-center gap-2 dt-bar-fade-in">
+      <span className="flex items-center gap-1.5 text-[13px] font-medium text-foreground">
+        <CheckSquare size={15} className="text-[color:var(--product-accent)]" />
+        {count} Selected
+      </span>
+      <div className="relative">
+        <button
+          type="button"
+          ref={btnRef}
+          onClick={() => {
+            const rect = btnRef.current?.getBoundingClientRect();
+            if (rect) setPos({ top: rect.bottom + 6, left: rect.left });
+            setOpen((current) => !current);
+          }}
+          aria-haspopup="true"
+          aria-expanded={open}
+          className="inline-flex h-9 items-center gap-1.5 rounded-[8px] bg-[color:var(--product-accent)] px-3 text-[13px] font-medium text-white transition-colors hover:opacity-90 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#2563EB]"
+        >
+          Bulk Actions
+          <ChevronDown size={14} className={`transition-transform duration-150 ease-[var(--ease-in-out-strong)] ${open ? 'rotate-180' : ''}`} />
+        </button>
+        {open && typeof document !== 'undefined' && createPortal(
+          <div
+            ref={menuRef}
+            style={{ position: 'fixed', top: pos.top, left: pos.left }}
+            className="z-[9999] w-48 rounded-xl border border-[#e5e5e7] bg-white p-1 shadow-xl dark:border-[#3a3a3d] dark:bg-[#2a2a2d]"
+            onClick={(event) => event.stopPropagation()}
+          >
+            <button
+              type="button"
+              onClick={() => { setOpen(false); onBulkEdit(); }}
+              className="flex w-full items-center gap-2 rounded-lg px-2.5 py-1.5 text-left text-[12px] font-normal text-[#475569] transition-colors hover:bg-[#F1F5F9] dark:text-[#9CA3AF] dark:hover:bg-white/5"
+            >
+              <Pencil size={13} />
+              Bulk Edit
+            </button>
+            <button
+              type="button"
+              onClick={() => { setOpen(false); onExportSelected(); }}
+              className="flex w-full items-center gap-2 rounded-lg px-2.5 py-1.5 text-left text-[12px] font-normal text-[#475569] transition-colors hover:bg-[#F1F5F9] dark:text-[#9CA3AF] dark:hover:bg-white/5"
+            >
+              <Download size={13} />
+              Export Selected
+            </button>
+            <button
+              type="button"
+              disabled
+              title="Coming soon"
+              className="flex w-full cursor-not-allowed items-center gap-2 rounded-lg px-2.5 py-1.5 text-left text-[12px] font-normal text-[#b3b8c2] dark:text-[#5a5f66]"
+            >
+              <Trash2 size={13} />
+              Delete Selected
+            </button>
+            <div className="my-1 border-t border-[#F1F5F9] dark:border-[#2f2f32]" />
+            <button
+              type="button"
+              onClick={() => { setOpen(false); onClearSelection(); }}
+              className="flex w-full items-center gap-2 rounded-lg px-2.5 py-1.5 text-left text-[12px] font-normal text-[#475569] transition-colors hover:bg-[#F1F5F9] dark:text-[#9CA3AF] dark:hover:bg-white/5"
+            >
+              <X size={13} />
+              Clear Selection
+            </button>
+          </div>,
+          document.body
+        )}
+      </div>
+    </div>
+  );
+}
+
+// Toolbar filter trigger — Brand/Leader/Wallet Type. Trigger only; the
+// panel beneath it is the shared FilterDropdown (app/components/
+// FilterDropdown.tsx). Copied verbatim from Balance (app/agentbal/page.tsx).
+function FilterTriggerButton({
+  label,
+  icon: Icon,
+  anyUnchecked,
+  selectedCount,
+  menuOpen,
+  buttonRef,
+  onClick,
+}: {
+  label: string;
+  icon: React.ComponentType<{ size?: number; className?: string }>;
+  anyUnchecked: boolean;
+  selectedCount: number;
+  menuOpen: boolean;
+  buttonRef: React.RefObject<HTMLButtonElement | null>;
+  onClick: () => void;
+}) {
+  const tooltip = useTooltip(buttonRef);
+  return (
+    <div className="relative">
+      <button
+        type="button"
+        ref={buttonRef}
+        onClick={onClick}
+        aria-label={label}
+        {...tooltip.handlers}
+        className="inline-flex h-10 w-10 xl:w-auto shrink-0 items-center justify-center xl:justify-start gap-1.5 rounded-[12px] border border-[#E2E8F0] bg-white px-0 xl:px-3 text-[13px] font-medium text-[#475569] transition-[color,background-color,border-color,box-shadow,transform] duration-150 ease-[var(--ease-out-strong)] hover:border-[#2563EB] hover:bg-[#F1F5F9] hover:ring-2 hover:ring-[#2563EB]/20 active:scale-[0.97] dark:border-[#3a3a3d] dark:bg-[#2a2a2d] dark:text-[#9CA3AF] dark:hover:bg-white/5"
+      >
+        <Icon size={15} className="text-[#475569] dark:text-[#9CA3AF]" />
+        <span className="hidden xl:inline">{label}</span>
+        {anyUnchecked && (
+          <span className="flex h-4 min-w-[16px] animate-[dt-badge-pop_150ms_var(--ease-out-strong)] items-center justify-center rounded-full bg-indigo-600 px-1 text-[10px] font-semibold text-white">
+            {selectedCount}
+          </span>
+        )}
+        <ChevronDown
+          size={14}
+          className={`hidden text-[#475569] transition-transform duration-150 ease-[var(--ease-in-out-strong)] dark:text-[#9CA3AF] xl:inline ${menuOpen ? 'rotate-180' : ''}`}
+        />
+      </button>
+      {tooltip.rendered && <Tooltip label={label} open={tooltip.open} pos={tooltip.pos} onlyWhenCompact />}
+    </div>
+  );
+}
+
+// "Reset All Filters" trigger — filled indigo icon once a filter is active.
+// Copied verbatim from Balance.
+function ResetFiltersButton({ anyFilterActive, onClick }: { anyFilterActive: boolean; onClick: () => void }) {
+  const buttonRef = useRef<HTMLButtonElement>(null);
+  const tooltip = useTooltip(buttonRef);
+
+  return (
+    <div className="relative">
+      <button
+        ref={buttonRef}
+        type="button"
+        onClick={() => { if (anyFilterActive) onClick(); }}
+        {...tooltip.handlers}
+        aria-label="Reset all filters"
+        aria-disabled={!anyFilterActive}
+        className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-[12px] border transition-[color,background-color,border-color,transform] duration-150 ease-[var(--ease-out-strong)] ${
+          anyFilterActive
+            ? 'cursor-pointer border-[#E2E8F0] bg-white text-indigo-600 hover:border-[#FCA5A5] hover:bg-[#FEF2F2] hover:text-[#DC2626] active:scale-[0.97] active:border-[#FCA5A5] active:bg-[#FEF2F2] active:text-[#DC2626] dark:border-[#3a3a3d] dark:bg-[#2a2a2d] dark:text-indigo-400'
+            : 'cursor-default border-[#E2E8F0] bg-white text-[#475569] opacity-40 dark:border-[#3a3a3d] dark:bg-[#2a2a2d] dark:text-[#9CA3AF]'
+        }`}
+      >
+        <FilterX size={20} fill={anyFilterActive ? 'currentColor' : 'none'} />
+      </button>
+      {tooltip.rendered && <Tooltip label="Reset all filters" open={tooltip.open} pos={tooltip.pos} />}
+    </div>
+  );
+}
+
+// Type comes straight from the wallet name's own suffix, not a separate
+// Balance Limit lookup — every Send Money shop is solo (one wallet per
+// network), so each row's own agentName already carries its type, e.g.
+// "N-T1PS2-NAVY040-NG" -> "NG". Copied verbatim from Balance
+// (app/sendmoney/balances/page.tsx), confirmed by sampling every suffix in
+// the roster: only NG/RK/UP/BK ever appear.
+const WALLET_TYPE_SUFFIXES = ['NG', 'RK', 'UP', 'BK'];
+
+function computeWalletType(agentName: string): string {
+  const segments = agentName.trim().toUpperCase().split('-');
+  const suffix = segments[segments.length - 1];
+  return WALLET_TYPE_SUFFIXES.includes(suffix) ? suffix : '−';
+}
+
+const WALLET_TYPE_FILTER_OPTIONS = [
+  { label: 'Bkash', abbreviation: 'BK' },
+  { label: 'Nagad', abbreviation: 'NG' },
+  { label: 'Rocket', abbreviation: 'RK' },
+  { label: 'UPay', abbreviation: 'UP' },
+];
+const WALLET_TYPE_FILTER_LABELS = [...WALLET_TYPE_FILTER_OPTIONS.map((opt) => opt.label), '—'];
+
+// Single badge (never multiple — each Send Money shop has exactly one
+// wallet type, unlike Cashout's own multi-wallet-per-shop model) using the
+// same per-wallet tint scheme as WALLET_BADGE_TINTS elsewhere (Bkash pink,
+// Nagad yellow, Rocket purple, Upay red), keyed by abbreviation.
+const WALLET_TYPE_BADGE_TINTS: Record<string, string> = {
+  BK: 'bg-pink-50 text-pink-700 border-pink-200 dark:bg-pink-500/10 dark:text-pink-400 dark:border-pink-900/50',
+  NG: 'bg-yellow-50 text-yellow-700 border-yellow-200 dark:bg-yellow-500/10 dark:text-yellow-400 dark:border-yellow-900/50',
+  RK: 'bg-purple-50 text-purple-700 border-purple-200 dark:bg-purple-500/10 dark:text-purple-400 dark:border-purple-900/50',
+  UP: 'bg-red-50 text-red-700 border-red-200 dark:bg-red-500/10 dark:text-red-400 dark:border-red-900/50',
+};
+
+const WALLET_TYPE_FULL_NAMES: Record<string, string> = {
+  BK: 'Bkash',
+  NG: 'Nagad',
+  RK: 'Rocket',
+  UP: 'Upay',
+};
+
+function WalletTypeBadge({ walletType }: { walletType: string }) {
+  if (!walletType || walletType === '−') {
+    return <span className="text-[#94A3B8]">−</span>;
+  }
+  const tint = WALLET_TYPE_BADGE_TINTS[walletType] ?? 'bg-slate-100 text-slate-600 border-slate-200 dark:bg-slate-500/10 dark:text-slate-400 dark:border-slate-700';
+  return (
+    <span className={`inline-flex h-[22px] items-center rounded-[999px] border px-[8px] text-[11px] font-semibold transition-[filter] duration-150 hover:brightness-95 dark:hover:brightness-110 ${tint}`}>
+      {WALLET_TYPE_FULL_NAMES[walletType] ?? walletType}
+    </span>
+  );
+}
 
 // Row-skeleton bar widths, cycled by row+column index so loading rows read
 // as varied text lengths instead of one uniform bar repeated everywhere.
@@ -103,12 +417,13 @@ function FadeValue({ value, className }: { value: string; className: string }) {
   );
 }
 
-type Row = SendMoneyOpeningRow & { _id: number };
+type Row = SendMoneyOpeningRow & { _id: number; walletType: string };
 
 const COLUMN_IDS = {
   BRAND: 'brand',
   LEADER: 'leader',
   AGENT_NAME: 'agentName',
+  WALLET_TYPE: 'walletType',
   OPENING_BALANCE: 'openingBalance',
   SECURITY_DEPOSIT: 'securityDeposit',
   ACTIONS: 'actions',
@@ -127,11 +442,13 @@ type ColumnDef = {
 };
 
 // Alignment matches Cashout Opening's own convention (both ported together):
-// text left, numbers right, actions center.
+// text left, numbers right, actions center. Wallet Type center-aligned,
+// same as Cashout's own (app/summary/page.tsx).
 const DEFAULT_COLUMNS: ColumnDef[] = [
   { key: COLUMN_IDS.BRAND, label: 'Brand', visible: true, sortable: true, hideable: true, align: 'left' },
   { key: COLUMN_IDS.LEADER, label: 'Leader', visible: true, sortable: true, hideable: true, align: 'left' },
   { key: COLUMN_IDS.AGENT_NAME, label: 'Agent Name', visible: true, sortable: true, hideable: true, align: 'left' },
+  { key: COLUMN_IDS.WALLET_TYPE, label: 'Wallet Type', visible: true, sortable: true, hideable: true, align: 'center' },
   { key: COLUMN_IDS.OPENING_BALANCE, label: 'Opening Balance', visible: true, sortable: true, hideable: true, align: 'right' },
   { key: COLUMN_IDS.SECURITY_DEPOSIT, label: 'Security Deposit', visible: true, sortable: true, hideable: true, align: 'right' },
   { key: COLUMN_IDS.ACTIONS, label: 'Action', visible: true, sortable: false, hideable: false, align: 'center' },
@@ -142,11 +459,12 @@ const COLUMN_VISIBILITY_STORAGE_KEY = 'sendMoneyOpeningColumnVisibility';
 // Kept identical to Cashout Opening's own columnWidths (app/summary/page.tsx)
 // so both products' tables render with the same proportions.
 const columnWidths: Record<ColumnKey, string> = {
-  brand: '16%',
-  leader: '18%',
-  agentName: '20%',
-  openingBalance: '18%',
-  securityDeposit: '17%',
+  brand: '14%',
+  leader: '16%',
+  agentName: '16%',
+  walletType: '12%',
+  openingBalance: '16%',
+  securityDeposit: '15%',
   actions: '11%',
 };
 
@@ -214,6 +532,7 @@ function RowActionsCell({ row, onEdit }: { row: Row; onEdit: (row: Row) => void 
       `Brand: ${row.brand ?? '—'}`,
       `Leader: ${toProperCase(row.leader)}`,
       `Agent Name: ${row.agentName}`,
+      `Wallet Type: ${row.walletType}`,
       `Opening Balance: ${fmt(row.openingBalance)}`,
       `Security Deposit: ${fmt(row.securityDeposit)}`,
     ].join('\n');
@@ -312,6 +631,8 @@ function renderCell(row: Row, key: ColumnKey, onEdit: (row: Row) => void, search
       return <td key={key} title={toProperCase(row.leader)} className={base}>{highlightMatch(toProperCase(row.leader), searchTerm)}</td>;
     case 'agentName':
       return <td key={key} title={row.agentName} className={base}>{highlightMatch(row.agentName, searchTerm)}</td>;
+    case 'walletType':
+      return <td key={key} title={row.walletType} className={base}><WalletTypeBadge walletType={row.walletType} /></td>;
     // Extra right padding (pr-9 instead of the shared px-4's pr-4) shifts the
     // number left so it lines up under the header word's own last letter —
     // the header's sort icon (14px + 6px gap) sits further right than the
@@ -349,6 +670,27 @@ export default function SendMoneyOpeningPage() {
   const [columnsMenuOpen, setColumnsMenuOpen] = useState(false);
   const [mounted, setMounted] = useState(false);
   const columnsButtonRef = useRef<HTMLButtonElement>(null);
+  const uploadButtonRef = useRef<HTMLButtonElement>(null);
+  const newButtonRef = useRef<HTMLButtonElement>(null);
+  const refreshButtonRef = useRef<HTMLButtonElement>(null);
+  const exportButtonRef = useRef<HTMLButtonElement>(null);
+  const uploadTooltip = useTooltip(uploadButtonRef);
+  const newTooltip = useTooltip(newButtonRef);
+  const refreshTooltip = useTooltip(refreshButtonRef);
+  const exportTooltip = useTooltip(exportButtonRef);
+  const columnsTooltip = useTooltip(columnsButtonRef);
+
+  // Toolbar filters — Brand/Leader/Wallet Type, same style/arrangement as
+  // Balance (app/agentbal/page.tsx).
+  const [brandFilter, setBrandFilter] = useState<Record<string, boolean>>({});
+  const [leaderFilter, setLeaderFilter] = useState<Record<string, boolean>>({});
+  const [walletTypeFilter, setWalletTypeFilter] = useState<Record<string, boolean>>({});
+  const [brandMenuOpen, setBrandMenuOpen] = useState(false);
+  const [leaderMenuOpen, setLeaderMenuOpen] = useState(false);
+  const [walletTypeMenuOpen, setWalletTypeMenuOpen] = useState(false);
+  const brandButtonRef = useRef<HTMLButtonElement>(null);
+  const leaderButtonRef = useRef<HTMLButtonElement>(null);
+  const walletTypeButtonRef = useRef<HTMLButtonElement>(null);
 
   const [editingRow, setEditingRow] = useState<Row | null>(null);
   const [newRecordOpen, setNewRecordOpen] = useState(false);
@@ -391,7 +733,7 @@ export default function SendMoneyOpeningPage() {
       const res = await fetch(`/api/sendmoney/opening?t=${Date.now()}`);
       if (!res.ok) throw new Error((await res.text().catch(() => '')) || `Request failed with status ${res.status}`);
       const text = await res.text();
-      setRows(parseSendMoneyOpeningCsv(text).map((row, index) => ({ ...row, _id: index })));
+      setRows(parseSendMoneyOpeningCsv(text).map((row, index) => ({ ...row, _id: index, walletType: computeWalletType(row.agentName) })));
       setSelectedIds(new Set());
     } catch (err) {
       setError(classifyFetchError(err instanceof Error ? err.message : String(err)));
@@ -432,13 +774,115 @@ export default function SendMoneyOpeningPage() {
   );
 
   const filteredRows = rows.filter((row) => {
-    const haystack = `${row.leader} ${row.agentName} ${fmt(row.openingBalance)} ${fmt(row.securityDeposit)} ${row.brand ?? ''}`.toLowerCase();
+    const haystack = `${row.leader} ${row.agentName} ${row.walletType} ${fmt(row.openingBalance)} ${fmt(row.securityDeposit)} ${row.brand ?? ''}`.toLowerCase();
     return haystack.includes(searchTerm.toLowerCase());
   });
 
+  // Toolbar filters — Brand/Leader/Wallet Type, same style/arrangement as
+  // Balance (app/agentbal/page.tsx). Wallet Type here is single-value per
+  // row (one wallet per shop) — simpler exact-match logic than Cashout
+  // Opening's own multi-value version, matching Send Money Balance's own
+  // Wallet Type filter (app/sendmoney/balances/page.tsx).
+  const brandOptions = useMemo(
+    () => Array.from(new Set(rows.map((row) => row.brand ?? '—'))).sort((a, b) => a.localeCompare(b)),
+    [rows]
+  );
+  const leaderOptions = useMemo(
+    () => Array.from(new Set(rows.map((row) => row.leader).filter(Boolean))).sort((a, b) => a.localeCompare(b)),
+    [rows]
+  );
+  const walletTypeOptions = WALLET_TYPE_FILTER_LABELS;
+
+  const isBrandChecked = (name: string) => brandFilter[name] !== false;
+  const isLeaderChecked = (name: string) => leaderFilter[name] !== false;
+  const isWalletTypeChecked = (name: string) => walletTypeFilter[name] !== false;
+
+  const anyBrandUnchecked = brandOptions.some((name) => !isBrandChecked(name));
+  const anyLeaderUnchecked = leaderOptions.some((name) => !isLeaderChecked(name));
+  const anyWalletTypeUnchecked = walletTypeOptions.some((name) => !isWalletTypeChecked(name));
+
+  const selectedBrandCount = brandOptions.filter((name) => isBrandChecked(name)).length;
+  const selectedLeaderCount = leaderOptions.filter((name) => isLeaderChecked(name)).length;
+  const selectedWalletTypeCount = walletTypeOptions.filter((name) => isWalletTypeChecked(name)).length;
+
+  const anyFilterActive = anyBrandUnchecked || anyLeaderUnchecked || anyWalletTypeUnchecked;
+
+  const resetAllFilters = useCallback(() => {
+    setBrandFilter({});
+    setLeaderFilter({});
+    setWalletTypeFilter({});
+    setBrandMenuOpen(false);
+    setLeaderMenuOpen(false);
+    setWalletTypeMenuOpen(false);
+  }, []);
+
+  const matchesWalletTypeFilter = useCallback((row: Row) => {
+    if (!walletTypeOptions.some((name) => walletTypeFilter[name] === false)) return true;
+    if (row.walletType === '−') return isWalletTypeChecked('—');
+    const opt = WALLET_TYPE_FILTER_OPTIONS.find((o) => o.abbreviation === row.walletType);
+    return opt ? isWalletTypeChecked(opt.label) : isWalletTypeChecked('—');
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [walletTypeFilter, walletTypeOptions]);
+
+  const facetFilteredRows = useMemo(() => {
+    let list = filteredRows;
+    if (brandOptions.some((name) => brandFilter[name] === false)) {
+      list = list.filter((row) => brandFilter[row.brand ?? '—'] !== false);
+    }
+    if (leaderOptions.some((name) => leaderFilter[name] === false)) {
+      list = list.filter((row) => leaderFilter[row.leader] !== false);
+    }
+    list = list.filter(matchesWalletTypeFilter);
+    return list;
+  }, [filteredRows, brandFilter, brandOptions, leaderFilter, leaderOptions, matchesWalletTypeFilter]);
+
+  // Faceted option counts — each omits its own facet's clause so unchecking
+  // an option in a dropdown doesn't shrink its own list toward zero.
+  const brandFilterOptions = useMemo(() => {
+    let list = filteredRows;
+    if (leaderOptions.some((name) => leaderFilter[name] === false)) {
+      list = list.filter((row) => leaderFilter[row.leader] !== false);
+    }
+    list = list.filter(matchesWalletTypeFilter);
+    const counts = new Map<string, number>();
+    for (const row of list) counts.set(row.brand ?? '—', (counts.get(row.brand ?? '—') ?? 0) + 1);
+    return brandOptions.map((name) => ({ value: name, label: name, count: counts.get(name) ?? 0 }));
+  }, [filteredRows, leaderFilter, leaderOptions, matchesWalletTypeFilter, brandOptions]);
+
+  const leaderFilterOptions = useMemo(() => {
+    let list = filteredRows;
+    if (brandOptions.some((name) => brandFilter[name] === false)) {
+      list = list.filter((row) => brandFilter[row.brand ?? '—'] !== false);
+    }
+    list = list.filter(matchesWalletTypeFilter);
+    const counts = new Map<string, number>();
+    for (const row of list) counts.set(row.leader, (counts.get(row.leader) ?? 0) + 1);
+    return leaderOptions.map((name) => ({ value: name, label: toProperCase(name), count: counts.get(name) ?? 0 }));
+  }, [filteredRows, brandFilter, brandOptions, matchesWalletTypeFilter, leaderOptions]);
+
+  const walletTypeFilterOptions = useMemo(() => {
+    let list = filteredRows;
+    if (brandOptions.some((name) => brandFilter[name] === false)) {
+      list = list.filter((row) => brandFilter[row.brand ?? '—'] !== false);
+    }
+    if (leaderOptions.some((name) => leaderFilter[name] === false)) {
+      list = list.filter((row) => leaderFilter[row.leader] !== false);
+    }
+    const counts = new Map<string, number>();
+    for (const row of list) {
+      if (row.walletType === '−') {
+        counts.set('—', (counts.get('—') ?? 0) + 1);
+        continue;
+      }
+      const opt = WALLET_TYPE_FILTER_OPTIONS.find((o) => o.abbreviation === row.walletType);
+      counts.set(opt ? opt.label : '—', (counts.get(opt ? opt.label : '—') ?? 0) + 1);
+    }
+    return walletTypeOptions.map((name) => ({ value: name, label: name, count: counts.get(name) ?? 0 }));
+  }, [filteredRows, brandFilter, brandOptions, leaderFilter, leaderOptions, walletTypeOptions]);
+
   const sortedRows = useMemo(() => {
-    if (!sortColumn) return filteredRows;
-    const list = [...filteredRows];
+    if (!sortColumn) return facetFilteredRows;
+    const list = [...facetFilteredRows];
     list.sort((a, b) => {
       if (sortColumn === 'openingBalance' || sortColumn === 'securityDeposit') {
         return compareNullableNumber(a[sortColumn], b[sortColumn], sortDirection);
@@ -451,6 +895,8 @@ export default function SendMoneyOpeningPage() {
             return row.leader.toLowerCase();
           case 'agentName':
             return row.agentName.toLowerCase();
+          case 'walletType':
+            return row.walletType.toLowerCase();
           default:
             return '';
         }
@@ -459,7 +905,7 @@ export default function SendMoneyOpeningPage() {
       return sortDirection === 'asc' ? comparison : -comparison;
     });
     return list;
-  }, [filteredRows, sortColumn, sortDirection]);
+  }, [facetFilteredRows, sortColumn, sortDirection]);
 
   const totalPages = Math.max(1, Math.ceil(sortedRows.length / rowsPerPage));
   const currentPage = Math.min(page, totalPages);
@@ -524,7 +970,10 @@ export default function SendMoneyOpeningPage() {
     { key: 'sdp', label: 'SDP', kind: 'amount' },
   ], []);
 
-  const handleExport = useCallback(() => {
+  // Optional `rowsOverride`/`fileTag` let the Bulk Actions dropdown's own
+  // "Export Selected" reuse this same export path against just the
+  // checked rows, instead of duplicating the worksheet-building logic.
+  const handleExport = useCallback((rowsOverride?: Row[], fileTag: string = 'OPENING_BALANCE') => {
     const getExportValue = (row: Row, key: ColumnKey) => {
       switch (key) {
         case 'brand':
@@ -533,6 +982,8 @@ export default function SendMoneyOpeningPage() {
           return row.leader;
         case 'agentName':
           return row.agentName;
+        case 'walletType':
+          return row.walletType;
         case 'openingBalance':
           return fmt(row.openingBalance);
         case 'securityDeposit':
@@ -544,7 +995,7 @@ export default function SendMoneyOpeningPage() {
 
     const exportColumns = visibleColumns.filter((col) => col.key !== COLUMN_IDS.ACTIONS);
     const headers = exportColumns.map((col) => col.label);
-    const data = sortedRows.map((row) => exportColumns.map((col) => getExportValue(row, col.key)));
+    const data = (rowsOverride ?? sortedRows).map((row) => exportColumns.map((col) => getExportValue(row, col.key)));
 
     const worksheet = XLSX.utils.aoa_to_sheet([headers, ...data]);
     worksheet['!cols'] = headers.map(() => ({ wch: 16 }));
@@ -555,8 +1006,13 @@ export default function SendMoneyOpeningPage() {
     const now = new Date();
     const datePart = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
     const timePart = `${String(now.getHours()).padStart(2, '0')}${String(now.getMinutes()).padStart(2, '0')}`;
-    XLSX.writeFile(workbook, `SENDMONEY_OPENING_BALANCE_${datePart}_${timePart}.xlsx`);
+    XLSX.writeFile(workbook, `SENDMONEY_${fileTag}_${datePart}_${timePart}.xlsx`);
   }, [sortedRows, visibleColumns]);
+
+  const handleExportSelected = useCallback(() => {
+    const selectedRows = sortedRows.filter((row) => selectedIds.has(row._id));
+    handleExport(selectedRows, 'OPENING_BALANCE_SELECTED');
+  }, [sortedRows, selectedIds, handleExport]);
 
   const clearSearch = useCallback(() => {
     setSearchTerm('');
@@ -630,7 +1086,7 @@ export default function SendMoneyOpeningPage() {
         isRefreshing={spinning}
         onRefresh={fetchData}
       />
-      <div className={`w-full border-t border-border bg-[#f4f6fb] px-4 py-3 transition-shadow duration-150 ease-out dark:bg-[#1c1c1e] md:px-6 ${isScrolled ? TABLE_STICKY_HEADER_SHADOW_CLASS : ''}`}>
+      <div className="w-full border-t border-border bg-[#f4f6fb] px-4 py-3 dark:bg-[#1c1c1e] md:px-6">
         <div className="flex gap-2">
           {loading ? (
             Array.from({ length: 4 }).map((_, i) => (
@@ -674,63 +1130,147 @@ export default function SendMoneyOpeningPage() {
 
         {!error && (
           <DataTable>
-            <Toolbar>
-              <Toolbar.Left>
-                <div className="flex h-10 w-full min-w-[200px] items-center gap-2 rounded-[10px] border border-border bg-white px-[14px] transition-colors focus-within:border-[#2563EB] focus-within:ring-2 focus-within:ring-[#2563EB]/20 dark:bg-[#2a2a2d] sm:w-[380px]">
-                  {loading ? (
-                    <div className="dt-skeleton h-3 w-32 rounded-md" />
-                  ) : (
-                    <>
-                      <Search size={16} className="shrink-0 text-muted-foreground" />
-                      <input
-                        aria-label="Search agents or brands"
-                        value={searchTerm}
-                        onChange={(event) => setSearchTerm(event.target.value)}
-                        className="flex-1 bg-transparent text-[13px] font-normal text-foreground placeholder:text-muted-foreground outline-none border-none"
-                        placeholder="Search agents or brands..."
-                      />
-                    </>
-                  )}
+            <div className="flex shrink-0 flex-nowrap items-center overflow-x-auto border-b border-border px-4 py-3">
+              {loading ? (
+                <div className="mr-3 flex shrink-0 items-center gap-3">
+                  <div className="h-10 w-10 shrink-0 dt-skeleton rounded-[12px] xl:w-[92px]" />
+                  <div className="h-10 w-10 shrink-0 dt-skeleton rounded-[12px] xl:w-[98px]" />
+                  <div className="h-10 w-10 shrink-0 dt-skeleton rounded-[12px] xl:w-[130px]" />
+                  <div className="h-10 w-10 shrink-0 dt-skeleton rounded-[12px]" />
                 </div>
-              </Toolbar.Left>
-              <Toolbar.Right>
-                {loading && <div className="dt-skeleton h-9 w-[76px] rounded-[8px]" />}
-                {!loading && (
-                  selectionBarRendered ? (
-                    <div className="flex flex-wrap items-center gap-3 dt-bar-fade-in">
-                      <span className="text-[13px] font-medium text-foreground">{selectedIds.size} Selected</span>
-                      <button
-                        type="button"
-                        onClick={() => setBulkEditOpen(true)}
-                        className="inline-flex h-9 items-center rounded-[8px] bg-[color:var(--product-accent)] px-3 text-[13px] font-medium text-white transition-colors hover:opacity-90 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#2563EB]"
-                      >
-                        Bulk Edit
-                      </button>
-                    </div>
-                  ) : (
-                    <AddRecordDropdown
-                      templateModule="openingSendMoney"
-                      onNewRecord={() => setNewRecordOpen(true)}
-                      onBulkImport={() => setBulkImportOpen(true)}
-                      buttonClassName="bg-[color:var(--product-accent)] hover:opacity-90"
+              ) : (
+                <div className="mr-3 flex shrink-0 items-center gap-3">
+                  <div className="relative">
+                    <FilterTriggerButton
+                      label="Brand"
+                      icon={Tag}
+                      anyUnchecked={anyBrandUnchecked}
+                      selectedCount={selectedBrandCount}
+                      menuOpen={brandMenuOpen}
+                      buttonRef={brandButtonRef}
+                      onClick={() => setBrandMenuOpen((current) => !current)}
                     />
-                  )
+                    <FilterDropdown
+                      open={brandMenuOpen}
+                      onOpenChange={setBrandMenuOpen}
+                      anchorRef={brandButtonRef}
+                      options={brandFilterOptions}
+                      selected={brandFilter}
+                      onChange={setBrandFilter}
+                    />
+                  </div>
+                  <div className="relative">
+                    <FilterTriggerButton
+                      label="Leader"
+                      icon={User}
+                      anyUnchecked={anyLeaderUnchecked}
+                      selectedCount={selectedLeaderCount}
+                      menuOpen={leaderMenuOpen}
+                      buttonRef={leaderButtonRef}
+                      onClick={() => setLeaderMenuOpen((current) => !current)}
+                    />
+                    <FilterDropdown
+                      open={leaderMenuOpen}
+                      onOpenChange={setLeaderMenuOpen}
+                      anchorRef={leaderButtonRef}
+                      options={leaderFilterOptions}
+                      selected={leaderFilter}
+                      onChange={setLeaderFilter}
+                    />
+                  </div>
+                  <div className="relative">
+                    <FilterTriggerButton
+                      label="Wallet Type"
+                      icon={WalletIcon}
+                      anyUnchecked={anyWalletTypeUnchecked}
+                      selectedCount={selectedWalletTypeCount}
+                      menuOpen={walletTypeMenuOpen}
+                      buttonRef={walletTypeButtonRef}
+                      onClick={() => setWalletTypeMenuOpen((current) => !current)}
+                    />
+                    <FilterDropdown
+                      open={walletTypeMenuOpen}
+                      onOpenChange={setWalletTypeMenuOpen}
+                      anchorRef={walletTypeButtonRef}
+                      options={walletTypeFilterOptions}
+                      selected={walletTypeFilter}
+                      onChange={setWalletTypeFilter}
+                    />
+                  </div>
+                  <ResetFiltersButton anyFilterActive={anyFilterActive} onClick={resetAllFilters} />
+                </div>
+              )}
+
+              <div className="flex h-10 flex-1 min-w-[200px] items-center gap-2 rounded-full border border-border bg-white px-[16px] transition-colors focus-within:border-[#2563EB] focus-within:ring-2 focus-within:ring-[#2563EB]/20 dark:bg-[#2a2a2d]">
+                {loading ? (
+                  <div className="h-3 w-32 dt-skeleton rounded-md" />
+                ) : (
+                  <>
+                    <Search size={16} className="shrink-0 text-muted-foreground" />
+                    <input
+                      aria-label="Search agents or brands"
+                      value={searchTerm}
+                      onChange={(event) => setSearchTerm(event.target.value)}
+                      className="flex-1 bg-transparent text-[13px] font-normal text-foreground placeholder:text-muted-foreground outline-none border-none"
+                      placeholder="Search agents or brands..."
+                    />
+                  </>
                 )}
-                {loading && <div className="dt-skeleton h-8 w-8 rounded-[8px]" />}
-                {!loading && (
-                  <button type="button" onClick={fetchData} aria-label="Refresh" title="Refresh" className={GHOST_BUTTON}>
-                    <RefreshCw size={15} className={spinning ? 'animate-spin' : ''} />
-                  </button>
-                )}
-                {loading && <div className="dt-skeleton h-9 w-[88px] rounded-[8px]" />}
-                {!loading && (
-                  <button type="button" onClick={handleExport} aria-label="Export to Excel" title="Export to Excel" className={GHOST_BUTTON}>
-                    <Download size={15} />
-                    Export
-                  </button>
-                )}
-                {loading && <div className="dt-skeleton h-9 w-[104px] rounded-[8px]" />}
-                {!loading && (
+              </div>
+
+              {/* Selection indicator + Bulk Actions — an ADDED segment, never
+                  a replacement. New/Upload/Export/Refresh/Columns below stay
+                  exactly where they are whether or not anything is selected,
+                  per the standard bulk-selection toolbar spec (no layout
+                  shift, no hidden primary actions). */}
+              {!loading && selectionBarRendered && (
+                <div className="ml-3 flex shrink-0 items-center">
+                  <BulkActionsMenu
+                    count={selectedIds.size}
+                    onBulkEdit={() => setBulkEditOpen(true)}
+                    onExportSelected={handleExportSelected}
+                    onClearSelection={() => setSelectedIds(new Set())}
+                  />
+                </div>
+              )}
+
+              {loading ? (
+                <div className="ml-3 flex shrink-0 items-center gap-3">
+                  <div className="h-10 w-10 shrink-0 dt-skeleton rounded-[12px] xl:w-[92px]" />
+                  <div className="h-10 w-10 shrink-0 dt-skeleton rounded-[12px] xl:w-[92px]" />
+                  <div className="h-10 w-10 shrink-0 dt-skeleton rounded-[12px] xl:w-[88px]" />
+                  <div className="h-10 w-10 shrink-0 dt-skeleton rounded-[12px]" />
+                  <div className="h-10 w-10 shrink-0 dt-skeleton rounded-[12px]" />
+                </div>
+              ) : (
+                <div className="ml-3 flex shrink-0 items-center gap-3">
+                  <div className="relative">
+                    <button type="button" ref={newButtonRef} onClick={() => setNewRecordOpen(true)} aria-label="New" {...newTooltip.handlers} className={NEW_BUTTON}>
+                      <Plus size={16} />
+                      <span className="hidden xl:inline">New</span>
+                    </button>
+                    {newTooltip.rendered && <Tooltip label="New" open={newTooltip.open} pos={newTooltip.pos} onlyWhenCompact />}
+                  </div>
+                  <div className="relative">
+                    <button type="button" ref={uploadButtonRef} onClick={() => setBulkImportOpen(true)} aria-label="Upload" {...uploadTooltip.handlers} className={ICON_BUTTON}>
+                      <Upload size={16} />
+                      <span className="hidden xl:inline">Upload</span>
+                    </button>
+                    {uploadTooltip.rendered && <Tooltip label="Upload" open={uploadTooltip.open} pos={uploadTooltip.pos} onlyWhenCompact />}
+                  </div>
+                  <div className="relative">
+                    <button type="button" ref={exportButtonRef} onClick={() => handleExport()} aria-label="Export to Excel" {...exportTooltip.handlers} className={ICON_BUTTON}>
+                      <Download size={16} />
+                      <span className="hidden xl:inline">Export</span>
+                    </button>
+                    {exportTooltip.rendered && <Tooltip label="Export" open={exportTooltip.open} pos={exportTooltip.pos} onlyWhenCompact />}
+                  </div>
+                  <div className="relative">
+                    <button type="button" ref={refreshButtonRef} onClick={fetchData} aria-label="Refresh Data" {...refreshTooltip.handlers} className={ICON_ONLY_BUTTON}>
+                      <RefreshCw size={16} className={spinning ? 'animate-spin' : ''} />
+                    </button>
+                    {refreshTooltip.rendered && <Tooltip label="Refresh Data" open={refreshTooltip.open} pos={refreshTooltip.pos} />}
+                  </div>
                   <div className="relative">
                     <button
                       type="button"
@@ -739,13 +1279,13 @@ export default function SendMoneyOpeningPage() {
                       aria-haspopup="true"
                       aria-expanded={columnsMenuOpen}
                       aria-controls="sendmoney-opening-columns-popover"
-                      aria-label="Columns"
-                      title="Columns"
-                      className={GHOST_BUTTON}
+                      aria-label="Customize Columns"
+                      {...columnsTooltip.handlers}
+                      className={ICON_ONLY_BUTTON}
                     >
-                      <Columns3 size={15} />
-                      Columns
+                      <Columns3 size={16} />
                     </button>
+                    {columnsTooltip.rendered && <Tooltip label="Customize Columns" open={columnsTooltip.open} pos={columnsTooltip.pos} />}
                     <ColumnsDropdown
                       id="sendmoney-opening-columns-popover"
                       open={columnsMenuOpen}
@@ -756,9 +1296,9 @@ export default function SendMoneyOpeningPage() {
                       onRestoreDefaults={() => setColumnDefs(DEFAULT_COLUMNS.map((col) => ({ ...col })))}
                     />
                   </div>
-                )}
-              </Toolbar.Right>
-            </Toolbar>
+                </div>
+              )}
+            </div>
             <div className="hidden h-1.5 shrink-0 sm:block" />
             <div className="relative hidden flex-1 min-h-0 sm:block">
             <div ref={tableScrollRef} className="dt-scroll h-full overflow-y-auto overflow-x-auto">
@@ -898,7 +1438,7 @@ export default function SendMoneyOpeningPage() {
                       <div className="flex items-start justify-between gap-2">
                         <div className="min-w-0">
                           <p className="truncate text-sm font-bold text-foreground">{row.agentName}</p>
-                          <p className="truncate text-[12px] font-normal text-muted-foreground">{toProperCase(row.leader)}{row.brand ? ` · ${row.brand}` : ''}</p>
+                          <p className="truncate text-[12px] font-normal text-muted-foreground">{toProperCase(row.leader)}{row.brand ? ` · ${row.brand}` : ''}{row.walletType !== '−' ? ` · ${row.walletType}` : ''}</p>
                         </div>
                       </div>
 
