@@ -23,6 +23,8 @@ import {
   User,
   Wallet as WalletIcon,
   FilterX,
+  Upload,
+  Plus,
 } from 'lucide-react';
 import * as XLSX from 'xlsx';
 import SettlementHeader from '../components/SettlementHeader';
@@ -34,7 +36,6 @@ import EmptyState from '../components/EmptyState';
 import DataTable from '../components/DataTable';
 import RecordFormModal, { type RecordFormField } from '../components/RecordFormModal';
 import { SETTLEMENT_BRAND_OPTIONS, CASHOUT_WALLET_OPTIONS, TOPUP_TYPE_OPTIONS } from '../lib/topupOptions';
-import AddRecordDropdown from '../components/AddRecordDropdown';
 import BulkImportModal from '../components/BulkImportModal';
 import BulkEditModal, { type BulkEditUpdates } from '../components/BulkEditModal';
 import { classifyFetchError, type ClassifiedError } from '../lib/errors';
@@ -50,6 +51,20 @@ import { calculateColumnLayout, type ColumnLayout } from '../lib/columnLayout';
 // instruction.
 const ICON_BUTTON =
   'flex h-10 w-10 xl:w-auto shrink-0 items-center justify-center xl:justify-start gap-1.5 rounded-[12px] border border-[#E2E8F0] bg-white px-0 xl:px-3 text-[13px] font-medium text-[#475569] transition-[color,background-color,border-color,box-shadow,transform] duration-150 ease-[var(--ease-out-strong)] hover:border-[#2563EB] hover:bg-[#F1F5F9] hover:ring-2 hover:ring-[#2563EB]/20 active:scale-[0.97] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#2563EB] dark:border-[#3a3a3d] dark:bg-[#2a2a2d] dark:text-[#9CA3AF] dark:hover:bg-white/5';
+
+// Always-icon-only variant (never shows a text label, unlike ICON_BUTTON's
+// xl: breakpoint reveal) — Refresh/Columns per explicit instruction, tooltip
+// carries the label instead.
+const ICON_ONLY_BUTTON =
+  'flex h-10 w-10 shrink-0 items-center justify-center rounded-[12px] border border-[#E2E8F0] bg-white text-[13px] font-medium text-[#475569] transition-[color,background-color,border-color,box-shadow,transform] duration-150 ease-[var(--ease-out-strong)] hover:border-[#2563EB] hover:bg-[#F1F5F9] hover:ring-2 hover:ring-[#2563EB]/20 active:scale-[0.97] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#2563EB] dark:border-[#3a3a3d] dark:bg-[#2a2a2d] dark:text-[#9CA3AF] dark:hover:bg-white/5';
+
+// Same shell as ICON_BUTTON — border, white bg, hover/active treatment all
+// identical — with only the text/icon color swapped to indigo. Replaces the
+// old solid-indigo-fill "+ Add" button per explicit instruction: no more
+// filled CTA, just a colored label on the same neutral button shell as
+// Refresh/Export/Columns.
+const NEW_BUTTON =
+  'flex h-10 w-10 xl:w-auto shrink-0 items-center justify-center xl:justify-start gap-1.5 rounded-[12px] border border-[#E2E8F0] bg-white px-0 xl:px-3 text-[13px] font-medium text-indigo-600 transition-[color,background-color,border-color,box-shadow,transform] duration-150 ease-[var(--ease-out-strong)] hover:border-[#2563EB] hover:bg-[#F1F5F9] hover:ring-2 hover:ring-[#2563EB]/20 active:scale-[0.97] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#2563EB] dark:border-[#3a3a3d] dark:bg-[#2a2a2d] dark:text-indigo-400 dark:hover:bg-white/5';
 
 // Shared hover/focus-driven tooltip state — portal-rendered so it's never
 // clipped by the toolbar's overflow-x-auto. Copied verbatim from Balance
@@ -781,9 +796,13 @@ export default function TopUpPage() {
   const walletButtonRef = useRef<HTMLButtonElement>(null);
   const refreshButtonRef = useRef<HTMLButtonElement>(null);
   const exportButtonRef = useRef<HTMLButtonElement>(null);
+  const uploadButtonRef = useRef<HTMLButtonElement>(null);
+  const newButtonRef = useRef<HTMLButtonElement>(null);
   const refreshTooltip = useTooltip(refreshButtonRef);
   const exportTooltip = useTooltip(exportButtonRef);
   const columnsTooltip = useTooltip(columnsButtonRef);
+  const uploadTooltip = useTooltip(uploadButtonRef);
+  const newTooltip = useTooltip(newButtonRef);
 
   useEffect(() => {
     setMounted(true);
@@ -1426,8 +1445,10 @@ export default function TopUpPage() {
               {loading ? (
                 <div className="ml-3 flex shrink-0 items-center gap-3">
                   <div className="h-10 w-10 shrink-0 dt-skeleton rounded-[12px] xl:w-[92px]" />
+                  <div className="h-10 w-10 shrink-0 dt-skeleton rounded-[12px] xl:w-[92px]" />
                   <div className="h-10 w-10 shrink-0 dt-skeleton rounded-[12px] xl:w-[88px]" />
-                  <div className="h-10 w-10 shrink-0 dt-skeleton rounded-[12px] xl:w-[108px]" />
+                  <div className="h-10 w-10 shrink-0 dt-skeleton rounded-[12px]" />
+                  <div className="h-10 w-10 shrink-0 dt-skeleton rounded-[12px]" />
                 </div>
               ) : (
                 <div className="ml-3 flex shrink-0 items-center gap-3">
@@ -1443,26 +1464,35 @@ export default function TopUpPage() {
                       </button>
                     </div>
                   ) : (
-                    <AddRecordDropdown
-                      templateModule="topup"
-                      onNewRecord={() => setNewRecordOpen(true)}
-                      onBulkImport={() => setBulkImportOpen(true)}
-                      buttonClassName="bg-indigo-600 hover:bg-indigo-700"
-                    />
+                    <div className="relative">
+                      <button type="button" ref={newButtonRef} onClick={() => setNewRecordOpen(true)} aria-label="New" {...newTooltip.handlers} className={NEW_BUTTON}>
+                        <Plus size={16} />
+                        <span className="hidden xl:inline">New</span>
+                      </button>
+                      {newTooltip.rendered && <Tooltip label="New" open={newTooltip.open} pos={newTooltip.pos} onlyWhenCompact />}
+                    </div>
                   )}
-                  <div className="relative">
-                    <button type="button" ref={refreshButtonRef} onClick={fetchData} aria-label="Refresh" {...refreshTooltip.handlers} className={ICON_BUTTON}>
-                      <RefreshCw size={16} className={spinning ? 'animate-spin' : ''} />
-                      <span className="hidden xl:inline">Refresh</span>
-                    </button>
-                    {refreshTooltip.rendered && <Tooltip label="Refresh" open={refreshTooltip.open} pos={refreshTooltip.pos} onlyWhenCompact />}
-                  </div>
+                  {!selectionBarRendered && (
+                    <div className="relative">
+                      <button type="button" ref={uploadButtonRef} onClick={() => setBulkImportOpen(true)} aria-label="Upload" {...uploadTooltip.handlers} className={ICON_BUTTON}>
+                        <Upload size={16} />
+                        <span className="hidden xl:inline">Upload</span>
+                      </button>
+                      {uploadTooltip.rendered && <Tooltip label="Upload" open={uploadTooltip.open} pos={uploadTooltip.pos} onlyWhenCompact />}
+                    </div>
+                  )}
                   <div className="relative">
                     <button type="button" ref={exportButtonRef} onClick={handleExport} aria-label="Export to Excel" {...exportTooltip.handlers} className={ICON_BUTTON}>
                       <Download size={16} />
                       <span className="hidden xl:inline">Export</span>
                     </button>
                     {exportTooltip.rendered && <Tooltip label="Export" open={exportTooltip.open} pos={exportTooltip.pos} onlyWhenCompact />}
+                  </div>
+                  <div className="relative">
+                    <button type="button" ref={refreshButtonRef} onClick={fetchData} aria-label="Refresh Data" {...refreshTooltip.handlers} className={ICON_ONLY_BUTTON}>
+                      <RefreshCw size={16} className={spinning ? 'animate-spin' : ''} />
+                    </button>
+                    {refreshTooltip.rendered && <Tooltip label="Refresh Data" open={refreshTooltip.open} pos={refreshTooltip.pos} />}
                   </div>
                   <div className="relative">
                     <button
@@ -1472,14 +1502,13 @@ export default function TopUpPage() {
                       aria-haspopup="true"
                       aria-expanded={columnsMenuOpen}
                       aria-controls="topup-columns-popover"
-                      aria-label="Columns"
+                      aria-label="Customize Columns"
                       {...columnsTooltip.handlers}
-                      className={ICON_BUTTON}
+                      className={ICON_ONLY_BUTTON}
                     >
                       <Columns3 size={16} />
-                      <span className="hidden xl:inline">Columns</span>
                     </button>
-                    {columnsTooltip.rendered && <Tooltip label="Columns" open={columnsTooltip.open} pos={columnsTooltip.pos} onlyWhenCompact />}
+                    {columnsTooltip.rendered && <Tooltip label="Customize Columns" open={columnsTooltip.open} pos={columnsTooltip.pos} />}
                     <ColumnsDropdown
                       id="topup-columns-popover"
                       open={columnsMenuOpen}
