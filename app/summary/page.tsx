@@ -260,6 +260,16 @@ function walletTypeBadgeClasses(code: string): string {
   return WALLET_TYPE_BADGE_TINTS[code] ?? 'bg-slate-100 text-slate-600 border-slate-200 dark:bg-slate-500/10 dark:text-slate-400 dark:border-slate-700';
 }
 
+// Full names shown when a shop has only 1-2 active wallets (room to spell
+// it out); abbreviations shown once there are 3+ (keeps the row from
+// needing to scroll for the common case, per explicit instruction).
+const WALLET_TYPE_FULL_NAMES: Record<string, string> = {
+  BK: 'Bkash',
+  NG: 'Nagad',
+  RK: 'Rocket',
+  UP: 'Upay',
+};
+
 // row.walletType is a "BK | NG | RK | UP"-style joined string (or '−' when
 // no active wallet at all) — split it back into its own small pill per
 // code, so a shop with several active wallets shows several badges in a
@@ -273,6 +283,7 @@ function WalletTypeBadge({ walletType }: { walletType: string }) {
     return <span className="text-[#94A3B8]">−</span>;
   }
   const codes = walletType.split(' | ');
+  const useFullNames = codes.length <= 2;
   return (
     <span className="dt-scroll inline-flex max-w-full flex-nowrap items-center gap-1 overflow-x-auto">
       {codes.map((code) => (
@@ -280,7 +291,7 @@ function WalletTypeBadge({ walletType }: { walletType: string }) {
           key={code}
           className={`inline-flex h-[22px] shrink-0 items-center rounded-[999px] border px-[8px] text-[11px] font-semibold transition-[filter] duration-150 hover:brightness-95 dark:hover:brightness-110 ${walletTypeBadgeClasses(code)}`}
         >
-          {code}
+          {useFullNames ? (WALLET_TYPE_FULL_NAMES[code] ?? code) : code}
         </span>
       ))}
     </span>
