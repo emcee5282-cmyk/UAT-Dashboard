@@ -240,6 +240,45 @@ function BrandBadge({ children, brand }: { children: React.ReactNode; brand: str
   );
 }
 
+// Same per-wallet tint scheme as WALLET_BADGE_TINTS elsewhere (e.g.
+// app/stlm/page.tsx's own Wallet column) — Bkash pink, Nagad yellow,
+// Rocket purple, Upay red — just keyed by the abbreviation
+// computeWalletType() already produces (BK/NG/RK/UP) instead of the full
+// wallet name, so the same real-world color association carries over.
+const WALLET_TYPE_BADGE_TINTS: Record<string, string> = {
+  BK: 'bg-pink-50 text-pink-700 border-pink-200 dark:bg-pink-500/10 dark:text-pink-400 dark:border-pink-900/50',
+  NG: 'bg-yellow-50 text-yellow-700 border-yellow-200 dark:bg-yellow-500/10 dark:text-yellow-400 dark:border-yellow-900/50',
+  RK: 'bg-purple-50 text-purple-700 border-purple-200 dark:bg-purple-500/10 dark:text-purple-400 dark:border-purple-900/50',
+  UP: 'bg-red-50 text-red-700 border-red-200 dark:bg-red-500/10 dark:text-red-400 dark:border-red-900/50',
+};
+
+function walletTypeBadgeClasses(code: string): string {
+  return WALLET_TYPE_BADGE_TINTS[code] ?? 'bg-slate-100 text-slate-600 border-slate-200 dark:bg-slate-500/10 dark:text-slate-400 dark:border-slate-700';
+}
+
+// row.walletType is a "BK | NG | RK | UP"-style joined string (or '−' when
+// no active wallet at all) — split it back into its own small pill per
+// code, so a shop with several active wallets shows several badges in a
+// row instead of one long plain-text string.
+function WalletTypeBadge({ walletType }: { walletType: string }) {
+  if (!walletType || walletType === '−') {
+    return <span className="text-[#94A3B8]">−</span>;
+  }
+  const codes = walletType.split(' | ');
+  return (
+    <span className="flex flex-wrap items-center gap-1">
+      {codes.map((code) => (
+        <span
+          key={code}
+          className={`inline-flex h-[22px] items-center rounded-[999px] border px-[8px] text-[11px] font-semibold transition-[filter] duration-150 hover:brightness-95 dark:hover:brightness-110 ${walletTypeBadgeClasses(code)}`}
+        >
+          {code}
+        </span>
+      ))}
+    </span>
+  );
+}
+
 // Re-triggers a short opacity+translateY fade whenever `value` changes (e.g.
 // after Refresh resolves with new numbers) — same pattern as
 // SettlementSummary's own FadeValue, duplicated here since this page's KPI
@@ -393,7 +432,7 @@ function renderCell(row: Row, key: ColumnKey, onEdit: (row: Row) => void, search
     case 'agentName':
       return <td key={key} title={row.agentName} className={base}>{highlightMatch(row.agentName, searchTerm)}</td>;
     case 'walletType':
-      return <td key={key} title={row.walletType} className={base}>{highlightMatch(row.walletType, searchTerm)}</td>;
+      return <td key={key} title={row.walletType} className={base}><WalletTypeBadge walletType={row.walletType} /></td>;
     // Extra right padding (pr-9 instead of the shared px-4's pr-4) shifts the
     // number left so it lines up under the header word's own last letter —
     // the header's sort icon (14px + 6px gap) sits further right than the
