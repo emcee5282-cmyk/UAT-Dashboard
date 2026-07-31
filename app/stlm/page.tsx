@@ -1777,11 +1777,11 @@ export default function StlmPage() {
                     </div>
                   ) : (
                     <div className="relative">
-                      <button type="button" ref={uploadButtonRef} onClick={() => setBulkImportOpen(true)} aria-label="Upload" {...uploadTooltip.handlers} className={ICON_BUTTON}>
-                        <Upload size={16} />
-                        <span className="hidden xl:inline">Upload</span>
+                      <button type="button" ref={newButtonRef} onClick={() => setNewRecordOpen(true)} aria-label="New" {...newTooltip.handlers} className={NEW_BUTTON}>
+                        <Plus size={16} />
+                        <span className="hidden xl:inline">New</span>
                       </button>
-                      {uploadTooltip.rendered && <Tooltip label="Upload" open={uploadTooltip.open} pos={uploadTooltip.pos} onlyWhenCompact />}
+                      {newTooltip.rendered && <Tooltip label="New" open={newTooltip.open} pos={newTooltip.pos} onlyWhenCompact />}
                     </div>
                   )}
                   <div className="relative">
@@ -1826,11 +1826,11 @@ export default function StlmPage() {
                   </div>
                   {!selectionBarRendered && (
                     <div className="relative">
-                      <button type="button" ref={newButtonRef} onClick={() => setNewRecordOpen(true)} aria-label="New" {...newTooltip.handlers} className={NEW_BUTTON}>
-                        <Plus size={16} />
-                        <span className="hidden xl:inline">New</span>
+                      <button type="button" ref={uploadButtonRef} onClick={() => setBulkImportOpen(true)} aria-label="Upload" {...uploadTooltip.handlers} className={ICON_BUTTON}>
+                        <Upload size={16} />
+                        <span className="hidden xl:inline">Upload</span>
                       </button>
-                      {newTooltip.rendered && <Tooltip label="New" open={newTooltip.open} pos={newTooltip.pos} onlyWhenCompact />}
+                      {uploadTooltip.rendered && <Tooltip label="Upload" open={uploadTooltip.open} pos={uploadTooltip.pos} onlyWhenCompact />}
                     </div>
                   )}
                 </div>
