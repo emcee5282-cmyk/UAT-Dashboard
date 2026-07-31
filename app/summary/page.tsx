@@ -1483,13 +1483,17 @@ export default function Summary() {
                   <tr className="h-[48px]">
                     <th style={{ width: '44px' }} className="px-0">
                       <div className="flex items-center justify-center">
-                        <input
-                          type="checkbox"
-                          aria-label="Select all rows on this page"
-                          checked={allOnPageSelected}
-                          onChange={toggleSelectAllOnPage}
-                          className="h-3.5 w-3.5 cursor-pointer"
-                        />
+                        {loading ? (
+                          <div className="h-3.5 w-3.5 dt-skeleton rounded" />
+                        ) : (
+                          <input
+                            type="checkbox"
+                            aria-label="Select all rows on this page"
+                            checked={allOnPageSelected}
+                            onChange={toggleSelectAllOnPage}
+                            className="h-3.5 w-3.5 cursor-pointer"
+                          />
+                        )}
                       </div>
                     </th>
                     {visibleColumns.map((col) => (
@@ -1497,7 +1501,16 @@ export default function Summary() {
                         key={col.key}
                         style={{ width: columnWidths[col.key] }}
                         className={headerCellClasses(col.align, 'px-4')}>
-                        {!col.sortable ? (
+                        {/* Header shimmers along with the body during
+                            loading, per explicit instruction — reverses the
+                            earlier "headers are never placeholders" spec. */}
+                        {loading ? (
+                          <div
+                            className={`h-3 w-3/5 max-w-[72px] dt-skeleton rounded-md ${
+                              col.align === 'right' ? 'ml-auto' : col.align === 'center' ? 'mx-auto' : ''
+                            }`}
+                          />
+                        ) : !col.sortable ? (
                           <span>{col.label}</span>
                         ) : (
                           <button

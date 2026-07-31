@@ -1096,11 +1096,16 @@ export default function TransferQueue() {
                       <th
                         key={col.key}
                         className={headerCellClasses(col.align)}>
-                        {/* Header always renders its real label/sort control,
-                            loading or not — only data rows shimmer (premium
-                            skeleton spec: headers are never placeholders,
-                            matching Settlement/Top Up's own convention). */}
-                        {col.key === 'brand' ? (
+                        {/* Header shimmers along with the body during
+                            loading, per explicit instruction — reverses the
+                            earlier "headers are never placeholders" spec. */}
+                        {loading ? (
+                          <div
+                            className={`h-3 w-3/5 max-w-[72px] dt-skeleton rounded-md ${
+                              col.align === 'right' ? 'ml-auto' : col.align === 'center' ? 'mx-auto' : ''
+                            }`}
+                          />
+                        ) : col.key === 'brand' ? (
                           // A mirrored INVISIBLE copy of the button sits on the
                           // opposite side of the label, same width as the real
                           // one — this "balanced spacer" trick centers the

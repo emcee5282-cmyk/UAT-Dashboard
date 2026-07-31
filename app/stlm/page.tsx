@@ -1978,13 +1978,17 @@ export default function StlmPage() {
                   <DataTable.StickyHeader isScrolled={isScrolled}>
                   <div role="row" className="flex h-[48px] items-center">
                     <div role="columnheader" className="flex h-full w-[44px] shrink-0 items-center justify-center">
-                      <input
-                        type="checkbox"
-                        aria-label="Select all rows on this page"
-                        checked={allOnPageSelected}
-                        onChange={toggleSelectAllOnPage}
-                        className="h-3.5 w-3.5 cursor-pointer"
-                      />
+                      {loading ? (
+                        <div className="h-3.5 w-3.5 dt-skeleton rounded" />
+                      ) : (
+                        <input
+                          type="checkbox"
+                          aria-label="Select all rows on this page"
+                          checked={allOnPageSelected}
+                          onChange={toggleSelectAllOnPage}
+                          className="h-3.5 w-3.5 cursor-pointer"
+                        />
+                      )}
                     </div>
                     {visibleColumns.map((col) => (
                       <div
@@ -1993,10 +1997,16 @@ export default function StlmPage() {
                         style={flexStyleById[col.id]}
                         aria-sort={!col.sortable ? undefined : sortColumn === col.id ? (sortDirection === 'asc' ? 'ascending' : 'descending') : 'none'}
                         className={headerCellClasses(col.id !== COLUMN_IDS.BRAND && sortColumn === col.id, col.id === COLUMN_IDS.BRAND, COLUMN_ALIGN[col.id], 'px-4')}>
-                        {/* Header always renders its real label/sort control,
-                            loading or not — only data rows shimmer (premium
-                            skeleton spec: headers are never placeholders). */}
-                        {!col.sortable ? (
+                        {/* Header shimmers along with the body during
+                            loading, per explicit instruction — reverses the
+                            earlier "headers are never placeholders" spec. */}
+                        {loading ? (
+                          <div
+                            className={`h-3 w-3/5 max-w-[72px] dt-skeleton rounded-md ${
+                              COLUMN_ALIGN[col.id] === 'right' ? 'ml-auto' : COLUMN_ALIGN[col.id] === 'center' ? 'mx-auto' : ''
+                            }`}
+                          />
+                        ) : !col.sortable ? (
                           <span>{col.label}</span>
                         ) : (
                           <button

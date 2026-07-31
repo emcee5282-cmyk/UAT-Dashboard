@@ -301,6 +301,12 @@ const GHOST_BUTTON =
 const ICON_BUTTON =
   'flex h-10 w-10 xl:w-auto shrink-0 items-center justify-center xl:justify-start gap-1.5 rounded-[12px] border border-[#E2E8F0] bg-white px-0 xl:px-3 text-[13px] font-medium text-[#475569] transition-[color,background-color,border-color,box-shadow,transform] duration-150 ease-[var(--ease-out-strong)] hover:border-[#2563EB] hover:bg-[#F1F5F9] hover:ring-2 hover:ring-[#2563EB]/20 active:scale-[0.97] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#2563EB] dark:border-[#3a3a3d] dark:bg-[#2a2a2d] dark:text-[#9CA3AF] dark:hover:bg-white/5';
 
+// Always-icon-only variant (never shows a text label, unlike ICON_BUTTON's
+// xl: breakpoint reveal) — Columns only, per explicit instruction to match
+// Settlement/Top Up's own Columns button. Refresh/Export keep ICON_BUTTON.
+const ICON_ONLY_BUTTON =
+  'flex h-10 w-10 shrink-0 items-center justify-center rounded-[12px] border border-[#E2E8F0] bg-white text-[13px] font-medium text-[#475569] transition-[color,background-color,border-color,box-shadow,transform] duration-150 ease-[var(--ease-out-strong)] hover:border-[#2563EB] hover:bg-[#F1F5F9] hover:ring-2 hover:ring-[#2563EB]/20 active:scale-[0.97] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#2563EB] dark:border-[#3a3a3d] dark:bg-[#2a2a2d] dark:text-[#9CA3AF] dark:hover:bg-white/5';
+
 const PAGE_SIZE_OPTIONS = [50, 100, 250, 500];
 
 const BALANCE_GRID_ORDER: ColumnKey[] = [
@@ -1468,25 +1474,25 @@ export default function SendMoneyAgentBalance() {
 
               {loading ? (
                 <div className="ml-3 flex shrink-0 items-center gap-3">
-                  <div className="h-10 w-10 shrink-0 dt-skeleton rounded-[12px] xl:w-[92px]" />
                   <div className="h-10 w-10 shrink-0 dt-skeleton rounded-[12px] xl:w-[88px]" />
-                  <div className="h-10 w-10 shrink-0 dt-skeleton rounded-[12px] xl:w-[108px]" />
+                  <div className="h-10 w-10 shrink-0 dt-skeleton rounded-[12px] xl:w-[92px]" />
+                  <div className="h-10 w-10 shrink-0 dt-skeleton rounded-[12px]" />
                 </div>
               ) : (
                 <div className="ml-3 flex shrink-0 items-center gap-3">
-                  <div className="relative">
-                    <button type="button" ref={refreshButtonRef} onClick={fetchData} aria-label="Refresh" {...refreshTooltip.handlers} className={ICON_BUTTON}>
-                      <RefreshCw size={16} className={spinning ? 'animate-spin' : ''} />
-                      <span className="hidden xl:inline">Refresh</span>
-                    </button>
-                    {refreshTooltip.rendered && <Tooltip label="Refresh" open={refreshTooltip.open} pos={refreshTooltip.pos} onlyWhenCompact />}
-                  </div>
                   <div className="relative">
                     <button type="button" ref={exportButtonRef} onClick={handleExport} aria-label="Export to Excel" {...exportTooltip.handlers} className={ICON_BUTTON}>
                       <Download size={16} />
                       <span className="hidden xl:inline">Export</span>
                     </button>
                     {exportTooltip.rendered && <Tooltip label="Export" open={exportTooltip.open} pos={exportTooltip.pos} onlyWhenCompact />}
+                  </div>
+                  <div className="relative">
+                    <button type="button" ref={refreshButtonRef} onClick={fetchData} aria-label="Refresh" {...refreshTooltip.handlers} className={ICON_BUTTON}>
+                      <RefreshCw size={16} className={spinning ? 'animate-spin' : ''} />
+                      <span className="hidden xl:inline">Refresh</span>
+                    </button>
+                    {refreshTooltip.rendered && <Tooltip label="Refresh" open={refreshTooltip.open} pos={refreshTooltip.pos} onlyWhenCompact />}
                   </div>
                   <div className="relative">
                     <button
@@ -1498,12 +1504,11 @@ export default function SendMoneyAgentBalance() {
                       aria-controls="sendmoney-balances-columns-popover"
                       aria-label="Columns"
                       {...columnsTooltip.handlers}
-                      className={ICON_BUTTON}
+                      className={ICON_ONLY_BUTTON}
                     >
                       <Columns3 size={16} />
-                      <span className="hidden xl:inline">Columns</span>
                     </button>
-                    {columnsTooltip.rendered && <Tooltip label="Columns" open={columnsTooltip.open} pos={columnsTooltip.pos} onlyWhenCompact />}
+                    {columnsTooltip.rendered && <Tooltip label="Columns" open={columnsTooltip.open} pos={columnsTooltip.pos} />}
                     <ColumnsDropdown
                       id="sendmoney-balances-columns-popover"
                       open={columnsMenuOpen}
@@ -1534,7 +1539,16 @@ export default function SendMoneyAgentBalance() {
                         key={col.key}
                         style={colWidthsPx[col.key] ? { width: colWidthsPx[col.key], minWidth: colWidthsPx[col.key] } : undefined}
                         className={headerCellClasses(col.key, sortColumn === col.key)}>
-                        {col.sortable ? (
+                        {/* Header shimmers along with the body during
+                            loading, per explicit instruction — reverses the
+                            earlier "headers are never placeholders" spec. */}
+                        {loading ? (
+                          <div
+                            className={`h-3 w-3/5 max-w-[72px] dt-skeleton rounded-md ${
+                              col.align === 'right' ? 'ml-auto' : col.align === 'center' ? 'mx-auto' : ''
+                            }`}
+                          />
+                        ) : col.sortable ? (
                           <button
                             type="button"
                             onClick={() => {
