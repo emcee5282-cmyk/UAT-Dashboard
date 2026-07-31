@@ -20,6 +20,7 @@ import BulkImportModal from '../components/BulkImportModal';
 import BulkEditModal, { type BulkEditUpdates } from '../components/BulkEditModal';
 import { classifyFetchError, type ClassifiedError, assertAllOk } from '../lib/errors';
 import { extractRealShopName } from '../lib/realShopName';
+import { isLoggedIn } from '../lib/balanceEngine';
 import { getPreference, setPreference } from '../lib/preferences';
 import { SETTLEMENT_BRAND_OPTIONS } from '../lib/topupOptions';
 import { fmtAbbrev } from '@/app/lib/format';
@@ -70,6 +71,7 @@ function toProperCase(str: string): string {
 
 type Row = {
   agentName: string;
+  walletType: string;
   openingBal: number;
   sdp: number;
   leader: string;
@@ -130,10 +132,32 @@ function fmt(num: number): string {
   });
 }
 
+// Wallet Type ("BK | NG | RK | UP") — copied verbatim from Balance
+// (app/agentbal/page.tsx), same source data (SSP AG BalanceLimit via
+// /api/agentbal) and same isLoggedIn-gated aggregation, per explicit
+// instruction to source this from Balance.
+const WALLET_TYPE_ORDER = [
+  { match: 'BKASH', abbreviation: 'BK' },
+  { match: 'NAGAD', abbreviation: 'NG' },
+  { match: 'ROCKET', abbreviation: 'RK' },
+  { match: 'UPAY', abbreviation: 'UP' },
+];
+
+function computeWalletType(types: string[]): string {
+  const normalized = new Set(types.map((raw) => raw.trim().toUpperCase()).filter((t) => t && t !== '-'));
+
+  const abbreviations = WALLET_TYPE_ORDER
+    .filter(({ match }) => normalized.has(match))
+    .map(({ abbreviation }) => abbreviation);
+
+  return abbreviations.length > 0 ? abbreviations.join(' | ') : '−';
+}
+
 const COLUMN_IDS = {
   BRAND: 'brand',
   LEADER: 'leader',
   AGENT_NAME: 'agentName',
+  WALLET_TYPE: 'walletType',
   OPENING_BAL: 'openingBal',
   SDP: 'sdp',
   ACTIONS: 'actions',
@@ -152,11 +176,13 @@ type ColumnDef = {
 };
 
 // Alignment matches Settlement's own convention: text left, numbers right,
-// actions center (was all-center before this port).
+// actions center (was all-center before this port). Wallet Type inserted
+// between Agent Name and Opening Balance per explicit instruction.
 const DEFAULT_COLUMNS: ColumnDef[] = [
   { key: COLUMN_IDS.BRAND, label: 'Brand', visible: true, sortable: true, hideable: true, align: 'left' },
   { key: COLUMN_IDS.LEADER, label: 'Leader', visible: true, sortable: true, hideable: true, align: 'left' },
   { key: COLUMN_IDS.AGENT_NAME, label: 'Agent Name', visible: true, sortable: true, hideable: true, align: 'left' },
+  { key: COLUMN_IDS.WALLET_TYPE, label: 'Wallet Type', visible: true, sortable: true, hideable: true, align: 'left' },
   { key: COLUMN_IDS.OPENING_BAL, label: 'Opening Balance', visible: true, sortable: true, hideable: true, align: 'right' },
   { key: COLUMN_IDS.SDP, label: 'Security Deposit', visible: true, sortable: true, hideable: true, align: 'right' },
   { key: COLUMN_IDS.ACTIONS, label: 'Action', visible: true, sortable: false, hideable: false, align: 'center' },
@@ -164,16 +190,16 @@ const DEFAULT_COLUMNS: ColumnDef[] = [
 
 const COLUMN_VISIBILITY_STORAGE_KEY = 'openingBalanceColumnVisibility';
 
-// Percentages kept identical to Send Money Opening's own columnWidths
-// (app/sendmoney/opening/page.tsx) so both products' tables render with
-// the same proportions. Brand's own <col> reserves the 44px checkbox
-// column via calc(), same trick as Settlement/Top Up's Send Money pages.
+// Percentages rebalanced to make room for Wallet Type (still sum to 100%).
+// Brand's own <col> reserves the 44px checkbox column via calc(), same
+// trick as Settlement/Top Up's Send Money pages.
 const columnWidths: Record<ColumnKey, string> = {
-  brand: '16%',
-  leader: '18%',
-  agentName: '20%',
-  openingBal: '18%',
-  sdp: '17%',
+  brand: '14%',
+  leader: '16%',
+  agentName: '16%',
+  walletType: '12%',
+  openingBal: '16%',
+  sdp: '15%',
   actions: '11%',
 };
 
@@ -267,6 +293,7 @@ function RowActionsCell({ row, onEdit }: { row: Row; onEdit: (row: Row) => void 
       `Brand: ${row.brand}`,
       `Leader: ${toProperCase(row.leader)}`,
       `Agent Name: ${row.agentName}`,
+      `Wallet Type: ${row.walletType}`,
       `Opening Balance: ${fmt(row.openingBal)}`,
       `Security Deposit: ${fmt(row.sdp)}`,
     ].join('\n');
@@ -365,6 +392,8 @@ function renderCell(row: Row, key: ColumnKey, onEdit: (row: Row) => void, search
       return <td key={key} title={toProperCase(row.leader)} className={base}>{highlightMatch(toProperCase(row.leader), searchTerm)}</td>;
     case 'agentName':
       return <td key={key} title={row.agentName} className={base}>{highlightMatch(row.agentName, searchTerm)}</td>;
+    case 'walletType':
+      return <td key={key} title={row.walletType} className={base}>{highlightMatch(row.walletType, searchTerm)}</td>;
     // Extra right padding (pr-9 instead of the shared px-4's pr-4) shifts the
     // number left so it lines up under the header word's own last letter —
     // the header's sort icon (14px + 6px gap) sits further right than the
@@ -444,6 +473,10 @@ export default function Summary() {
       const balText = await balRes.text();
 
       const brandGroups = new Map<string, string[]>();
+      // Wallet Type values, isLoggedIn-gated — same aggregation as Balance's
+      // own walletTypeValues (app/agentbal/page.tsx), cols 4 (Wallet Type)
+      // and 15 (Login) off the same "SSP AG BalanceLimit" data.
+      const walletTypeValues = new Map<string, string[]>();
       balText
         .trim()
         .split('\n')
@@ -453,10 +486,18 @@ export default function Summary() {
           const cols = line.split(',');
           const walletName = cols[1]?.replace(/"/g, '').trim();
           const group = cols[6]?.replace(/"/g, '').trim();
+          const walletType = cols[4]?.replace(/"/g, '').trim();
+          const login = cols[15]?.replace(/"/g, '').trim() ?? '';
           if (!walletName || walletName === '-') return;
           const groups = brandGroups.get(walletName) ?? [];
           groups.push(group);
           brandGroups.set(walletName, groups);
+
+          if (walletType && walletType !== '-' && isLoggedIn(login)) {
+            const types = walletTypeValues.get(walletName) ?? [];
+            types.push(walletType);
+            walletTypeValues.set(walletName, types);
+          }
         });
 
       const lines = text.trim().split('\n').slice(1);
@@ -467,6 +508,7 @@ export default function Summary() {
           const agentName = cols[0]?.replace(/"/g, '').trim();
           return {
             agentName,
+            walletType: computeWalletType(walletTypeValues.get(agentName) ?? []),
             openingBal: clean(cols[1]),
             sdp: clean(cols[2]),
             leader: cols[3]?.replace(/"/g, '').trim(),
@@ -514,7 +556,7 @@ export default function Summary() {
   );
 
   const filteredRows = rows.filter((row) => {
-    const haystack = `${row.leader} ${row.agentName} ${fmt(row.openingBal)} ${fmt(row.sdp)} ${row.brand}`.toLowerCase();
+    const haystack = `${row.leader} ${row.agentName} ${row.walletType} ${fmt(row.openingBal)} ${fmt(row.sdp)} ${row.brand}`.toLowerCase();
     return haystack.includes(searchTerm.toLowerCase());
   });
 
@@ -530,6 +572,8 @@ export default function Summary() {
             return row.leader.toLowerCase();
           case 'agentName':
             return row.agentName.toLowerCase();
+          case 'walletType':
+            return row.walletType.toLowerCase();
           case 'openingBal':
             return row.openingBal;
           case 'sdp':
@@ -625,6 +669,8 @@ export default function Summary() {
           return row.leader;
         case 'agentName':
           return row.agentName;
+        case 'walletType':
+          return row.walletType;
         case 'openingBal':
           return fmt(row.openingBal);
         case 'sdp':
@@ -994,7 +1040,7 @@ export default function Summary() {
                       <div className="flex items-start justify-between gap-2">
                         <div className="min-w-0">
                           <p className="truncate text-sm font-bold text-foreground">{row.agentName}</p>
-                          <p className="truncate text-[12px] font-normal text-muted-foreground">{toProperCase(row.leader)}{row.brand !== '−' ? ` · ${row.brand}` : ''}</p>
+                          <p className="truncate text-[12px] font-normal text-muted-foreground">{toProperCase(row.leader)}{row.brand !== '−' ? ` · ${row.brand}` : ''}{row.walletType !== '−' ? ` · ${row.walletType}` : ''}</p>
                         </div>
                       </div>
 
