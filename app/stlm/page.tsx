@@ -52,6 +52,12 @@ import { calculateColumnLayout, type ColumnLayout } from '../lib/columnLayout';
 const ICON_BUTTON =
   'flex h-10 w-10 xl:w-auto shrink-0 items-center justify-center xl:justify-start gap-1.5 rounded-[12px] border border-[#E2E8F0] bg-white px-0 xl:px-3 text-[13px] font-medium text-[#475569] transition-[color,background-color,border-color,box-shadow,transform] duration-150 ease-[var(--ease-out-strong)] hover:border-[#2563EB] hover:bg-[#F1F5F9] hover:ring-2 hover:ring-[#2563EB]/20 active:scale-[0.97] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#2563EB] dark:border-[#3a3a3d] dark:bg-[#2a2a2d] dark:text-[#9CA3AF] dark:hover:bg-white/5';
 
+// Always-icon-only variant (never shows a text label, unlike ICON_BUTTON's
+// xl: breakpoint reveal) — Refresh/Columns per explicit instruction, tooltip
+// carries the label instead.
+const ICON_ONLY_BUTTON =
+  'flex h-10 w-10 shrink-0 items-center justify-center rounded-[12px] border border-[#E2E8F0] bg-white text-[13px] font-medium text-[#475569] transition-[color,background-color,border-color,box-shadow,transform] duration-150 ease-[var(--ease-out-strong)] hover:border-[#2563EB] hover:bg-[#F1F5F9] hover:ring-2 hover:ring-[#2563EB]/20 active:scale-[0.97] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#2563EB] dark:border-[#3a3a3d] dark:bg-[#2a2a2d] dark:text-[#9CA3AF] dark:hover:bg-white/5';
+
 // Same shell as ICON_BUTTON — border, white bg, hover/active treatment all
 // identical — with only the text/icon color swapped to indigo. Replaces the
 // old solid-indigo-fill "+ Add" button per explicit instruction: no more
@@ -1759,8 +1765,8 @@ export default function StlmPage() {
                   <div className="h-10 w-10 shrink-0 dt-skeleton rounded-[12px] xl:w-[92px]" />
                   <div className="h-10 w-10 shrink-0 dt-skeleton rounded-[12px] xl:w-[92px]" />
                   <div className="h-10 w-10 shrink-0 dt-skeleton rounded-[12px] xl:w-[88px]" />
-                  <div className="h-10 w-10 shrink-0 dt-skeleton rounded-[12px] xl:w-[108px]" />
-                  <div className="h-10 w-10 shrink-0 dt-skeleton rounded-[12px] xl:w-[80px]" />
+                  <div className="h-10 w-10 shrink-0 dt-skeleton rounded-[12px]" />
+                  <div className="h-10 w-10 shrink-0 dt-skeleton rounded-[12px]" />
                 </div>
               ) : (
                 <div className="ml-3 flex shrink-0 items-center gap-3">
@@ -1808,14 +1814,13 @@ export default function StlmPage() {
                       aria-haspopup="true"
                       aria-expanded={columnsMenuOpen}
                       aria-controls="settlement-columns-popover"
-                      aria-label="Columns"
+                      aria-label="Customize Columns"
                       {...columnsTooltip.handlers}
-                      className={ICON_BUTTON}
+                      className={ICON_ONLY_BUTTON}
                     >
                       <Columns3 size={16} />
-                      <span className="hidden xl:inline">Columns</span>
                     </button>
-                    {columnsTooltip.rendered && <Tooltip label="Columns" open={columnsTooltip.open} pos={columnsTooltip.pos} onlyWhenCompact />}
+                    {columnsTooltip.rendered && <Tooltip label="Customize Columns" open={columnsTooltip.open} pos={columnsTooltip.pos} />}
                     <ColumnsDropdown
                       id="settlement-columns-popover"
                       open={columnsMenuOpen}
@@ -1827,11 +1832,10 @@ export default function StlmPage() {
                     />
                   </div>
                   <div className="relative">
-                    <button type="button" ref={refreshButtonRef} onClick={fetchData} aria-label="Refresh" {...refreshTooltip.handlers} className={ICON_BUTTON}>
+                    <button type="button" ref={refreshButtonRef} onClick={fetchData} aria-label="Refresh Data" {...refreshTooltip.handlers} className={ICON_ONLY_BUTTON}>
                       <RefreshCw size={16} className={spinning ? 'animate-spin' : ''} />
-                      <span className="hidden xl:inline">Refresh</span>
                     </button>
-                    {refreshTooltip.rendered && <Tooltip label="Refresh" open={refreshTooltip.open} pos={refreshTooltip.pos} onlyWhenCompact />}
+                    {refreshTooltip.rendered && <Tooltip label="Refresh Data" open={refreshTooltip.open} pos={refreshTooltip.pos} />}
                   </div>
                 </div>
               )}
