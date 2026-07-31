@@ -176,29 +176,32 @@ type ColumnDef = {
 };
 
 // Alignment matches Settlement's own convention: text left, numbers right,
-// actions center (was all-center before this port). Wallet Type moved
-// further right (after Security Deposit, just before Action) per explicit
-// follow-up correction — no longer between Agent Name and Opening Balance.
+// actions center (was all-center before this port). Wallet Type reverted
+// back between Agent Name and Opening Balance — the further-right column
+// order was wrong; the intent was a narrower Wallet Type column (more
+// space handed to Agent Name instead), not a reorder. See columnWidths.
 const DEFAULT_COLUMNS: ColumnDef[] = [
   { key: COLUMN_IDS.BRAND, label: 'Brand', visible: true, sortable: true, hideable: true, align: 'left' },
   { key: COLUMN_IDS.LEADER, label: 'Leader', visible: true, sortable: true, hideable: true, align: 'left' },
   { key: COLUMN_IDS.AGENT_NAME, label: 'Agent Name', visible: true, sortable: true, hideable: true, align: 'left' },
+  { key: COLUMN_IDS.WALLET_TYPE, label: 'Wallet Type', visible: true, sortable: true, hideable: true, align: 'left' },
   { key: COLUMN_IDS.OPENING_BAL, label: 'Opening Balance', visible: true, sortable: true, hideable: true, align: 'right' },
   { key: COLUMN_IDS.SDP, label: 'Security Deposit', visible: true, sortable: true, hideable: true, align: 'right' },
-  { key: COLUMN_IDS.WALLET_TYPE, label: 'Wallet Type', visible: true, sortable: true, hideable: true, align: 'left' },
   { key: COLUMN_IDS.ACTIONS, label: 'Action', visible: true, sortable: false, hideable: false, align: 'center' },
 ];
 
 const COLUMN_VISIBILITY_STORAGE_KEY = 'openingBalanceColumnVisibility';
 
-// Percentages rebalanced to make room for Wallet Type (still sum to 100%).
+// Agent Name widened, Wallet Type narrowed (still sum to 100%) per
+// explicit instruction — Wallet Type's own badges sit further right
+// (pushed by a wider Agent Name) without moving the column itself.
 // Brand's own <col> reserves the 44px checkbox column via calc(), same
 // trick as Settlement/Top Up's Send Money pages.
 const columnWidths: Record<ColumnKey, string> = {
   brand: '14%',
   leader: '16%',
-  agentName: '16%',
-  walletType: '12%',
+  agentName: '20%',
+  walletType: '8%',
   openingBal: '16%',
   sdp: '15%',
   actions: '11%',
@@ -260,18 +263,22 @@ function walletTypeBadgeClasses(code: string): string {
 // row.walletType is a "BK | NG | RK | UP"-style joined string (or '−' when
 // no active wallet at all) — split it back into its own small pill per
 // code, so a shop with several active wallets shows several badges in a
-// row instead of one long plain-text string.
+// row instead of one long plain-text string. Nowrap + horizontal scroll
+// (not flex-wrap) — the column was deliberately narrowed, and wrapping
+// badges onto multiple lines blew up individual row heights (53px up to
+// 129px on some rows); scrolling within the cell keeps every row the same
+// fixed height instead.
 function WalletTypeBadge({ walletType }: { walletType: string }) {
   if (!walletType || walletType === '−') {
     return <span className="text-[#94A3B8]">−</span>;
   }
   const codes = walletType.split(' | ');
   return (
-    <span className="flex flex-wrap items-center gap-1">
+    <span className="dt-scroll flex flex-nowrap items-center gap-1 overflow-x-auto">
       {codes.map((code) => (
         <span
           key={code}
-          className={`inline-flex h-[22px] items-center rounded-[999px] border px-[8px] text-[11px] font-semibold transition-[filter] duration-150 hover:brightness-95 dark:hover:brightness-110 ${walletTypeBadgeClasses(code)}`}
+          className={`inline-flex h-[22px] shrink-0 items-center rounded-[999px] border px-[8px] text-[11px] font-semibold transition-[filter] duration-150 hover:brightness-95 dark:hover:brightness-110 ${walletTypeBadgeClasses(code)}`}
         >
           {code}
         </span>
