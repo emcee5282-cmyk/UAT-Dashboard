@@ -32,10 +32,10 @@ export default function SettlementHeader({ icon: Icon, title, isRefreshing, onRe
           relative to the leftover space between those two, not the row. */}
       <div className="grid min-h-[52px] grid-cols-3 items-center px-4 py-3 md:px-6">
         <div className="flex min-w-0 items-center gap-2.5">
-          <div
-            className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg text-white"
-            style={{ background: 'var(--product-accent)' }}
-          >
+          {/* Same indigo regardless of active product (was --product-accent,
+              flipping indigo/teal per product) — kept as one consistent
+              color across Cashout and Send Money per explicit instruction. */}
+          <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-[#4f46e5] text-white">
             <Icon size={15} />
           </div>
           <h1 className="truncate text-[15px] font-semibold leading-tight tracking-[-0.01em] text-foreground">

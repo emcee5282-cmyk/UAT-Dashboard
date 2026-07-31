@@ -90,10 +90,12 @@ function DockRow({
     // low-opacity tint plus a 2px nudge reads as "this row is selectable"
     // without competing with the actual active state.
     !disabled && !active && 'hover:translate-x-[2px] hover:bg-[#0f172a]/[0.05] dark:hover:bg-white/[0.06]',
-    // Soft product-tinted fill (flips indigo/teal with the active product
-    // via --product-accent) replaces the old solid navy block — paired with
-    // the left accent bar below instead of a full rectangle.
-    active && 'bg-[var(--product-accent-soft)] font-semibold text-[var(--product-accent)] shadow-[0_1px_3px_rgba(15,23,42,0.08)]'
+    // Soft indigo fill — same indigo regardless of active product (was
+    // --product-accent, flipping indigo/teal per product; kept as one
+    // consistent color across Cashout and Send Money per explicit
+    // instruction) — replaces the old solid navy block, paired with the
+    // left accent bar below instead of a full rectangle.
+    active && 'bg-[rgba(79,70,229,0.08)] dark:bg-[rgba(129,140,248,0.12)] font-semibold text-indigo-600 dark:text-indigo-400 shadow-[0_1px_3px_rgba(15,23,42,0.08)]'
   );
 
   const inner = (
@@ -125,8 +127,7 @@ function DockRow({
     <div className="group relative">
       {active && (
         <span
-          className="pointer-events-none absolute left-0 top-1/2 z-10 h-5 w-[2.5px] -translate-y-1/2 rounded-full"
-          style={{ background: 'var(--product-accent)' }}
+          className="pointer-events-none absolute left-0 top-1/2 z-10 h-5 w-[2.5px] -translate-y-1/2 rounded-full bg-[#4f46e5]"
         />
       )}
       {href ? (
