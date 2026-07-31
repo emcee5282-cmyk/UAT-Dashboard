@@ -5,12 +5,13 @@ import { createPortal } from 'react-dom';
 import {
   Search, Columns3, ChevronUp, ChevronDown, ChevronsUpDown, Download, BookOpen, RefreshCw,
   MoreVertical, Copy, Pencil, Eye, Trash2, Inbox, Users, Banknote, ShieldCheck, CircleSlash,
-  Upload, Plus, CheckSquare, X,
+  Upload, Plus, CheckSquare, X, Tag, User, Wallet as WalletIcon, FilterX,
 } from 'lucide-react';
 import * as XLSX from 'xlsx';
 import SettlementHeader from '../components/SettlementHeader';
 import ConnectionErrorState from '../components/ConnectionErrorState';
 import DataTable from '../components/DataTable';
+import FilterDropdown from '../components/FilterDropdown';
 import ColumnsDropdown from '../components/ColumnsDropdown';
 import TableFooter from '../components/TableFooter';
 import EmptyState from '../components/EmptyState';
@@ -23,7 +24,6 @@ import { isLoggedIn } from '../lib/balanceEngine';
 import { getPreference, setPreference } from '../lib/preferences';
 import { SETTLEMENT_BRAND_OPTIONS } from '../lib/topupOptions';
 import { fmtAbbrev } from '@/app/lib/format';
-import { TABLE_STICKY_HEADER_SHADOW_CLASS } from '../design-system/shadows';
 
 // Responsive action buttons (Upload/Export) — icon+text when the viewport
 // has room, collapsing to icon-only (40x40, no padding) once space gets
@@ -214,6 +214,95 @@ function BulkActionsMenu({
     </div>
   );
 }
+
+// Toolbar filter trigger — Brand/Leader/Wallet Type. Trigger only; the
+// panel beneath it is the shared FilterDropdown (app/components/
+// FilterDropdown.tsx). Copied verbatim from Balance (app/agentbal/page.tsx).
+function FilterTriggerButton({
+  label,
+  icon: Icon,
+  anyUnchecked,
+  selectedCount,
+  menuOpen,
+  buttonRef,
+  onClick,
+}: {
+  label: string;
+  icon: React.ComponentType<{ size?: number; className?: string }>;
+  anyUnchecked: boolean;
+  selectedCount: number;
+  menuOpen: boolean;
+  buttonRef: React.RefObject<HTMLButtonElement | null>;
+  onClick: () => void;
+}) {
+  const tooltip = useTooltip(buttonRef);
+  return (
+    <div className="relative">
+      <button
+        type="button"
+        ref={buttonRef}
+        onClick={onClick}
+        aria-label={label}
+        {...tooltip.handlers}
+        className="inline-flex h-10 w-10 xl:w-auto shrink-0 items-center justify-center xl:justify-start gap-1.5 rounded-[12px] border border-[#E2E8F0] bg-white px-0 xl:px-3 text-[13px] font-medium text-[#475569] transition-[color,background-color,border-color,box-shadow,transform] duration-150 ease-[var(--ease-out-strong)] hover:border-[#2563EB] hover:bg-[#F1F5F9] hover:ring-2 hover:ring-[#2563EB]/20 active:scale-[0.97] dark:border-[#3a3a3d] dark:bg-[#2a2a2d] dark:text-[#9CA3AF] dark:hover:bg-white/5"
+      >
+        <Icon size={15} className="text-[#475569] dark:text-[#9CA3AF]" />
+        <span className="hidden xl:inline">{label}</span>
+        {anyUnchecked && (
+          <span className="flex h-4 min-w-[16px] animate-[dt-badge-pop_150ms_var(--ease-out-strong)] items-center justify-center rounded-full bg-indigo-600 px-1 text-[10px] font-semibold text-white">
+            {selectedCount}
+          </span>
+        )}
+        <ChevronDown
+          size={14}
+          className={`hidden text-[#475569] transition-transform duration-150 ease-[var(--ease-in-out-strong)] dark:text-[#9CA3AF] xl:inline ${menuOpen ? 'rotate-180' : ''}`}
+        />
+      </button>
+      {tooltip.rendered && <Tooltip label={label} open={tooltip.open} pos={tooltip.pos} onlyWhenCompact />}
+    </div>
+  );
+}
+
+// "Reset All Filters" trigger — filled indigo icon once a filter is active.
+// Copied verbatim from Balance.
+function ResetFiltersButton({ anyFilterActive, onClick }: { anyFilterActive: boolean; onClick: () => void }) {
+  const buttonRef = useRef<HTMLButtonElement>(null);
+  const tooltip = useTooltip(buttonRef);
+
+  return (
+    <div className="relative">
+      <button
+        ref={buttonRef}
+        type="button"
+        onClick={() => { if (anyFilterActive) onClick(); }}
+        {...tooltip.handlers}
+        aria-label="Reset all filters"
+        aria-disabled={!anyFilterActive}
+        className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-[12px] border transition-[color,background-color,border-color,transform] duration-150 ease-[var(--ease-out-strong)] ${
+          anyFilterActive
+            ? 'cursor-pointer border-[#E2E8F0] bg-white text-indigo-600 hover:border-[#FCA5A5] hover:bg-[#FEF2F2] hover:text-[#DC2626] active:scale-[0.97] active:border-[#FCA5A5] active:bg-[#FEF2F2] active:text-[#DC2626] dark:border-[#3a3a3d] dark:bg-[#2a2a2d] dark:text-indigo-400'
+            : 'cursor-default border-[#E2E8F0] bg-white text-[#475569] opacity-40 dark:border-[#3a3a3d] dark:bg-[#2a2a2d] dark:text-[#9CA3AF]'
+        }`}
+      >
+        <FilterX size={20} fill={anyFilterActive ? 'currentColor' : 'none'} />
+      </button>
+      {tooltip.rendered && <Tooltip label="Reset all filters" open={tooltip.open} pos={tooltip.pos} />}
+    </div>
+  );
+}
+
+// Wallet Type filter options — same shape as row.walletType itself
+// ("BK | NG | RK | UP"-style joined string, or '−' for none), same
+// abbreviation-matching approach as Balance's own Wallet Type filter
+// (app/agentbal/page.tsx) since this page's computeWalletType() already
+// produces byte-identical output.
+const WALLET_TYPE_FILTER_OPTIONS = [
+  { label: 'Bkash', abbreviation: 'BK' },
+  { label: 'Nagad', abbreviation: 'NG' },
+  { label: 'Rocket', abbreviation: 'RK' },
+  { label: 'UPay', abbreviation: 'UP' },
+];
+const WALLET_TYPE_FILTER_LABELS = [...WALLET_TYPE_FILTER_OPTIONS.map((opt) => opt.label), '—'];
 
 // Row-skeleton bar widths, cycled by row+column index so loading rows read
 // as varied text lengths instead of one uniform bar repeated everywhere.
@@ -676,6 +765,20 @@ export default function Summary() {
   const exportTooltip = useTooltip(exportButtonRef);
   const columnsTooltip = useTooltip(columnsButtonRef);
 
+  // Toolbar filters — Brand/Leader/Wallet Type, same style/arrangement as
+  // Balance (app/agentbal/page.tsx). Wallet Type reuses Balance's own
+  // multi-value abbreviation-matching logic since row.walletType here is
+  // byte-identical in shape ("BK | NG | RK | UP" or '−').
+  const [brandFilter, setBrandFilter] = useState<Record<string, boolean>>({});
+  const [leaderFilter, setLeaderFilter] = useState<Record<string, boolean>>({});
+  const [walletTypeFilter, setWalletTypeFilter] = useState<Record<string, boolean>>({});
+  const [brandMenuOpen, setBrandMenuOpen] = useState(false);
+  const [leaderMenuOpen, setLeaderMenuOpen] = useState(false);
+  const [walletTypeMenuOpen, setWalletTypeMenuOpen] = useState(false);
+  const brandButtonRef = useRef<HTMLButtonElement>(null);
+  const leaderButtonRef = useRef<HTMLButtonElement>(null);
+  const walletTypeButtonRef = useRef<HTMLButtonElement>(null);
+
   const [editingRow, setEditingRow] = useState<Row | null>(null);
   const [newRecordOpen, setNewRecordOpen] = useState(false);
   const [bulkImportOpen, setBulkImportOpen] = useState(false);
@@ -811,9 +914,121 @@ export default function Summary() {
     return haystack.includes(searchTerm.toLowerCase());
   });
 
+  // Toolbar filters — Brand/Leader/Wallet Type, same shape/behavior as
+  // Balance (app/agentbal/page.tsx): options are the full universe of
+  // values seen in `rows` (unaffected by search/other filters), faceted
+  // counts below narrow per-dropdown, and facetFilteredRows is the one
+  // that actually gates the table.
+  const brandOptions = useMemo(
+    () => Array.from(new Set(rows.map((row) => row.brand).filter((b) => b && b !== '−'))).sort((a, b) => a.localeCompare(b)),
+    [rows]
+  );
+  const leaderOptions = useMemo(
+    () => Array.from(new Set(rows.map((row) => row.leader).filter(Boolean))).sort((a, b) => a.localeCompare(b)),
+    [rows]
+  );
+  const walletTypeOptions = WALLET_TYPE_FILTER_LABELS;
+
+  const isBrandChecked = (name: string) => brandFilter[name] !== false;
+  const isLeaderChecked = (name: string) => leaderFilter[name] !== false;
+  const isWalletTypeChecked = (name: string) => walletTypeFilter[name] !== false;
+
+  const anyBrandUnchecked = brandOptions.some((name) => !isBrandChecked(name));
+  const anyLeaderUnchecked = leaderOptions.some((name) => !isLeaderChecked(name));
+  const anyWalletTypeUnchecked = walletTypeOptions.some((name) => !isWalletTypeChecked(name));
+
+  const selectedBrandCount = brandOptions.filter((name) => isBrandChecked(name)).length;
+  const selectedLeaderCount = leaderOptions.filter((name) => isLeaderChecked(name)).length;
+  const selectedWalletTypeCount = walletTypeOptions.filter((name) => isWalletTypeChecked(name)).length;
+
+  const anyFilterActive = anyBrandUnchecked || anyLeaderUnchecked || anyWalletTypeUnchecked;
+
+  const resetAllFilters = useCallback(() => {
+    setBrandFilter({});
+    setLeaderFilter({});
+    setWalletTypeFilter({});
+    setBrandMenuOpen(false);
+    setLeaderMenuOpen(false);
+    setWalletTypeMenuOpen(false);
+  }, []);
+
+  // Wallet Type matches by abbreviation intersection (a row can carry
+  // several) — same rule as Balance's own Wallet Type filter: '−' rows
+  // match only when "—" is checked, otherwise a row matches if ANY of its
+  // own codes is checked.
+  const matchesWalletTypeFilter = useCallback((row: Row) => {
+    if (!walletTypeOptions.some((name) => walletTypeFilter[name] === false)) return true;
+    if (row.walletType === '−') return isWalletTypeChecked('—');
+    const rowAbbreviations = row.walletType.split(' | ');
+    return WALLET_TYPE_FILTER_OPTIONS.some(
+      (opt) => rowAbbreviations.includes(opt.abbreviation) && isWalletTypeChecked(opt.label)
+      // eslint-disable-next-line react-hooks/exhaustive-deps
+    );
+  }, [walletTypeFilter, walletTypeOptions]);
+
+  const facetFilteredRows = useMemo(() => {
+    let list = filteredRows;
+    if (brandOptions.some((name) => brandFilter[name] === false)) {
+      list = list.filter((row) => brandFilter[row.brand] !== false);
+    }
+    if (leaderOptions.some((name) => leaderFilter[name] === false)) {
+      list = list.filter((row) => leaderFilter[row.leader] !== false);
+    }
+    list = list.filter(matchesWalletTypeFilter);
+    return list;
+  }, [filteredRows, brandFilter, brandOptions, leaderFilter, leaderOptions, matchesWalletTypeFilter]);
+
+  // Faceted option counts — each omits its own facet's clause so unchecking
+  // an option in a dropdown doesn't shrink its own list toward zero.
+  const brandFilterOptions = useMemo(() => {
+    let list = filteredRows;
+    if (leaderOptions.some((name) => leaderFilter[name] === false)) {
+      list = list.filter((row) => leaderFilter[row.leader] !== false);
+    }
+    list = list.filter(matchesWalletTypeFilter);
+    const counts = new Map<string, number>();
+    for (const row of list) counts.set(row.brand, (counts.get(row.brand) ?? 0) + 1);
+    return brandOptions.map((name) => ({ value: name, label: name, count: counts.get(name) ?? 0 }));
+  }, [filteredRows, leaderFilter, leaderOptions, matchesWalletTypeFilter, brandOptions]);
+
+  const leaderFilterOptions = useMemo(() => {
+    let list = filteredRows;
+    if (brandOptions.some((name) => brandFilter[name] === false)) {
+      list = list.filter((row) => brandFilter[row.brand] !== false);
+    }
+    list = list.filter(matchesWalletTypeFilter);
+    const counts = new Map<string, number>();
+    for (const row of list) counts.set(row.leader, (counts.get(row.leader) ?? 0) + 1);
+    return leaderOptions.map((name) => ({ value: name, label: toProperCase(name), count: counts.get(name) ?? 0 }));
+  }, [filteredRows, brandFilter, brandOptions, matchesWalletTypeFilter, leaderOptions]);
+
+  const walletTypeFilterOptions = useMemo(() => {
+    let list = filteredRows;
+    if (brandOptions.some((name) => brandFilter[name] === false)) {
+      list = list.filter((row) => brandFilter[row.brand] !== false);
+    }
+    if (leaderOptions.some((name) => leaderFilter[name] === false)) {
+      list = list.filter((row) => leaderFilter[row.leader] !== false);
+    }
+    const counts = new Map<string, number>();
+    for (const row of list) {
+      if (row.walletType === '−') {
+        counts.set('—', (counts.get('—') ?? 0) + 1);
+        continue;
+      }
+      const rowAbbreviations = row.walletType.split(' | ');
+      for (const opt of WALLET_TYPE_FILTER_OPTIONS) {
+        if (rowAbbreviations.includes(opt.abbreviation)) {
+          counts.set(opt.label, (counts.get(opt.label) ?? 0) + 1);
+        }
+      }
+    }
+    return walletTypeOptions.map((name) => ({ value: name, label: name, count: counts.get(name) ?? 0 }));
+  }, [filteredRows, brandFilter, brandOptions, leaderFilter, leaderOptions, walletTypeOptions]);
+
   const sortedRows = useMemo(() => {
-    if (!sortColumn) return filteredRows;
-    const list = [...filteredRows];
+    if (!sortColumn) return facetFilteredRows;
+    const list = [...facetFilteredRows];
     list.sort((a, b) => {
       const getValue = (row: Row) => {
         switch (sortColumn) {
@@ -846,7 +1061,7 @@ export default function Summary() {
       return sortDirection === 'asc' ? comparison : -comparison;
     });
     return list;
-  }, [filteredRows, sortColumn, sortDirection]);
+  }, [facetFilteredRows, sortColumn, sortDirection]);
 
   const totalPages = Math.max(1, Math.ceil(sortedRows.length / rowsPerPage));
   const currentPage = Math.min(page, totalPages);
@@ -1031,7 +1246,7 @@ export default function Summary() {
         isRefreshing={spinning}
         onRefresh={fetchData}
       />
-      <div className={`w-full border-t border-border bg-[#f4f6fb] px-4 py-3 transition-shadow duration-150 ease-out dark:bg-[#1c1c1e] md:px-6 ${isScrolled ? TABLE_STICKY_HEADER_SHADOW_CLASS : ''}`}>
+      <div className="w-full border-t border-border bg-[#f4f6fb] px-4 py-3 dark:bg-[#1c1c1e] md:px-6">
         <div className="flex gap-2 pr-2">
           {loading ? (
             Array.from({ length: 4 }).map((_, i) => (
@@ -1076,6 +1291,76 @@ export default function Summary() {
         {!error && (
           <DataTable>
             <div className="flex shrink-0 flex-nowrap items-center overflow-x-auto border-b border-[#E5E7EB] px-4 py-3 dark:border-[#3a3a3d]">
+              {loading ? (
+                <div className="mr-3 flex shrink-0 items-center gap-3">
+                  <div className="h-10 w-10 shrink-0 dt-skeleton rounded-[12px] xl:w-[92px]" />
+                  <div className="h-10 w-10 shrink-0 dt-skeleton rounded-[12px] xl:w-[98px]" />
+                  <div className="h-10 w-10 shrink-0 dt-skeleton rounded-[12px] xl:w-[130px]" />
+                  <div className="h-10 w-10 shrink-0 dt-skeleton rounded-[12px]" />
+                </div>
+              ) : (
+                <div className="mr-3 flex shrink-0 items-center gap-3">
+                  <div className="relative">
+                    <FilterTriggerButton
+                      label="Brand"
+                      icon={Tag}
+                      anyUnchecked={anyBrandUnchecked}
+                      selectedCount={selectedBrandCount}
+                      menuOpen={brandMenuOpen}
+                      buttonRef={brandButtonRef}
+                      onClick={() => setBrandMenuOpen((current) => !current)}
+                    />
+                    <FilterDropdown
+                      open={brandMenuOpen}
+                      onOpenChange={setBrandMenuOpen}
+                      anchorRef={brandButtonRef}
+                      options={brandFilterOptions}
+                      selected={brandFilter}
+                      onChange={setBrandFilter}
+                    />
+                  </div>
+                  <div className="relative">
+                    <FilterTriggerButton
+                      label="Leader"
+                      icon={User}
+                      anyUnchecked={anyLeaderUnchecked}
+                      selectedCount={selectedLeaderCount}
+                      menuOpen={leaderMenuOpen}
+                      buttonRef={leaderButtonRef}
+                      onClick={() => setLeaderMenuOpen((current) => !current)}
+                    />
+                    <FilterDropdown
+                      open={leaderMenuOpen}
+                      onOpenChange={setLeaderMenuOpen}
+                      anchorRef={leaderButtonRef}
+                      options={leaderFilterOptions}
+                      selected={leaderFilter}
+                      onChange={setLeaderFilter}
+                    />
+                  </div>
+                  <div className="relative">
+                    <FilterTriggerButton
+                      label="Wallet Type"
+                      icon={WalletIcon}
+                      anyUnchecked={anyWalletTypeUnchecked}
+                      selectedCount={selectedWalletTypeCount}
+                      menuOpen={walletTypeMenuOpen}
+                      buttonRef={walletTypeButtonRef}
+                      onClick={() => setWalletTypeMenuOpen((current) => !current)}
+                    />
+                    <FilterDropdown
+                      open={walletTypeMenuOpen}
+                      onOpenChange={setWalletTypeMenuOpen}
+                      anchorRef={walletTypeButtonRef}
+                      options={walletTypeFilterOptions}
+                      selected={walletTypeFilter}
+                      onChange={setWalletTypeFilter}
+                    />
+                  </div>
+                  <ResetFiltersButton anyFilterActive={anyFilterActive} onClick={resetAllFilters} />
+                </div>
+              )}
+
               <div className="flex h-10 flex-1 min-w-[200px] items-center gap-2 rounded-full border border-[#E5E7EB] bg-white px-[16px] transition-colors focus-within:border-[#2563EB] focus-within:ring-2 focus-within:ring-[#2563EB]/20 dark:border-[#3a3a3d] dark:bg-[#2a2a2d]">
                 {loading ? (
                   <div className="h-3 w-32 dt-skeleton rounded-md" />
