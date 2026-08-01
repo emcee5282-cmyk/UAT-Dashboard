@@ -184,7 +184,7 @@ const DEFAULT_COLUMNS: ColumnDef[] = [
   { key: COLUMN_IDS.DEPOSIT, label: 'Deposit', visible: true, sortable: true, hideable: true, align: 'center' },
   { key: COLUMN_IDS.WITHDRAWAL, label: 'Withdrawal', visible: true, sortable: true, hideable: true, align: 'center' },
   { key: COLUMN_IDS.PRIORITY, label: 'Priority', visible: true, sortable: true, hideable: true, align: 'center' },
-  { key: COLUMN_IDS.WALLET_STATUS, label: 'Wallet Status', visible: true, sortable: true, hideable: false, align: 'center' },
+  { key: COLUMN_IDS.WALLET_STATUS, label: 'Wallet Status', visible: true, sortable: true, hideable: false, align: 'left' },
   // Edit/Save/Cancel per ROW — Priority is the only field this saves;
   // Deposit/Withdrawal/Wallet Status are computed and read-only. Never
   // hideable — it's the only edit affordance for the row.
@@ -947,7 +947,7 @@ export default function SendMoneyWalletStatus() {
       }
       case 'walletStatus':
         return (
-          <td key={key} style={cellStyle} className={base}>
+          <td key={key} style={cellStyle} className={shopBase}>
             <span className="inline-flex items-center gap-1.5 rounded-md border border-transparent px-2 text-[12px] font-medium text-foreground">
               <span className={`h-2 w-2 shrink-0 rounded-full ${WALLET_STATUS_DOT[row.walletStatus]}`} />
               {row.walletStatus}
@@ -990,7 +990,7 @@ export default function SendMoneyWalletStatus() {
                 disabled={rowSaving}
                 aria-label="Cancel"
                 title="Cancel"
-                className="flex h-10 w-10 items-center justify-center rounded-[10px] border border-[#E5E7EB] bg-white text-slate-500 transition-colors duration-150 ease-out hover:bg-[#F8FAFC] disabled:opacity-50 dark:border-[#3a3a3d] dark:bg-[#2a2a2d] dark:text-[#9CA3AF]"
+                className="flex h-10 w-10 items-center justify-center rounded-[10px] border border-[#E5E7EB] bg-white text-slate-500 transition-colors duration-150 ease-out hover:border-rose-300 hover:bg-rose-50 hover:text-rose-600 disabled:opacity-50 dark:border-[#3a3a3d] dark:bg-[#2a2a2d] dark:text-[#9CA3AF] dark:hover:border-rose-900/60 dark:hover:bg-rose-500/10 dark:hover:text-rose-400"
               >
                 <X size={16} />
               </button>
@@ -1316,7 +1316,7 @@ export default function SendMoneyWalletStatus() {
                                 type="button"
                                 onClick={cancelEdit}
                                 disabled={rowSaving}
-                                className="flex h-8 flex-1 items-center justify-center gap-1 rounded-[10px] border border-[#E5E7EB] bg-white text-[12px] font-semibold text-slate-500 transition-colors duration-150 ease-out disabled:opacity-50 dark:border-[#3a3a3d] dark:bg-[#2a2a2d] dark:text-[#9CA3AF]"
+                                className="flex h-8 flex-1 items-center justify-center gap-1 rounded-[10px] border border-[#E5E7EB] bg-white text-[12px] font-semibold text-slate-500 transition-colors duration-150 ease-out hover:border-rose-300 hover:bg-rose-50 hover:text-rose-600 disabled:opacity-50 dark:border-[#3a3a3d] dark:bg-[#2a2a2d] dark:text-[#9CA3AF] dark:hover:border-rose-900/60 dark:hover:bg-rose-500/10 dark:hover:text-rose-400"
                               >
                                 <X size={14} /> Cancel
                               </button>
