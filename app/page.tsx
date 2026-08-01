@@ -1741,7 +1741,11 @@ export default function BalanceOverviewPage() {
         { key: 'upay', label: 'UPay', value: todayBundle.upay },
       ], null, sendMoneyTopUpStlm, sendMoneyOpeningOverride, sendMoneyWalletRunningBalOverride));
 
-      const sspLine1BrandTopUpStlm = computeCashoutBrandTopUpStlm(agstlmText, cutoff);
+      // Same widened cutoff as the KPI cards/Today strip above (cashoutLiveCutoff,
+      // not the plain clock-based `cutoff`) — otherwise SSP Line 1's Top Up/
+      // Settlement reset to 0 at the 2AM rollover even while Opening/Estimated
+      // Opening hasn't been confirmed for the new day yet.
+      const sspLine1BrandTopUpStlm = computeCashoutBrandTopUpStlm(agstlmText, cashoutLiveCutoff);
 
       const sspLine1CashoutComputed = parseSspLine1(sspLine1Text).map((row) => {
         const brandTotals = sspLine1BrandTopUpStlm.get(row.brand.toUpperCase()) ?? { topUp: 0, stlm: 0 };
@@ -1752,7 +1756,10 @@ export default function BalanceOverviewPage() {
       // Send Money's own SSP Line 1 table — same logic, sourced from "PS BD
       // STLM + TOPUP" (bundleText) with Send Money's own wallet-name-based
       // brand resolution (no cross-sheet lookup needed).
-      const sspLine1SendMoneyBrandTopUpStlm = computeSendMoneyBrandTopUpStlm(bundleText, cutoff);
+      // Same widened cutoff as above — SSP Line 2's Top Up/Settlement must not
+      // reset to 0 at the 2AM rollover while Send Money's Opening/Estimated
+      // Opening hasn't been confirmed for the new day yet.
+      const sspLine1SendMoneyBrandTopUpStlm = computeSendMoneyBrandTopUpStlm(bundleText, sendMoneyLiveCutoff);
       const sspLine1SendMoneyComputed = parseSspLine1(sspLine1SendMoneyText).map((row) => {
         const brandTotals = sspLine1SendMoneyBrandTopUpStlm.get(row.brand.toUpperCase()) ?? { topUp: 0, stlm: 0 };
         const settlement = -brandTotals.stlm;
