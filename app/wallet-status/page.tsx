@@ -70,11 +70,13 @@ function deriveWalletFlags(computedStatus: string): { walletStatus: WalletStatus
 
 // Format mimics Transfer Queue (app/transfer-queue/page.tsx) per explicit
 // instruction — same GHOST_BUTTON toolbar, SettlementHeader, DataTable,
-// native table w/ colgroup, ColumnsDropdown, TableFooter, mobile card list.
+// native table, ColumnsDropdown, TableFooter, mobile card list. Column
+// widths use Balance's own dynamic per-column measurement system (see
+// computeColumnWidthsPx below) rather than colgroup/table-fixed — per
+// explicit instruction to arrange sizing the same way as Balance.
 const GHOST_BUTTON =
   'inline-flex h-9 items-center gap-1.5 rounded-[8px] border border-[#E2E8F0] px-3 text-[13px] font-medium text-[#475569] transition-colors duration-150 ease-out hover:bg-[#F8FAFC] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#2563EB] dark:border-[#3a3a3d] dark:text-[#9CA3AF] dark:hover:bg-white/5';
 
-const TABLE_MIN_WIDTH_PX = 1200;
 const PAGE_SIZE_OPTIONS = [50, 100, 250, 500];
 
 function displayNum(num: number): string {
@@ -191,22 +193,112 @@ const DEFAULT_COLUMNS: ColumnDef[] = [
 
 const COLUMN_VISIBILITY_STORAGE_KEY = 'walletStatusColumnVisibility';
 
-// Wallet Status / its Action column are fixed px per spec ("Never resize.
-// Never shift. Never wrap.") — every other column stays percentage-based;
-// table-fixed + the horizontal-scroll fallback absorb the mixed units fine.
-const columnWidths: Record<ColumnKey, string> = {
-  brand: '8%',
-  shopName: '18%',
-  companyBalance: '12%',
-  availableLimit: '11%',
-  frozenAmount: '10%',
-  sdp: '9%',
-  deposit: '8%',
-  withdrawal: '8%',
-  priority: '7%',
-  walletStatus: '170px',
-  walletStatusAction: '72px',
-};
+// Same dynamic per-column width system as Balance (app/agentbal/page.tsx):
+// every column is sized to its own longest real value across the FULL
+// dataset (not just the current page), so no column ever truncates its
+// header or clips a value, and pagination/sorting never makes a column
+// visibly jump. table-auto (no <colgroup>/table-fixed) + inline
+// width/minWidth per cell, same as Balance.
+let measureCanvas: HTMLCanvasElement | null = null;
+function measureTextWidthPx(text: string, font: string): number {
+  if (typeof document === 'undefined') return 0;
+  if (!measureCanvas) measureCanvas = document.createElement('canvas');
+  const ctx = measureCanvas.getContext('2d');
+  if (!ctx) return 0;
+  ctx.font = font;
+  return ctx.measureText(text).width;
+}
+
+// Fonts/paddings mirror this page's own real classes exactly: header cell
+// (text-[14px] font-semibold), body cell (text-[13px] font-normal), Brand
+// badge (text-[12px] font-semibold), and the Deposit/Withdrawal/Priority/
+// Wallet Status pill badges (text-[12px] font-medium).
+const BODY_TEXT_FONT = '400 13px Inter, sans-serif';
+const HEADER_TEXT_FONT = '600 14px Inter, sans-serif';
+const BRAND_BADGE_FONT = '600 12px Inter, sans-serif';
+const PILL_BADGE_FONT = '500 12px Inter, sans-serif';
+
+// px-4 cell padding = 16px each side = 32px total, on every cell.
+const CELL_PADDING_PX = 32;
+// Sort icon + its gap reserve, for sortable headers only (see SortIcon).
+const HEADER_SORT_ICON_RESERVE_PX = 20;
+// Info icon + its gap reserve — Available Limit/Frozen Amount only.
+const HEADER_INFO_ICON_RESERVE_PX = 18;
+// Brand badge chrome beyond its text: px-[10px] (10px) each side + 1px
+// border each side.
+const BRAND_BADGE_CHROME_PX = 22;
+// Deposit/Withdrawal/Priority pill chrome beyond its text: px-2 (8px)
+// each side + 1px border each side.
+const PILL_BADGE_CHROME_PX = 18;
+// Wallet Status pill chrome beyond its text: px-2 (8px) each side + 1px
+// border each side + the status dot (8px) + its gap-1.5 (6px).
+const WALLET_STATUS_BADGE_CHROME_PX = 32;
+// Extra breathing room so the longest value never sits flush against the
+// next column's edge.
+const EXTRA_BREATHING_ROOM_PX = 8;
+// The Edit/Save/Cancel action column has no measurable text content (icon
+// buttons only) — fixed wide enough for the Save+Cancel button pair.
+const WALLET_STATUS_ACTION_WIDTH_PX = 96;
+
+const COLUMNS_WITH_INFO_ICON: ColumnKey[] = ['availableLimit', 'frozenAmount'];
+const PILL_BADGE_COLUMNS: ColumnKey[] = ['deposit', 'withdrawal', 'priority'];
+
+// Exact display string per column — mirrors renderCell's own per-column
+// JSX content, kept as plain strings here purely for width measurement.
+function getColumnDisplayText(row: WalletStatusRow, key: ColumnKey): string {
+  switch (key) {
+    case 'brand': return row.brand;
+    case 'shopName': return row.shopName;
+    case 'companyBalance': return displayNum(row.companyBalance);
+    case 'availableLimit': return displayAvailableLimit(row.availableLimit);
+    case 'frozenAmount': return displayNum(row.frozenAmount);
+    case 'sdp': return row.sdpDisplay;
+    case 'deposit': return row.deposit;
+    case 'withdrawal': return row.withdrawal;
+    case 'priority': return row.priority;
+    case 'walletStatus': return row.walletStatus;
+    default: return '';
+  }
+}
+
+// For every visible column: measures the longest real value across the
+// full dataset (plus each column's own badge chrome, where applicable),
+// takes the max against the header label's own required width (so the
+// label itself is never the thing that gets clipped), and returns a fixed
+// px width to pin both the header and every body cell to.
+function computeColumnWidthsPx(rows: WalletStatusRow[], columns: ColumnDef[]): Partial<Record<ColumnKey, number>> {
+  const result: Partial<Record<ColumnKey, number>> = {};
+  for (const col of columns) {
+    if (col.key === 'walletStatusAction') {
+      result[col.key] = WALLET_STATUS_ACTION_WIDTH_PX;
+      continue;
+    }
+
+    const font = col.key === 'brand' ? BRAND_BADGE_FONT
+      : (PILL_BADGE_COLUMNS.includes(col.key) || col.key === 'walletStatus') ? PILL_BADGE_FONT
+      : BODY_TEXT_FONT;
+    const chrome = col.key === 'brand' ? BRAND_BADGE_CHROME_PX
+      : col.key === 'walletStatus' ? WALLET_STATUS_BADGE_CHROME_PX
+      : PILL_BADGE_COLUMNS.includes(col.key) ? PILL_BADGE_CHROME_PX
+      : 0;
+
+    let maxTextWidth = 0;
+    for (const row of rows) {
+      const w = measureTextWidthPx(getColumnDisplayText(row, col.key) ?? '', font);
+      if (w > maxTextWidth) maxTextWidth = w;
+    }
+    const dataWidth = maxTextWidth > 0 ? Math.ceil(maxTextWidth) + chrome + CELL_PADDING_PX + EXTRA_BREATHING_ROOM_PX : 0;
+
+    const headerWidth = Math.ceil(measureTextWidthPx(col.label, HEADER_TEXT_FONT))
+      + CELL_PADDING_PX
+      + (col.sortable ? HEADER_SORT_ICON_RESERVE_PX : 0)
+      + (COLUMNS_WITH_INFO_ICON.includes(col.key) ? HEADER_INFO_ICON_RESERVE_PX : 0);
+
+    const width = Math.max(dataWidth, headerWidth);
+    if (width > 0) result[col.key] = width;
+  }
+  return result;
+}
 
 const rowSkeletonWidths: Record<ColumnKey, string[]> = {
   brand: ['w-8', 'w-10', 'w-9'],
@@ -400,6 +492,14 @@ function rowHasChanges(row: WalletStatusRow, draft: RowDraft | null): boolean {
 
 export default function WalletStatus() {
   const [rows, setRows] = useState<WalletStatusRow[]>([]);
+
+  // Fixed width per column — sized to each column's own longest real value
+  // across the FULL dataset (not the current page/search/sort slice), so
+  // every column stays constant no matter which rows are on screen.
+  // Computed over DEFAULT_COLUMNS (not visibleColumns) so it never depends
+  // on columnDefs' own declaration order below.
+  const colWidthsPx = useMemo(() => computeColumnWidthsPx(rows, DEFAULT_COLUMNS), [rows]);
+
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<ClassifiedError | null>(null);
   const [spinning, setSpinning] = useState(false);
@@ -738,40 +838,42 @@ export default function WalletStatus() {
     return () => clearTimeout(timer);
   }, [toast]);
 
-  function renderCell(row: WalletStatusRow, key: ColumnKey) {
+  function renderCell(row: WalletStatusRow, key: ColumnKey, colWidthsPx?: Partial<Record<ColumnKey, number>>) {
     const base = 'whitespace-nowrap overflow-hidden text-ellipsis text-[13px] font-normal text-center px-4 py-[14px] align-top';
     const shopBase = 'whitespace-nowrap overflow-hidden text-ellipsis text-[13px] font-normal text-left px-4 py-[14px] align-top';
     const isEditingThisRow = editingRowKey === row.key;
+    const width = colWidthsPx?.[key];
+    const cellStyle = width ? { width, minWidth: width } : undefined;
     switch (key) {
       case 'brand':
-        return <td key={key} className={base}><BrandBadge>{row.brand}</BrandBadge></td>;
+        return <td key={key} style={cellStyle} className={base}><BrandBadge>{row.brand}</BrandBadge></td>;
       case 'shopName':
-        return <td key={key} className={`${shopBase} text-foreground`}>{row.shopName}</td>;
+        return <td key={key} style={cellStyle} className={`${shopBase} text-foreground`}>{row.shopName}</td>;
       case 'companyBalance':
         return (
-          <td key={key} className={`${base} tabular-nums ${row.companyBalance < 0 ? 'text-rose-600 dark:text-rose-400' : 'text-foreground'}`}>
+          <td key={key} style={cellStyle} className={`${base} tabular-nums ${row.companyBalance < 0 ? 'text-rose-600 dark:text-rose-400' : 'text-foreground'}`}>
             {displayNum(row.companyBalance)}
           </td>
         );
       case 'availableLimit':
         return (
-          <td key={key} className={`${base} tabular-nums ${availableLimitColorClass(row.availableLimit, row.baseLimit)}`}>
+          <td key={key} style={cellStyle} className={`${base} tabular-nums ${availableLimitColorClass(row.availableLimit, row.baseLimit)}`}>
             {displayAvailableLimit(row.availableLimit)}
           </td>
         );
       case 'frozenAmount': {
         const formatted = displayNum(row.frozenAmount);
         return (
-          <td key={key} className={`${base} tabular-nums ${formatted === '−' ? 'text-muted-foreground' : 'text-[#EF4444]'}`}>
+          <td key={key} style={cellStyle} className={`${base} tabular-nums ${formatted === '−' ? 'text-muted-foreground' : 'text-[#EF4444]'}`}>
             {formatted}
           </td>
         );
       }
       case 'sdp':
-        return <td key={key} className={`${base} tabular-nums text-foreground`}>{row.sdpDisplay}</td>;
+        return <td key={key} style={cellStyle} className={`${base} tabular-nums text-foreground`}>{row.sdpDisplay}</td>;
       case 'deposit':
         return (
-          <td key={key} className={base}>
+          <td key={key} style={cellStyle} className={base}>
             <span className={`inline-flex h-7 items-center rounded-md border px-2 text-[12px] font-medium ${row.deposit === 'Yes'
               ? 'border-emerald-200 bg-emerald-50 text-emerald-700 dark:border-emerald-900/50 dark:bg-emerald-500/10 dark:text-emerald-400'
               : 'border-slate-200 bg-slate-50 text-slate-600 dark:border-slate-700 dark:bg-slate-500/10 dark:text-slate-400'}`}>
@@ -781,7 +883,7 @@ export default function WalletStatus() {
         );
       case 'withdrawal':
         return (
-          <td key={key} className={base}>
+          <td key={key} style={cellStyle} className={base}>
             <span className={`inline-flex h-7 items-center rounded-md border px-2 text-[12px] font-medium ${row.withdrawal === 'Yes'
               ? 'border-emerald-200 bg-emerald-50 text-emerald-700 dark:border-emerald-900/50 dark:bg-emerald-500/10 dark:text-emerald-400'
               : 'border-slate-200 bg-slate-50 text-slate-600 dark:border-slate-700 dark:bg-slate-500/10 dark:text-slate-400'}`}>
@@ -792,7 +894,7 @@ export default function WalletStatus() {
       case 'priority': {
         const value = isEditingThisRow && editDraft ? editDraft.priority : row.priority;
         return (
-          <td key={key} className={base}>
+          <td key={key} style={cellStyle} className={base}>
             <StatusSelect
               value={value}
               options={PRIORITY_OPTIONS}
@@ -806,7 +908,7 @@ export default function WalletStatus() {
       }
       case 'walletStatus':
         return (
-          <td key={key} className={base}>
+          <td key={key} style={cellStyle} className={base}>
             <span className="inline-flex items-center gap-1.5 rounded-md border border-transparent px-2 text-[12px] font-medium text-foreground">
               <span className={`h-2 w-2 shrink-0 rounded-full ${WALLET_STATUS_DOT[row.walletStatus]}`} />
               {row.walletStatus}
@@ -816,7 +918,7 @@ export default function WalletStatus() {
       case 'walletStatusAction': {
         if (!isEditingThisRow) {
           return (
-            <td key={key} className={base}>
+            <td key={key} style={cellStyle} className={base}>
               <button
                 type="button"
                 onClick={() => startEdit(row)}
@@ -831,7 +933,7 @@ export default function WalletStatus() {
         }
         const canSave = rowHasChanges(row, editDraft);
         return (
-          <td key={key} className={base}>
+          <td key={key} style={cellStyle} className={base}>
             <span className="inline-flex items-center gap-1.5">
               <button
                 type="button"
@@ -946,16 +1048,15 @@ export default function WalletStatus() {
             <div className="hidden h-1.5 shrink-0 sm:block" />
             <div className="relative hidden flex-1 min-h-0 sm:block">
               <div ref={tableScrollRef} className="dt-scroll h-full overflow-y-auto overflow-x-auto">
-                <table className="w-full table-fixed text-xs" style={{ minWidth: TABLE_MIN_WIDTH_PX }}>
-                  <colgroup>
-                    {visibleColumns.map((col) => (
-                      <col key={col.key} style={{ width: columnWidths[col.key] }} />
-                    ))}
-                  </colgroup>
+                <table className="w-full text-xs">
                   <thead className={`sticky top-0 z-[50] bg-[#FAFAFB] dark:bg-[#252528] border-b border-[#E2E8F0] dark:border-[#3a3a3d] transition-shadow duration-150 ease-out ${isScrolled ? 'shadow-[0_2px_4px_rgba(15,23,42,0.1)] dark:shadow-[0_2px_4px_rgba(0,0,0,0.35)]' : ''}`}>
                     <tr className="h-[48px]">
                       {visibleColumns.map((col) => (
-                        <th key={col.key} className={headerCellClasses(col.align)}>
+                        <th
+                          key={col.key}
+                          style={colWidthsPx[col.key] ? { width: colWidthsPx[col.key], minWidth: colWidthsPx[col.key] } : undefined}
+                          className={headerCellClasses(col.align)}
+                        >
                           {loading ? (
                             <div className={`h-3 w-3/5 max-w-[72px] dt-skeleton rounded-md ${col.align === 'right' ? 'ml-auto' : col.align === 'center' ? 'mx-auto' : ''}`} />
                           ) : col.sortable ? (
@@ -1001,8 +1102,13 @@ export default function WalletStatus() {
                           {visibleColumns.map((col) => {
                             const widths = rowSkeletonWidths[col.key];
                             const width = widths[rowIndex % widths.length];
+                            const colWidth = colWidthsPx[col.key];
                             return (
-                              <td key={col.key} className="px-4 py-[14px]">
+                              <td
+                                key={col.key}
+                                style={colWidth ? { width: colWidth, minWidth: colWidth } : undefined}
+                                className="px-4 py-[14px]"
+                              >
                                 <div className={`dt-skeleton h-2.5 rounded-md ${width}`} />
                               </td>
                             );
@@ -1018,7 +1124,7 @@ export default function WalletStatus() {
                             : `border-border ${i % 2 === 1 ? 'bg-muted/5' : ''}`
                         }`}
                       >
-                        {visibleColumns.map((col) => renderCell(row, col.key))}
+                        {visibleColumns.map((col) => renderCell(row, col.key, colWidthsPx))}
                       </tr>
                     )) : (
                       <tr>
