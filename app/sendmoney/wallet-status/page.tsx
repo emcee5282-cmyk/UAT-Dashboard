@@ -255,7 +255,7 @@ function getColumnDisplayText(row: WalletStatusRow, key: ColumnKey): string {
     case 'sdp': return row.sdpDisplay;
     case 'deposit': return row.deposit;
     case 'withdrawal': return row.withdrawal;
-    case 'priority': return row.priority;
+    case 'priority': return priorityDisplay(row);
     case 'walletStatus': return row.walletStatus;
     default: return '';
   }
@@ -423,11 +423,28 @@ function BrandBadge({ children }: { children: string }) {
   );
 }
 
-const PRIORITY_BADGE_TINTS: Record<Priority, string> = {
+// "None" is a display-only state, never a selectable option or a stored
+// value — the real Priority (Low/Normal/High) stays intact underneath so
+// it reappears if the wallet becomes active again. Kept separate from
+// `Priority` itself so PRIORITY_OPTIONS/the sheet's normalizePriority
+// never have to account for a 4th value that was never actually settable.
+type PriorityDisplay = Priority | 'None';
+
+const PRIORITY_BADGE_TINTS: Record<PriorityDisplay, string> = {
   High: 'bg-rose-50 text-rose-700 border-rose-200 dark:bg-rose-500/10 dark:text-rose-400 dark:border-rose-900/50',
   Normal: 'bg-slate-100 text-slate-600 border-slate-200 dark:bg-slate-500/10 dark:text-slate-400 dark:border-slate-700',
   Low: 'bg-emerald-50 text-emerald-700 border-emerald-200 dark:bg-emerald-500/10 dark:text-emerald-400 dark:border-emerald-900/50',
+  None: 'bg-slate-50 text-slate-400 border-slate-200 dark:bg-slate-500/5 dark:text-slate-500 dark:border-slate-800',
 };
+
+// An inactive wallet has no meaningful priority to work — read-only rest
+// state shows "None" regardless of whatever Priority was last saved for
+// it. Editing (StatusSelect in edit mode) still operates on the real
+// saved value, so staff can pre-set a priority ahead of it going active
+// again without that edit being visible while it's inactive.
+function priorityDisplay(row: WalletStatusRow): PriorityDisplay {
+  return row.walletStatus === 'Inactive' ? 'None' : row.priority;
+}
 
 // Native <select> kept intentionally plain (no custom dropdown/portal) —
 // this is a live, persisted edit per cell, not a filter; a plain select is
@@ -658,13 +675,18 @@ export default function SendMoneyWalletStatus() {
           : 'No Record';
         const flags = deriveWalletFlags(computedStatus);
         const priorityEntry = statusData[opening.agentName.toUpperCase()] ?? DEFAULT_PRIORITY_ENTRY;
+        // An inactive wallet can't receive DP at all, so its receiving
+        // capacity is definitionally 0 — overridden here (not just at
+        // display time) so sorting/export/color all agree with what's
+        // shown, per explicit instruction.
+        const availableLimit = flags.walletStatus === 'Inactive' ? 0 : computeAvailableLimit(baseLimit, companyBalance, totals.dp);
         return {
           key: opening.agentName,
           shopName: opening.agentName,
           brand: resolveBrand(brandGroups.get(opening.agentName) ?? [], opening.agentName, { brandPriority: BRAND_PRIORITY, brandCodes: BRAND_CODES, validateComputedBrand: true }),
           companyBalance,
           baseLimit,
-          availableLimit: computeAvailableLimit(baseLimit, companyBalance, totals.dp),
+          availableLimit,
           frozenAmount: computeFrozenAmount(companyBalance, baseLimit),
           sdpDisplay,
           deposit: flags.deposit,
@@ -815,7 +837,7 @@ export default function SendMoneyWalletStatus() {
         case 'sdp': return row.sdpDisplay;
         case 'deposit': return row.deposit;
         case 'withdrawal': return row.withdrawal;
-        case 'priority': return row.priority;
+        case 'priority': return priorityDisplay(row);
         case 'walletStatus': return row.walletStatus;
       }
     };
@@ -899,13 +921,23 @@ export default function SendMoneyWalletStatus() {
           </td>
         );
       case 'priority': {
-        const value = isEditingThisRow && editDraft ? editDraft.priority : row.priority;
+        if (!isEditingThisRow) {
+          const displayValue = priorityDisplay(row);
+          return (
+            <td key={key} style={cellStyle} className={base}>
+              <span className={`inline-flex h-7 items-center rounded-md border px-2 text-[12px] font-medium ${PRIORITY_BADGE_TINTS[displayValue]}`}>
+                {displayValue}
+              </span>
+            </td>
+          );
+        }
+        const value = editDraft ? editDraft.priority : row.priority;
         return (
           <td key={key} style={cellStyle} className={base}>
             <StatusSelect
               value={value}
               options={PRIORITY_OPTIONS}
-              editing={isEditingThisRow}
+              editing
               saving={rowSaving}
               onChange={(next) => updateDraftField(next)}
               className={PRIORITY_BADGE_TINTS[value]}
@@ -1242,14 +1274,20 @@ export default function SendMoneyWalletStatus() {
                             {showPriority && (
                               <div>
                                 <p className="mb-1 text-[9px] font-medium text-muted-foreground">Priority</p>
-                                <StatusSelect
-                                  value={priorityValue}
-                                  options={PRIORITY_OPTIONS}
-                                  editing={isEditingThisRow}
-                                  saving={rowSaving}
-                                  onChange={(next) => updateDraftField(next)}
-                                  className={PRIORITY_BADGE_TINTS[priorityValue]}
-                                />
+                                {isEditingThisRow ? (
+                                  <StatusSelect
+                                    value={priorityValue}
+                                    options={PRIORITY_OPTIONS}
+                                    editing
+                                    saving={rowSaving}
+                                    onChange={(next) => updateDraftField(next)}
+                                    className={PRIORITY_BADGE_TINTS[priorityValue]}
+                                  />
+                                ) : (
+                                  <span className={`inline-flex h-7 items-center rounded-md border px-2 text-[12px] font-medium ${PRIORITY_BADGE_TINTS[priorityDisplay(row)]}`}>
+                                    {priorityDisplay(row)}
+                                  </span>
+                                )}
                               </div>
                             )}
                           </div>
