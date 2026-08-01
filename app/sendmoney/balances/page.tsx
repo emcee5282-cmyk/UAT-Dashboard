@@ -1475,7 +1475,7 @@ export default function SendMoneyAgentBalance() {
               {loading ? (
                 <div className="ml-3 flex shrink-0 items-center gap-3">
                   <div className="h-10 w-10 shrink-0 dt-skeleton rounded-[12px] xl:w-[88px]" />
-                  <div className="h-10 w-10 shrink-0 dt-skeleton rounded-[12px] xl:w-[92px]" />
+                  <div className="h-10 w-10 shrink-0 dt-skeleton rounded-[12px]" />
                   <div className="h-10 w-10 shrink-0 dt-skeleton rounded-[12px]" />
                 </div>
               ) : (
@@ -1488,11 +1488,10 @@ export default function SendMoneyAgentBalance() {
                     {exportTooltip.rendered && <Tooltip label="Export" open={exportTooltip.open} pos={exportTooltip.pos} onlyWhenCompact />}
                   </div>
                   <div className="relative">
-                    <button type="button" ref={refreshButtonRef} onClick={fetchData} aria-label="Refresh" {...refreshTooltip.handlers} className={ICON_BUTTON}>
+                    <button type="button" ref={refreshButtonRef} onClick={fetchData} aria-label="Refresh" {...refreshTooltip.handlers} className={ICON_ONLY_BUTTON}>
                       <RefreshCw size={16} className={spinning ? 'animate-spin' : ''} />
-                      <span className="hidden xl:inline">Refresh</span>
                     </button>
-                    {refreshTooltip.rendered && <Tooltip label="Refresh" open={refreshTooltip.open} pos={refreshTooltip.pos} onlyWhenCompact />}
+                    {refreshTooltip.rendered && <Tooltip label="Refresh" open={refreshTooltip.open} pos={refreshTooltip.pos} />}
                   </div>
                   <div className="relative">
                     <button
