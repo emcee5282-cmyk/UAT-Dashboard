@@ -1662,23 +1662,36 @@ export default function BalanceOverviewPage() {
         : undefined;
 
       // Top Up/Settlement totals reset at the 2AM business-day rollover (see
-      // app/lib/businessDate.ts) — clock-based ("today"), UNLESS Opening is
-      // still stale (hasn't refreshed for today) AND no valid Estimated
-      // Balance covers that gap yet — then these widen to sum from
-      // Opening's own last-refresh day through today, so Settlement/TopUp
-      // posted "yesterday" (while waiting for either Opening or an upload)
-      // doesn't disappear once the calendar rolls over. Once a valid
-      // Estimated Balance exists, it already bakes that stale day in (see
-      // app/lib/estimatedOpening.ts), so this goes back to today-only to
-      // avoid counting it twice. Per explicit instruction, the CashGo/
-      // Bundle Transfer "Today" strip widens the same way.
+      // app/lib/businessDate.ts) — clock-based ("today"), UNLESS no valid
+      // Estimated Balance covers today yet — then these widen so
+      // Settlement/TopUp posted "yesterday" doesn't disappear once the
+      // calendar rolls over. Once a valid Estimated Balance exists, it
+      // already bakes that stale day in (see app/lib/estimatedOpening.ts),
+      // so this goes back to today-only to avoid counting it twice. Per
+      // explicit instruction, the CashGo/Bundle Transfer "Today" strip
+      // widens the same way.
+      //
+      // Widen target: Opening's own "Updated Time" card date IF it's
+      // genuinely stale (older than today) — same as before. But if that
+      // card has ALREADY ticked over to today while Estimated Balance still
+      // hasn't been confirmed (confirmed live: Send Money's card can flip
+      // to "today" via its own refresh independently of whether yesterday's
+      // Settlement/Top Up were ever folded into today's Opening figure —
+      // 67 real Send Money Settlement rows totaling ~18.26M went invisible
+      // this way, neither "today" nor shown anywhere), fall back one
+      // business day instead of snapping straight to today.
       const cutoff = getBusinessToday();
-      const cashoutLiveCutoff = (cashoutCutoffDate !== null && cashoutCutoffDate.getTime() < cutoff.getTime() && !estimatedOpeningValid)
-        ? cashoutCutoffDate
-        : cutoff;
-      const sendMoneyLiveCutoff = (sendMoneyCutoffDate !== null && sendMoneyCutoffDate.getTime() < cutoff.getTime() && !estimatedSendMoneyOpeningValid)
-        ? sendMoneyCutoffDate
-        : cutoff;
+      const oneBusinessDayBack = new Date(cutoff.getTime() - 24 * 60 * 60 * 1000);
+      const cashoutLiveCutoff = estimatedOpeningValid
+        ? cutoff
+        : (cashoutCutoffDate !== null && cashoutCutoffDate.getTime() < cutoff.getTime())
+          ? cashoutCutoffDate
+          : oneBusinessDayBack;
+      const sendMoneyLiveCutoff = estimatedSendMoneyOpeningValid
+        ? cutoff
+        : (sendMoneyCutoffDate !== null && sendMoneyCutoffDate.getTime() < cutoff.getTime())
+          ? sendMoneyCutoffDate
+          : oneBusinessDayBack;
       const cashoutTopUpStlm = computeCashoutTopUpStlm(agstlmText, cashoutLiveCutoff);
       const sendMoneyTopUpStlm = computeSendMoneyTopUpStlm(bundleText, sendMoneyLiveCutoff);
 

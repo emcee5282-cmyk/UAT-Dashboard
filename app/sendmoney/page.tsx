@@ -193,18 +193,23 @@ export default function SendMoneyDashboardPage() {
 
       const openingRawRows = parseCsvLines(openingText);
       // Top Up/Settlement totals reset at the 2AM business-day rollover (see
-      // app/lib/businessDate.ts) — clock-based ("today"), UNLESS Opening's
-      // own "UPDATED TIME" card is still stale (hasn't refreshed for today)
-      // AND no valid Estimated Balance covers that gap yet — then this
-      // widens back to Opening's own last-refresh day, so Settlement/Top Up
-      // posted "yesterday" (while waiting for either Opening or an upload)
-      // doesn't disappear the instant the calendar rolls over. Once a valid
-      // Estimated Balance exists it already bakes that stale day in, so this
-      // goes back to today-only to avoid counting it twice. Same
-      // sendMoneyLiveCutoff logic as app/page.tsx — this page previously ran
-      // its own always-today copy, which is what caused Top Up/Settlement to
-      // reset early (reported live: "nawawala agad... kahit wala pang
-      // updated na Estimated balance").
+      // app/lib/businessDate.ts) — clock-based ("today"), UNLESS no valid
+      // Estimated Balance covers today yet — then this widens so
+      // Settlement/Top Up posted "yesterday" doesn't disappear the instant
+      // the calendar rolls over. Once a valid Estimated Balance exists it
+      // already bakes that stale day in, so this goes back to today-only to
+      // avoid counting it twice. Same sendMoneyLiveCutoff logic as
+      // app/page.tsx.
+      //
+      // Widen target: Opening's own "UPDATED TIME" card date IF it's
+      // genuinely stale (older than today). But if that card has ALREADY
+      // ticked over to today while Estimated Balance still hasn't been
+      // confirmed (confirmed live: Send Money's card can flip to "today" via
+      // its own refresh independently of whether yesterday's Settlement/
+      // Top Up were ever folded into today's Opening figure — 67 real
+      // Settlement rows totaling ~18.26M went invisible this way, neither
+      // "today" nor shown anywhere), fall back one business day instead of
+      // snapping straight to today.
       const sendMoneyCutoffDate = parseSendMoneyReportCutoffDate(openingText);
       const estimatedUploadedAt = estimatedData.uploadedAt ? new Date(estimatedData.uploadedAt) : null;
       const estimatedSendMoneyOpeningValid =
@@ -213,9 +218,12 @@ export default function SendMoneyDashboardPage() {
         estimatedUploadedAt !== null &&
         toBusinessDate(estimatedUploadedAt).getTime() === getBusinessToday().getTime();
       const cutoff = getBusinessToday();
-      const reportCutoffDate = (sendMoneyCutoffDate !== null && sendMoneyCutoffDate.getTime() < cutoff.getTime() && !estimatedSendMoneyOpeningValid)
-        ? sendMoneyCutoffDate
-        : cutoff;
+      const oneBusinessDayBack = new Date(cutoff.getTime() - 24 * 60 * 60 * 1000);
+      const reportCutoffDate = estimatedSendMoneyOpeningValid
+        ? cutoff
+        : (sendMoneyCutoffDate !== null && sendMoneyCutoffDate.getTime() < cutoff.getTime())
+          ? sendMoneyCutoffDate
+          : oneBusinessDayBack;
 
       // Send Money's own roster lives in cols L-O (indices 11-14) of the same
       // "Opening AG" sheet Cashout uses for cols A-D.
