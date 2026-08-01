@@ -1,7 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { ChevronDown, ChevronUp, ChevronsUpDown, Columns3, Download, RefreshCw, Search, Flag } from 'lucide-react';
+import { ChevronDown, ChevronUp, ChevronsUpDown, Columns3, Download, RefreshCw, Search, Flag, Check, X } from 'lucide-react';
 import * as XLSX from 'xlsx';
 import SettlementHeader from '../components/SettlementHeader';
 import ConnectionErrorState from '../components/ConnectionErrorState';
@@ -189,30 +189,68 @@ const PRIORITY_BADGE_TINTS: Record<Priority, string> = {
 // Native <select> kept intentionally plain (no custom dropdown/portal) —
 // this is a live, persisted edit per cell, not a filter; a plain select is
 // the simplest control that can't be mistaken for a filter trigger.
+//
+// Changing the select only stages a draft value locally — it does NOT save.
+// A Check/X pair appears only once the draft differs from the last-saved
+// value, per explicit instruction: picking through several options while
+// deciding must fire zero saves, and only the final choice, once confirmed,
+// fires exactly one.
 function StatusSelect<T extends string>({
   value,
   options,
   onChange,
+  pending,
   saving,
+  onConfirm,
+  onCancel,
   className,
 }: {
   value: T;
   options: T[];
   onChange: (next: T) => void;
+  pending: boolean;
   saving: boolean;
+  onConfirm: () => void;
+  onCancel: () => void;
   className: string;
 }) {
   return (
-    <select
-      value={value}
-      disabled={saving}
-      onChange={(event) => onChange(event.target.value as T)}
-      className={`h-7 rounded-md border px-1.5 text-[12px] font-medium outline-none transition-opacity disabled:opacity-50 ${className}`}
-    >
-      {options.map((opt) => (
-        <option key={opt} value={opt}>{opt}</option>
-      ))}
-    </select>
+    <span className="inline-flex items-center gap-1">
+      <select
+        value={value}
+        disabled={saving}
+        onChange={(event) => onChange(event.target.value as T)}
+        className={`h-7 rounded-md border px-1.5 text-[12px] font-medium outline-none transition-opacity disabled:opacity-50 ${className}`}
+      >
+        {options.map((opt) => (
+          <option key={opt} value={opt}>{opt}</option>
+        ))}
+      </select>
+      {pending && (
+        <>
+          <button
+            type="button"
+            onClick={onConfirm}
+            disabled={saving}
+            aria-label="Confirm"
+            title="Confirm"
+            className="flex h-6 w-6 shrink-0 items-center justify-center rounded-md text-emerald-600 transition-colors hover:bg-emerald-50 disabled:opacity-50 dark:text-emerald-400 dark:hover:bg-emerald-500/10"
+          >
+            <Check size={14} />
+          </button>
+          <button
+            type="button"
+            onClick={onCancel}
+            disabled={saving}
+            aria-label="Cancel"
+            title="Cancel"
+            className="flex h-6 w-6 shrink-0 items-center justify-center rounded-md text-rose-500 transition-colors hover:bg-rose-50 disabled:opacity-50 dark:text-rose-400 dark:hover:bg-rose-500/10"
+          >
+            <X size={14} />
+          </button>
+        </>
+      )}
+    </span>
   );
 }
 
@@ -232,6 +270,10 @@ export default function WalletStatus() {
   const [rowsPerPage, setRowsPerPage] = useState(50);
   const [savingKeys, setSavingKeys] = useState<Set<string>>(new Set());
   const [saveError, setSaveError] = useState<string | null>(null);
+  // Staged, unsaved edits — keyed by row.key, then field. Nothing here is
+  // persisted until confirmField() fires; changing the select just writes
+  // here.
+  const [drafts, setDrafts] = useState<Record<string, Partial<Record<'deposit' | 'withdrawal' | 'priority', string>>>>({});
 
   const [isScrolled, setIsScrolled] = useState(false);
   const tableScrollRef = useRef<HTMLDivElement>(null);
@@ -391,26 +433,45 @@ export default function WalletStatus() {
     setPreference(COLUMN_VISIBILITY_STORAGE_KEY, visibility);
   }, [columnDefs, mounted]);
 
-  // Optimistic update + persist to the "Wallet Status" sheet tab (see
-  // app/lib/walletStatus.ts). Reverts the row on a failed save and surfaces
-  // a brief banner — no silent data loss if the write fails.
-  const updateField = useCallback((row: WalletStatusRow, field: 'deposit' | 'withdrawal' | 'priority', value: string) => {
-    const previous = row[field];
-    setRows((current) => current.map((r) => (r.key === row.key ? { ...r, [field]: value } : r)));
+  // Changing the select stages a draft only — nothing saves yet. Per
+  // explicit instruction: clicking through several options while deciding
+  // must not fire a save each time; only Confirm does.
+  const setDraftValue = useCallback((row: WalletStatusRow, field: 'deposit' | 'withdrawal' | 'priority', value: string) => {
+    setDrafts((current) => ({ ...current, [row.key]: { ...current[row.key], [field]: value } }));
+  }, []);
+
+  const cancelField = useCallback((row: WalletStatusRow, field: 'deposit' | 'withdrawal' | 'priority') => {
+    setDrafts((current) => {
+      const rowDrafts = { ...current[row.key] };
+      delete rowDrafts[field];
+      return { ...current, [row.key]: rowDrafts };
+    });
+  }, []);
+
+  // The single point where a value actually persists — one write per
+  // Confirm click, to the "Wallet Status" sheet tab (see
+  // app/lib/walletStatus.ts). Leaves the draft in place on failure (so the
+  // staged choice isn't lost and Confirm can just be retried) and surfaces
+  // a brief banner instead.
+  const confirmField = useCallback((row: WalletStatusRow, field: 'deposit' | 'withdrawal' | 'priority') => {
+    const draftValue = drafts[row.key]?.[field];
+    if (draftValue === undefined) return;
+
     setSavingKeys((current) => new Set(current).add(row.key));
     setSaveError(null);
 
     fetch('/api/wallet-status/update', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ shopName: row.shopName, field, value }),
+      body: JSON.stringify({ shopName: row.shopName, field, value: draftValue }),
     })
       .then((res) => {
         if (!res.ok) throw new Error('Save failed');
+        setRows((current) => current.map((r) => (r.key === row.key ? { ...r, [field]: draftValue } : r)));
+        cancelField(row, field);
       })
       .catch(() => {
-        setRows((current) => current.map((r) => (r.key === row.key ? { ...r, [field]: previous } : r)));
-        setSaveError(`Failed to save ${row.shopName}'s ${field} — reverted.`);
+        setSaveError(`Failed to save ${row.shopName}'s ${field}. Try again.`);
         setTimeout(() => setSaveError(null), 4000);
       })
       .finally(() => {
@@ -420,7 +481,7 @@ export default function WalletStatus() {
           return next;
         });
       });
-  }, []);
+  }, [drafts, cancelField]);
 
   const searchedRows = useMemo(() => {
     const query = searchTerm.toLowerCase();
@@ -507,46 +568,64 @@ export default function WalletStatus() {
         );
       case 'sdp':
         return <td key={key} className={`${base} tabular-nums text-foreground`}>{row.sdpDisplay}</td>;
-      case 'deposit':
+      case 'deposit': {
+        const draft = drafts[row.key]?.deposit;
+        const displayValue = (draft ?? row.deposit) as DepositWithdrawal;
         return (
           <td key={key} className={base}>
             <StatusSelect
-              value={row.deposit}
+              value={displayValue}
               options={YES_NO_OPTIONS}
               saving={saving}
-              onChange={(next) => updateField(row, 'deposit', next)}
-              className={row.deposit === 'Yes'
+              pending={draft !== undefined && draft !== row.deposit}
+              onChange={(next) => setDraftValue(row, 'deposit', next)}
+              onConfirm={() => confirmField(row, 'deposit')}
+              onCancel={() => cancelField(row, 'deposit')}
+              className={displayValue === 'Yes'
                 ? 'border-emerald-200 bg-emerald-50 text-emerald-700 dark:border-emerald-900/50 dark:bg-emerald-500/10 dark:text-emerald-400'
                 : 'border-slate-200 bg-slate-50 text-slate-600 dark:border-slate-700 dark:bg-slate-500/10 dark:text-slate-400'}
             />
           </td>
         );
-      case 'withdrawal':
+      }
+      case 'withdrawal': {
+        const draft = drafts[row.key]?.withdrawal;
+        const displayValue = (draft ?? row.withdrawal) as DepositWithdrawal;
         return (
           <td key={key} className={base}>
             <StatusSelect
-              value={row.withdrawal}
+              value={displayValue}
               options={YES_NO_OPTIONS}
               saving={saving}
-              onChange={(next) => updateField(row, 'withdrawal', next)}
-              className={row.withdrawal === 'Yes'
+              pending={draft !== undefined && draft !== row.withdrawal}
+              onChange={(next) => setDraftValue(row, 'withdrawal', next)}
+              onConfirm={() => confirmField(row, 'withdrawal')}
+              onCancel={() => cancelField(row, 'withdrawal')}
+              className={displayValue === 'Yes'
                 ? 'border-emerald-200 bg-emerald-50 text-emerald-700 dark:border-emerald-900/50 dark:bg-emerald-500/10 dark:text-emerald-400'
                 : 'border-slate-200 bg-slate-50 text-slate-600 dark:border-slate-700 dark:bg-slate-500/10 dark:text-slate-400'}
             />
           </td>
         );
-      case 'priority':
+      }
+      case 'priority': {
+        const draft = drafts[row.key]?.priority;
+        const displayValue = (draft ?? row.priority) as Priority;
         return (
           <td key={key} className={base}>
             <StatusSelect
-              value={row.priority}
+              value={displayValue}
               options={PRIORITY_OPTIONS}
               saving={saving}
-              onChange={(next) => updateField(row, 'priority', next)}
-              className={PRIORITY_BADGE_TINTS[row.priority]}
+              pending={draft !== undefined && draft !== row.priority}
+              onChange={(next) => setDraftValue(row, 'priority', next)}
+              onConfirm={() => confirmField(row, 'priority')}
+              onCancel={() => cancelField(row, 'priority')}
+              className={PRIORITY_BADGE_TINTS[displayValue]}
             />
           </td>
         );
+      }
     }
   }
 
@@ -727,6 +806,12 @@ export default function WalletStatus() {
                     const showWithdrawal = visibleColumns.some((c) => c.key === 'withdrawal');
                     const showPriority = visibleColumns.some((c) => c.key === 'priority');
                     const saving = savingKeys.has(row.key);
+                    const depositDraft = drafts[row.key]?.deposit;
+                    const depositValue = (depositDraft ?? row.deposit) as DepositWithdrawal;
+                    const withdrawalDraft = drafts[row.key]?.withdrawal;
+                    const withdrawalValue = (withdrawalDraft ?? row.withdrawal) as DepositWithdrawal;
+                    const priorityDraft = drafts[row.key]?.priority;
+                    const priorityValue = (priorityDraft ?? row.priority) as Priority;
                     return (
                       <div key={row.key} className="rounded-xl border border-border bg-white p-3.5 dark:bg-[#2a2a2d]">
                         {(showShop || showBrand) && (
@@ -757,11 +842,14 @@ export default function WalletStatus() {
                               <div>
                                 <p className="mb-1 text-[9px] font-medium text-muted-foreground">Deposit</p>
                                 <StatusSelect
-                                  value={row.deposit}
+                                  value={depositValue}
                                   options={YES_NO_OPTIONS}
                                   saving={saving}
-                                  onChange={(next) => updateField(row, 'deposit', next)}
-                                  className={row.deposit === 'Yes'
+                                  pending={depositDraft !== undefined && depositDraft !== row.deposit}
+                                  onChange={(next) => setDraftValue(row, 'deposit', next)}
+                                  onConfirm={() => confirmField(row, 'deposit')}
+                                  onCancel={() => cancelField(row, 'deposit')}
+                                  className={depositValue === 'Yes'
                                     ? 'border-emerald-200 bg-emerald-50 text-emerald-700 dark:border-emerald-900/50 dark:bg-emerald-500/10 dark:text-emerald-400'
                                     : 'border-slate-200 bg-slate-50 text-slate-600 dark:border-slate-700 dark:bg-slate-500/10 dark:text-slate-400'}
                                 />
@@ -771,11 +859,14 @@ export default function WalletStatus() {
                               <div>
                                 <p className="mb-1 text-[9px] font-medium text-muted-foreground">Withdrawal</p>
                                 <StatusSelect
-                                  value={row.withdrawal}
+                                  value={withdrawalValue}
                                   options={YES_NO_OPTIONS}
                                   saving={saving}
-                                  onChange={(next) => updateField(row, 'withdrawal', next)}
-                                  className={row.withdrawal === 'Yes'
+                                  pending={withdrawalDraft !== undefined && withdrawalDraft !== row.withdrawal}
+                                  onChange={(next) => setDraftValue(row, 'withdrawal', next)}
+                                  onConfirm={() => confirmField(row, 'withdrawal')}
+                                  onCancel={() => cancelField(row, 'withdrawal')}
+                                  className={withdrawalValue === 'Yes'
                                     ? 'border-emerald-200 bg-emerald-50 text-emerald-700 dark:border-emerald-900/50 dark:bg-emerald-500/10 dark:text-emerald-400'
                                     : 'border-slate-200 bg-slate-50 text-slate-600 dark:border-slate-700 dark:bg-slate-500/10 dark:text-slate-400'}
                                 />
@@ -785,11 +876,14 @@ export default function WalletStatus() {
                               <div>
                                 <p className="mb-1 text-[9px] font-medium text-muted-foreground">Priority</p>
                                 <StatusSelect
-                                  value={row.priority}
+                                  value={priorityValue}
                                   options={PRIORITY_OPTIONS}
                                   saving={saving}
-                                  onChange={(next) => updateField(row, 'priority', next)}
-                                  className={PRIORITY_BADGE_TINTS[row.priority]}
+                                  pending={priorityDraft !== undefined && priorityDraft !== row.priority}
+                                  onChange={(next) => setDraftValue(row, 'priority', next)}
+                                  onConfirm={() => confirmField(row, 'priority')}
+                                  onCancel={() => cancelField(row, 'priority')}
+                                  className={PRIORITY_BADGE_TINTS[priorityValue]}
                                 />
                               </div>
                             )}
