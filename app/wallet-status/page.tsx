@@ -15,7 +15,7 @@ import { rawVal } from '@/app/lib/format';
 import { parseCsvLines } from '../lib/csv';
 import { getBusinessToday } from '../lib/businessDate';
 import { getPreference, setPreference } from '../lib/preferences';
-import { computeCompanyBalance, resolveBrand } from '../lib/balanceEngine';
+import { computeCompanyBalance, resolveBrand, computeWalletStatus } from '../lib/balanceEngine';
 
 // Mirrors app/lib/walletStatus.ts's own types — not imported directly since
 // that file pulls in `googleapis` (Node-only, breaks the client bundle);
@@ -24,23 +24,41 @@ import { computeCompanyBalance, resolveBrand } from '../lib/balanceEngine';
 // convention instead of importing the server-only module.
 type DepositWithdrawal = 'Yes' | 'No';
 type Priority = 'Low' | 'Normal' | 'High';
-// '' = never set — a real, displayable state ("−"), not a default to fall
-// back through like Deposit/Withdrawal/Priority above.
-type WalletStatusValue = 'Active' | 'Inactive' | 'Suspended' | '';
-type WalletStatusEntry = { deposit: DepositWithdrawal; withdrawal: DepositWithdrawal; priority: Priority; walletStatus: WalletStatusValue };
-const DEFAULT_WALLET_STATUS_ENTRY: WalletStatusEntry = { deposit: 'No', withdrawal: 'No', priority: 'Normal', walletStatus: '' };
+// Deposit/Withdrawal/Wallet Status are all derived from the wallet's actual
+// operational status (same computeWalletStatus() used by Balance) — never
+// manually set, so there's no "never set" blank state to account for here.
+// Only Priority is a real staff-entered value read from the "Wallet Status"
+// sheet tab.
+type WalletStatusValue = 'Active' | 'Inactive' | 'Wallet With Issue';
+type PriorityEntry = { priority: Priority };
+const DEFAULT_PRIORITY_ENTRY: PriorityEntry = { priority: 'Normal' };
 
-// Inline-edit spec: click-to-edit, single row at a time, colored dots only.
-const WALLET_STATUS_OPTIONS: { value: Exclude<WalletStatusValue, ''>; label: string; dot: string }[] = [
-  { value: 'Active', label: 'Active', dot: 'bg-emerald-500' },
-  { value: 'Inactive', label: 'Inactive', dot: 'bg-amber-400' },
-  { value: 'Suspended', label: 'Suspended', dot: 'bg-rose-500' },
-];
-const WALLET_STATUS_DOT: Record<Exclude<WalletStatusValue, ''>, string> = {
+const WALLET_STATUS_DOT: Record<WalletStatusValue, string> = {
   Active: 'bg-emerald-500',
   Inactive: 'bg-amber-400',
-  Suspended: 'bg-rose-500',
+  'Wallet With Issue': 'bg-rose-500',
 };
+
+// Derives the 3 display fields from the wallet's real computeWalletStatus()
+// result (same source Balance uses) per explicit instruction: Deposit/
+// Withdrawal/Wallet Status must reflect what the wallet is actually open
+// for, not an independently staff-set flag that can drift out of sync.
+// - Open for DP+WD, DP Only, or WD Only -> "Active"; Deposit is "Yes" only
+//   when DP capability is present, Withdrawal only when WD capability is.
+// - Wallet With Issue -> passed through as its own status (not folded into
+//   Active/Inactive).
+// - Everything else (No Record, Disconnected, Top Up Acc., Account
+//   Problem) -> "Inactive", with both Deposit and Withdrawal "No".
+function deriveWalletFlags(computedStatus: string): { walletStatus: WalletStatusValue; deposit: DepositWithdrawal; withdrawal: DepositWithdrawal } {
+  const hasDeposit = computedStatus === 'DP + WD' || computedStatus === 'DP Only';
+  const hasWithdrawal = computedStatus === 'DP + WD' || computedStatus === 'WD Only';
+  const walletStatus: WalletStatusValue = computedStatus === 'Wallet With Issue'
+    ? 'Wallet With Issue'
+    : hasDeposit || hasWithdrawal
+      ? 'Active'
+      : 'Inactive';
+  return { walletStatus, deposit: hasDeposit ? 'Yes' : 'No', withdrawal: hasWithdrawal ? 'Yes' : 'No' };
+}
 
 // Format mimics Transfer Queue (app/transfer-queue/page.tsx) per explicit
 // instruction — same GHOST_BUTTON toolbar, SettlementHeader, DataTable,
@@ -86,7 +104,6 @@ function stripBrandSuffix(name: string): string {
 // Fixed dropdown/sort order — Low, Normal, High (ascending urgency).
 const PRIORITY_OPTIONS: Priority[] = ['Low', 'Normal', 'High'];
 const PRIORITY_RANK: Record<Priority, number> = { Low: 0, Normal: 1, High: 2 };
-const YES_NO_OPTIONS: DepositWithdrawal[] = ['Yes', 'No'];
 
 type WalletStatusRow = {
   key: string;
@@ -132,11 +149,9 @@ const DEFAULT_COLUMNS: ColumnDef[] = [
   { key: COLUMN_IDS.WITHDRAWAL, label: 'Withdrawal', visible: true, sortable: true, hideable: true, align: 'center' },
   { key: COLUMN_IDS.PRIORITY, label: 'Priority', visible: true, sortable: true, hideable: true, align: 'center' },
   { key: COLUMN_IDS.WALLET_STATUS, label: 'Wallet Status', visible: true, sortable: true, hideable: false, align: 'center' },
-  // Single Edit/Save/Cancel per ROW, covering all four editable fields
-  // (Deposit/Withdrawal/Priority/Wallet Status) together — per explicit
-  // instruction, dropdowns stay read-only until this row's Edit icon is
-  // clicked, and one Save/Cancel commits or discards all of them at once.
-  // Never hideable — it's the only edit affordance for the row.
+  // Edit/Save/Cancel per ROW — Priority is the only field this saves;
+  // Deposit/Withdrawal/Wallet Status are computed and read-only. Never
+  // hideable — it's the only edit affordance for the row.
   { key: COLUMN_IDS.WALLET_STATUS_ACTION, label: '', visible: true, sortable: false, hideable: false, align: 'center' },
 ];
 
@@ -220,14 +235,14 @@ const PRIORITY_BADGE_TINTS: Record<Priority, string> = {
 
 // Native <select> kept intentionally plain (no custom dropdown/portal) —
 // this is a live, persisted edit per cell, not a filter; a plain select is
-// the simplest control that can't be mistaken for a filter trigger.
+// the simplest control that can't be mistaken for a filter trigger. Only
+// used for Priority now — Deposit/Withdrawal/Wallet Status are computed and
+// render as plain badges directly in renderCell, never through this
+// component.
 //
-// Read-only (disabled) until the row's own Edit icon is clicked — per
-// explicit instruction, dropdowns for Deposit/Withdrawal/Priority/Wallet
-// Status only become interactive in edit mode, same as Wallet Status
-// already worked; changing any of them only stages a draft, never saves
-// directly. One Save/Cancel pair (the row's Action column) commits or
-// discards every changed field together.
+// Read-only (disabled) until the row's own Edit icon is clicked — changing
+// it only stages a draft, never saves directly; the row's Action column
+// Save/Cancel commits or discards it.
 // Read-only rest state renders a plain, fully-opaque badge — no <select>,
 // no chevron, no dimmed "disabled" look. Per explicit instruction: a
 // dropdown chevron before Edit is clicked reads as "this is clickable"
@@ -271,13 +286,13 @@ function StatusSelect<T extends string>({
   );
 }
 
-const EDITABLE_FIELDS = ['deposit', 'withdrawal', 'priority', 'walletStatus'] as const;
-type EditableField = typeof EDITABLE_FIELDS[number];
-type RowDraft = { deposit: DepositWithdrawal; withdrawal: DepositWithdrawal; priority: Priority; walletStatus: WalletStatusValue };
+// Deposit/Withdrawal/Wallet Status are computed (see deriveWalletFlags) —
+// Priority is the only field a staff member can actually edit and persist.
+type RowDraft = { priority: Priority };
 
 function rowHasChanges(row: WalletStatusRow, draft: RowDraft | null): boolean {
   if (!draft) return false;
-  return EDITABLE_FIELDS.some((field) => draft[field] !== row[field]);
+  return draft.priority !== row.priority;
 }
 
 export default function WalletStatus() {
@@ -297,13 +312,11 @@ export default function WalletStatus() {
   const [saveError, setSaveError] = useState<string | null>(null);
   const [toast, setToast] = useState<string | null>(null);
 
-  // One row editable at a time, covering all four fields together
-  // (Deposit/Withdrawal/Priority/Wallet Status) — per explicit instruction,
-  // there's a single Edit icon per row, not one staging mechanism per
-  // dropdown. editingRowKey being a single value (not a Set/per-field map)
-  // is what makes "starting to edit another row auto-cancels the previous
-  // one" free — the old row's cells stop matching and revert to showing
-  // their saved values with no extra cleanup needed.
+  // One row editable at a time — Priority is the only field this stages.
+  // editingRowKey being a single value (not a Set/per-field map) is what
+  // makes "starting to edit another row auto-cancels the previous one"
+  // free — the old row's cell just stops matching and reverts to showing
+  // its saved value with no extra cleanup needed.
   const [editingRowKey, setEditingRowKey] = useState<string | null>(null);
   const [editDraft, setEditDraft] = useState<RowDraft | null>(null);
   const [rowSaving, setRowSaving] = useState(false);
@@ -349,7 +362,7 @@ export default function WalletStatus() {
       const openingText = await openingRes.text();
       const balText = await balRes.text();
       const stlmText = await stlmRes.text();
-      const statusData: Record<string, WalletStatusEntry> = await statusRes.json();
+      const statusData: Record<string, PriorityEntry> = await statusRes.json();
 
       const reportCutoffDate = getBusinessToday();
 
@@ -372,11 +385,14 @@ export default function WalletStatus() {
           totalDP: rawVal(row[11]),
           totalWD: rawVal(row[13]),
           group: rawVal(row[6]),
+          accountStatus: rawVal(row[2]),
         }))
         .filter((row) => row.walletName && row.walletName !== '-');
 
+      const balWalletNames = new Set(balRows.map((bal) => bal.walletName));
       const balanceTotals = new Map<string, { dp: number; wd: number }>();
       const brandGroups = new Map<string, string[]>();
+      const walletStatusValues = new Map<string, string[]>();
       balRows.forEach((bal) => {
         const dp = parseFloat(bal.totalDP.replace(/,/g, '')) || 0;
         const wd = parseFloat(bal.totalWD.replace(/,/g, '')) || 0;
@@ -387,6 +403,12 @@ export default function WalletStatus() {
           const groups = brandGroups.get(bal.walletName) ?? [];
           groups.push(bal.group);
           brandGroups.set(bal.walletName, groups);
+        }
+
+        if (bal.accountStatus && bal.accountStatus !== '-') {
+          const statuses = walletStatusValues.get(bal.walletName) ?? [];
+          statuses.push(bal.accountStatus);
+          walletStatusValues.set(bal.walletName, statuses);
         }
       });
 
@@ -419,17 +441,21 @@ export default function WalletStatus() {
         const companyBalance = computeCompanyBalance(parseNumber(opening.openingBal), totals.dp, totalTopUp, totals.wd, totalStlm);
         const sdpTrimmed = opening.sdp.trim().toUpperCase();
         const sdpDisplay = sdpTrimmed === 'NO SDP' || !opening.sdp || opening.sdp === '-' ? '−' : displayNum(parseNumber(opening.sdp));
-        const status = statusData[opening.agentName.toUpperCase()] ?? DEFAULT_WALLET_STATUS_ENTRY;
+        const computedStatus = balWalletNames.has(opening.agentName)
+          ? computeWalletStatus(walletStatusValues.get(opening.agentName) ?? [])
+          : 'No Record';
+        const flags = deriveWalletFlags(computedStatus);
+        const priorityEntry = statusData[opening.agentName.toUpperCase()] ?? DEFAULT_PRIORITY_ENTRY;
         return {
           key: opening.agentName,
           shopName: opening.agentName,
           brand: resolveBrand(brandGroups.get(opening.agentName) ?? [], opening.agentName, { brandPriority: BRAND_PRIORITY, brandCodes: BRAND_CODES }),
           companyBalance,
           sdpDisplay,
-          deposit: status.deposit,
-          withdrawal: status.withdrawal,
-          priority: status.priority,
-          walletStatus: status.walletStatus,
+          deposit: flags.deposit,
+          withdrawal: flags.withdrawal,
+          priority: priorityEntry.priority,
+          walletStatus: flags.walletStatus,
         };
       });
 
@@ -467,15 +493,15 @@ export default function WalletStatus() {
     setPreference(COLUMN_VISIBILITY_STORAGE_KEY, visibility);
   }, [columnDefs, mounted]);
 
-  // Click Edit -> stage a full-row draft (all 4 fields, seeded from the
-  // row's current saved values) and enter edit mode. Nothing saves until
-  // Save is clicked; Cancel just discards the draft. editingRowKey being a
-  // single value means starting to edit a different row automatically
-  // ends the previous edit — its cells just stop matching and fall back to
-  // showing their saved values.
+  // Click Edit -> stage a draft (seeded from the row's current saved
+  // Priority) and enter edit mode. Nothing saves until Save is clicked;
+  // Cancel just discards the draft. editingRowKey being a single value
+  // means starting to edit a different row automatically ends the previous
+  // edit — its cells just stop matching and fall back to showing their
+  // saved value.
   const startEdit = useCallback((row: WalletStatusRow) => {
     setEditingRowKey(row.key);
-    setEditDraft({ deposit: row.deposit, withdrawal: row.withdrawal, priority: row.priority, walletStatus: row.walletStatus });
+    setEditDraft({ priority: row.priority });
   }, []);
 
   const cancelEdit = useCallback(() => {
@@ -483,42 +509,29 @@ export default function WalletStatus() {
     setEditDraft(null);
   }, []);
 
-  const updateDraftField = useCallback((field: EditableField, value: string) => {
-    setEditDraft((current) => (current ? { ...current, [field]: value } : current));
+  const updateDraftField = useCallback((value: Priority) => {
+    setEditDraft((current) => (current ? { ...current, priority: value } : current));
   }, []);
 
-  // The single point where a row's staged edits actually persist — one
-  // Save click saves every changed field in that row (1-4 requests, fired
-  // together), to the "Wallet Status" sheet tab (see
-  // app/lib/walletStatus.ts). On a partial/total failure, refetches from
-  // the server instead of guessing which individual writes landed, so the
-  // UI can't end up claiming a save succeeded when only some fields did.
+  // The single point where a row's staged Priority edit actually persists,
+  // to the "Wallet Status" sheet tab (see app/lib/walletStatus.ts). On
+  // failure, refetches from the server instead of assuming the write
+  // didn't land.
   const saveRow = useCallback((row: WalletStatusRow) => {
     if (!editDraft || !rowHasChanges(row, editDraft)) return;
-    const draft = editDraft;
-    const fields = EDITABLE_FIELDS.filter((field) => draft[field] !== row[field]);
+    const value = editDraft.priority;
 
     setRowSaving(true);
     setSaveError(null);
 
-    Promise.all(
-      fields.map((field) =>
-        fetch('/api/wallet-status/update', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ shopName: row.shopName, field, value: draft[field] }),
-        }).then((res) => {
-          if (!res.ok) throw new Error(`Save failed for ${field}`);
-          return field;
-        })
-      )
-    )
-      .then((savedFields) => {
-        setRows((current) => current.map((r) => (
-          r.key === row.key
-            ? { ...r, ...Object.fromEntries(savedFields.map((f) => [f, draft[f]])) }
-            : r
-        )));
+    fetch('/api/wallet-status/update', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ shopName: row.shopName, field: 'priority', value }),
+    })
+      .then((res) => {
+        if (!res.ok) throw new Error('Save failed for priority');
+        setRows((current) => current.map((r) => (r.key === row.key ? { ...r, priority: value } : r)));
         cancelEdit();
         setToast('Changes Saved');
       })
@@ -630,40 +643,26 @@ export default function WalletStatus() {
         );
       case 'sdp':
         return <td key={key} className={`${base} tabular-nums text-foreground`}>{row.sdpDisplay}</td>;
-      case 'deposit': {
-        const value = isEditingThisRow && editDraft ? editDraft.deposit : row.deposit;
+      case 'deposit':
         return (
           <td key={key} className={base}>
-            <StatusSelect
-              value={value}
-              options={YES_NO_OPTIONS}
-              editing={isEditingThisRow}
-              saving={rowSaving}
-              onChange={(next) => updateDraftField('deposit', next)}
-              className={value === 'Yes'
-                ? 'border-emerald-200 bg-emerald-50 text-emerald-700 dark:border-emerald-900/50 dark:bg-emerald-500/10 dark:text-emerald-400'
-                : 'border-slate-200 bg-slate-50 text-slate-600 dark:border-slate-700 dark:bg-slate-500/10 dark:text-slate-400'}
-            />
+            <span className={`inline-flex h-7 items-center rounded-md border px-2 text-[12px] font-medium ${row.deposit === 'Yes'
+              ? 'border-emerald-200 bg-emerald-50 text-emerald-700 dark:border-emerald-900/50 dark:bg-emerald-500/10 dark:text-emerald-400'
+              : 'border-slate-200 bg-slate-50 text-slate-600 dark:border-slate-700 dark:bg-slate-500/10 dark:text-slate-400'}`}>
+              {row.deposit}
+            </span>
           </td>
         );
-      }
-      case 'withdrawal': {
-        const value = isEditingThisRow && editDraft ? editDraft.withdrawal : row.withdrawal;
+      case 'withdrawal':
         return (
           <td key={key} className={base}>
-            <StatusSelect
-              value={value}
-              options={YES_NO_OPTIONS}
-              editing={isEditingThisRow}
-              saving={rowSaving}
-              onChange={(next) => updateDraftField('withdrawal', next)}
-              className={value === 'Yes'
-                ? 'border-emerald-200 bg-emerald-50 text-emerald-700 dark:border-emerald-900/50 dark:bg-emerald-500/10 dark:text-emerald-400'
-                : 'border-slate-200 bg-slate-50 text-slate-600 dark:border-slate-700 dark:bg-slate-500/10 dark:text-slate-400'}
-            />
+            <span className={`inline-flex h-7 items-center rounded-md border px-2 text-[12px] font-medium ${row.withdrawal === 'Yes'
+              ? 'border-emerald-200 bg-emerald-50 text-emerald-700 dark:border-emerald-900/50 dark:bg-emerald-500/10 dark:text-emerald-400'
+              : 'border-slate-200 bg-slate-50 text-slate-600 dark:border-slate-700 dark:bg-slate-500/10 dark:text-slate-400'}`}>
+              {row.withdrawal}
+            </span>
           </td>
         );
-      }
       case 'priority': {
         const value = isEditingThisRow && editDraft ? editDraft.priority : row.priority;
         return (
@@ -673,52 +672,21 @@ export default function WalletStatus() {
               options={PRIORITY_OPTIONS}
               editing={isEditingThisRow}
               saving={rowSaving}
-              onChange={(next) => updateDraftField('priority', next)}
+              onChange={(next) => updateDraftField(next)}
               className={PRIORITY_BADGE_TINTS[value]}
             />
           </td>
         );
       }
-      case 'walletStatus': {
-        const displayValue = (isEditingThisRow && editDraft ? editDraft.walletStatus : row.walletStatus) ?? '';
-        // A never-set row shows "−" at rest, but Edit must still open the
-        // dropdown (spec: "After Edit → Dropdown automatically opens") — the
-        // "−" short-circuit only applies while NOT editing.
-        if (!displayValue && !isEditingThisRow) {
-          return <td key={key} className={base}><span className="text-muted-foreground">−</span></td>;
-        }
-        // Read-only rest state is a plain badge (dot + text, no chevron, no
-        // dimmed look) — same reasoning as StatusSelect above. Only once
-        // editing does this become a real <select>.
-        if (!isEditingThisRow) {
-          return (
-            <td key={key} className={base}>
-              <span className="inline-flex items-center gap-1.5 rounded-md border border-transparent px-2 text-[12px] font-medium text-foreground">
-                <span className={`h-2 w-2 shrink-0 rounded-full ${WALLET_STATUS_DOT[displayValue as Exclude<WalletStatusValue, ''>]}`} />
-                {displayValue}
-              </span>
-            </td>
-          );
-        }
+      case 'walletStatus':
         return (
           <td key={key} className={base}>
-            <span className="inline-flex items-center gap-1.5">
-              {displayValue && <span className={`h-2 w-2 shrink-0 rounded-full ${WALLET_STATUS_DOT[displayValue as Exclude<WalletStatusValue, ''>]}`} />}
-              <select
-                value={displayValue}
-                disabled={rowSaving}
-                onChange={(event) => updateDraftField('walletStatus', event.target.value)}
-                className="h-7 rounded-md border border-[#5B5CEB] bg-white px-1.5 text-[12px] font-medium text-foreground outline-none transition-opacity duration-150 ease-out disabled:opacity-60 dark:bg-[#2a2a2d]"
-              >
-                {!displayValue && <option value="">Select…</option>}
-                {WALLET_STATUS_OPTIONS.map((opt) => (
-                  <option key={opt.value} value={opt.value}>{opt.label}</option>
-                ))}
-              </select>
+            <span className="inline-flex items-center gap-1.5 rounded-md border border-transparent px-2 text-[12px] font-medium text-foreground">
+              <span className={`h-2 w-2 shrink-0 rounded-full ${WALLET_STATUS_DOT[row.walletStatus]}`} />
+              {row.walletStatus}
             </span>
           </td>
         );
-      }
       case 'walletStatusAction': {
         if (!isEditingThisRow) {
           return (
@@ -957,10 +925,7 @@ export default function WalletStatus() {
                     const showPriority = visibleColumns.some((c) => c.key === 'priority');
                     const showWalletStatus = visibleColumns.some((c) => c.key === 'walletStatus');
                     const isEditingThisRow = editingRowKey === row.key;
-                    const depositValue = isEditingThisRow && editDraft ? editDraft.deposit : row.deposit;
-                    const withdrawalValue = isEditingThisRow && editDraft ? editDraft.withdrawal : row.withdrawal;
                     const priorityValue = isEditingThisRow && editDraft ? editDraft.priority : row.priority;
-                    const walletStatusDisplayValue = (isEditingThisRow && editDraft ? editDraft.walletStatus : row.walletStatus) ?? '';
                     const canSave = rowHasChanges(row, editDraft);
                     return (
                       <div
@@ -996,31 +961,21 @@ export default function WalletStatus() {
                             {showDeposit && (
                               <div>
                                 <p className="mb-1 text-[9px] font-medium text-muted-foreground">Deposit</p>
-                                <StatusSelect
-                                  value={depositValue}
-                                  options={YES_NO_OPTIONS}
-                                  editing={isEditingThisRow}
-                                  saving={rowSaving}
-                                  onChange={(next) => updateDraftField('deposit', next)}
-                                  className={depositValue === 'Yes'
-                                    ? 'border-emerald-200 bg-emerald-50 text-emerald-700 dark:border-emerald-900/50 dark:bg-emerald-500/10 dark:text-emerald-400'
-                                    : 'border-slate-200 bg-slate-50 text-slate-600 dark:border-slate-700 dark:bg-slate-500/10 dark:text-slate-400'}
-                                />
+                                <span className={`inline-flex h-7 items-center rounded-md border px-2 text-[12px] font-medium ${row.deposit === 'Yes'
+                                  ? 'border-emerald-200 bg-emerald-50 text-emerald-700 dark:border-emerald-900/50 dark:bg-emerald-500/10 dark:text-emerald-400'
+                                  : 'border-slate-200 bg-slate-50 text-slate-600 dark:border-slate-700 dark:bg-slate-500/10 dark:text-slate-400'}`}>
+                                  {row.deposit}
+                                </span>
                               </div>
                             )}
                             {showWithdrawal && (
                               <div>
                                 <p className="mb-1 text-[9px] font-medium text-muted-foreground">Withdrawal</p>
-                                <StatusSelect
-                                  value={withdrawalValue}
-                                  options={YES_NO_OPTIONS}
-                                  editing={isEditingThisRow}
-                                  saving={rowSaving}
-                                  onChange={(next) => updateDraftField('withdrawal', next)}
-                                  className={withdrawalValue === 'Yes'
-                                    ? 'border-emerald-200 bg-emerald-50 text-emerald-700 dark:border-emerald-900/50 dark:bg-emerald-500/10 dark:text-emerald-400'
-                                    : 'border-slate-200 bg-slate-50 text-slate-600 dark:border-slate-700 dark:bg-slate-500/10 dark:text-slate-400'}
-                                />
+                                <span className={`inline-flex h-7 items-center rounded-md border px-2 text-[12px] font-medium ${row.withdrawal === 'Yes'
+                                  ? 'border-emerald-200 bg-emerald-50 text-emerald-700 dark:border-emerald-900/50 dark:bg-emerald-500/10 dark:text-emerald-400'
+                                  : 'border-slate-200 bg-slate-50 text-slate-600 dark:border-slate-700 dark:bg-slate-500/10 dark:text-slate-400'}`}>
+                                  {row.withdrawal}
+                                </span>
                               </div>
                             )}
                             {showPriority && (
@@ -1031,7 +986,7 @@ export default function WalletStatus() {
                                   options={PRIORITY_OPTIONS}
                                   editing={isEditingThisRow}
                                   saving={rowSaving}
-                                  onChange={(next) => updateDraftField('priority', next)}
+                                  onChange={(next) => updateDraftField(next)}
                                   className={PRIORITY_BADGE_TINTS[priorityValue]}
                                 />
                               </div>
@@ -1041,31 +996,10 @@ export default function WalletStatus() {
                         {showWalletStatus && (
                           <div className={`flex items-center gap-1.5 ${(showShop || showBrand || showBalance || showSdp || showDeposit || showWithdrawal || showPriority) ? 'mt-2.5 border-t border-border pt-2.5' : ''}`}>
                             <p className="text-[9px] font-medium text-muted-foreground">Wallet Status</p>
-                            {!isEditingThisRow && walletStatusDisplayValue && (
-                              <span className="inline-flex items-center gap-1.5 text-[12px] font-medium text-foreground">
-                                <span className={`h-2 w-2 shrink-0 rounded-full ${WALLET_STATUS_DOT[walletStatusDisplayValue as Exclude<WalletStatusValue, ''>]}`} />
-                                {walletStatusDisplayValue}
-                              </span>
-                            )}
-                            {!isEditingThisRow && !walletStatusDisplayValue && (
-                              <span className="text-[12px] text-muted-foreground">−</span>
-                            )}
-                            {isEditingThisRow && (
-                              <span className="inline-flex items-center gap-1.5">
-                                {walletStatusDisplayValue && <span className={`h-2 w-2 shrink-0 rounded-full ${WALLET_STATUS_DOT[walletStatusDisplayValue as Exclude<WalletStatusValue, ''>]}`} />}
-                                <select
-                                  value={walletStatusDisplayValue}
-                                  disabled={rowSaving}
-                                  onChange={(event) => updateDraftField('walletStatus', event.target.value)}
-                                  className="h-7 rounded-md border border-[#5B5CEB] bg-white px-1.5 text-[12px] font-medium text-foreground outline-none transition-opacity duration-150 ease-out disabled:opacity-60 dark:bg-[#2a2a2d]"
-                                >
-                                  {!walletStatusDisplayValue && <option value="">Select…</option>}
-                                  {WALLET_STATUS_OPTIONS.map((opt) => (
-                                    <option key={opt.value} value={opt.value}>{opt.label}</option>
-                                  ))}
-                                </select>
-                              </span>
-                            )}
+                            <span className="inline-flex items-center gap-1.5 text-[12px] font-medium text-foreground">
+                              <span className={`h-2 w-2 shrink-0 rounded-full ${WALLET_STATUS_DOT[row.walletStatus]}`} />
+                              {row.walletStatus}
+                            </span>
                           </div>
                         )}
                         <div className="mt-2.5 flex items-center gap-1.5 border-t border-border pt-2.5">
