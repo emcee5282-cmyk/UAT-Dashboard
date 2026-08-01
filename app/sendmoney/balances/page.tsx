@@ -760,7 +760,6 @@ export default function SendMoneyAgentBalance() {
 
       const openingRawRows = parseCsvLines(openingText);
       const reportCutoffDate = parseSendMoneyReportCutoffDate(openingRawRows);
-      const topUpSettlementCutoff = getBusinessToday();
 
       const estimatedUploadedAt = estimatedData.uploadedAt ? new Date(estimatedData.uploadedAt) : null;
       const estimatedOpeningValid =
@@ -769,6 +768,33 @@ export default function SendMoneyAgentBalance() {
         estimatedUploadedAt !== null &&
         toBusinessDate(estimatedUploadedAt).getTime() === getBusinessToday().getTime();
       const estimatedBalances = new Map(Object.entries(estimatedData.balances ?? {}));
+
+      // Top Up/Settlement totals (feeding Company Balance) reset at the 2AM
+      // business-day rollover (see app/lib/businessDate.ts) — clock-based
+      // ("today"), UNLESS no valid Estimated Balance covers today yet, then
+      // this widens so Settlement/Top Up posted "yesterday" doesn't
+      // disappear once the calendar rolls over. Once a valid Estimated
+      // Balance exists it already bakes that stale day in, so this goes
+      // back to today-only to avoid counting it twice.
+      //
+      // Widen target: Opening's own "UPDATED TIME" card date IF it's
+      // genuinely stale (older than today). But if that card has ALREADY
+      // ticked over to today while Estimated Balance still hasn't been
+      // confirmed (confirmed live on the Dashboard: Opening's card can flip
+      // to "today" independently of whether yesterday's Settlement/Top Up
+      // were ever folded into today's Opening figure), fall back one
+      // business day instead of snapping straight to today. Same
+      // sendMoneyLiveCutoff logic as app/page.tsx / app/sendmoney/page.tsx —
+      // per explicit instruction, so this page's Company Balance and the
+      // Dashboard's own Top Up/Settlement never disagree (same figures
+      // whether read here or exported from this page).
+      const businessToday = getBusinessToday();
+      const oneBusinessDayBack = new Date(businessToday.getTime() - 24 * 60 * 60 * 1000);
+      const topUpSettlementCutoff = estimatedOpeningValid
+        ? businessToday
+        : (reportCutoffDate !== null && reportCutoffDate.getTime() < businessToday.getTime())
+          ? reportCutoffDate
+          : oneBusinessDayBack;
 
       // Send Money's own roster lives in cols L-O (indices 11-14) of the same
       // "Opening AG" sheet Cashout uses for cols A-D — a separate ~9,983-row

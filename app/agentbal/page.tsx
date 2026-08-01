@@ -878,16 +878,13 @@ export default function AgentBalance() {
       const estimatedData: { balances: Record<string, number>; uploadedAt: string | null } = await estimatedRes.json();
 
       const openingRawRows = parseCsvLines(openingText);
-      // Opening's own "Updated Time" card — kept separate from the Top
-      // Up/Settlement cutoff below (which is purely clock-based). This one
-      // is still needed to detect whether Opening AG has been manually
-      // refreshed yet, for the Assumed Balance validity check further down.
+      // Opening's own "Updated Time" card — still needed to detect whether
+      // Opening AG has been manually refreshed yet, for the Assumed Balance
+      // validity check below AND (per explicit instruction) the Top Up/
+      // Settlement cutoff further down, so Company Balance and the
+      // Dashboard's own Top Up/Settlement (app/page.tsx) never disagree —
+      // same figures whether the user reads them here or exports this page.
       const reportCutoffDate = parseReportCutoffDate(openingRawRows);
-      // Top Up/Settlement totals (feeding Company Balance) reset at the 2AM
-      // business-day rollover (see app/lib/businessDate.ts) — clock-based,
-      // independent of whether Opening's own "Updated Time" card has been
-      // manually refreshed.
-      const topUpSettlementCutoff = getBusinessToday();
 
       // Assumed Balance (uploaded via Opening's "Upload Excel Data") only
       // takes over when BOTH hold:
@@ -908,6 +905,30 @@ export default function AgentBalance() {
         estimatedUploadedAt !== null &&
         toBusinessDate(estimatedUploadedAt).getTime() === getBusinessToday().getTime();
       const estimatedBalances = new Map(Object.entries(estimatedData.balances ?? {}));
+
+      // Top Up/Settlement totals (feeding Company Balance) reset at the 2AM
+      // business-day rollover (see app/lib/businessDate.ts) — clock-based
+      // ("today"), UNLESS no valid Estimated Balance covers today yet, then
+      // this widens so Settlement/Top Up posted "yesterday" doesn't
+      // disappear once the calendar rolls over. Once a valid Estimated
+      // Balance exists it already bakes that stale day in, so this goes
+      // back to today-only to avoid counting it twice.
+      //
+      // Widen target: Opening's own "Updated Time" card date IF it's
+      // genuinely stale (older than today). But if that card has ALREADY
+      // ticked over to today while Estimated Balance still hasn't been
+      // confirmed (confirmed live on the Dashboard: Opening's card can flip
+      // to "today" independently of whether yesterday's Settlement/Top Up
+      // were ever folded into today's Opening figure), fall back one
+      // business day instead of snapping straight to today. Same
+      // cashoutLiveCutoff logic as app/page.tsx.
+      const businessToday = getBusinessToday();
+      const oneBusinessDayBack = new Date(businessToday.getTime() - 24 * 60 * 60 * 1000);
+      const topUpSettlementCutoff = estimatedOpeningValid
+        ? businessToday
+        : (reportCutoffDate !== null && reportCutoffDate.getTime() < businessToday.getTime())
+          ? reportCutoffDate
+          : oneBusinessDayBack;
 
       const openingRows = openingRawRows
         .slice(1)
