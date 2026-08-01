@@ -24,6 +24,7 @@ export const ROUTE_MAP: RoutePair[] = [
   { cashout: '/stlm', sendmoney: '/sendmoney/settlement' },
   { cashout: '/topup', sendmoney: '/sendmoney/topup' },
   { cashout: '/transfer-queue', sendmoney: '/sendmoney/transfer-queue' },
+  { cashout: '/wallet-status', sendmoney: '/sendmoney/wallet-status' },
   // Balance Overview combines both products on one page — self-mapped so it
   // never redirects away when the Cashout/Send Money switcher is toggled.
   // Now lives at '/' (the site's landing page).

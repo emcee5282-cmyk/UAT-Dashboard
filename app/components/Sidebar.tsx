@@ -19,6 +19,7 @@ import {
   Home,
   ChevronLeft,
   ChevronRight,
+  Flag,
 } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { cn } from '@/lib/utils';
@@ -172,6 +173,7 @@ const OPERATIONS_ITEMS = [
 
 const MONITORING_ITEMS = [
   { href: '/transfer-queue', label: 'Transfer Queue', icon: Shuffle, isTransferQueue: true },
+  { href: '/wallet-status', label: 'Wallet Status', icon: Flag, isTransferQueue: false },
 ];
 
 export default function Sidebar() {

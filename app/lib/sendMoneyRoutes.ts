@@ -21,6 +21,7 @@ export const sendMoneyRoutes: SendMoneyRoute[] = [
   { path: '/sendmoney/settlement', title: 'Settlement', itemLabel: 'settlements' },
   { path: '/sendmoney/topup', title: 'Top Up', itemLabel: 'top ups' },
   { path: '/sendmoney/transfer-queue', title: 'Transfer Queue', itemLabel: 'transfers' },
+  { path: '/sendmoney/wallet-status', title: 'Wallet Status', itemLabel: 'shops' },
 ];
 
 export function getSendMoneyRoute(path: string): SendMoneyRoute {
