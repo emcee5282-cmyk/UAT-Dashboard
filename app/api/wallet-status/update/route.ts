@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server';
 import { updateCashoutWalletStatusField, type WalletStatusField } from '@/app/lib/walletStatus';
 
-const VALID_FIELDS: WalletStatusField[] = ['deposit', 'withdrawal', 'priority'];
+const VALID_FIELDS: WalletStatusField[] = ['deposit', 'withdrawal', 'priority', 'walletStatus'];
 
 export async function POST(request: Request) {
   try {

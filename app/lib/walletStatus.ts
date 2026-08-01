@@ -2,33 +2,41 @@ import { google, Auth } from 'googleapis';
 import { fetchRange } from './googleSheets';
 
 // "Wallet Status" — a dedicated sheet tab holding manually-set, cross-device
-// per-shop values (Deposit enabled?, Withdrawal enabled?, Priority) that
-// don't exist anywhere else in the spreadsheet. Sparse by design: only shops
-// a staff member has actually touched get a row — everyone else falls back
-// to the defaults below. Same column-block-per-product convention as
-// "Estimated Opening" (see app/lib/estimatedOpening.ts): Cashout in A-D,
-// Send Money in F-I, one blank column between them.
+// per-shop values (Deposit enabled?, Withdrawal enabled?, Priority, and the
+// standalone Active/Inactive/Suspended status field) that don't exist
+// anywhere else in the spreadsheet. Sparse by design: only shops a staff
+// member has actually touched get a row — everyone else falls back to the
+// defaults below. Same column-block-per-product convention as "Estimated
+// Opening" (see app/lib/estimatedOpening.ts): Cashout in A-E, Send Money in
+// F-J, one blank column between them.
 const SHEET_TITLE = 'Wallet Status';
 
 const CASHOUT_START_COL = 'A';
-const CASHOUT_END_COL = 'D';
+const CASHOUT_END_COL = 'E';
 const SENDMONEY_START_COL = 'F';
-const SENDMONEY_END_COL = 'I';
+const SENDMONEY_END_COL = 'J';
 
 export type DepositWithdrawal = 'Yes' | 'No';
 export type Priority = 'Low' | 'Normal' | 'High';
-export type WalletStatusField = 'deposit' | 'withdrawal' | 'priority';
+// '' = never set — a real, displayable state ("—"), not a default to fall
+// back through like Deposit/Withdrawal/Priority above; per the inline-edit
+// spec, an unset row shows "—" and only becomes one of the 3 real values
+// once a staff member explicitly saves one.
+export type WalletStatusValue = 'Active' | 'Inactive' | 'Suspended' | '';
+export type WalletStatusField = 'deposit' | 'withdrawal' | 'priority' | 'walletStatus';
 
 export type WalletStatusEntry = {
   deposit: DepositWithdrawal;
   withdrawal: DepositWithdrawal;
   priority: Priority;
+  walletStatus: WalletStatusValue;
 };
 
 export const DEFAULT_WALLET_STATUS_ENTRY: WalletStatusEntry = {
   deposit: 'No',
   withdrawal: 'No',
   priority: 'Normal',
+  walletStatus: '',
 };
 
 // Full read-write scope — separate from app/lib/googleSheets.ts's read-only
@@ -77,13 +85,13 @@ async function ensureSheetExists(sheetsApi: ReturnType<typeof google.sheets>, sp
     spreadsheetId,
     range: `${SHEET_TITLE}!${CASHOUT_START_COL}1:${CASHOUT_END_COL}1`,
     valueInputOption: 'RAW',
-    requestBody: { values: [['Shop Name', 'Deposit', 'Withdrawal', 'Priority']] },
+    requestBody: { values: [['Shop Name', 'Deposit', 'Withdrawal', 'Priority', 'Wallet Status']] },
   });
   await sheetsApi.spreadsheets.values.update({
     spreadsheetId,
     range: `${SHEET_TITLE}!${SENDMONEY_START_COL}1:${SENDMONEY_END_COL}1`,
     valueInputOption: 'RAW',
-    requestBody: { values: [['Shop Name', 'Deposit', 'Withdrawal', 'Priority']] },
+    requestBody: { values: [['Shop Name', 'Deposit', 'Withdrawal', 'Priority', 'Wallet Status']] },
   });
 }
 
@@ -96,6 +104,14 @@ function normalizePriority(raw: string): Priority {
   if (trimmed === 'high') return 'High';
   if (trimmed === 'low') return 'Low';
   return 'Normal';
+}
+
+function normalizeWalletStatusValue(raw: string): WalletStatusValue {
+  const trimmed = raw.trim().toLowerCase();
+  if (trimmed === 'active') return 'Active';
+  if (trimmed === 'inactive') return 'Inactive';
+  if (trimmed === 'suspended') return 'Suspended';
+  return '';
 }
 
 async function readWalletStatus(startCol: string, endCol: string): Promise<Map<string, WalletStatusEntry>> {
@@ -114,6 +130,7 @@ async function readWalletStatus(startCol: string, endCol: string): Promise<Map<s
       deposit: normalizeDepositWithdrawal(row[1] ?? ''),
       withdrawal: normalizeDepositWithdrawal(row[2] ?? ''),
       priority: normalizePriority(row[3] ?? ''),
+      walletStatus: normalizeWalletStatusValue(row[4] ?? ''),
     });
   });
 
@@ -156,8 +173,8 @@ async function updateWalletStatusField(
   const normalizedShop = shopName.trim().toUpperCase();
   const rowOffset = existingRows.findIndex((row) => String(row[0] ?? '').trim().toUpperCase() === normalizedShop);
 
-  const fieldColOffset = field === 'deposit' ? 1 : field === 'withdrawal' ? 2 : 3;
-  const colLetters = [startCol, String.fromCharCode(startCol.charCodeAt(0) + 1), String.fromCharCode(startCol.charCodeAt(0) + 2), String.fromCharCode(startCol.charCodeAt(0) + 3)];
+  const fieldColOffset = field === 'deposit' ? 1 : field === 'withdrawal' ? 2 : field === 'priority' ? 3 : 4;
+  const colLetters = Array.from({ length: 5 }, (_, i) => String.fromCharCode(startCol.charCodeAt(0) + i));
 
   if (rowOffset !== -1) {
     const sheetRow = rowOffset + 2; // data starts at row 2
@@ -171,7 +188,7 @@ async function updateWalletStatusField(
   }
 
   const sheetRow = existingRows.length + 2;
-  const newRow = [shopName, 'No', 'No', 'Normal'];
+  const newRow = [shopName, 'No', 'No', 'Normal', ''];
   newRow[fieldColOffset] = value;
   await sheetsApi.spreadsheets.values.update({
     spreadsheetId,

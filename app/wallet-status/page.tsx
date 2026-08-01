@@ -1,7 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { ChevronDown, ChevronUp, ChevronsUpDown, Columns3, Download, RefreshCw, Search, Flag, Check, X } from 'lucide-react';
+import { ChevronDown, ChevronUp, ChevronsUpDown, Columns3, Download, RefreshCw, Search, Flag, Check, X, SquarePen, Loader2 } from 'lucide-react';
 import * as XLSX from 'xlsx';
 import SettlementHeader from '../components/SettlementHeader';
 import ConnectionErrorState from '../components/ConnectionErrorState';
@@ -24,8 +24,23 @@ import { computeCompanyBalance, resolveBrand } from '../lib/balanceEngine';
 // convention instead of importing the server-only module.
 type DepositWithdrawal = 'Yes' | 'No';
 type Priority = 'Low' | 'Normal' | 'High';
-type WalletStatusEntry = { deposit: DepositWithdrawal; withdrawal: DepositWithdrawal; priority: Priority };
-const DEFAULT_WALLET_STATUS_ENTRY: WalletStatusEntry = { deposit: 'No', withdrawal: 'No', priority: 'Normal' };
+// '' = never set — a real, displayable state ("−"), not a default to fall
+// back through like Deposit/Withdrawal/Priority above.
+type WalletStatusValue = 'Active' | 'Inactive' | 'Suspended' | '';
+type WalletStatusEntry = { deposit: DepositWithdrawal; withdrawal: DepositWithdrawal; priority: Priority; walletStatus: WalletStatusValue };
+const DEFAULT_WALLET_STATUS_ENTRY: WalletStatusEntry = { deposit: 'No', withdrawal: 'No', priority: 'Normal', walletStatus: '' };
+
+// Inline-edit spec: click-to-edit, single row at a time, colored dots only.
+const WALLET_STATUS_OPTIONS: { value: Exclude<WalletStatusValue, ''>; label: string; dot: string }[] = [
+  { value: 'Active', label: 'Active', dot: 'bg-emerald-500' },
+  { value: 'Inactive', label: 'Inactive', dot: 'bg-amber-400' },
+  { value: 'Suspended', label: 'Suspended', dot: 'bg-rose-500' },
+];
+const WALLET_STATUS_DOT: Record<Exclude<WalletStatusValue, ''>, string> = {
+  Active: 'bg-emerald-500',
+  Inactive: 'bg-amber-400',
+  Suspended: 'bg-rose-500',
+};
 
 // Format mimics Transfer Queue (app/transfer-queue/page.tsx) per explicit
 // instruction — same GHOST_BUTTON toolbar, SettlementHeader, DataTable,
@@ -82,6 +97,7 @@ type WalletStatusRow = {
   deposit: DepositWithdrawal;
   withdrawal: DepositWithdrawal;
   priority: Priority;
+  walletStatus: WalletStatusValue;
 };
 
 const COLUMN_IDS = {
@@ -93,6 +109,8 @@ const COLUMN_IDS = {
   WITHDRAWAL: 'withdrawal',
   PRIORITY: 'priority',
   ACTIONS: 'actions',
+  WALLET_STATUS: 'walletStatus',
+  WALLET_STATUS_ACTION: 'walletStatusAction',
 } as const;
 
 type ColumnKey = typeof COLUMN_IDS[keyof typeof COLUMN_IDS];
@@ -118,19 +136,31 @@ const DEFAULT_COLUMNS: ColumnDef[] = [
   // instruction — never hideable, since it's the only way to commit any
   // pending edit in that row.
   { key: COLUMN_IDS.ACTIONS, label: '', visible: true, sortable: false, hideable: false, align: 'center' },
+  // Standalone inline-edit column per the "Wallet Status Inline Edit" spec —
+  // its own click-to-edit Save/Cancel, independent of the shared Actions
+  // column above (which only covers Deposit/Withdrawal/Priority). Both this
+  // and its action column are non-hideable — hiding the data without its
+  // only edit affordance would strand it.
+  { key: COLUMN_IDS.WALLET_STATUS, label: 'Wallet Status', visible: true, sortable: true, hideable: false, align: 'center' },
+  { key: COLUMN_IDS.WALLET_STATUS_ACTION, label: '', visible: true, sortable: false, hideable: false, align: 'center' },
 ];
 
 const COLUMN_VISIBILITY_STORAGE_KEY = 'walletStatusColumnVisibility';
 
+// Wallet Status / its Action column are fixed px per spec ("Never resize.
+// Never shift. Never wrap.") — every other column stays percentage-based;
+// table-fixed + the horizontal-scroll fallback absorb the mixed units fine.
 const columnWidths: Record<ColumnKey, string> = {
-  brand: '8%',
-  shopName: '24%',
-  companyBalance: '14%',
-  sdp: '12%',
-  deposit: '10%',
-  withdrawal: '10%',
-  priority: '9%',
-  actions: '13%',
+  brand: '7%',
+  shopName: '19%',
+  companyBalance: '12%',
+  sdp: '10%',
+  deposit: '9%',
+  withdrawal: '9%',
+  priority: '8%',
+  actions: '11%',
+  walletStatus: '170px',
+  walletStatusAction: '72px',
 };
 
 const rowSkeletonWidths: Record<ColumnKey, string[]> = {
@@ -142,6 +172,8 @@ const rowSkeletonWidths: Record<ColumnKey, string[]> = {
   withdrawal: ['w-10', 'w-10', 'w-10'],
   priority: ['w-14', 'w-14', 'w-14'],
   actions: ['w-10', 'w-10', 'w-10'],
+  walletStatus: ['w-20', 'w-24', 'w-16'],
+  walletStatusAction: ['w-8', 'w-8', 'w-8'],
 };
 
 function headerCellClasses(align: 'left' | 'right' | 'center') {
@@ -256,6 +288,18 @@ export default function WalletStatus() {
   // persisted until confirmField() fires; changing the select just writes
   // here.
   const [drafts, setDrafts] = useState<Record<string, Partial<Record<'deposit' | 'withdrawal' | 'priority', string>>>>({});
+
+  // Wallet Status inline-edit — separate, self-contained state machine from
+  // the drafts/confirmRow mechanism above (per the inline-edit spec's own
+  // rules: only one row editable at a time, click Edit to start, Save/
+  // Cancel to end). editingWalletStatusKey being a single value (not a Set)
+  // is what makes "starting another row auto-cancels the previous one"
+  // free — the old row's cell stops matching and reverts to showing the
+  // saved value with no extra cleanup needed.
+  const [editingWalletStatusKey, setEditingWalletStatusKey] = useState<string | null>(null);
+  const [editingWalletStatusDraft, setEditingWalletStatusDraft] = useState<WalletStatusValue | null>(null);
+  const [walletStatusSaving, setWalletStatusSaving] = useState(false);
+  const [walletStatusToast, setWalletStatusToast] = useState<string | null>(null);
 
   const [isScrolled, setIsScrolled] = useState(false);
   const tableScrollRef = useRef<HTMLDivElement>(null);
@@ -378,6 +422,7 @@ export default function WalletStatus() {
           deposit: status.deposit,
           withdrawal: status.withdrawal,
           priority: status.priority,
+          walletStatus: status.walletStatus,
         };
       });
 
@@ -481,6 +526,44 @@ export default function WalletStatus() {
       });
   }, [drafts, cancelRow, fetchData]);
 
+  const startEditWalletStatus = useCallback((row: WalletStatusRow) => {
+    setEditingWalletStatusKey(row.key);
+    setEditingWalletStatusDraft(row.walletStatus);
+  }, []);
+
+  const cancelEditWalletStatus = useCallback(() => {
+    setEditingWalletStatusKey(null);
+    setEditingWalletStatusDraft(null);
+  }, []);
+
+  const saveWalletStatus = useCallback((row: WalletStatusRow) => {
+    if (!editingWalletStatusDraft || editingWalletStatusDraft === row.walletStatus) return;
+    const value = editingWalletStatusDraft;
+
+    setWalletStatusSaving(true);
+    setSaveError(null);
+
+    fetch('/api/wallet-status/update', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ shopName: row.shopName, field: 'walletStatus', value }),
+    })
+      .then((res) => {
+        if (!res.ok) throw new Error('Save failed');
+        setRows((current) => current.map((r) => (r.key === row.key ? { ...r, walletStatus: value } : r)));
+        setEditingWalletStatusKey(null);
+        setEditingWalletStatusDraft(null);
+        setWalletStatusToast('Wallet Status Updated');
+      })
+      .catch(() => {
+        setSaveError(`Failed to update ${row.shopName}'s Wallet Status. Try again.`);
+        setTimeout(() => setSaveError(null), 4000);
+      })
+      .finally(() => {
+        setWalletStatusSaving(false);
+      });
+  }, [editingWalletStatusDraft]);
+
   const searchedRows = useMemo(() => {
     const query = searchTerm.toLowerCase();
     if (!query) return rows;
@@ -499,6 +582,7 @@ export default function WalletStatus() {
           case 'deposit': return row.deposit;
           case 'withdrawal': return row.withdrawal;
           case 'priority': return PRIORITY_RANK[row.priority];
+          case 'walletStatus': return row.walletStatus;
           default: return row.companyBalance;
         }
       };
@@ -531,11 +615,13 @@ export default function WalletStatus() {
         case 'deposit': return row.deposit;
         case 'withdrawal': return row.withdrawal;
         case 'priority': return row.priority;
+        case 'walletStatus': return row.walletStatus;
       }
     };
-    // Actions (Confirm/Cancel) has no exportable value — excluded from the
-    // sheet rather than producing an empty, unlabeled column.
-    const exportColumns = visibleColumns.filter((col) => col.key !== 'actions');
+    // Actions/walletStatusAction (Confirm/Cancel, Edit/Save/Cancel) have no
+    // exportable value — excluded from the sheet rather than producing an
+    // empty, unlabeled column.
+    const exportColumns = visibleColumns.filter((col) => col.key !== 'actions' && col.key !== 'walletStatusAction');
     const headers = exportColumns.map((col) => col.label);
     const data = sortedRows.map((row) => exportColumns.map((col) => getExportValue(row, col.key)));
     const worksheet = XLSX.utils.aoa_to_sheet([headers, ...data]);
@@ -551,6 +637,13 @@ export default function WalletStatus() {
   useEffect(() => {
     if (page !== currentPage) setPage(currentPage);
   }, [page, currentPage]);
+
+  // Success toast — top right, 2s, per spec.
+  useEffect(() => {
+    if (!walletStatusToast) return;
+    const timer = setTimeout(() => setWalletStatusToast(null), 2000);
+    return () => clearTimeout(timer);
+  }, [walletStatusToast]);
 
   function renderCell(row: WalletStatusRow, key: ColumnKey) {
     const base = 'whitespace-nowrap overflow-hidden text-ellipsis text-[13px] font-normal text-center px-4 py-[14px] align-top';
@@ -651,11 +744,92 @@ export default function WalletStatus() {
           </td>
         );
       }
+      case 'walletStatus': {
+        const isEditingThisRow = editingWalletStatusKey === row.key;
+        const displayValue = (isEditingThisRow ? editingWalletStatusDraft : row.walletStatus) ?? '';
+        // A never-set row shows "−" at rest, but Edit must still open the
+        // dropdown (spec: "After Edit → Dropdown automatically opens") — the
+        // "−" short-circuit only applies while NOT editing.
+        if (!displayValue && !isEditingThisRow) {
+          return <td key={key} className={base}><span className="text-muted-foreground">−</span></td>;
+        }
+        return (
+          <td key={key} className={base}>
+            <span className="inline-flex items-center gap-1.5">
+              {displayValue && <span className={`h-2 w-2 shrink-0 rounded-full ${WALLET_STATUS_DOT[displayValue as Exclude<WalletStatusValue, ''>]}`} />}
+              <select
+                value={displayValue}
+                disabled={!isEditingThisRow || walletStatusSaving}
+                onChange={(event) => setEditingWalletStatusDraft(event.target.value as WalletStatusValue)}
+                className={`h-7 rounded-md border bg-white px-1.5 text-[12px] font-medium outline-none transition-[background-color,border-color,opacity] duration-150 ease-out disabled:cursor-default disabled:opacity-100 dark:bg-[#2a2a2d] ${
+                  isEditingThisRow ? 'border-[#5B5CEB]' : 'border-transparent'
+                }`}
+              >
+                {!displayValue && <option value="">Select…</option>}
+                {WALLET_STATUS_OPTIONS.map((opt) => (
+                  <option key={opt.value} value={opt.value}>{opt.label}</option>
+                ))}
+              </select>
+            </span>
+          </td>
+        );
+      }
+      case 'walletStatusAction': {
+        const isEditingThisRow = editingWalletStatusKey === row.key;
+        if (!isEditingThisRow) {
+          return (
+            <td key={key} className={base}>
+              <button
+                type="button"
+                onClick={() => startEditWalletStatus(row)}
+                aria-label="Edit Wallet Status"
+                title="Edit Wallet Status"
+                className="flex h-8 w-8 items-center justify-center rounded-md text-muted-foreground transition-colors duration-150 ease-out hover:bg-muted hover:text-foreground"
+              >
+                <SquarePen size={15} />
+              </button>
+            </td>
+          );
+        }
+        const canSave = !!editingWalletStatusDraft && editingWalletStatusDraft !== row.walletStatus;
+        return (
+          <td key={key} className={base}>
+            <span className="inline-flex items-center gap-1.5">
+              <button
+                type="button"
+                onClick={() => saveWalletStatus(row)}
+                disabled={!canSave || walletStatusSaving}
+                aria-label="Save Changes"
+                title="Save Changes"
+                className="flex h-10 w-10 items-center justify-center rounded-[10px] bg-[#5B5CEB] text-white transition-[transform,opacity] duration-150 ease-out hover:-translate-y-px disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:translate-y-0"
+              >
+                {walletStatusSaving ? <Loader2 size={16} className="animate-spin" /> : <Check size={16} />}
+              </button>
+              <button
+                type="button"
+                onClick={cancelEditWalletStatus}
+                disabled={walletStatusSaving}
+                aria-label="Cancel"
+                title="Cancel"
+                className="flex h-10 w-10 items-center justify-center rounded-[10px] border border-[#E5E7EB] bg-white text-slate-500 transition-colors duration-150 ease-out hover:bg-[#F8FAFC] disabled:opacity-50 dark:border-[#3a3a3d] dark:bg-[#2a2a2d] dark:text-[#9CA3AF]"
+              >
+                <X size={16} />
+              </button>
+            </span>
+          </td>
+        );
+      }
     }
   }
 
   return (
     <div className="h-screen w-full flex flex-col overflow-hidden bg-background font-[Inter,sans-serif] text-foreground transition-colors duration-300 dark:bg-[#1c1c1e]">
+      {walletStatusToast && (
+        <div className="fixed right-5 top-5 z-[100] flex items-center gap-2 rounded-lg border border-emerald-200 bg-white px-3.5 py-2.5 text-[12px] font-medium text-foreground shadow-lg dark:border-emerald-900/50 dark:bg-[#2a2a2d]">
+          <Check size={15} className="shrink-0 text-emerald-500" />
+          {walletStatusToast}
+        </div>
+      )}
       <SettlementHeader icon={Flag} title="Wallet Status" isRefreshing={spinning} onRefresh={fetchData} />
 
       <main className="flex-1 flex flex-col overflow-hidden px-6 pb-6 pt-4">
@@ -790,7 +964,14 @@ export default function WalletStatus() {
                         </tr>
                       ))
                     ) : pagedRows.length > 0 ? pagedRows.map((row, i) => (
-                      <tr key={row.key} className={`border-b border-border last:border-0 transition-colors hover:bg-muted/10 ${i % 2 === 1 ? 'bg-muted/5' : ''}`}>
+                      <tr
+                        key={row.key}
+                        className={`border-b last:border-0 transition-[background-color,border-color] duration-150 ease-out hover:bg-muted/10 ${
+                          editingWalletStatusKey === row.key
+                            ? 'border-b-border border-l-[3px] border-l-[#5B5CEB] bg-[#F8F9FF] dark:bg-[#5B5CEB]/[0.08]'
+                            : `border-border ${i % 2 === 1 ? 'bg-muted/5' : ''}`
+                        }`}
+                      >
                         {visibleColumns.map((col) => renderCell(row, col.key))}
                       </tr>
                     )) : (
@@ -837,8 +1018,17 @@ export default function WalletStatus() {
                     const withdrawalValue = (withdrawalDraft ?? row.withdrawal) as DepositWithdrawal;
                     const priorityDraft = drafts[row.key]?.priority;
                     const priorityValue = (priorityDraft ?? row.priority) as Priority;
+                    const showWalletStatus = visibleColumns.some((c) => c.key === 'walletStatus');
+                    const isEditingWalletStatus = editingWalletStatusKey === row.key;
+                    const walletStatusDisplayValue = (isEditingWalletStatus ? editingWalletStatusDraft : row.walletStatus) ?? '';
+                    const canSaveWalletStatus = !!editingWalletStatusDraft && editingWalletStatusDraft !== row.walletStatus;
                     return (
-                      <div key={row.key} className="rounded-xl border border-border bg-white p-3.5 dark:bg-[#2a2a2d]">
+                      <div
+                        key={row.key}
+                        className={`rounded-xl border p-3.5 transition-[background-color,border-color] duration-150 ease-out dark:bg-[#2a2a2d] ${
+                          isEditingWalletStatus ? 'border-[#5B5CEB] bg-[#F8F9FF] dark:bg-[#5B5CEB]/[0.08]' : 'border-border bg-white'
+                        }`}
+                      >
                         {(showShop || showBrand) && (
                           <div className="flex items-start justify-between gap-2">
                             {showShop && <p className="min-w-0 truncate text-sm font-bold text-foreground">{row.shopName}</p>}
@@ -923,6 +1113,67 @@ export default function WalletStatus() {
                             >
                               <X size={13} /> Cancel
                             </button>
+                          </div>
+                        )}
+                        {showWalletStatus && (
+                          <div className="mt-2.5 flex items-center justify-between gap-2 border-t border-border pt-2.5">
+                            <div className="flex items-center gap-1.5">
+                              <p className="text-[9px] font-medium text-muted-foreground">Wallet Status</p>
+                              {(walletStatusDisplayValue || isEditingWalletStatus) ? (
+                                <span className="inline-flex items-center gap-1.5">
+                                  {walletStatusDisplayValue && <span className={`h-2 w-2 shrink-0 rounded-full ${WALLET_STATUS_DOT[walletStatusDisplayValue as Exclude<WalletStatusValue, ''>]}`} />}
+                                  <select
+                                    value={walletStatusDisplayValue}
+                                    disabled={!isEditingWalletStatus || walletStatusSaving}
+                                    onChange={(event) => setEditingWalletStatusDraft(event.target.value as WalletStatusValue)}
+                                    className={`h-7 rounded-md border bg-white px-1.5 text-[12px] font-medium outline-none transition-[background-color,border-color,opacity] duration-150 ease-out disabled:cursor-default disabled:opacity-100 dark:bg-[#2a2a2d] ${
+                                      isEditingWalletStatus ? 'border-[#5B5CEB]' : 'border-transparent'
+                                    }`}
+                                  >
+                                    {!walletStatusDisplayValue && <option value="">Select…</option>}
+                                    {WALLET_STATUS_OPTIONS.map((opt) => (
+                                      <option key={opt.value} value={opt.value}>{opt.label}</option>
+                                    ))}
+                                  </select>
+                                </span>
+                              ) : (
+                                <span className="text-[12px] text-muted-foreground">−</span>
+                              )}
+                            </div>
+                            {isEditingWalletStatus ? (
+                              <span className="inline-flex items-center gap-1.5">
+                                <button
+                                  type="button"
+                                  onClick={() => saveWalletStatus(row)}
+                                  disabled={!canSaveWalletStatus || walletStatusSaving}
+                                  aria-label="Save Changes"
+                                  title="Save Changes"
+                                  className="flex h-8 w-8 items-center justify-center rounded-[10px] bg-[#5B5CEB] text-white transition-opacity duration-150 ease-out disabled:cursor-not-allowed disabled:opacity-40"
+                                >
+                                  {walletStatusSaving ? <Loader2 size={15} className="animate-spin" /> : <Check size={15} />}
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={cancelEditWalletStatus}
+                                  disabled={walletStatusSaving}
+                                  aria-label="Cancel"
+                                  title="Cancel"
+                                  className="flex h-8 w-8 items-center justify-center rounded-[10px] border border-[#E5E7EB] bg-white text-slate-500 transition-colors duration-150 ease-out disabled:opacity-50 dark:border-[#3a3a3d] dark:bg-[#2a2a2d] dark:text-[#9CA3AF]"
+                                >
+                                  <X size={15} />
+                                </button>
+                              </span>
+                            ) : (
+                              <button
+                                type="button"
+                                onClick={() => startEditWalletStatus(row)}
+                                aria-label="Edit Wallet Status"
+                                title="Edit Wallet Status"
+                                className="flex h-8 w-8 items-center justify-center rounded-md text-muted-foreground transition-colors duration-150 ease-out hover:bg-muted hover:text-foreground"
+                              >
+                                <SquarePen size={15} />
+                              </button>
+                            )}
                           </div>
                         )}
                       </div>
