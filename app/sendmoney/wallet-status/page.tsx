@@ -229,23 +229,39 @@ const PRIORITY_BADGE_TINTS: Record<Priority, string> = {
 // already worked; changing any of them only stages a draft, never saves
 // directly. One Save/Cancel pair (the row's Action column) commits or
 // discards every changed field together.
+// Read-only rest state renders a plain, fully-opaque badge — no <select>,
+// no chevron, no dimmed "disabled" look. Per explicit instruction: a
+// dropdown chevron before Edit is clicked reads as "this is clickable"
+// when it isn't yet, and a faded/opacity-reduced look reads as broken —
+// the value at rest should just be clearly legible text. Only once
+// `editing` is true (this row's Edit icon was clicked) does it become a
+// real interactive <select>.
 function StatusSelect<T extends string>({
   value,
   options,
   onChange,
-  disabled,
+  editing,
+  saving,
   className,
 }: {
   value: T;
   options: T[];
   onChange: (next: T) => void;
-  disabled: boolean;
+  editing: boolean;
+  saving: boolean;
   className: string;
 }) {
+  if (!editing) {
+    return (
+      <span className={`inline-flex h-7 items-center rounded-md border px-2 text-[12px] font-medium ${className}`}>
+        {value}
+      </span>
+    );
+  }
   return (
     <select
       value={value}
-      disabled={disabled}
+      disabled={saving}
       onChange={(event) => onChange(event.target.value as T)}
       className={`h-7 rounded-md border px-1.5 text-[12px] font-medium outline-none transition-opacity disabled:opacity-60 ${className}`}
     >
@@ -626,7 +642,8 @@ export default function SendMoneyWalletStatus() {
             <StatusSelect
               value={value}
               options={YES_NO_OPTIONS}
-              disabled={!isEditingThisRow || rowSaving}
+              editing={isEditingThisRow}
+              saving={rowSaving}
               onChange={(next) => updateDraftField('deposit', next)}
               className={value === 'Yes'
                 ? 'border-emerald-200 bg-emerald-50 text-emerald-700 dark:border-emerald-900/50 dark:bg-emerald-500/10 dark:text-emerald-400'
@@ -642,7 +659,8 @@ export default function SendMoneyWalletStatus() {
             <StatusSelect
               value={value}
               options={YES_NO_OPTIONS}
-              disabled={!isEditingThisRow || rowSaving}
+              editing={isEditingThisRow}
+              saving={rowSaving}
               onChange={(next) => updateDraftField('withdrawal', next)}
               className={value === 'Yes'
                 ? 'border-emerald-200 bg-emerald-50 text-emerald-700 dark:border-emerald-900/50 dark:bg-emerald-500/10 dark:text-emerald-400'
@@ -658,7 +676,8 @@ export default function SendMoneyWalletStatus() {
             <StatusSelect
               value={value}
               options={PRIORITY_OPTIONS}
-              disabled={!isEditingThisRow || rowSaving}
+              editing={isEditingThisRow}
+              saving={rowSaving}
               onChange={(next) => updateDraftField('priority', next)}
               className={PRIORITY_BADGE_TINTS[value]}
             />
@@ -673,17 +692,28 @@ export default function SendMoneyWalletStatus() {
         if (!displayValue && !isEditingThisRow) {
           return <td key={key} className={base}><span className="text-muted-foreground">−</span></td>;
         }
+        // Read-only rest state is a plain badge (dot + text, no chevron, no
+        // dimmed look) — same reasoning as StatusSelect above. Only once
+        // editing does this become a real <select>.
+        if (!isEditingThisRow) {
+          return (
+            <td key={key} className={base}>
+              <span className="inline-flex items-center gap-1.5 rounded-md border border-transparent px-2 text-[12px] font-medium text-foreground">
+                <span className={`h-2 w-2 shrink-0 rounded-full ${WALLET_STATUS_DOT[displayValue as Exclude<WalletStatusValue, ''>]}`} />
+                {displayValue}
+              </span>
+            </td>
+          );
+        }
         return (
           <td key={key} className={base}>
             <span className="inline-flex items-center gap-1.5">
               {displayValue && <span className={`h-2 w-2 shrink-0 rounded-full ${WALLET_STATUS_DOT[displayValue as Exclude<WalletStatusValue, ''>]}`} />}
               <select
                 value={displayValue}
-                disabled={!isEditingThisRow || rowSaving}
+                disabled={rowSaving}
                 onChange={(event) => updateDraftField('walletStatus', event.target.value)}
-                className={`h-7 rounded-md border bg-white px-1.5 text-[12px] font-medium outline-none transition-[background-color,border-color,opacity] duration-150 ease-out disabled:cursor-default disabled:opacity-100 dark:bg-[#2a2a2d] ${
-                  isEditingThisRow ? 'border-[#5B5CEB]' : 'border-transparent'
-                }`}
+                className="h-7 rounded-md border border-[#5B5CEB] bg-white px-1.5 text-[12px] font-medium text-foreground outline-none transition-opacity duration-150 ease-out disabled:opacity-60 dark:bg-[#2a2a2d]"
               >
                 {!displayValue && <option value="">Select…</option>}
                 {WALLET_STATUS_OPTIONS.map((opt) => (
@@ -974,7 +1004,8 @@ export default function SendMoneyWalletStatus() {
                                 <StatusSelect
                                   value={depositValue}
                                   options={YES_NO_OPTIONS}
-                                  disabled={!isEditingThisRow || rowSaving}
+                                  editing={isEditingThisRow}
+                                  saving={rowSaving}
                                   onChange={(next) => updateDraftField('deposit', next)}
                                   className={depositValue === 'Yes'
                                     ? 'border-emerald-200 bg-emerald-50 text-emerald-700 dark:border-emerald-900/50 dark:bg-emerald-500/10 dark:text-emerald-400'
@@ -988,7 +1019,8 @@ export default function SendMoneyWalletStatus() {
                                 <StatusSelect
                                   value={withdrawalValue}
                                   options={YES_NO_OPTIONS}
-                                  disabled={!isEditingThisRow || rowSaving}
+                                  editing={isEditingThisRow}
+                                  saving={rowSaving}
                                   onChange={(next) => updateDraftField('withdrawal', next)}
                                   className={withdrawalValue === 'Yes'
                                     ? 'border-emerald-200 bg-emerald-50 text-emerald-700 dark:border-emerald-900/50 dark:bg-emerald-500/10 dark:text-emerald-400'
@@ -1002,7 +1034,8 @@ export default function SendMoneyWalletStatus() {
                                 <StatusSelect
                                   value={priorityValue}
                                   options={PRIORITY_OPTIONS}
-                                  disabled={!isEditingThisRow || rowSaving}
+                                  editing={isEditingThisRow}
+                                  saving={rowSaving}
                                   onChange={(next) => updateDraftField('priority', next)}
                                   className={PRIORITY_BADGE_TINTS[priorityValue]}
                                 />
@@ -1013,16 +1046,23 @@ export default function SendMoneyWalletStatus() {
                         {showWalletStatus && (
                           <div className={`flex items-center gap-1.5 ${(showShop || showBrand || showBalance || showSdp || showDeposit || showWithdrawal || showPriority) ? 'mt-2.5 border-t border-border pt-2.5' : ''}`}>
                             <p className="text-[9px] font-medium text-muted-foreground">Wallet Status</p>
-                            {(walletStatusDisplayValue || isEditingThisRow) ? (
+                            {!isEditingThisRow && walletStatusDisplayValue && (
+                              <span className="inline-flex items-center gap-1.5 text-[12px] font-medium text-foreground">
+                                <span className={`h-2 w-2 shrink-0 rounded-full ${WALLET_STATUS_DOT[walletStatusDisplayValue as Exclude<WalletStatusValue, ''>]}`} />
+                                {walletStatusDisplayValue}
+                              </span>
+                            )}
+                            {!isEditingThisRow && !walletStatusDisplayValue && (
+                              <span className="text-[12px] text-muted-foreground">−</span>
+                            )}
+                            {isEditingThisRow && (
                               <span className="inline-flex items-center gap-1.5">
                                 {walletStatusDisplayValue && <span className={`h-2 w-2 shrink-0 rounded-full ${WALLET_STATUS_DOT[walletStatusDisplayValue as Exclude<WalletStatusValue, ''>]}`} />}
                                 <select
                                   value={walletStatusDisplayValue}
-                                  disabled={!isEditingThisRow || rowSaving}
+                                  disabled={rowSaving}
                                   onChange={(event) => updateDraftField('walletStatus', event.target.value)}
-                                  className={`h-7 rounded-md border bg-white px-1.5 text-[12px] font-medium outline-none transition-[background-color,border-color,opacity] duration-150 ease-out disabled:cursor-default disabled:opacity-100 dark:bg-[#2a2a2d] ${
-                                    isEditingThisRow ? 'border-[#5B5CEB]' : 'border-transparent'
-                                  }`}
+                                  className="h-7 rounded-md border border-[#5B5CEB] bg-white px-1.5 text-[12px] font-medium text-foreground outline-none transition-opacity duration-150 ease-out disabled:opacity-60 dark:bg-[#2a2a2d]"
                                 >
                                   {!walletStatusDisplayValue && <option value="">Select…</option>}
                                   {WALLET_STATUS_OPTIONS.map((opt) => (
@@ -1030,8 +1070,6 @@ export default function SendMoneyWalletStatus() {
                                   ))}
                                 </select>
                               </span>
-                            ) : (
-                              <span className="text-[12px] text-muted-foreground">−</span>
                             )}
                           </div>
                         )}
