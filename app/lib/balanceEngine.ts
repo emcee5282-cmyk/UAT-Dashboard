@@ -58,6 +58,25 @@ export function computeAgentWithdrawal(companyBalance: number, balanceInside: nu
   return companyBalance - balanceInside;
 }
 
+// A shop's receiving limit floors at 200,000 regardless of SDP — replaces
+// what would otherwise be a separate "Minimum SDP" column.
+export function computeBaseLimit(sdp: number): number {
+  return Math.max(sdp, 200000);
+}
+
+// How far Company Balance has already overshot the allowed limit.
+export function computeFrozenAmount(companyBalance: number, baseLimit: number): number {
+  return Math.max(companyBalance - baseLimit, 0);
+}
+
+// Remaining room for today's incoming DP before the shop hits its limit.
+// Today's Total DP is subtracted on top of Company Balance (which already
+// includes it) per the business rule as specified — not a double-counting
+// bug, an intentional extra buffer.
+export function computeAvailableLimit(baseLimit: number, companyBalance: number, todayTotalDP: number): number {
+  return Math.max(baseLimit - companyBalance - todayTotalDP, 0);
+}
+
 export function computeSdpVsBalance(
   leader: string,
   sdpRaw: string,
