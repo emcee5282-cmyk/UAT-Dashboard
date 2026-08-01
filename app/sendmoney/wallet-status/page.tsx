@@ -92,6 +92,7 @@ const COLUMN_IDS = {
   DEPOSIT: 'deposit',
   WITHDRAWAL: 'withdrawal',
   PRIORITY: 'priority',
+  ACTIONS: 'actions',
 } as const;
 
 type ColumnKey = typeof COLUMN_IDS[keyof typeof COLUMN_IDS];
@@ -113,18 +114,23 @@ const DEFAULT_COLUMNS: ColumnDef[] = [
   { key: COLUMN_IDS.DEPOSIT, label: 'Deposit', visible: true, sortable: true, hideable: true, align: 'center' },
   { key: COLUMN_IDS.WITHDRAWAL, label: 'Withdrawal', visible: true, sortable: true, hideable: true, align: 'center' },
   { key: COLUMN_IDS.PRIORITY, label: 'Priority', visible: true, sortable: true, hideable: true, align: 'center' },
+  // One Confirm/Cancel pair per ROW (not per dropdown) per explicit
+  // instruction — never hideable, since it's the only way to commit any
+  // pending edit in that row.
+  { key: COLUMN_IDS.ACTIONS, label: '', visible: true, sortable: false, hideable: false, align: 'center' },
 ];
 
 const COLUMN_VISIBILITY_STORAGE_KEY = 'sendMoneyWalletStatusColumnVisibility';
 
 const columnWidths: Record<ColumnKey, string> = {
-  brand: '10%',
-  shopName: '28%',
-  companyBalance: '16%',
-  sdp: '14%',
-  deposit: '11%',
-  withdrawal: '11%',
-  priority: '10%',
+  brand: '8%',
+  shopName: '24%',
+  companyBalance: '14%',
+  sdp: '12%',
+  deposit: '10%',
+  withdrawal: '10%',
+  priority: '9%',
+  actions: '13%',
 };
 
 const rowSkeletonWidths: Record<ColumnKey, string[]> = {
@@ -135,6 +141,7 @@ const rowSkeletonWidths: Record<ColumnKey, string[]> = {
   deposit: ['w-10', 'w-10', 'w-10'],
   withdrawal: ['w-10', 'w-10', 'w-10'],
   priority: ['w-14', 'w-14', 'w-14'],
+  actions: ['w-10', 'w-10', 'w-10'],
 };
 
 function headerCellClasses(align: 'left' | 'right' | 'center') {
@@ -187,68 +194,47 @@ const PRIORITY_BADGE_TINTS: Record<Priority, string> = {
   Low: 'bg-emerald-50 text-emerald-700 border-emerald-200 dark:bg-emerald-500/10 dark:text-emerald-400 dark:border-emerald-900/50',
 };
 
+// Native <select> kept intentionally plain (no custom dropdown/portal) —
+// this is a live, persisted edit per cell, not a filter; a plain select is
+// the simplest control that can't be mistaken for a filter trigger.
+//
 // Changing the select only stages a draft value locally — it does NOT save.
-// A Check/X pair appears only once the draft differs from the last-saved
-// value, per explicit instruction: picking through several options while
-// deciding must fire zero saves, and only the final choice, once confirmed,
-// fires exactly one.
+// Confirm/Cancel lives once per ROW (the Actions column), not per dropdown
+// — per explicit instruction, picking Deposit/Withdrawal/Priority for the
+// same row is one edit, committed with one click, not three.
 function StatusSelect<T extends string>({
   value,
   options,
   onChange,
-  pending,
   saving,
-  onConfirm,
-  onCancel,
   className,
 }: {
   value: T;
   options: T[];
   onChange: (next: T) => void;
-  pending: boolean;
   saving: boolean;
-  onConfirm: () => void;
-  onCancel: () => void;
   className: string;
 }) {
   return (
-    <span className="inline-flex items-center gap-1">
-      <select
-        value={value}
-        disabled={saving}
-        onChange={(event) => onChange(event.target.value as T)}
-        className={`h-7 rounded-md border px-1.5 text-[12px] font-medium outline-none transition-opacity disabled:opacity-50 ${className}`}
-      >
-        {options.map((opt) => (
-          <option key={opt} value={opt}>{opt}</option>
-        ))}
-      </select>
-      {pending && (
-        <>
-          <button
-            type="button"
-            onClick={onConfirm}
-            disabled={saving}
-            aria-label="Confirm"
-            title="Confirm"
-            className="flex h-6 w-6 shrink-0 items-center justify-center rounded-md text-emerald-600 transition-colors hover:bg-emerald-50 disabled:opacity-50 dark:text-emerald-400 dark:hover:bg-emerald-500/10"
-          >
-            <Check size={14} />
-          </button>
-          <button
-            type="button"
-            onClick={onCancel}
-            disabled={saving}
-            aria-label="Cancel"
-            title="Cancel"
-            className="flex h-6 w-6 shrink-0 items-center justify-center rounded-md text-rose-500 transition-colors hover:bg-rose-50 disabled:opacity-50 dark:text-rose-400 dark:hover:bg-rose-500/10"
-          >
-            <X size={14} />
-          </button>
-        </>
-      )}
-    </span>
+    <select
+      value={value}
+      disabled={saving}
+      onChange={(event) => onChange(event.target.value as T)}
+      className={`h-7 rounded-md border px-1.5 text-[12px] font-medium outline-none transition-opacity disabled:opacity-50 ${className}`}
+    >
+      {options.map((opt) => (
+        <option key={opt} value={opt}>{opt}</option>
+      ))}
+    </select>
   );
+}
+
+const EDITABLE_FIELDS = ['deposit', 'withdrawal', 'priority'] as const;
+type EditableField = typeof EDITABLE_FIELDS[number];
+
+function rowHasPendingDraft(row: WalletStatusRow, rowDrafts: Partial<Record<EditableField, string>> | undefined): boolean {
+  if (!rowDrafts) return false;
+  return EDITABLE_FIELDS.some((field) => rowDrafts[field] !== undefined && rowDrafts[field] !== row[field]);
 }
 
 export default function SendMoneyWalletStatus() {
@@ -434,46 +420,62 @@ export default function SendMoneyWalletStatus() {
     setPreference(COLUMN_VISIBILITY_STORAGE_KEY, visibility);
   }, [columnDefs, mounted]);
 
-  // Changing the select stages a draft only — nothing saves yet. Per
-  // explicit instruction: clicking through several options while deciding
-  // must not fire a save each time; only Confirm does.
-  const setDraftValue = useCallback((row: WalletStatusRow, field: 'deposit' | 'withdrawal' | 'priority', value: string) => {
+  // Changing a select stages a draft only — nothing saves yet. Per explicit
+  // instruction: clicking through several options while deciding must not
+  // fire a save each time, and Deposit/Withdrawal/Priority on the same row
+  // are ONE edit — confirmed/cancelled together (see confirmRow/cancelRow
+  // below), not per dropdown.
+  const setDraftValue = useCallback((row: WalletStatusRow, field: EditableField, value: string) => {
     setDrafts((current) => ({ ...current, [row.key]: { ...current[row.key], [field]: value } }));
   }, []);
 
-  const cancelField = useCallback((row: WalletStatusRow, field: 'deposit' | 'withdrawal' | 'priority') => {
+  const cancelRow = useCallback((row: WalletStatusRow) => {
     setDrafts((current) => {
-      const rowDrafts = { ...current[row.key] };
-      delete rowDrafts[field];
-      return { ...current, [row.key]: rowDrafts };
+      const next = { ...current };
+      delete next[row.key];
+      return next;
     });
   }, []);
 
-  // The single point where a value actually persists — one write per
-  // Confirm click, to the "Wallet Status" sheet tab (see
-  // app/lib/walletStatus.ts). Leaves the draft in place on failure (so the
-  // staged choice isn't lost and Confirm can just be retried) and surfaces
-  // a brief banner instead.
-  const confirmField = useCallback((row: WalletStatusRow, field: 'deposit' | 'withdrawal' | 'priority') => {
-    const draftValue = drafts[row.key]?.[field];
-    if (draftValue === undefined) return;
+  // The single point where a row's staged edits actually persist — one
+  // Confirm click saves every changed field in that row (1-3 requests,
+  // fired together), to the "Wallet Status" sheet tab (see
+  // app/lib/walletStatus.ts). On a partial/total failure, refetches from
+  // the server instead of guessing which individual writes landed, so the
+  // UI can't end up claiming a save succeeded when only some fields did.
+  const confirmRow = useCallback((row: WalletStatusRow) => {
+    const rowDrafts = drafts[row.key];
+    const fields = EDITABLE_FIELDS.filter((field) => rowDrafts?.[field] !== undefined && rowDrafts[field] !== row[field]);
+    if (fields.length === 0) return;
 
     setSavingKeys((current) => new Set(current).add(row.key));
     setSaveError(null);
 
-    fetch('/api/sendmoney/wallet-status/update', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ shopName: row.shopName, field, value: draftValue }),
-    })
-      .then((res) => {
-        if (!res.ok) throw new Error('Save failed');
-        setRows((current) => current.map((r) => (r.key === row.key ? { ...r, [field]: draftValue } : r)));
-        cancelField(row, field);
+    Promise.all(
+      fields.map((field) =>
+        fetch('/api/sendmoney/wallet-status/update', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ shopName: row.shopName, field, value: rowDrafts![field] }),
+        }).then((res) => {
+          if (!res.ok) throw new Error(`Save failed for ${field}`);
+          return field;
+        })
+      )
+    )
+      .then((savedFields) => {
+        setRows((current) => current.map((r) => (
+          r.key === row.key
+            ? { ...r, ...Object.fromEntries(savedFields.map((f) => [f, rowDrafts![f]])) }
+            : r
+        )));
+        cancelRow(row);
       })
       .catch(() => {
-        setSaveError(`Failed to save ${row.shopName}'s ${field}. Try again.`);
-        setTimeout(() => setSaveError(null), 4000);
+        setSaveError(`Failed to save ${row.shopName} — reloading to confirm what actually saved.`);
+        setTimeout(() => setSaveError(null), 5000);
+        cancelRow(row);
+        fetchData();
       })
       .finally(() => {
         setSavingKeys((current) => {
@@ -482,7 +484,7 @@ export default function SendMoneyWalletStatus() {
           return next;
         });
       });
-  }, [drafts, cancelField]);
+  }, [drafts, cancelRow, fetchData]);
 
   const searchedRows = useMemo(() => {
     const query = searchTerm.toLowerCase();
@@ -536,8 +538,11 @@ export default function SendMoneyWalletStatus() {
         case 'priority': return row.priority;
       }
     };
-    const headers = visibleColumns.map((col) => col.label);
-    const data = sortedRows.map((row) => visibleColumns.map((col) => getExportValue(row, col.key)));
+    // Actions (Confirm/Cancel) has no exportable value — excluded from the
+    // sheet rather than producing an empty, unlabeled column.
+    const exportColumns = visibleColumns.filter((col) => col.key !== 'actions');
+    const headers = exportColumns.map((col) => col.label);
+    const data = sortedRows.map((row) => exportColumns.map((col) => getExportValue(row, col.key)));
     const worksheet = XLSX.utils.aoa_to_sheet([headers, ...data]);
     worksheet['!cols'] = headers.map(() => ({ wch: 18 }));
     const workbook = XLSX.utils.book_new();
@@ -578,10 +583,7 @@ export default function SendMoneyWalletStatus() {
               value={displayValue}
               options={YES_NO_OPTIONS}
               saving={saving}
-              pending={draft !== undefined && draft !== row.deposit}
               onChange={(next) => setDraftValue(row, 'deposit', next)}
-              onConfirm={() => confirmField(row, 'deposit')}
-              onCancel={() => cancelField(row, 'deposit')}
               className={displayValue === 'Yes'
                 ? 'border-emerald-200 bg-emerald-50 text-emerald-700 dark:border-emerald-900/50 dark:bg-emerald-500/10 dark:text-emerald-400'
                 : 'border-slate-200 bg-slate-50 text-slate-600 dark:border-slate-700 dark:bg-slate-500/10 dark:text-slate-400'}
@@ -598,10 +600,7 @@ export default function SendMoneyWalletStatus() {
               value={displayValue}
               options={YES_NO_OPTIONS}
               saving={saving}
-              pending={draft !== undefined && draft !== row.withdrawal}
               onChange={(next) => setDraftValue(row, 'withdrawal', next)}
-              onConfirm={() => confirmField(row, 'withdrawal')}
-              onCancel={() => cancelField(row, 'withdrawal')}
               className={displayValue === 'Yes'
                 ? 'border-emerald-200 bg-emerald-50 text-emerald-700 dark:border-emerald-900/50 dark:bg-emerald-500/10 dark:text-emerald-400'
                 : 'border-slate-200 bg-slate-50 text-slate-600 dark:border-slate-700 dark:bg-slate-500/10 dark:text-slate-400'}
@@ -618,12 +617,42 @@ export default function SendMoneyWalletStatus() {
               value={displayValue}
               options={PRIORITY_OPTIONS}
               saving={saving}
-              pending={draft !== undefined && draft !== row.priority}
               onChange={(next) => setDraftValue(row, 'priority', next)}
-              onConfirm={() => confirmField(row, 'priority')}
-              onCancel={() => cancelField(row, 'priority')}
               className={PRIORITY_BADGE_TINTS[displayValue]}
             />
+          </td>
+        );
+      }
+      case 'actions': {
+        const pending = rowHasPendingDraft(row, drafts[row.key]);
+        return (
+          <td key={key} className={base}>
+            {pending ? (
+              <span className="inline-flex items-center gap-1.5">
+                <button
+                  type="button"
+                  onClick={() => confirmRow(row)}
+                  disabled={saving}
+                  aria-label="Confirm changes"
+                  title="Confirm changes"
+                  className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md border border-emerald-200 bg-emerald-50 text-emerald-600 transition-colors hover:bg-emerald-100 disabled:opacity-50 dark:border-emerald-900/50 dark:bg-emerald-500/10 dark:text-emerald-400 dark:hover:bg-emerald-500/20"
+                >
+                  <Check size={14} />
+                </button>
+                <button
+                  type="button"
+                  onClick={() => cancelRow(row)}
+                  disabled={saving}
+                  aria-label="Cancel changes"
+                  title="Cancel changes"
+                  className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md border border-rose-200 bg-rose-50 text-rose-500 transition-colors hover:bg-rose-100 disabled:opacity-50 dark:border-rose-900/50 dark:bg-rose-500/10 dark:text-rose-400 dark:hover:bg-rose-500/20"
+                >
+                  <X size={14} />
+                </button>
+              </span>
+            ) : (
+              <span className="text-muted-foreground">−</span>
+            )}
           </td>
         );
       }
@@ -846,10 +875,7 @@ export default function SendMoneyWalletStatus() {
                                   value={depositValue}
                                   options={YES_NO_OPTIONS}
                                   saving={saving}
-                                  pending={depositDraft !== undefined && depositDraft !== row.deposit}
                                   onChange={(next) => setDraftValue(row, 'deposit', next)}
-                                  onConfirm={() => confirmField(row, 'deposit')}
-                                  onCancel={() => cancelField(row, 'deposit')}
                                   className={depositValue === 'Yes'
                                     ? 'border-emerald-200 bg-emerald-50 text-emerald-700 dark:border-emerald-900/50 dark:bg-emerald-500/10 dark:text-emerald-400'
                                     : 'border-slate-200 bg-slate-50 text-slate-600 dark:border-slate-700 dark:bg-slate-500/10 dark:text-slate-400'}
@@ -863,10 +889,7 @@ export default function SendMoneyWalletStatus() {
                                   value={withdrawalValue}
                                   options={YES_NO_OPTIONS}
                                   saving={saving}
-                                  pending={withdrawalDraft !== undefined && withdrawalDraft !== row.withdrawal}
                                   onChange={(next) => setDraftValue(row, 'withdrawal', next)}
-                                  onConfirm={() => confirmField(row, 'withdrawal')}
-                                  onCancel={() => cancelField(row, 'withdrawal')}
                                   className={withdrawalValue === 'Yes'
                                     ? 'border-emerald-200 bg-emerald-50 text-emerald-700 dark:border-emerald-900/50 dark:bg-emerald-500/10 dark:text-emerald-400'
                                     : 'border-slate-200 bg-slate-50 text-slate-600 dark:border-slate-700 dark:bg-slate-500/10 dark:text-slate-400'}
@@ -880,14 +903,31 @@ export default function SendMoneyWalletStatus() {
                                   value={priorityValue}
                                   options={PRIORITY_OPTIONS}
                                   saving={saving}
-                                  pending={priorityDraft !== undefined && priorityDraft !== row.priority}
                                   onChange={(next) => setDraftValue(row, 'priority', next)}
-                                  onConfirm={() => confirmField(row, 'priority')}
-                                  onCancel={() => cancelField(row, 'priority')}
                                   className={PRIORITY_BADGE_TINTS[priorityValue]}
                                 />
                               </div>
                             )}
+                          </div>
+                        )}
+                        {rowHasPendingDraft(row, drafts[row.key]) && (
+                          <div className="mt-2.5 flex items-center gap-1.5 border-t border-border pt-2.5">
+                            <button
+                              type="button"
+                              onClick={() => confirmRow(row)}
+                              disabled={saving}
+                              className="flex h-7 flex-1 items-center justify-center gap-1 rounded-md border border-emerald-200 bg-emerald-50 text-[11px] font-semibold text-emerald-600 transition-colors hover:bg-emerald-100 disabled:opacity-50 dark:border-emerald-900/50 dark:bg-emerald-500/10 dark:text-emerald-400 dark:hover:bg-emerald-500/20"
+                            >
+                              <Check size={13} /> Confirm
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => cancelRow(row)}
+                              disabled={saving}
+                              className="flex h-7 flex-1 items-center justify-center gap-1 rounded-md border border-rose-200 bg-rose-50 text-[11px] font-semibold text-rose-500 transition-colors hover:bg-rose-100 disabled:opacity-50 dark:border-rose-900/50 dark:bg-rose-500/10 dark:text-rose-400 dark:hover:bg-rose-500/20"
+                            >
+                              <X size={13} /> Cancel
+                            </button>
                           </div>
                         )}
                       </div>
