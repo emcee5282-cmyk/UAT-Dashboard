@@ -92,11 +92,10 @@ function computeWalletStatus(statuses: string[]): string {
   return 'Disconnected';
 }
 
-const EXCLUDED_SDP_LEADERS = [
-  'AFF JAR', 'AIMAN', 'ALADDIN', 'JISAN', 'MIR', 'MR LEE',
-  'MUNIM', 'NIHJUM', 'NURNOBY', 'ONEMEN', 'OSMAN', 'MOTIN',
-  'ROSE', 'SAM', 'XYZ', 'SHAKIL', 'SHARIF', 'SVEN', 'TANVIR', 'ZUBAIR',
-];
+// No leaders are exempted from SDP VS Balance, per explicit instruction —
+// matches Send Money's own Transfer Queue (app/sendmoney/transfer-queue/
+// page.tsx), which never had a leader exclusion list to begin with.
+const EXCLUDED_SDP_LEADERS: string[] = [];
 
 function computeSdpVsBalance(leader: string, sdpRaw: string, sdpNum: number, companyBalance: number): number {
   const normalizedLeader = leader.trim().toUpperCase();
