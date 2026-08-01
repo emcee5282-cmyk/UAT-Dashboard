@@ -5,7 +5,7 @@ import { createPortal } from 'react-dom';
 import {
   ChevronDown, Columns3, Download, RefreshCw, Search, Wallet,
   TrendingUp, ArrowDownToLine, ArrowUpFromLine, Shield, ArrowUpDown,
-  Tag, User, FilterX, Info,
+  Tag, User, FilterX,
 } from 'lucide-react';
 import * as XLSX from 'xlsx';
 import SettlementHeader from '@/app/components/SettlementHeader';
@@ -27,9 +27,6 @@ import {
   computeCompanyBalance,
   computeAgentWithdrawal,
   computeSdpVsBalance,
-  computeBaseLimit,
-  computeFrozenAmount,
-  computeAvailableLimit,
   resolveBrand,
 } from '@/app/lib/balanceEngine';
 import { getPreference, setPreference } from '@/app/lib/preferences';
@@ -61,9 +58,6 @@ type MergedRow = OpeningRow & {
   runningBalance: number;
   agentWithdrawal: number;
   sdpVsBalance: number;
-  baseLimit: number;
-  availableLimit: number;
-  frozenAmount: number;
   walletStatus: string;
   brand: string;
   walletType: string;
@@ -92,25 +86,6 @@ function displayNum(val: string | number | null | undefined): string {
 
 function numOrBlank(num: number): number | undefined {
   return Math.abs(num) < 0.01 ? undefined : num;
-}
-
-// Unlike displayNum, Available Limit always shows a real number — 0 is a
-// meaningful, distinct state (limit fully used) from "no data", so it's
-// never collapsed into the dash.
-function displayAvailableLimit(num: number): string {
-  const formatted = Math.abs(num).toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-  return num < 0 ? `-${formatted}` : formatted;
-}
-
-// Exact hex values per spec — kept as literal Tailwind arbitrary-value
-// classes (not the theme's semantic rose/emerald tokens) since these 4
-// thresholds are a distinct, deliberately-specified palette.
-function availableLimitColorClass(availableLimit: number, baseLimit: number): string {
-  if (availableLimit <= 0 || baseLimit <= 0) return 'text-[#EF4444]';
-  const pct = (availableLimit / baseLimit) * 100;
-  if (pct < 30) return 'text-[#F97316]';
-  if (pct < 70) return 'text-[#F59E0B]';
-  return 'text-[#10B981]';
 }
 
 function parseNumber(val: string): number {
@@ -195,8 +170,6 @@ const COLUMN_IDS = {
   TOP_UP: 'topUp',
   SETTLEMENT: 'settlement',
   COMPANY_BALANCE: 'companyBalance',
-  AVAILABLE_LIMIT: 'availableLimit',
-  FROZEN_AMOUNT: 'frozenAmount',
   BALANCE_INSIDE: 'balanceInside',
   AGENT_WITHDRAWAL: 'agentWithdrawal',
   SDP_VS_BALANCE: 'sdpVsBalance',
@@ -231,8 +204,6 @@ const DEFAULT_COLUMNS: ColumnDef[] = [
   { key: COLUMN_IDS.TOP_UP, label: 'Top Up', visible: !DEFAULT_HIDDEN.includes(COLUMN_IDS.TOP_UP), sortable: true, hideable: true, align: 'right' },
   { key: COLUMN_IDS.SETTLEMENT, label: 'Settlement', visible: !DEFAULT_HIDDEN.includes(COLUMN_IDS.SETTLEMENT), sortable: true, hideable: true, align: 'right' },
   { key: COLUMN_IDS.COMPANY_BALANCE, label: 'Company Balance', visible: !DEFAULT_HIDDEN.includes(COLUMN_IDS.COMPANY_BALANCE), sortable: true, hideable: true, align: 'right' },
-  { key: COLUMN_IDS.AVAILABLE_LIMIT, label: 'Available Limit', visible: !DEFAULT_HIDDEN.includes(COLUMN_IDS.AVAILABLE_LIMIT), sortable: true, hideable: true, align: 'right' },
-  { key: COLUMN_IDS.FROZEN_AMOUNT, label: 'Frozen Amount', visible: !DEFAULT_HIDDEN.includes(COLUMN_IDS.FROZEN_AMOUNT), sortable: true, hideable: true, align: 'right' },
   { key: COLUMN_IDS.BALANCE_INSIDE, label: 'Balance Inside', visible: !DEFAULT_HIDDEN.includes(COLUMN_IDS.BALANCE_INSIDE), sortable: true, hideable: true, align: 'right' },
   { key: COLUMN_IDS.AGENT_WITHDRAWAL, label: 'Agent Withdrawal', visible: !DEFAULT_HIDDEN.includes(COLUMN_IDS.AGENT_WITHDRAWAL), sortable: true, hideable: true, align: 'right' },
   { key: COLUMN_IDS.SDP_VS_BALANCE, label: 'SDP VS Balance', visible: !DEFAULT_HIDDEN.includes(COLUMN_IDS.SDP_VS_BALANCE), sortable: true, hideable: true, align: 'right' },
@@ -272,10 +243,6 @@ const WALLET_STATUS_BADGE_FONT = '500 11px Inter, sans-serif';
 
 const CELL_PADDING_PX = 40;
 const HEADER_SORT_ICON_RESERVE_PX = 20;
-// Info icon + its gap reserve — Available Limit/Frozen Amount only (see
-// COLUMN_INFO_TEXT).
-const HEADER_INFO_ICON_RESERVE_PX = 18;
-const COLUMNS_WITH_INFO_ICON: ColumnKey[] = ['availableLimit', 'frozenAmount'];
 const BRAND_BADGE_CHROME_PX = 22;
 const WALLET_STATUS_BADGE_CHROME_PX = 30;
 const EXTRA_BREATHING_ROOM_PX = 8;
@@ -295,8 +262,6 @@ function getColumnDisplayText(row: MergedRow, key: ColumnKey): string {
     case 'balanceInside': return displayNum(String(row.balanceInside ?? 0));
     case 'agentWithdrawal': return displayNum(String(row.agentWithdrawal));
     case 'sdpVsBalance': return row.sdpVsBalance > 0 ? displayNum(String(Math.abs(row.sdpVsBalance))) : '−';
-    case 'availableLimit': return displayAvailableLimit(row.availableLimit);
-    case 'frozenAmount': return displayNum(row.frozenAmount);
     case 'walletStatus': return row.walletStatus;
     case 'companyBalance':
     default: return displayNum(row.runningBalance);
@@ -322,8 +287,7 @@ function computeColumnWidthsPx(rows: MergedRow[], columns: ColumnDef[]): Partial
 
     const headerWidth = Math.ceil(measureTextWidthPx(col.label, HEADER_TEXT_FONT))
       + CELL_PADDING_PX
-      + (col.sortable ? HEADER_SORT_ICON_RESERVE_PX : 0)
-      + (COLUMNS_WITH_INFO_ICON.includes(col.key) ? HEADER_INFO_ICON_RESERVE_PX : 0);
+      + (col.sortable ? HEADER_SORT_ICON_RESERVE_PX : 0);
 
     const width = Math.max(dataWidth, headerWidth);
     if (width > 0) result[col.key] = width;
@@ -346,10 +310,9 @@ const ICON_ONLY_BUTTON =
 const PAGE_SIZE_OPTIONS = [50, 100, 250, 500];
 
 const BALANCE_GRID_ORDER: ColumnKey[] = [
-  'availableLimit', 'frozenAmount', 'balanceInside',
-  'agentWithdrawal', 'opening', 'totalWD',
-  'topUp', 'totalDP', 'settlement',
-  'sdp', 'sdpVsBalance',
+  'balanceInside', 'agentWithdrawal', 'opening',
+  'totalWD', 'topUp', 'totalDP',
+  'settlement', 'sdp', 'sdpVsBalance',
 ];
 
 function SortIcon({ active }: { active: boolean; direction: 'asc' | 'desc' }) {
@@ -418,72 +381,6 @@ function Tooltip({
       <span className="absolute left-1/2 top-full h-2 w-2 -translate-x-1/2 -translate-y-1/2 rotate-45 bg-[#1F2937]" />
     </div>,
     document.body
-  );
-}
-
-// Explains the Available Limit / Frozen Amount formulas on hover. Positioned
-// BELOW its trigger (not above, like Tooltip) since these triggers live in
-// the sticky header near the top of the viewport — an above-anchored
-// tooltip would run off-screen. Multi-line (whitespace-pre-line) instead of
-// Tooltip's single-line nowrap.
-function useBelowTooltip(triggerRef: React.RefObject<HTMLElement | null>) {
-  const [open, setOpen] = useState(false);
-  const [rendered, setRendered] = useState(false);
-  const [pos, setPos] = useState({ top: 0, left: 0 });
-
-  useEffect(() => {
-    if (open) {
-      const rect = triggerRef.current?.getBoundingClientRect();
-      if (rect) setPos({ top: rect.bottom + 8, left: rect.left + rect.width / 2 });
-      setRendered(true);
-    } else {
-      const timeout = setTimeout(() => setRendered(false), 150);
-      return () => clearTimeout(timeout);
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [open]);
-
-  return {
-    open,
-    rendered,
-    pos,
-    handlers: {
-      onMouseEnter: () => setOpen(true),
-      onMouseLeave: () => setOpen(false),
-      onFocus: () => setOpen(true),
-      onBlur: () => setOpen(false),
-    },
-  };
-}
-
-const COLUMN_INFO_TEXT: Partial<Record<ColumnKey, string>> = {
-  availableLimit: "Remaining receiving capacity for today.\n\nFormula:\nBase Limit − Company Balance − Today's Total DP\n\nResets every day at 2:00 AM.",
-  frozenAmount: 'Amount exceeding the allowed receiving limit.\n\nFormula:\nCompany Balance − Base Limit\n\nOnly shown when Company Balance exceeds the allowed limit.',
-};
-
-function HeaderInfoIcon({ text }: { text: string }) {
-  const triggerRef = useRef<HTMLSpanElement>(null);
-  const tooltip = useBelowTooltip(triggerRef);
-  return (
-    <span
-      ref={triggerRef}
-      role="img"
-      aria-label="Info"
-      {...tooltip.handlers}
-      className="flex items-center text-[#94A3B8] transition-colors duration-150 hover:text-[#475569] dark:hover:text-[#CBD5E1]"
-    >
-      <Info size={11} />
-      {tooltip.rendered && typeof document !== 'undefined' && createPortal(
-        <div
-          style={{ position: 'fixed', top: tooltip.pos.top, left: tooltip.pos.left, transform: 'translate(-50%, 0)' }}
-          className={`pointer-events-none z-[9999] w-[240px] whitespace-pre-line rounded-md bg-[#1F2937] px-3 py-2 text-left text-[11px] font-normal leading-relaxed text-white transition-opacity duration-150 ease-out ${tooltip.open ? 'opacity-100' : 'opacity-0'}`}
-        >
-          {text}
-          <span className="absolute left-1/2 top-0 h-2 w-2 -translate-x-1/2 -translate-y-1/2 rotate-45 bg-[#1F2937]" />
-        </div>,
-        document.body
-      )}
-    </span>
   );
 }
 
@@ -667,12 +564,6 @@ function mobileCardFieldValue(row: MergedRow, key: ColumnKey): { value: string; 
       return { value: displayNum(String(row.agentWithdrawal)), className: 'text-foreground' };
     case 'sdpVsBalance':
       return { value: row.sdpVsBalance > 0 ? displayNum(String(Math.abs(row.sdpVsBalance))) : '−', className: 'text-foreground' };
-    case 'availableLimit':
-      return { value: displayAvailableLimit(row.availableLimit), className: availableLimitColorClass(row.availableLimit, row.baseLimit) };
-    case 'frozenAmount': {
-      const formatted = displayNum(row.frozenAmount);
-      return { value: formatted, className: formatted === '−' ? 'text-muted-foreground' : 'text-[#EF4444]' };
-    }
     default:
       return { value: '−', className: 'text-foreground' };
   }
@@ -726,15 +617,6 @@ function renderCell(row: MergedRow, key: ColumnKey, colWidthsPx?: Partial<Record
       return <td key={key} style={cellStyle} className={`${base} tabular-nums`}>{row.sdpVsBalance > 0 ? displayNum(String(Math.abs(row.sdpVsBalance))) : '−'}</td>;
     case 'walletStatus':
       return <td key={key} style={cellStyle} className={base}><WalletStatusBadge status={row.walletStatus} /></td>;
-    case 'availableLimit': {
-      const color = availableLimitColorClass(row.availableLimit, row.baseLimit);
-      return <td key={key} style={cellStyle} className={`${baseNoColor} tabular-nums ${color}`}>{displayAvailableLimit(row.availableLimit)}</td>;
-    }
-    case 'frozenAmount': {
-      const formatted = displayNum(row.frozenAmount);
-      const color = formatted === '−' ? 'text-[#111827] dark:text-[#E5E7EB]' : 'text-[#EF4444]';
-      return <td key={key} style={cellStyle} className={`${baseNoColor} tabular-nums ${color}`}>{formatted}</td>;
-    }
     case 'companyBalance':
     default: {
       const color = row.runningBalance < 0 ? 'text-rose-600 dark:text-rose-400' : 'text-[#111827] dark:text-[#E5E7EB]';
@@ -1008,7 +890,6 @@ export default function SendMoneyAgentBalance() {
         const balanceInside = balanceInsideTotals.get(opening.agentName) ?? 0;
         const runningBalance = computeCompanyBalance(parseNumber(opening.openingBal), totals.dp, totalTopUp, totals.wd, totalStlm);
         const sdpNum = parseNumber(opening.sdp);
-        const baseLimit = computeBaseLimit(sdpNum);
         const walletStatus = balWalletNames.has(opening.agentName)
           ? computeWalletStatus(walletStatusValues.get(opening.agentName) ?? [])
           : 'No Record';
@@ -1022,9 +903,6 @@ export default function SendMoneyAgentBalance() {
           runningBalance,
           agentWithdrawal: computeAgentWithdrawal(runningBalance, balanceInside),
           sdpVsBalance: computeSdpVsBalance(opening.leader, opening.sdp, sdpNum, runningBalance, EXCLUDED_SDP_LEADERS),
-          baseLimit,
-          availableLimit: computeAvailableLimit(baseLimit, runningBalance, totals.dp),
-          frozenAmount: computeFrozenAmount(runningBalance, baseLimit),
           walletStatus,
           brand: resolveBrand(brandGroups.get(opening.agentName) ?? [], opening.agentName, { brandPriority: BRAND_PRIORITY, brandCodes: BRAND_CODES, validateComputedBrand: true }),
           walletType: computeWalletType(opening.agentName),
@@ -1343,10 +1221,6 @@ export default function SendMoneyAgentBalance() {
             return row.agentWithdrawal;
           case 'sdpVsBalance':
             return row.sdpVsBalance;
-          case 'availableLimit':
-            return row.availableLimit;
-          case 'frozenAmount':
-            return row.frozenAmount;
           case 'walletStatus':
             return row.walletStatus.toLowerCase();
           case 'companyBalance':
@@ -1407,10 +1281,6 @@ export default function SendMoneyAgentBalance() {
           return numOrBlank(row.agentWithdrawal);
         case 'sdpVsBalance':
           return row.sdpVsBalance > 0 ? Math.abs(row.sdpVsBalance) : undefined;
-        case 'availableLimit':
-          return row.availableLimit;
-        case 'frozenAmount':
-          return numOrBlank(row.frozenAmount);
         case 'walletStatus':
           return row.walletStatus;
       }
@@ -1695,15 +1565,8 @@ export default function SendMoneyAgentBalance() {
                             {col.align === 'right' || col.align === 'center' ? (
                               <span className="relative inline-flex items-center">
                                 {col.label}
-                                <span className="absolute left-full ml-1.5 flex items-center gap-1">
-                                  {COLUMN_INFO_TEXT[col.key] && (
-                                    <span onClick={(e) => e.stopPropagation()}>
-                                      <HeaderInfoIcon text={COLUMN_INFO_TEXT[col.key]!} />
-                                    </span>
-                                  )}
-                                  <span className={sortColumn === col.key ? '' : 'opacity-60 transition-opacity duration-150 group-hover/sort:opacity-100'}>
-                                    <SortIcon active={sortColumn === col.key} direction={sortDirection} />
-                                  </span>
+                                <span className={`absolute left-full ml-1.5 flex items-center ${sortColumn === col.key ? '' : 'opacity-60 transition-opacity duration-150 group-hover/sort:opacity-100'}`}>
+                                  <SortIcon active={sortColumn === col.key} direction={sortDirection} />
                                 </span>
                               </span>
                             ) : (

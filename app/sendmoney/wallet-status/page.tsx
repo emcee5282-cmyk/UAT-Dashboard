@@ -1,7 +1,8 @@
 'use client';
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { ChevronDown, ChevronUp, ChevronsUpDown, Columns3, Download, RefreshCw, Search, Flag, Check, X, SquarePen, Loader2 } from 'lucide-react';
+import { createPortal } from 'react-dom';
+import { ChevronDown, ChevronUp, ChevronsUpDown, Columns3, Download, RefreshCw, Search, Flag, Check, X, SquarePen, Loader2, Info } from 'lucide-react';
 import * as XLSX from 'xlsx';
 import SettlementHeader from '@/app/components/SettlementHeader';
 import ConnectionErrorState from '@/app/components/ConnectionErrorState';
@@ -15,7 +16,14 @@ import { rawVal } from '@/app/lib/format';
 import { parseCsvLines } from '@/app/lib/csv';
 import { getBusinessToday } from '@/app/lib/businessDate';
 import { getPreference, setPreference } from '@/app/lib/preferences';
-import { computeCompanyBalance, resolveBrand, computeWalletStatus } from '@/app/lib/balanceEngine';
+import {
+  computeCompanyBalance,
+  resolveBrand,
+  computeWalletStatus,
+  computeBaseLimit,
+  computeFrozenAmount,
+  computeAvailableLimit,
+} from '@/app/lib/balanceEngine';
 import { BRAND_CODES as CASHOUT_BRAND_CODES } from '@/app/lib/transferQueueCount';
 
 // Mirrors app/lib/walletStatus.ts's own types — not imported directly since
@@ -77,6 +85,25 @@ function displayNum(num: number): string {
   return num < 0 ? `-${formatted}` : formatted;
 }
 
+// Unlike displayNum, Available Limit always shows a real number — 0 is a
+// meaningful, distinct state (limit fully used) from "no data", so it's
+// never collapsed into the dash.
+function displayAvailableLimit(num: number): string {
+  const formatted = Math.abs(num).toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  return num < 0 ? `-${formatted}` : formatted;
+}
+
+// Exact hex values per spec — kept as literal Tailwind arbitrary-value
+// classes (not the theme's semantic rose/emerald tokens) since these 4
+// thresholds are a distinct, deliberately-specified palette.
+function availableLimitColorClass(availableLimit: number, baseLimit: number): string {
+  if (availableLimit <= 0 || baseLimit <= 0) return 'text-[#EF4444]';
+  const pct = (availableLimit / baseLimit) * 100;
+  if (pct < 30) return 'text-[#F97316]';
+  if (pct < 70) return 'text-[#F59E0B]';
+  return 'text-[#10B981]';
+}
+
 function parseNumber(val: string): number {
   const cleaned = (val ?? '').replace(/"/g, '').replace(/,/g, '').trim();
   if (cleaned === '-' || cleaned === '') return 0;
@@ -110,6 +137,9 @@ type WalletStatusRow = {
   shopName: string;
   brand: string;
   companyBalance: number;
+  baseLimit: number;
+  availableLimit: number;
+  frozenAmount: number;
   sdpDisplay: string;
   deposit: DepositWithdrawal;
   withdrawal: DepositWithdrawal;
@@ -121,6 +151,8 @@ const COLUMN_IDS = {
   BRAND: 'brand',
   SHOP_NAME: 'shopName',
   COMPANY_BALANCE: 'companyBalance',
+  AVAILABLE_LIMIT: 'availableLimit',
+  FROZEN_AMOUNT: 'frozenAmount',
   SDP: 'sdp',
   DEPOSIT: 'deposit',
   WITHDRAWAL: 'withdrawal',
@@ -144,6 +176,8 @@ const DEFAULT_COLUMNS: ColumnDef[] = [
   { key: COLUMN_IDS.BRAND, label: 'Brand', visible: true, sortable: true, hideable: true, align: 'center' },
   { key: COLUMN_IDS.SHOP_NAME, label: 'Shop Name', visible: true, sortable: true, hideable: true, align: 'left' },
   { key: COLUMN_IDS.COMPANY_BALANCE, label: 'Company Balance', visible: true, sortable: true, hideable: true, align: 'center' },
+  { key: COLUMN_IDS.AVAILABLE_LIMIT, label: 'Available Limit', visible: true, sortable: true, hideable: true, align: 'center' },
+  { key: COLUMN_IDS.FROZEN_AMOUNT, label: 'Frozen Amount', visible: true, sortable: true, hideable: true, align: 'center' },
   { key: COLUMN_IDS.SDP, label: 'SDP', visible: true, sortable: true, hideable: true, align: 'center' },
   { key: COLUMN_IDS.DEPOSIT, label: 'Deposit', visible: true, sortable: true, hideable: true, align: 'center' },
   { key: COLUMN_IDS.WITHDRAWAL, label: 'Withdrawal', visible: true, sortable: true, hideable: true, align: 'center' },
@@ -162,12 +196,14 @@ const COLUMN_VISIBILITY_STORAGE_KEY = 'sendMoneyWalletStatusColumnVisibility';
 // table-fixed + the horizontal-scroll fallback absorb the mixed units fine.
 const columnWidths: Record<ColumnKey, string> = {
   brand: '8%',
-  shopName: '22%',
-  companyBalance: '13%',
-  sdp: '11%',
-  deposit: '9%',
-  withdrawal: '9%',
-  priority: '8%',
+  shopName: '18%',
+  companyBalance: '12%',
+  availableLimit: '11%',
+  frozenAmount: '10%',
+  sdp: '9%',
+  deposit: '8%',
+  withdrawal: '8%',
+  priority: '7%',
   walletStatus: '170px',
   walletStatusAction: '72px',
 };
@@ -176,6 +212,8 @@ const rowSkeletonWidths: Record<ColumnKey, string[]> = {
   brand: ['w-8', 'w-10', 'w-9'],
   shopName: ['w-24', 'w-28', 'w-20'],
   companyBalance: ['w-16', 'w-20', 'w-14'],
+  availableLimit: ['w-16', 'w-14', 'w-20'],
+  frozenAmount: ['w-14', 'w-10', 'w-16'],
   sdp: ['w-14', 'w-16', 'w-12'],
   deposit: ['w-10', 'w-10', 'w-10'],
   withdrawal: ['w-10', 'w-10', 'w-10'],
@@ -197,6 +235,71 @@ function SortIcon({ active, direction }: { active: boolean; direction: 'asc' | '
         <ChevronUp size={14} className="text-[#2563EB]" />
       ) : (
         <ChevronDown size={14} className="text-[#2563EB]" />
+      )}
+    </span>
+  );
+}
+
+// Explains the Available Limit / Frozen Amount formulas on hover.
+// Positioned BELOW its trigger (these triggers live in the sticky top
+// header) — an above-anchored tooltip would run off-screen. Multi-line
+// (whitespace-pre-line), unlike a single-line nowrap tooltip.
+function useBelowTooltip(triggerRef: React.RefObject<HTMLElement | null>) {
+  const [open, setOpen] = useState(false);
+  const [rendered, setRendered] = useState(false);
+  const [pos, setPos] = useState({ top: 0, left: 0 });
+
+  useEffect(() => {
+    if (open) {
+      const rect = triggerRef.current?.getBoundingClientRect();
+      if (rect) setPos({ top: rect.bottom + 8, left: rect.left + rect.width / 2 });
+      setRendered(true);
+    } else {
+      const timeout = setTimeout(() => setRendered(false), 150);
+      return () => clearTimeout(timeout);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open]);
+
+  return {
+    open,
+    rendered,
+    pos,
+    handlers: {
+      onMouseEnter: () => setOpen(true),
+      onMouseLeave: () => setOpen(false),
+      onFocus: () => setOpen(true),
+      onBlur: () => setOpen(false),
+    },
+  };
+}
+
+const COLUMN_INFO_TEXT: Partial<Record<ColumnKey, string>> = {
+  availableLimit: "Remaining receiving capacity for today.\n\nFormula:\nBase Limit − Company Balance − Today's Total DP\n\nResets every day at 2:00 AM.",
+  frozenAmount: 'Amount exceeding the allowed receiving limit.\n\nFormula:\nCompany Balance − Base Limit\n\nOnly shown when Company Balance exceeds the allowed limit.',
+};
+
+function HeaderInfoIcon({ text }: { text: string }) {
+  const triggerRef = useRef<HTMLSpanElement>(null);
+  const tooltip = useBelowTooltip(triggerRef);
+  return (
+    <span
+      ref={triggerRef}
+      role="img"
+      aria-label="Info"
+      {...tooltip.handlers}
+      className="flex items-center text-[#94A3B8] transition-colors duration-150 hover:text-[#475569] dark:hover:text-[#CBD5E1]"
+    >
+      <Info size={11} />
+      {tooltip.rendered && typeof document !== 'undefined' && createPortal(
+        <div
+          style={{ position: 'fixed', top: tooltip.pos.top, left: tooltip.pos.left, transform: 'translate(-50%, 0)' }}
+          className={`pointer-events-none z-[9999] w-[240px] whitespace-pre-line rounded-md bg-[#1F2937] px-3 py-2 text-left text-[11px] font-normal leading-relaxed text-white transition-opacity duration-150 ease-out ${tooltip.open ? 'opacity-100' : 'opacity-0'}`}
+        >
+          {text}
+          <span className="absolute left-1/2 top-0 h-2 w-2 -translate-x-1/2 -translate-y-1/2 rotate-45 bg-[#1F2937]" />
+        </div>,
+        document.body
       )}
     </span>
   );
@@ -446,8 +549,10 @@ export default function SendMoneyWalletStatus() {
         const totalTopUp = topUpTotals.get(normalizeAgentKey(opening.agentName)) ?? 0;
         const totalStlm = stlmTotals.get(normalizeAgentKey(opening.agentName)) ?? 0;
         const companyBalance = computeCompanyBalance(parseNumber(opening.openingBal), totals.dp, totalTopUp, totals.wd, totalStlm);
+        const sdpNum = parseNumber(opening.sdp);
+        const baseLimit = computeBaseLimit(sdpNum);
         const sdpTrimmed = opening.sdp.trim().toUpperCase();
-        const sdpDisplay = sdpTrimmed === 'NO SDP' || !opening.sdp || opening.sdp === '-' ? '−' : displayNum(parseNumber(opening.sdp));
+        const sdpDisplay = sdpTrimmed === 'NO SDP' || !opening.sdp || opening.sdp === '-' ? '−' : displayNum(sdpNum);
         const computedStatus = balWalletNames.has(opening.agentName)
           ? computeWalletStatus(walletStatusValues.get(opening.agentName) ?? [])
           : 'No Record';
@@ -458,6 +563,9 @@ export default function SendMoneyWalletStatus() {
           shopName: opening.agentName,
           brand: resolveBrand(brandGroups.get(opening.agentName) ?? [], opening.agentName, { brandPriority: BRAND_PRIORITY, brandCodes: BRAND_CODES, validateComputedBrand: true }),
           companyBalance,
+          baseLimit,
+          availableLimit: computeAvailableLimit(baseLimit, companyBalance, totals.dp),
+          frozenAmount: computeFrozenAmount(companyBalance, baseLimit),
           sdpDisplay,
           deposit: flags.deposit,
           withdrawal: flags.withdrawal,
@@ -567,6 +675,8 @@ export default function SendMoneyWalletStatus() {
           case 'brand': return row.brand.toLowerCase();
           case 'shopName': return row.shopName.toLowerCase();
           case 'companyBalance': return row.companyBalance;
+          case 'availableLimit': return row.availableLimit;
+          case 'frozenAmount': return row.frozenAmount;
           case 'sdp': return row.sdpDisplay === '−' ? -Infinity : parseNumber(row.sdpDisplay);
           case 'deposit': return row.deposit;
           case 'withdrawal': return row.withdrawal;
@@ -600,6 +710,8 @@ export default function SendMoneyWalletStatus() {
         case 'brand': return row.brand;
         case 'shopName': return row.shopName;
         case 'companyBalance': return row.companyBalance;
+        case 'availableLimit': return row.availableLimit;
+        case 'frozenAmount': return row.frozenAmount > 0 ? row.frozenAmount : undefined;
         case 'sdp': return row.sdpDisplay;
         case 'deposit': return row.deposit;
         case 'withdrawal': return row.withdrawal;
@@ -648,6 +760,20 @@ export default function SendMoneyWalletStatus() {
             {displayNum(row.companyBalance)}
           </td>
         );
+      case 'availableLimit':
+        return (
+          <td key={key} className={`${base} tabular-nums ${availableLimitColorClass(row.availableLimit, row.baseLimit)}`}>
+            {displayAvailableLimit(row.availableLimit)}
+          </td>
+        );
+      case 'frozenAmount': {
+        const formatted = displayNum(row.frozenAmount);
+        return (
+          <td key={key} className={`${base} tabular-nums ${formatted === '−' ? 'text-muted-foreground' : 'text-[#EF4444]'}`}>
+            {formatted}
+          </td>
+        );
+      }
       case 'sdp':
         return <td key={key} className={`${base} tabular-nums text-foreground`}>{row.sdpDisplay}</td>;
       case 'deposit':
@@ -853,12 +979,20 @@ export default function SendMoneyWalletStatus() {
                               className={`flex w-full items-center gap-1.5 transition hover:opacity-80 ${col.align === 'center' ? 'justify-center' : 'justify-start'}`}
                             >
                               {col.align === 'center' && (
-                                <span aria-hidden="true" className="invisible">
+                                <span aria-hidden="true" className="invisible flex items-center gap-1.5">
+                                  {COLUMN_INFO_TEXT[col.key] && <Info size={11} />}
                                   <SortIcon active={sortColumn === col.key} direction={sortDirection} />
                                 </span>
                               )}
                               <span className={`min-w-0 truncate ${col.align === 'center' ? 'flex-1' : ''}`}>{col.label}</span>
-                              <SortIcon active={sortColumn === col.key} direction={sortDirection} />
+                              <span className="flex items-center gap-1.5">
+                                {COLUMN_INFO_TEXT[col.key] && (
+                                  <span onClick={(e) => e.stopPropagation()}>
+                                    <HeaderInfoIcon text={COLUMN_INFO_TEXT[col.key]!} />
+                                  </span>
+                                )}
+                                <SortIcon active={sortColumn === col.key} direction={sortDirection} />
+                              </span>
                             </button>
                           ) : (
                             col.label
@@ -926,6 +1060,8 @@ export default function SendMoneyWalletStatus() {
                     const showShop = visibleColumns.some((c) => c.key === 'shopName');
                     const showBrand = visibleColumns.some((c) => c.key === 'brand');
                     const showBalance = visibleColumns.some((c) => c.key === 'companyBalance');
+                    const showAvailableLimit = visibleColumns.some((c) => c.key === 'availableLimit');
+                    const showFrozenAmount = visibleColumns.some((c) => c.key === 'frozenAmount');
                     const showSdp = visibleColumns.some((c) => c.key === 'sdp');
                     const showDeposit = visibleColumns.some((c) => c.key === 'deposit');
                     const showWithdrawal = visibleColumns.some((c) => c.key === 'withdrawal');
@@ -947,12 +1083,24 @@ export default function SendMoneyWalletStatus() {
                             {showBrand && <span className="shrink-0 text-[11px] font-medium text-muted-foreground">{row.brand}</span>}
                           </div>
                         )}
-                        {(showBalance || showSdp) && (
+                        {(showBalance || showAvailableLimit || showFrozenAmount || showSdp) && (
                           <div className={`grid grid-cols-2 gap-2 ${(showShop || showBrand) ? 'mt-2.5 border-t border-border pt-2.5' : ''}`}>
                             {showBalance && (
                               <div>
                                 <p className="text-[9px] font-medium text-muted-foreground">Company Balance</p>
                                 <p className={`text-[13px] font-bold tabular-nums ${row.companyBalance < 0 ? 'text-rose-600 dark:text-rose-400' : 'text-foreground'}`}>{displayNum(row.companyBalance)}</p>
+                              </div>
+                            )}
+                            {showAvailableLimit && (
+                              <div>
+                                <p className="text-[9px] font-medium text-muted-foreground">Available Limit</p>
+                                <p className={`text-[13px] font-semibold tabular-nums ${availableLimitColorClass(row.availableLimit, row.baseLimit)}`}>{displayAvailableLimit(row.availableLimit)}</p>
+                              </div>
+                            )}
+                            {showFrozenAmount && (
+                              <div>
+                                <p className="text-[9px] font-medium text-muted-foreground">Frozen Amount</p>
+                                <p className={`text-[13px] font-semibold tabular-nums ${displayNum(row.frozenAmount) === '−' ? 'text-muted-foreground' : 'text-[#EF4444]'}`}>{displayNum(row.frozenAmount)}</p>
                               </div>
                             )}
                             {showSdp && (
@@ -964,7 +1112,7 @@ export default function SendMoneyWalletStatus() {
                           </div>
                         )}
                         {(showDeposit || showWithdrawal || showPriority) && (
-                          <div className={`flex flex-wrap items-center gap-2 ${(showShop || showBrand || showBalance || showSdp) ? 'mt-2.5 border-t border-border pt-2.5' : ''}`}>
+                          <div className={`flex flex-wrap items-center gap-2 ${(showShop || showBrand || showBalance || showAvailableLimit || showFrozenAmount || showSdp) ? 'mt-2.5 border-t border-border pt-2.5' : ''}`}>
                             {showDeposit && (
                               <div>
                                 <p className="mb-1 text-[9px] font-medium text-muted-foreground">Deposit</p>
@@ -1001,7 +1149,7 @@ export default function SendMoneyWalletStatus() {
                           </div>
                         )}
                         {showWalletStatus && (
-                          <div className={`flex items-center gap-1.5 ${(showShop || showBrand || showBalance || showSdp || showDeposit || showWithdrawal || showPriority) ? 'mt-2.5 border-t border-border pt-2.5' : ''}`}>
+                          <div className={`flex items-center gap-1.5 ${(showShop || showBrand || showBalance || showAvailableLimit || showFrozenAmount || showSdp || showDeposit || showWithdrawal || showPriority) ? 'mt-2.5 border-t border-border pt-2.5' : ''}`}>
                             <p className="text-[9px] font-medium text-muted-foreground">Wallet Status</p>
                             <span className="inline-flex items-center gap-1.5 text-[12px] font-medium text-foreground">
                               <span className={`h-2 w-2 shrink-0 rounded-full ${WALLET_STATUS_DOT[row.walletStatus]}`} />
