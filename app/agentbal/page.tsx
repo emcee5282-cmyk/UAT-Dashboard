@@ -886,22 +886,18 @@ export default function AgentBalance() {
       // same figures whether the user reads them here or exports this page.
       const reportCutoffDate = parseReportCutoffDate(openingRawRows);
 
-      // Assumed Balance (uploaded via Opening's "Upload Excel Data") only
-      // takes over when BOTH hold:
-      // 1. Opening's own "Updated Time" card is still showing the PREVIOUS
-      //    business day — i.e. the real Opening reset for today hasn't
-      //    happened yet. The instant "Updated Time" catches up to today,
-      //    this stops applying on its own (no manual delete needed).
-      // 2. The upload's OWN "Last Updated" timestamp is itself from TODAY's
-      //    business day — a fresh upload made right around/after the 2AM
-      //    rollover reads as "today" already (see app/lib/businessDate.ts).
-      //    An upload left over from a prior business day (stale — no fresh
-      //    file was uploaded for today) must NOT keep being applied just
-      //    because Opening's own reset happens to be running late too.
+      // Assumed Balance (uploaded via Opening's "Upload Excel Data") takes
+      // over whenever the upload's OWN "Last Updated" timestamp is itself
+      // from TODAY's business day — a fresh upload made right around/after
+      // the 2AM rollover reads as "today" already (see
+      // app/lib/businessDate.ts). Per explicit instruction, this is the ONLY
+      // trigger now. Previously this also required Opening's own "Updated
+      // Time" card to still be showing the previous business day — dropped:
+      // confirmed live that card can advance to "today" on its own well
+      // before the real data is ready, which silently blocked a genuinely
+      // valid, current-day upload from ever being used.
       const estimatedUploadedAt = estimatedData.uploadedAt ? new Date(estimatedData.uploadedAt) : null;
       const estimatedOpeningValid =
-        reportCutoffDate !== null &&
-        reportCutoffDate.getTime() < getBusinessToday().getTime() &&
         estimatedUploadedAt !== null &&
         toBusinessDate(estimatedUploadedAt).getTime() === getBusinessToday().getTime();
       const estimatedBalances = new Map(Object.entries(estimatedData.balances ?? {}));

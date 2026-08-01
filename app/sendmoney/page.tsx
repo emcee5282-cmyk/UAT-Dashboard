@@ -210,11 +210,14 @@ export default function SendMoneyDashboardPage() {
       // Settlement rows totaling ~18.26M went invisible this way, neither
       // "today" nor shown anywhere), fall back one business day instead of
       // snapping straight to today.
+      // Estimated Balance validity itself is gated ONLY on the upload's own
+      // "Last Updated" timestamp being from today's business day — per
+      // explicit instruction, Opening's own card state is no longer a
+      // co-requirement here either (see the widen-cutoff comment above for
+      // why that card can't be trusted as a freshness signal).
       const sendMoneyCutoffDate = parseSendMoneyReportCutoffDate(openingText);
       const estimatedUploadedAt = estimatedData.uploadedAt ? new Date(estimatedData.uploadedAt) : null;
       const estimatedSendMoneyOpeningValid =
-        sendMoneyCutoffDate !== null &&
-        sendMoneyCutoffDate.getTime() < getBusinessToday().getTime() &&
         estimatedUploadedAt !== null &&
         toBusinessDate(estimatedUploadedAt).getTime() === getBusinessToday().getTime();
       const cutoff = getBusinessToday();
