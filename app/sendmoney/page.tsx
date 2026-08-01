@@ -9,7 +9,7 @@ import ConnectionErrorState from '@/app/components/ConnectionErrorState';
 import { classifyFetchError, type ClassifiedError, assertAllOk } from '@/app/lib/errors';
 import { rawVal, clean, fmt, fmtAbbrev, fmtCell } from '@/app/lib/format';
 import { parseCsvLines } from '@/app/lib/csv';
-import { getBusinessToday } from '@/app/lib/businessDate';
+import { getBusinessToday, toBusinessDate, parseCardCutoffDate } from '@/app/lib/businessDate';
 
 type BundlePoint = {
   day: string;
@@ -46,6 +46,19 @@ function parseStlmRowDate(dateStr: string): Date | null {
   const [m, d, y] = parts.map(Number);
   if (!m || !d || !y) return null;
   return new Date(y, m - 1, d);
+}
+
+// "Opening AG" sheet col I — Send Money's own "UPDATED TIME" card, same
+// column app/page.tsx's own parseSendMoneyReportCutoffDate reads.
+function parseSendMoneyReportCutoffDate(text: string): Date | null {
+  const lines = text.trim().split('\n');
+  for (const line of lines) {
+    const cols = line.split(',');
+    const cell = (cols[8] ?? '').replace(/"/g, '').trim();
+    const parsed = parseCardCutoffDate(cell);
+    if (parsed) return parsed;
+  }
+  return null;
 }
 
 // Send Money's wallet type is read off the wallet name's own suffix (e.g.
@@ -142,17 +155,19 @@ export default function SendMoneyDashboardPage() {
       setLoading(true);
       setError(null);
       setRows([]);
-      const [res, openingRes, balRes, stlmRes] = await Promise.all([
+      const [res, openingRes, balRes, stlmRes, estimatedRes] = await Promise.all([
         fetch(`/api/sendmoney/sheet?t=${Date.now()}`),
         fetch(`/api/opening?t=${Date.now()}`),
         fetch(`/api/sendmoney/balances?t=${Date.now()}`),
         fetch(`/api/sendmoney/stlmtopup?t=${Date.now()}`),
+        fetch(`/api/sendmoney/opening/estimated-balance?t=${Date.now()}`),
       ]);
-      await assertAllOk([res, openingRes, balRes, stlmRes]);
+      await assertAllOk([res, openingRes, balRes, stlmRes, estimatedRes]);
       const text = await res.text();
       const openingText = await openingRes.text();
       const balData: string[][] = await balRes.json();
       const stlmText = await stlmRes.text();
+      const estimatedData: { uploadedAt: string | null } = await estimatedRes.json();
 
       const lines = text.trim().split('\n').slice(1);
       const parsed: Row[] = lines
@@ -177,10 +192,30 @@ export default function SendMoneyDashboardPage() {
         });
 
       const openingRawRows = parseCsvLines(openingText);
-      // Top Up/Settlement totals reset at the 2AM business-day rollover
-      // (see app/lib/businessDate.ts) — clock-based, not gated on whether
-      // Opening's own "Updated Time" card has been manually refreshed yet.
-      const reportCutoffDate = getBusinessToday();
+      // Top Up/Settlement totals reset at the 2AM business-day rollover (see
+      // app/lib/businessDate.ts) — clock-based ("today"), UNLESS Opening's
+      // own "UPDATED TIME" card is still stale (hasn't refreshed for today)
+      // AND no valid Estimated Balance covers that gap yet — then this
+      // widens back to Opening's own last-refresh day, so Settlement/Top Up
+      // posted "yesterday" (while waiting for either Opening or an upload)
+      // doesn't disappear the instant the calendar rolls over. Once a valid
+      // Estimated Balance exists it already bakes that stale day in, so this
+      // goes back to today-only to avoid counting it twice. Same
+      // sendMoneyLiveCutoff logic as app/page.tsx — this page previously ran
+      // its own always-today copy, which is what caused Top Up/Settlement to
+      // reset early (reported live: "nawawala agad... kahit wala pang
+      // updated na Estimated balance").
+      const sendMoneyCutoffDate = parseSendMoneyReportCutoffDate(openingText);
+      const estimatedUploadedAt = estimatedData.uploadedAt ? new Date(estimatedData.uploadedAt) : null;
+      const estimatedSendMoneyOpeningValid =
+        sendMoneyCutoffDate !== null &&
+        sendMoneyCutoffDate.getTime() < getBusinessToday().getTime() &&
+        estimatedUploadedAt !== null &&
+        toBusinessDate(estimatedUploadedAt).getTime() === getBusinessToday().getTime();
+      const cutoff = getBusinessToday();
+      const reportCutoffDate = (sendMoneyCutoffDate !== null && sendMoneyCutoffDate.getTime() < cutoff.getTime() && !estimatedSendMoneyOpeningValid)
+        ? sendMoneyCutoffDate
+        : cutoff;
 
       // Send Money's own roster lives in cols L-O (indices 11-14) of the same
       // "Opening AG" sheet Cashout uses for cols A-D.
