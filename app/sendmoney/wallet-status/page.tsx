@@ -252,7 +252,17 @@ const EXTRA_BREATHING_ROOM_PX = 8;
 const WALLET_STATUS_ACTION_WIDTH_PX = 96;
 // Remarks is free text up to 500 chars — a fixed width (per spec), never
 // grown to fit content; long remarks truncate with an ellipsis + tooltip.
-const REMARKS_COLUMN_WIDTH_PX = 240;
+// width===minWidth===maxWidth (same technique every other column here
+// already uses) — this table is table-auto, not table-fixed, so a
+// min-width smaller than width lets the browser shrink the column toward
+// it when content is short (confirmed: a lone min:240/width:280 rendered
+// at 240, not 280). Pinning all three equal is what actually guarantees a
+// provably constant column, matching the spec's "must never change based
+// on content" requirement literally.
+const REMARKS_COLUMN_WIDTH_PX = 280;
+// Hover delay before the full-remark tooltip appears — long enough that a
+// quick pass-over the cell doesn't flash it, per spec.
+const REMARKS_TOOLTIP_HOVER_DELAY_MS = 275;
 
 const COLUMNS_WITH_INFO_ICON: ColumnKey[] = ['availableLimit', 'frozenAmount'];
 const PILL_BADGE_COLUMNS: ColumnKey[] = ['deposit', 'withdrawal', 'priority'];
@@ -356,10 +366,17 @@ function SortIcon({ active, direction }: { active: boolean; direction: 'asc' | '
 // Positioned BELOW its trigger (these triggers live in the sticky top
 // header) — an above-anchored tooltip would run off-screen. Multi-line
 // (whitespace-pre-line), unlike a single-line nowrap tooltip.
-function useBelowTooltip(triggerRef: React.RefObject<HTMLElement | null>) {
+// Optional `delayMs` (default 0, unchanged for existing callers like
+// HeaderInfoIcon) delays only the SHOW — hiding on mouse-leave is always
+// instant, per spec ("close automatically when mouse leaves"). A pending
+// show-timer is cancelled if the pointer leaves before it fires, so a
+// quick pass-over never flashes the tooltip.
+function useBelowTooltip(triggerRef: React.RefObject<HTMLElement | null>, options?: { delayMs?: number }) {
+  const delayMs = options?.delayMs ?? 0;
   const [open, setOpen] = useState(false);
   const [rendered, setRendered] = useState(false);
   const [pos, setPos] = useState({ top: 0, left: 0 });
+  const showTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
     if (open) {
@@ -373,15 +390,31 @@ function useBelowTooltip(triggerRef: React.RefObject<HTMLElement | null>) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open]);
 
+  const scheduleOpen = useCallback(() => {
+    if (delayMs > 0) {
+      showTimerRef.current = setTimeout(() => setOpen(true), delayMs);
+    } else {
+      setOpen(true);
+    }
+  }, [delayMs]);
+
+  const cancelOpen = useCallback(() => {
+    if (showTimerRef.current) {
+      clearTimeout(showTimerRef.current);
+      showTimerRef.current = null;
+    }
+    setOpen(false);
+  }, []);
+
   return {
     open,
     rendered,
     pos,
     handlers: {
-      onMouseEnter: () => setOpen(true),
-      onMouseLeave: () => setOpen(false),
+      onMouseEnter: scheduleOpen,
+      onMouseLeave: cancelOpen,
       onFocus: () => setOpen(true),
-      onBlur: () => setOpen(false),
+      onBlur: cancelOpen,
     },
   };
 }
@@ -478,7 +511,7 @@ function RemarksCell({
   onOpen: (anchor: HTMLElement) => void;
 }) {
   const triggerRef = useRef<HTMLButtonElement>(null);
-  const tooltip = useBelowTooltip(triggerRef);
+  const tooltip = useBelowTooltip(triggerRef, { delayMs: REMARKS_TOOLTIP_HOVER_DELAY_MS });
   const hasRemark = remark.trim() !== '';
 
   return (
@@ -487,24 +520,24 @@ function RemarksCell({
       type="button"
       onClick={() => triggerRef.current && onOpen(triggerRef.current)}
       {...(hasRemark ? tooltip.handlers : {})}
-      className={`flex h-7 w-full max-w-full items-center gap-1 rounded-md px-1.5 text-left transition-colors duration-150 ease-out hover:bg-muted/40 ${isEditing ? 'bg-muted/40' : ''}`}
+      className={`flex h-7 w-full max-w-full items-center gap-1 overflow-hidden rounded-md px-1.5 text-left transition-colors duration-150 ease-out hover:bg-muted/40 ${isEditing ? 'bg-muted/40' : ''}`}
     >
       {hasRemark && <MessageSquare size={12} className="shrink-0 text-muted-foreground" />}
       {hasRemark ? (
-        <span className="min-w-0 flex-1 truncate text-[12px] font-normal text-slate-700 dark:text-slate-300">{remark}</span>
+        <span className="min-w-0 flex-1 overflow-hidden text-ellipsis whitespace-nowrap text-[12px] font-normal text-slate-700 dark:text-slate-300">{remark}</span>
       ) : (
-        <span className="min-w-0 flex-1 truncate text-[12px] font-normal italic text-muted-foreground">− Add Remark −</span>
+        <span className="min-w-0 flex-1 overflow-hidden text-ellipsis whitespace-nowrap text-[12px] font-normal italic text-slate-400 dark:text-slate-500">− Add Remark −</span>
       )}
       {hasRemark && tooltip.rendered && typeof document !== 'undefined' && createPortal(
         <div
           style={{ position: 'fixed', top: tooltip.pos.top, left: tooltip.pos.left, transform: 'translate(-50%, 0)' }}
-          className={`pointer-events-none z-[9999] w-[260px] whitespace-pre-line rounded-md bg-[#1F2937] px-3 py-2 text-left text-[11px] font-normal leading-relaxed text-white transition-opacity duration-150 ease-out ${tooltip.open ? 'opacity-100' : 'opacity-0'}`}
+          className={`pointer-events-none z-[9999] max-w-[420px] whitespace-pre-line break-words rounded-md bg-[#1F2937] px-3 py-2 text-left text-[11px] font-normal leading-relaxed text-white transition-opacity duration-150 ease-out ${tooltip.open ? 'opacity-100' : 'opacity-0'}`}
         >
           {remark}
           {updatedBy && (
-            <div className="mt-1.5 border-t border-white/15 pt-1.5 text-[10px] text-white/70">
-              Updated by: {updatedBy}
-              {updatedAt && <><br />{formatRemarkTimestamp(updatedAt)}</>}
+            <div className="mt-1.5 space-y-0.5 border-t border-white/15 pt-1.5 text-[10px] text-white/70">
+              <div>Updated by: {updatedBy}</div>
+              {updatedAt && <div>Updated at: {formatRemarkTimestamp(updatedAt)}</div>}
             </div>
           )}
           <span className="absolute left-1/2 top-0 h-2 w-2 -translate-x-1/2 -translate-y-1/2 rotate-45 bg-[#1F2937]" />
@@ -1159,8 +1192,15 @@ export default function SendMoneyWalletStatus() {
           </td>
         );
       case 'remarks':
+        // Own style object (not the shared `cellStyle`) — width/minWidth/
+        // maxWidth per spec, rather than the generic width===minWidth every
+        // other column uses. Never grows with content either way.
         return (
-          <td key={key} style={cellStyle} className={`${shopBase} !overflow-visible`}>
+          <td
+            key={key}
+            style={{ width: REMARKS_COLUMN_WIDTH_PX, minWidth: REMARKS_COLUMN_WIDTH_PX, maxWidth: REMARKS_COLUMN_WIDTH_PX }}
+            className={`${shopBase} !overflow-visible`}
+          >
             <RemarksCell
               remark={row.remark}
               updatedBy={row.remarkUpdatedBy}
@@ -1345,7 +1385,9 @@ export default function SendMoneyWalletStatus() {
                       {visibleColumns.map((col) => (
                         <th
                           key={col.key}
-                          style={colWidthsPx[col.key] ? { width: colWidthsPx[col.key], minWidth: colWidthsPx[col.key] } : undefined}
+                          style={col.key === 'remarks'
+                            ? { width: REMARKS_COLUMN_WIDTH_PX, minWidth: REMARKS_COLUMN_WIDTH_PX, maxWidth: REMARKS_COLUMN_WIDTH_PX }
+                            : colWidthsPx[col.key] ? { width: colWidthsPx[col.key], minWidth: colWidthsPx[col.key] } : undefined}
                           className={headerCellClasses(col.align)}
                         >
                           {loading ? (
