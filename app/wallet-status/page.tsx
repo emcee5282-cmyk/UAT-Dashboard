@@ -41,8 +41,16 @@ type WalletStatusValue = 'Active' | 'Inactive' | 'Wallet With Issue';
 // Remark fields ride along on the same per-shop API response — independent
 // of Priority (a shop can have one without the other) but fetched together
 // since both come from the same "Wallet Status" sheet tab / API route.
-type PriorityEntry = { priority: Priority; remark: string; remarkUpdatedBy: string; remarkUpdatedAt: string };
-const DEFAULT_PRIORITY_ENTRY: PriorityEntry = { priority: 'Normal', remark: '', remarkUpdatedBy: '', remarkUpdatedAt: '' };
+// Field names here (updatedBy/updatedAt) must match the actual API
+// response shape (mergeWalletStatusAndRemarks in app/lib/walletStatus.ts)
+// exactly — a prior "remarkUpdatedBy"/"remarkUpdatedAt" mismatch here
+// silently produced undefined on every fresh fetch (confirmed live: the
+// sheet correctly stored "Operations Admin" + a real timestamp, but a
+// reload showed no "Updated by" section at all) while masking itself
+// right after a Save, since that path updates row state directly from the
+// POST response instead of refetching.
+type PriorityEntry = { priority: Priority; remark: string; updatedBy: string; updatedAt: string };
+const DEFAULT_PRIORITY_ENTRY: PriorityEntry = { priority: 'Normal', remark: '', updatedBy: '', updatedAt: '' };
 
 const WALLET_STATUS_DOT: Record<WalletStatusValue, string> = {
   Active: 'bg-emerald-500',
@@ -843,8 +851,8 @@ export default function WalletStatus() {
           priority: priorityEntry.priority,
           walletStatus: flags.walletStatus,
           remark: priorityEntry.remark,
-          remarkUpdatedBy: priorityEntry.remarkUpdatedBy,
-          remarkUpdatedAt: priorityEntry.remarkUpdatedAt,
+          remarkUpdatedBy: priorityEntry.updatedBy,
+          remarkUpdatedAt: priorityEntry.updatedAt,
         };
       });
 
