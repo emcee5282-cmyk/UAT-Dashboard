@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { ChevronDown, ChevronUp, ChevronsUpDown, Columns3, Download, RefreshCw, Search, Flag, Check, X, SquarePen, Loader2, Info } from 'lucide-react';
+import { ChevronDown, ChevronUp, ChevronsUpDown, Columns3, Download, RefreshCw, Search, Flag, Check, X, SquarePen, Loader2, Info, MessageSquare } from 'lucide-react';
 import * as XLSX from 'xlsx';
 import SettlementHeader from '@/app/components/SettlementHeader';
 import ConnectionErrorState from '@/app/components/ConnectionErrorState';
@@ -39,8 +39,11 @@ type Priority = 'Low' | 'Normal' | 'High';
 // Only Priority is a real staff-entered value read from the "Wallet Status"
 // sheet tab.
 type WalletStatusValue = 'Active' | 'Inactive' | 'Wallet With Issue';
-type PriorityEntry = { priority: Priority };
-const DEFAULT_PRIORITY_ENTRY: PriorityEntry = { priority: 'Normal' };
+// Remark fields ride along on the same per-shop API response — independent
+// of Priority (a shop can have one without the other) but fetched together
+// since both come from the same "Wallet Status" sheet tab / API route.
+type PriorityEntry = { priority: Priority; remark: string; remarkUpdatedBy: string; remarkUpdatedAt: string };
+const DEFAULT_PRIORITY_ENTRY: PriorityEntry = { priority: 'Normal', remark: '', remarkUpdatedBy: '', remarkUpdatedAt: '' };
 
 const WALLET_STATUS_DOT: Record<WalletStatusValue, string> = {
   Active: 'bg-emerald-500',
@@ -147,6 +150,9 @@ type WalletStatusRow = {
   withdrawal: DepositWithdrawal;
   priority: Priority;
   walletStatus: WalletStatusValue;
+  remark: string;
+  remarkUpdatedBy: string;
+  remarkUpdatedAt: string;
 };
 
 const COLUMN_IDS = {
@@ -160,6 +166,7 @@ const COLUMN_IDS = {
   WITHDRAWAL: 'withdrawal',
   PRIORITY: 'priority',
   WALLET_STATUS: 'walletStatus',
+  REMARKS: 'remarks',
   WALLET_STATUS_ACTION: 'walletStatusAction',
 } as const;
 
@@ -185,6 +192,10 @@ const DEFAULT_COLUMNS: ColumnDef[] = [
   { key: COLUMN_IDS.WITHDRAWAL, label: 'Withdrawal', visible: true, sortable: true, hideable: true, align: 'center' },
   { key: COLUMN_IDS.PRIORITY, label: 'Priority', visible: true, sortable: true, hideable: true, align: 'center' },
   { key: COLUMN_IDS.WALLET_STATUS, label: 'Wallet Status', visible: true, sortable: true, hideable: false, align: 'left' },
+  // Independent of Wallet Status/Priority — its own click-to-edit popover,
+  // not tied to the row-wide Edit/Save/Cancel below. Fixed width (see
+  // computeColumnWidthsPx's own special-case), never measured from content.
+  { key: COLUMN_IDS.REMARKS, label: 'Remarks', visible: true, sortable: true, hideable: true, align: 'left' },
   // Edit/Save/Cancel per ROW — Priority is the only field this saves;
   // Deposit/Withdrawal/Wallet Status are computed and read-only. Never
   // hideable — it's the only edit affordance for the row.
@@ -239,6 +250,9 @@ const EXTRA_BREATHING_ROOM_PX = 8;
 // The Edit/Save/Cancel action column has no measurable text content (icon
 // buttons only) — fixed wide enough for the Save+Cancel button pair.
 const WALLET_STATUS_ACTION_WIDTH_PX = 96;
+// Remarks is free text up to 500 chars — a fixed width (per spec), never
+// grown to fit content; long remarks truncate with an ellipsis + tooltip.
+const REMARKS_COLUMN_WIDTH_PX = 240;
 
 const COLUMNS_WITH_INFO_ICON: ColumnKey[] = ['availableLimit', 'frozenAmount'];
 const PILL_BADGE_COLUMNS: ColumnKey[] = ['deposit', 'withdrawal', 'priority'];
@@ -257,6 +271,7 @@ function getColumnDisplayText(row: WalletStatusRow, key: ColumnKey): string {
     case 'withdrawal': return row.withdrawal;
     case 'priority': return priorityDisplay(row);
     case 'walletStatus': return row.walletStatus;
+    case 'remarks': return row.remark;
     default: return '';
   }
 }
@@ -271,6 +286,10 @@ function computeColumnWidthsPx(rows: WalletStatusRow[], columns: ColumnDef[]): P
   for (const col of columns) {
     if (col.key === 'walletStatusAction') {
       result[col.key] = WALLET_STATUS_ACTION_WIDTH_PX;
+      continue;
+    }
+    if (col.key === 'remarks') {
+      result[col.key] = REMARKS_COLUMN_WIDTH_PX;
       continue;
     }
 
@@ -311,6 +330,7 @@ const rowSkeletonWidths: Record<ColumnKey, string[]> = {
   withdrawal: ['w-10', 'w-10', 'w-10'],
   priority: ['w-14', 'w-14', 'w-14'],
   walletStatus: ['w-20', 'w-24', 'w-16'],
+  remarks: ['w-32', 'w-24', 'w-36'],
   walletStatusAction: ['w-8', 'w-8', 'w-8'],
 };
 
@@ -420,6 +440,78 @@ function BrandBadge({ children }: { children: string }) {
     <span className={`inline-flex h-[28px] items-center rounded-[999px] border px-[10px] text-[12px] font-semibold transition-[filter] duration-150 hover:brightness-95 dark:hover:brightness-110 ${brandBadgeClasses(children)}`}>
       {children}
     </span>
+  );
+}
+
+// "July 22, 2026 10:42 AM" — Manila wall clock, matches the tooltip mockup's
+// exact format (no comma between year and time, unlike Intl's own default).
+function formatRemarkTimestamp(iso: string): string {
+  if (!iso) return '';
+  const date = new Date(iso);
+  if (isNaN(date.getTime())) return '';
+  const parts = new Intl.DateTimeFormat('en-US', {
+    timeZone: 'Asia/Manila',
+    month: 'long', day: 'numeric', year: 'numeric', hour: 'numeric', minute: '2-digit', hour12: true,
+  }).formatToParts(date);
+  const get = (type: string) => parts.find((p) => p.type === type)?.value ?? '';
+  return `${get('month')} ${get('day')}, ${get('year')} ${get('hour')}:${get('minute')} ${get('dayPeriod')}`;
+}
+
+// The Remarks trigger — a single-line, ellipsis-truncated value (or an
+// italic "Add Remark" placeholder when empty) that opens the shared,
+// portal-rendered edit popover (see the page component's own
+// `editingRemarkKey`/`RemarkEditorPopover`) on click, and shows the full
+// remark + attribution on hover via the same useBelowTooltip pattern
+// already used by HeaderInfoIcon. Independent of Priority/Wallet Status —
+// no row-wide edit mode gates this.
+function RemarksCell({
+  remark,
+  updatedBy,
+  updatedAt,
+  isEditing,
+  onOpen,
+}: {
+  remark: string;
+  updatedBy: string;
+  updatedAt: string;
+  isEditing: boolean;
+  onOpen: (anchor: HTMLElement) => void;
+}) {
+  const triggerRef = useRef<HTMLButtonElement>(null);
+  const tooltip = useBelowTooltip(triggerRef);
+  const hasRemark = remark.trim() !== '';
+
+  return (
+    <button
+      ref={triggerRef}
+      type="button"
+      onClick={() => triggerRef.current && onOpen(triggerRef.current)}
+      {...(hasRemark ? tooltip.handlers : {})}
+      className={`flex h-7 w-full max-w-full items-center gap-1 rounded-md px-1.5 text-left transition-colors duration-150 ease-out hover:bg-muted/40 ${isEditing ? 'bg-muted/40' : ''}`}
+    >
+      {hasRemark && <MessageSquare size={12} className="shrink-0 text-muted-foreground" />}
+      {hasRemark ? (
+        <span className="min-w-0 flex-1 truncate text-[12px] font-normal text-slate-700 dark:text-slate-300">{remark}</span>
+      ) : (
+        <span className="min-w-0 flex-1 truncate text-[12px] font-normal italic text-muted-foreground">− Add Remark −</span>
+      )}
+      {hasRemark && tooltip.rendered && typeof document !== 'undefined' && createPortal(
+        <div
+          style={{ position: 'fixed', top: tooltip.pos.top, left: tooltip.pos.left, transform: 'translate(-50%, 0)' }}
+          className={`pointer-events-none z-[9999] w-[260px] whitespace-pre-line rounded-md bg-[#1F2937] px-3 py-2 text-left text-[11px] font-normal leading-relaxed text-white transition-opacity duration-150 ease-out ${tooltip.open ? 'opacity-100' : 'opacity-0'}`}
+        >
+          {remark}
+          {updatedBy && (
+            <div className="mt-1.5 border-t border-white/15 pt-1.5 text-[10px] text-white/70">
+              Updated by: {updatedBy}
+              {updatedAt && <><br />{formatRemarkTimestamp(updatedAt)}</>}
+            </div>
+          )}
+          <span className="absolute left-1/2 top-0 h-2 w-2 -translate-x-1/2 -translate-y-1/2 rotate-45 bg-[#1F2937]" />
+        </div>,
+        document.body
+      )}
+    </button>
   );
 }
 
@@ -541,6 +633,17 @@ export default function SendMoneyWalletStatus() {
   const [editingRowKey, setEditingRowKey] = useState<string | null>(null);
   const [editDraft, setEditDraft] = useState<RowDraft | null>(null);
   const [rowSaving, setRowSaving] = useState(false);
+
+  // Remarks' own independent edit state — deliberately separate from
+  // editingRowKey/editDraft above (Priority's row-wide edit mode). A remark
+  // popover and a Priority edit can be open at the same time; they don't
+  // gate each other.
+  const [editingRemarkKey, setEditingRemarkKey] = useState<string | null>(null);
+  const [remarkDraft, setRemarkDraft] = useState('');
+  const [remarkSaving, setRemarkSaving] = useState(false);
+  const [remarkAnchor, setRemarkAnchor] = useState<HTMLElement | null>(null);
+  const [remarkPopoverPos, setRemarkPopoverPos] = useState({ top: 0, left: 0 });
+  const remarkPopoverRef = useRef<HTMLDivElement>(null);
 
   const [isScrolled, setIsScrolled] = useState(false);
   const tableScrollRef = useRef<HTMLDivElement>(null);
@@ -693,6 +796,9 @@ export default function SendMoneyWalletStatus() {
           withdrawal: flags.withdrawal,
           priority: priorityEntry.priority,
           walletStatus: flags.walletStatus,
+          remark: priorityEntry.remark,
+          remarkUpdatedBy: priorityEntry.remarkUpdatedBy,
+          remarkUpdatedAt: priorityEntry.remarkUpdatedAt,
         };
       });
 
@@ -783,15 +889,112 @@ export default function SendMoneyWalletStatus() {
       });
   }, [editDraft, cancelEdit, fetchData]);
 
+  // Opens the shared Remarks popover, anchored to whichever cell/mobile
+  // trigger was clicked. A single editingRemarkKey means starting to edit a
+  // different shop's remark auto-closes the previous popover, same
+  // "one at a time" convention as Priority's editingRowKey — but this state
+  // is entirely separate from it, so a Priority edit and a Remarks edit can
+  // be open simultaneously without conflict.
+  const openRemarkEditor = useCallback((row: WalletStatusRow, anchor: HTMLElement) => {
+    const rect = anchor.getBoundingClientRect();
+    setRemarkPopoverPos({ top: rect.bottom + 6, left: rect.left });
+    setRemarkAnchor(anchor);
+    setEditingRemarkKey(row.key);
+    setRemarkDraft(row.remark);
+  }, []);
+
+  const cancelRemarkEdit = useCallback(() => {
+    setEditingRemarkKey(null);
+    setRemarkDraft('');
+    setRemarkAnchor(null);
+  }, []);
+
+  const saveRemark = useCallback((row: WalletStatusRow) => {
+    setRemarkSaving(true);
+    setSaveError(null);
+
+    fetch('/api/sendmoney/wallet-status/update-remark', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ shopName: row.shopName, remark: remarkDraft }),
+    })
+      .then(async (res) => {
+        if (!res.ok) throw new Error('Save failed for remark');
+        const data: { updatedBy: string; updatedAt: string } = await res.json();
+        setRows((current) => current.map((r) => (r.key === row.key
+          ? { ...r, remark: remarkDraft, remarkUpdatedBy: data.updatedBy, remarkUpdatedAt: data.updatedAt }
+          : r)));
+        cancelRemarkEdit();
+        setToast('Changes Saved');
+      })
+      .catch(() => {
+        setSaveError(`Failed to save remark for ${row.shopName} — reloading to confirm what actually saved.`);
+        setTimeout(() => setSaveError(null), 5000);
+        cancelRemarkEdit();
+        fetchData();
+      })
+      .finally(() => {
+        setRemarkSaving(false);
+      });
+  }, [remarkDraft, cancelRemarkEdit, fetchData]);
+
+  // Click-outside-to-cancel — same convention as this page's other
+  // dropdowns/menus. Ignores clicks on the popover itself or its anchor
+  // trigger (the anchor's own onClick already handles re-opening/toggling).
+  useEffect(() => {
+    if (!editingRemarkKey) return;
+    function handlePointerDown(e: MouseEvent) {
+      const target = e.target as Node;
+      if (remarkPopoverRef.current?.contains(target)) return;
+      if (remarkAnchor?.contains(target)) return;
+      cancelRemarkEdit();
+    }
+    document.addEventListener('mousedown', handlePointerDown);
+    return () => document.removeEventListener('mousedown', handlePointerDown);
+  }, [editingRemarkKey, remarkAnchor, cancelRemarkEdit]);
+
+  // Keeps the popover pinned to its anchor cell if the table scrolls or the
+  // window resizes while it's open (it's a fixed-position portal, so it
+  // wouldn't otherwise move with the row it belongs to).
+  useEffect(() => {
+    if (!editingRemarkKey || !remarkAnchor) return;
+    function reposition() {
+      const rect = remarkAnchor!.getBoundingClientRect();
+      setRemarkPopoverPos({ top: rect.bottom + 6, left: rect.left });
+    }
+    const scrollEl = tableScrollRef.current;
+    scrollEl?.addEventListener('scroll', reposition, { passive: true });
+    window.addEventListener('resize', reposition);
+    return () => {
+      scrollEl?.removeEventListener('scroll', reposition);
+      window.removeEventListener('resize', reposition);
+    };
+  }, [editingRemarkKey, remarkAnchor]);
+
+  const editingRemarkRow = useMemo(() => rows.find((r) => r.key === editingRemarkKey) ?? null, [rows, editingRemarkKey]);
+
   const searchedRows = useMemo(() => {
     const query = searchTerm.toLowerCase();
     if (!query) return rows;
-    return rows.filter((row) => `${row.shopName} ${row.brand}`.toLowerCase().includes(query));
+    return rows.filter((row) => `${row.shopName} ${row.brand} ${row.remark}`.toLowerCase().includes(query));
   }, [rows, searchTerm]);
 
   const sortedRows = useMemo(() => {
     const list = [...searchedRows];
     list.sort((a, b) => {
+      // Remarks sorts by string, but per spec, rows with no remark always
+      // sort to the end regardless of asc/desc direction — handled as its
+      // own branch since it doesn't fit the generic reverse-on-desc rule
+      // every other column below follows.
+      if (sortColumn === 'remarks') {
+        const aEmpty = a.remark.trim() === '';
+        const bEmpty = b.remark.trim() === '';
+        if (aEmpty && bEmpty) return 0;
+        if (aEmpty) return 1;
+        if (bEmpty) return -1;
+        const comparison = a.remark.toLowerCase().localeCompare(b.remark.toLowerCase());
+        return sortDirection === 'asc' ? comparison : -comparison;
+      }
       const getValue = (row: WalletStatusRow, column: ColumnKey) => {
         switch (column) {
           case 'brand': return row.brand.toLowerCase();
@@ -839,6 +1042,7 @@ export default function SendMoneyWalletStatus() {
         case 'withdrawal': return row.withdrawal;
         case 'priority': return priorityDisplay(row);
         case 'walletStatus': return row.walletStatus;
+        case 'remarks': return row.remark || '—';
       }
     };
     // The Edit/Save/Cancel action column has no exportable value — excluded
@@ -954,6 +1158,18 @@ export default function SendMoneyWalletStatus() {
             </span>
           </td>
         );
+      case 'remarks':
+        return (
+          <td key={key} style={cellStyle} className={`${shopBase} !overflow-visible`}>
+            <RemarksCell
+              remark={row.remark}
+              updatedBy={row.remarkUpdatedBy}
+              updatedAt={row.remarkUpdatedAt}
+              isEditing={editingRemarkKey === row.key}
+              onOpen={(anchor) => openRemarkEditor(row, anchor)}
+            />
+          </td>
+        );
       case 'walletStatusAction': {
         if (!isEditingThisRow) {
           return (
@@ -1008,6 +1224,42 @@ export default function SendMoneyWalletStatus() {
           <Check size={15} className="shrink-0 text-emerald-500" />
           {toast}
         </div>
+      )}
+      {editingRemarkRow && typeof document !== 'undefined' && createPortal(
+        <div
+          ref={remarkPopoverRef}
+          style={{ position: 'fixed', top: remarkPopoverPos.top, left: remarkPopoverPos.left }}
+          className="z-[200] w-[280px] rounded-[10px] border border-border bg-white p-2.5 shadow-lg dark:border-[#3a3a3d] dark:bg-[#2a2a2d]"
+        >
+          <textarea
+            autoFocus
+            maxLength={500}
+            rows={4}
+            value={remarkDraft}
+            onChange={(e) => setRemarkDraft(e.target.value)}
+            placeholder="Add a remark…"
+            className="w-full resize-none rounded-md border border-border bg-transparent px-2 py-1.5 text-[12px] text-foreground outline-none focus:border-[#2563EB] dark:border-[#3a3a3d]"
+          />
+          <div className="mt-2 flex items-center justify-end gap-1.5">
+            <button
+              type="button"
+              onClick={cancelRemarkEdit}
+              disabled={remarkSaving}
+              className="flex h-8 items-center gap-1 rounded-[8px] border border-[#E5E7EB] bg-white px-2.5 text-[12px] font-medium text-slate-500 transition-colors duration-150 ease-out hover:border-rose-300 hover:bg-rose-50 hover:text-rose-600 disabled:opacity-50 dark:border-[#3a3a3d] dark:bg-[#2a2a2d] dark:text-[#9CA3AF] dark:hover:border-rose-900/60 dark:hover:bg-rose-500/10 dark:hover:text-rose-400"
+            >
+              <X size={13} /> Cancel
+            </button>
+            <button
+              type="button"
+              onClick={() => saveRemark(editingRemarkRow)}
+              disabled={remarkSaving}
+              className="flex h-8 items-center gap-1 rounded-[8px] bg-[#5B5CEB] px-2.5 text-[12px] font-semibold text-white transition-opacity duration-150 ease-out disabled:cursor-not-allowed disabled:opacity-40"
+            >
+              {remarkSaving ? <Loader2 size={13} className="animate-spin" /> : <Check size={13} />} Save
+            </button>
+          </div>
+        </div>,
+        document.body
       )}
       <SettlementHeader icon={Flag} title="Wallet Status" isRefreshing={spinning} onRefresh={fetchData} />
 
@@ -1205,6 +1457,7 @@ export default function SendMoneyWalletStatus() {
                     const showWithdrawal = visibleColumns.some((c) => c.key === 'withdrawal');
                     const showPriority = visibleColumns.some((c) => c.key === 'priority');
                     const showWalletStatus = visibleColumns.some((c) => c.key === 'walletStatus');
+                    const showRemarks = visibleColumns.some((c) => c.key === 'remarks');
                     const isEditingThisRow = editingRowKey === row.key;
                     const priorityValue = isEditingThisRow && editDraft ? editDraft.priority : row.priority;
                     const canSave = rowHasChanges(row, editDraft);
@@ -1299,6 +1552,18 @@ export default function SendMoneyWalletStatus() {
                               <span className={`h-2 w-2 shrink-0 rounded-full ${WALLET_STATUS_DOT[row.walletStatus]}`} />
                               {row.walletStatus}
                             </span>
+                          </div>
+                        )}
+                        {showRemarks && (
+                          <div className="mt-2.5 border-t border-border pt-2.5">
+                            <p className="mb-1 text-[9px] font-medium text-muted-foreground">Remarks</p>
+                            <RemarksCell
+                              remark={row.remark}
+                              updatedBy={row.remarkUpdatedBy}
+                              updatedAt={row.remarkUpdatedAt}
+                              isEditing={editingRemarkKey === row.key}
+                              onOpen={(anchor) => openRemarkEditor(row, anchor)}
+                            />
                           </div>
                         )}
                         <div className="mt-2.5 flex items-center gap-1.5 border-t border-border pt-2.5">

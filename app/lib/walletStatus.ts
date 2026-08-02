@@ -16,6 +16,21 @@ const CASHOUT_END_COL = 'E';
 const SENDMONEY_START_COL = 'F';
 const SENDMONEY_END_COL = 'J';
 
+// Remarks — a separate, independent sparse table (own Shop Name key column,
+// not row-aligned with the Deposit/Withdrawal/Priority/Wallet Status block
+// above): a shop can get a remark without ever touching Priority/Wallet
+// Status, and vice versa. Placed past column J (not inserted before it) so
+// the existing A-E/F-J blocks — already holding real production data — are
+// never disturbed. One blank separator column before each, same convention
+// as app/lib/estimatedOpening.ts's own block spacing.
+const CASHOUT_REMARKS_START_COL = 'L';
+const CASHOUT_REMARKS_END_COL = 'O';
+const SENDMONEY_REMARKS_START_COL = 'Q';
+const SENDMONEY_REMARKS_END_COL = 'T';
+// No auth system exists in this app — same static label convention as
+// app/lib/estimatedOpening.ts's own IMPORTED_BY.
+const REMARK_UPDATED_BY = 'Operations Admin';
+
 export type DepositWithdrawal = 'Yes' | 'No';
 export type Priority = 'Low' | 'Normal' | 'High';
 // '' = never set — a real, displayable state ("—"), not a default to fall
@@ -30,6 +45,22 @@ export type WalletStatusEntry = {
   withdrawal: DepositWithdrawal;
   priority: Priority;
   walletStatus: WalletStatusValue;
+};
+
+// A shop's internal note — independent of Wallet Status/Priority above, per
+// explicit instruction: changing Wallet Status must never overwrite or
+// remove a Remark. `updatedAt` is stored as an ISO string (round-trips
+// exactly; display formatting happens client-side).
+export type WalletRemarkEntry = {
+  remark: string;
+  updatedBy: string;
+  updatedAt: string;
+};
+
+export const DEFAULT_WALLET_REMARK_ENTRY: WalletRemarkEntry = {
+  remark: '',
+  updatedBy: '',
+  updatedAt: '',
 };
 
 export const DEFAULT_WALLET_STATUS_ENTRY: WalletStatusEntry = {
@@ -204,4 +235,133 @@ export async function updateCashoutWalletStatusField(shopName: string, field: Wa
 
 export async function updateSendMoneyWalletStatusField(shopName: string, field: WalletStatusField, value: string): Promise<void> {
   return updateWalletStatusField(SENDMONEY_START_COL, SENDMONEY_END_COL, shopName, field, value);
+}
+
+// Remarks — own independent block (see column constants above). Own Shop
+// Name key column (col 0 of the block) since this table's row set doesn't
+// necessarily match the Deposit/Withdrawal/Priority/Wallet Status block's.
+async function readWalletRemarks(startCol: string, endCol: string): Promise<Map<string, WalletRemarkEntry>> {
+  let rows: string[][];
+  try {
+    rows = await fetchRange(`${SHEET_TITLE}!${startCol}2:${endCol}20000`);
+  } catch {
+    return new Map();
+  }
+
+  const entries = new Map<string, WalletRemarkEntry>();
+  rows.forEach((row) => {
+    const shopName = (row[0] ?? '').trim();
+    if (!shopName) return;
+    entries.set(shopName.toUpperCase(), {
+      remark: (row[1] ?? '').trim(),
+      updatedBy: (row[2] ?? '').trim(),
+      updatedAt: (row[3] ?? '').trim(),
+    });
+  });
+
+  return entries;
+}
+
+export async function readCashoutWalletRemarks(): Promise<Map<string, WalletRemarkEntry>> {
+  return readWalletRemarks(CASHOUT_REMARKS_START_COL, CASHOUT_REMARKS_END_COL);
+}
+
+export async function readSendMoneyWalletRemarks(): Promise<Map<string, WalletRemarkEntry>> {
+  return readWalletRemarks(SENDMONEY_REMARKS_START_COL, SENDMONEY_REMARKS_END_COL);
+}
+
+// Writes the header row for a Remarks block unconditionally (idempotent
+// overwrite, harmless if already present) — the "Wallet Status" sheet tab
+// already exists in production today, so ensureSheetExists' own bootstrap
+// (which only fires on first-ever tab creation) never sees these columns.
+async function ensureRemarksHeader(
+  sheetsApi: ReturnType<typeof google.sheets>,
+  spreadsheetId: string,
+  startCol: string,
+  endCol: string
+): Promise<void> {
+  await sheetsApi.spreadsheets.values.update({
+    spreadsheetId,
+    range: `${SHEET_TITLE}!${startCol}1:${endCol}1`,
+    valueInputOption: 'RAW',
+    requestBody: { values: [['Shop Name', 'Remark', 'Updated By', 'Updated At']] },
+  });
+}
+
+// Finds the shop's existing Remarks row and overwrites all 3 value cells
+// together (Remark/Updated By/Updated At always change as one unit on
+// Save — unlike updateWalletStatusField's single-field-at-a-time edits).
+// Appends a new row if the shop has none yet. An empty-string remark is a
+// valid, intentional value (clearing a remark back out), not skipped.
+async function updateWalletRemark(startCol: string, endCol: string, shopName: string, remark: string): Promise<{ updatedBy: string; updatedAt: string }> {
+  const auth = getAuthClient();
+  const spreadsheetId = getSpreadsheetId();
+  const sheetsApi = google.sheets({ version: 'v4', auth });
+
+  await ensureSheetExists(sheetsApi, spreadsheetId);
+  await ensureRemarksHeader(sheetsApi, spreadsheetId, startCol, endCol);
+
+  const rows = await sheetsApi.spreadsheets.values.get({
+    spreadsheetId,
+    range: `${SHEET_TITLE}!${startCol}2:${endCol}20000`,
+    valueRenderOption: 'UNFORMATTED_VALUE',
+  });
+  const existingRows = rows.data.values ?? [];
+
+  const normalizedShop = shopName.trim().toUpperCase();
+  const rowOffset = existingRows.findIndex((row) => String(row[0] ?? '').trim().toUpperCase() === normalizedShop);
+
+  const updatedBy = REMARK_UPDATED_BY;
+  const updatedAt = new Date().toISOString();
+  const newRow = [shopName, remark, updatedBy, updatedAt];
+
+  if (rowOffset !== -1) {
+    const sheetRow = rowOffset + 2; // data starts at row 2
+    await sheetsApi.spreadsheets.values.update({
+      spreadsheetId,
+      range: `${SHEET_TITLE}!${startCol}${sheetRow}:${endCol}${sheetRow}`,
+      valueInputOption: 'RAW',
+      requestBody: { values: [newRow] },
+    });
+    return { updatedBy, updatedAt };
+  }
+
+  const sheetRow = existingRows.length + 2;
+  await sheetsApi.spreadsheets.values.update({
+    spreadsheetId,
+    range: `${SHEET_TITLE}!${startCol}${sheetRow}:${endCol}${sheetRow}`,
+    valueInputOption: 'RAW',
+    requestBody: { values: [newRow] },
+  });
+  return { updatedBy, updatedAt };
+}
+
+export async function updateCashoutWalletRemark(shopName: string, remark: string): Promise<{ updatedBy: string; updatedAt: string }> {
+  return updateWalletRemark(CASHOUT_REMARKS_START_COL, CASHOUT_REMARKS_END_COL, shopName, remark);
+}
+
+export async function updateSendMoneyWalletRemark(shopName: string, remark: string): Promise<{ updatedBy: string; updatedAt: string }> {
+  return updateWalletRemark(SENDMONEY_REMARKS_START_COL, SENDMONEY_REMARKS_END_COL, shopName, remark);
+}
+
+export type MergedWalletStatusEntry = WalletStatusEntry & WalletRemarkEntry;
+
+// Combines the two independent maps into one per-shop object — additive
+// merge over the union of shop keys, so a shop present in only one side
+// still gets the other side's defaults instead of being dropped.
+export function mergeWalletStatusAndRemarks(
+  status: Map<string, WalletStatusEntry>,
+  remarks: Map<string, WalletRemarkEntry>
+): Record<string, MergedWalletStatusEntry> {
+  const merged: Record<string, MergedWalletStatusEntry> = {};
+  const keys = new Set([...status.keys(), ...remarks.keys()]);
+  keys.forEach((key) => {
+    merged[key] = {
+      ...DEFAULT_WALLET_STATUS_ENTRY,
+      ...(status.get(key) ?? {}),
+      ...DEFAULT_WALLET_REMARK_ENTRY,
+      ...(remarks.get(key) ?? {}),
+    };
+  });
+  return merged;
 }
