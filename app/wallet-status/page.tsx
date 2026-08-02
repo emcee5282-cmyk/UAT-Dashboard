@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { ChevronDown, ChevronUp, ChevronsUpDown, Columns3, Download, RefreshCw, Search, Flag, Check, X, SquarePen, Loader2, Info, MessageSquare, User } from 'lucide-react';
+import { ChevronDown, ChevronUp, ChevronsUpDown, Columns3, Download, RefreshCw, Search, Flag, Check, X, SquarePen, Loader2, Info } from 'lucide-react';
 import * as XLSX from 'xlsx';
 import SettlementHeader from '../components/SettlementHeader';
 import ConnectionErrorState from '../components/ConnectionErrorState';
@@ -527,9 +527,11 @@ function RemarksCell({
       type="button"
       onClick={() => triggerRef.current && onOpen(triggerRef.current)}
       {...(hasRemark ? tooltip.handlers : {})}
-      className={`flex h-7 w-full max-w-full items-center gap-1 overflow-hidden rounded-md px-1.5 text-left transition-colors duration-150 ease-out hover:bg-muted/40 ${isEditing ? 'bg-muted/40' : ''}`}
+      // active:scale — buttons should feel responsive to press (Kowalski:
+      // "buttons must feel responsive"); transition targets only
+      // background-color/transform, never `all`.
+      className={`flex h-7 w-full max-w-full items-center gap-1 overflow-hidden rounded-md px-1.5 text-left transition-[background-color,transform] duration-150 ease-out hover:bg-muted/40 active:scale-[0.97] ${isEditing ? 'bg-muted/40' : ''}`}
     >
-      {hasRemark && <MessageSquare size={12} className="shrink-0 text-muted-foreground" />}
       {hasRemark ? (
         <span className="min-w-0 flex-1 overflow-hidden text-ellipsis whitespace-nowrap text-[12px] font-normal text-slate-700 dark:text-slate-300">{remark}</span>
       ) : (
@@ -541,30 +543,38 @@ function RemarksCell({
         // app pairs everything with) — a deliberate one-off design that
         // stays white regardless of app theme, same treatment a raised
         // info card gets in most dashboards for legibility over any
-        // background.
+        // background. Scales in from the trigger (transform-origin: top —
+        // the arrow's own anchor point) rather than a bare opacity fade,
+        // starting from 0.97 (never scale(0) — Kowalski: nothing in the
+        // real world pops in from nothing).
         <div
-          style={{ position: 'fixed', top: tooltip.pos.top, left: tooltip.pos.left, transform: 'translate(-50%, 0)' }}
-          className={`pointer-events-none z-[9999] max-w-[420px] rounded-[12px] border border-[#E5E7EB] bg-white p-4 text-left shadow-[0_10px_30px_rgba(15,23,42,0.12)] transition-opacity duration-150 ease-out ${tooltip.open ? 'opacity-100' : 'opacity-0'}`}
+          style={{
+            position: 'fixed',
+            top: tooltip.pos.top,
+            left: tooltip.pos.left,
+            transform: `translate(-50%, 0) scale(${tooltip.open ? 1 : 0.97})`,
+            transformOrigin: 'top center',
+          }}
+          className={`pointer-events-none z-[9999] max-w-[420px] rounded-[12px] border border-[#E5E7EB] bg-white p-4 text-left shadow-[0_10px_30px_rgba(15,23,42,0.12)] transition-[opacity,transform] duration-150 ease-out ${tooltip.open ? 'opacity-100' : 'opacity-0'}`}
         >
-          <div className="flex items-center gap-1.5 text-[13px] font-semibold text-[#334155]">
-            <MessageSquare size={14} className="shrink-0" /> Remark
-          </div>
+          <div className="text-[13px] font-semibold text-[#334155]">Remark</div>
           <div className="mt-1.5 whitespace-pre-line break-words text-[13px] font-normal leading-relaxed text-[#334155]">
             {remark}
           </div>
-          {/* Per explicit instruction, kept combined in one block (Admin
-              name + date stacked together under a single "Updated by"
-              line) rather than split into separate "Last Edited By"/"Last
-              Updated" sections — scoped to the hover tooltip only, the
-              editor popover's own "Last Edited" metadata is untouched. */}
-          {updatedBy && (
-            <div className="mt-3 border-t border-[#E5E7EB] pt-3">
-              <div className="flex items-center gap-1.5 text-[11px] font-semibold text-[#64748B]">
-                <User size={12} className="shrink-0" /> Updated by: {updatedBy}
+          {/* Two side-by-side info boxes (Last Update / Updated By) per
+              explicit instruction — subtle tinted background + uppercase
+              micro-label carries the "not plain" polish instead of an
+              icon, matching the removal of the chat-bubble marker above. */}
+          {(updatedBy || updatedAt) && (
+            <div className="mt-3 grid grid-cols-2 gap-2 border-t border-[#E5E7EB] pt-3">
+              <div className="rounded-[8px] bg-[#F8FAFC] px-2.5 py-2">
+                <p className="text-[9px] font-semibold uppercase tracking-wide text-[#94A3B8]">Last Update</p>
+                <p className="mt-0.5 text-[12px] font-semibold text-[#334155]">{updatedAt ? formatRemarkTimestamp(updatedAt) : '—'}</p>
               </div>
-              {updatedAt && (
-                <div className="mt-0.5 text-[12px] font-medium text-[#334155]">{formatRemarkTimestamp(updatedAt)}</div>
-              )}
+              <div className="rounded-[8px] bg-[#F8FAFC] px-2.5 py-2">
+                <p className="text-[9px] font-semibold uppercase tracking-wide text-[#94A3B8]">Updated By</p>
+                <p className="mt-0.5 text-[12px] font-semibold text-[#334155]">{updatedBy || '—'}</p>
+              </div>
             </div>
           )}
           <span className="absolute left-1/2 top-0 h-2 w-2 -translate-x-1/2 -translate-y-1/2 rotate-45 border-l border-t border-[#E5E7EB] bg-white" />
