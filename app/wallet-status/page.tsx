@@ -497,40 +497,52 @@ function formatRemarkTimestamp(iso: string): string {
   return `${get('month')} ${get('day')}, ${get('year')} ${get('hour')}:${get('minute')} ${get('dayPeriod')}`;
 }
 
-// The Remarks trigger — a single-line, ellipsis-truncated value (or an
-// italic "Add Remark" placeholder when empty) that opens the shared,
-// portal-rendered edit popover (see the page component's own
-// `editingRemarkKey`/`RemarkEditorPopover`) on click, and shows the full
-// remark + attribution on hover via the same useBelowTooltip pattern
-// already used by HeaderInfoIcon. Independent of Priority/Wallet Status —
-// no row-wide edit mode gates this.
+// Per explicit instruction, Remarks is no longer independently
+// click-to-edit — it only becomes editable when the row's own Pencil icon
+// is clicked (same row-wide edit mode Priority already uses; see
+// `editing`/`onChange` below, wired from RowDraft.remark). At rest, this
+// is read-only: a single-line, ellipsis-truncated value (or an italic
+// "Add Remark" placeholder when empty) with the full remark + attribution
+// on hover via the same useBelowTooltip pattern already used by
+// HeaderInfoIcon.
 function RemarksCell({
   remark,
   updatedBy,
   updatedAt,
-  isEditing,
-  onOpen,
+  editing,
+  onChange,
 }: {
   remark: string;
   updatedBy: string;
   updatedAt: string;
-  isEditing: boolean;
-  onOpen: (anchor: HTMLElement) => void;
+  editing: boolean;
+  onChange?: (value: string) => void;
 }) {
-  const triggerRef = useRef<HTMLButtonElement>(null);
+  const triggerRef = useRef<HTMLSpanElement>(null);
   const tooltip = useBelowTooltip(triggerRef, { delayMs: REMARKS_TOOLTIP_HOVER_DELAY_MS });
   const hasRemark = remark.trim() !== '';
 
+  // The editable "container" per explicit instruction — only ever
+  // rendered while this row is in edit mode; never visible otherwise.
+  if (editing) {
+    return (
+      <textarea
+        autoFocus
+        maxLength={500}
+        rows={2}
+        value={remark}
+        onChange={(e) => onChange?.(e.target.value)}
+        placeholder="Add remarks…"
+        className="w-full resize-none rounded-md border border-border bg-white px-2 py-1.5 text-[12px] text-foreground outline-none focus:border-[#2563EB] dark:border-[#3a3a3d] dark:bg-[#2a2a2d]"
+      />
+    );
+  }
+
   return (
-    <button
+    <span
       ref={triggerRef}
-      type="button"
-      onClick={() => triggerRef.current && onOpen(triggerRef.current)}
       {...(hasRemark ? tooltip.handlers : {})}
-      // active:scale — buttons should feel responsive to press (Kowalski:
-      // "buttons must feel responsive"); transition targets only
-      // background-color/transform, never `all`.
-      className={`flex h-7 w-full max-w-full items-center gap-1 overflow-hidden rounded-md px-1.5 text-left transition-[background-color,transform] duration-150 ease-out hover:bg-muted/40 active:scale-[0.97] ${isEditing ? 'bg-muted/40' : ''}`}
+      className="flex h-7 w-full max-w-full items-center overflow-hidden"
     >
       {hasRemark ? (
         <span className="min-w-0 flex-1 overflow-hidden text-ellipsis whitespace-nowrap text-[12px] font-normal text-slate-700 dark:text-slate-300">{remark}</span>
@@ -581,7 +593,7 @@ function RemarksCell({
         </div>,
         document.body
       )}
-    </button>
+    </span>
   );
 }
 
@@ -663,11 +675,15 @@ function StatusSelect<T extends string>({
 
 // Deposit/Withdrawal/Wallet Status are computed (see deriveWalletFlags) —
 // Priority is the only field a staff member can actually edit and persist.
-type RowDraft = { priority: Priority };
+// Remarks is now staged in the SAME row-wide draft as Priority — per
+// explicit instruction, Remarks only becomes editable via the row's own
+// Pencil icon (no independent click-to-edit anymore), and a single
+// Save/Cancel commits or discards both fields together.
+type RowDraft = { priority: Priority; remark: string };
 
 function rowHasChanges(row: WalletStatusRow, draft: RowDraft | null): boolean {
   if (!draft) return false;
-  return draft.priority !== row.priority;
+  return draft.priority !== row.priority || draft.remark !== row.remark;
 }
 
 export default function WalletStatus() {
@@ -703,17 +719,6 @@ export default function WalletStatus() {
   const [editingRowKey, setEditingRowKey] = useState<string | null>(null);
   const [editDraft, setEditDraft] = useState<RowDraft | null>(null);
   const [rowSaving, setRowSaving] = useState(false);
-
-  // Remarks' own independent edit state — deliberately separate from
-  // editingRowKey/editDraft above (Priority's row-wide edit mode). A remark
-  // popover and a Priority edit can be open at the same time; they don't
-  // gate each other.
-  const [editingRemarkKey, setEditingRemarkKey] = useState<string | null>(null);
-  const [remarkDraft, setRemarkDraft] = useState('');
-  const [remarkSaving, setRemarkSaving] = useState(false);
-  const [remarkAnchor, setRemarkAnchor] = useState<HTMLElement | null>(null);
-  const [remarkPopoverPos, setRemarkPopoverPos] = useState({ top: 0, left: 0 });
-  const remarkPopoverRef = useRef<HTMLDivElement>(null);
 
   const [isScrolled, setIsScrolled] = useState(false);
   const tableScrollRef = useRef<HTMLDivElement>(null);
@@ -901,14 +906,15 @@ export default function WalletStatus() {
   }, [columnDefs, mounted]);
 
   // Click Edit -> stage a draft (seeded from the row's current saved
-  // Priority) and enter edit mode. Nothing saves until Save is clicked;
-  // Cancel just discards the draft. editingRowKey being a single value
-  // means starting to edit a different row automatically ends the previous
-  // edit — its cells just stop matching and fall back to showing their
-  // saved value.
+  // Priority AND Remark — per explicit instruction, Remarks is no longer
+  // independently editable, only via this same row-wide edit mode) and
+  // enter edit mode. Nothing saves until Save is clicked; Cancel just
+  // discards the draft. editingRowKey being a single value means starting
+  // to edit a different row automatically ends the previous edit — its
+  // cells just stop matching and fall back to showing their saved value.
   const startEdit = useCallback((row: WalletStatusRow) => {
     setEditingRowKey(row.key);
-    setEditDraft({ priority: row.priority });
+    setEditDraft({ priority: row.priority, remark: row.remark });
   }, []);
 
   const cancelEdit = useCallback(() => {
@@ -920,25 +926,53 @@ export default function WalletStatus() {
     setEditDraft((current) => (current ? { ...current, priority: value } : current));
   }, []);
 
-  // The single point where a row's staged Priority edit actually persists,
-  // to the "Wallet Status" sheet tab (see app/lib/walletStatus.ts). On
-  // failure, refetches from the server instead of assuming the write
-  // didn't land.
+  const updateDraftRemark = useCallback((value: string) => {
+    setEditDraft((current) => (current ? { ...current, remark: value } : current));
+  }, []);
+
+  // The single point where a row's staged Priority AND Remark edits
+  // actually persist — to two independent blocks of the same "Wallet
+  // Status" sheet tab (see app/lib/walletStatus.ts), only whichever
+  // actually changed. On failure, refetches from the server instead of
+  // assuming the write didn't land.
   const saveRow = useCallback((row: WalletStatusRow) => {
     if (!editDraft || !rowHasChanges(row, editDraft)) return;
-    const value = editDraft.priority;
+    const priorityChanged = editDraft.priority !== row.priority;
+    const remarkChanged = editDraft.remark !== row.remark;
 
     setRowSaving(true);
     setSaveError(null);
 
-    fetch('/api/wallet-status/update', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ shopName: row.shopName, field: 'priority', value }),
-    })
-      .then((res) => {
-        if (!res.ok) throw new Error('Save failed for priority');
-        setRows((current) => current.map((r) => (r.key === row.key ? { ...r, priority: value } : r)));
+    const priorityRequest = priorityChanged
+      ? fetch('/api/wallet-status/update', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ shopName: row.shopName, field: 'priority', value: editDraft.priority }),
+        }).then((res) => {
+          if (!res.ok) throw new Error('Save failed for priority');
+        })
+      : Promise.resolve();
+
+    const remarkRequest = remarkChanged
+      ? fetch('/api/wallet-status/update-remark', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ shopName: row.shopName, remark: editDraft.remark }),
+        }).then(async (res) => {
+          if (!res.ok) throw new Error('Save failed for remark');
+          return (await res.json()) as { updatedBy: string; updatedAt: string };
+        })
+      : Promise.resolve(null);
+
+    Promise.all([priorityRequest, remarkRequest])
+      .then(([, remarkResult]) => {
+        setRows((current) => current.map((r) => (r.key === row.key ? {
+          ...r,
+          priority: priorityChanged ? editDraft.priority : r.priority,
+          remark: remarkChanged ? editDraft.remark : r.remark,
+          remarkUpdatedBy: remarkResult ? remarkResult.updatedBy : r.remarkUpdatedBy,
+          remarkUpdatedAt: remarkResult ? remarkResult.updatedAt : r.remarkUpdatedAt,
+        } : r)));
         cancelEdit();
         setToast('Changes Saved');
       })
@@ -952,90 +986,6 @@ export default function WalletStatus() {
         setRowSaving(false);
       });
   }, [editDraft, cancelEdit, fetchData]);
-
-  // Opens the shared Remarks popover, anchored to whichever cell/mobile
-  // trigger was clicked. A single editingRemarkKey means starting to edit a
-  // different shop's remark auto-closes the previous popover, same
-  // "one at a time" convention as Priority's editingRowKey — but this state
-  // is entirely separate from it, so a Priority edit and a Remarks edit can
-  // be open simultaneously without conflict.
-  const openRemarkEditor = useCallback((row: WalletStatusRow, anchor: HTMLElement) => {
-    const rect = anchor.getBoundingClientRect();
-    setRemarkPopoverPos({ top: rect.bottom + 6, left: rect.left });
-    setRemarkAnchor(anchor);
-    setEditingRemarkKey(row.key);
-    setRemarkDraft(row.remark);
-  }, []);
-
-  const cancelRemarkEdit = useCallback(() => {
-    setEditingRemarkKey(null);
-    setRemarkDraft('');
-    setRemarkAnchor(null);
-  }, []);
-
-  const saveRemark = useCallback((row: WalletStatusRow) => {
-    setRemarkSaving(true);
-    setSaveError(null);
-
-    fetch('/api/wallet-status/update-remark', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ shopName: row.shopName, remark: remarkDraft }),
-    })
-      .then(async (res) => {
-        if (!res.ok) throw new Error('Save failed for remark');
-        const data: { updatedBy: string; updatedAt: string } = await res.json();
-        setRows((current) => current.map((r) => (r.key === row.key
-          ? { ...r, remark: remarkDraft, remarkUpdatedBy: data.updatedBy, remarkUpdatedAt: data.updatedAt }
-          : r)));
-        cancelRemarkEdit();
-        setToast('Changes Saved');
-      })
-      .catch(() => {
-        setSaveError(`Failed to save remark for ${row.shopName} — reloading to confirm what actually saved.`);
-        setTimeout(() => setSaveError(null), 5000);
-        cancelRemarkEdit();
-        fetchData();
-      })
-      .finally(() => {
-        setRemarkSaving(false);
-      });
-  }, [remarkDraft, cancelRemarkEdit, fetchData]);
-
-  // Click-outside-to-cancel — same convention as this page's other
-  // dropdowns/menus. Ignores clicks on the popover itself or its anchor
-  // trigger (the anchor's own onClick already handles re-opening/toggling).
-  useEffect(() => {
-    if (!editingRemarkKey) return;
-    function handlePointerDown(e: MouseEvent) {
-      const target = e.target as Node;
-      if (remarkPopoverRef.current?.contains(target)) return;
-      if (remarkAnchor?.contains(target)) return;
-      cancelRemarkEdit();
-    }
-    document.addEventListener('mousedown', handlePointerDown);
-    return () => document.removeEventListener('mousedown', handlePointerDown);
-  }, [editingRemarkKey, remarkAnchor, cancelRemarkEdit]);
-
-  // Keeps the popover pinned to its anchor cell if the table scrolls or the
-  // window resizes while it's open (it's a fixed-position portal, so it
-  // wouldn't otherwise move with the row it belongs to).
-  useEffect(() => {
-    if (!editingRemarkKey || !remarkAnchor) return;
-    function reposition() {
-      const rect = remarkAnchor!.getBoundingClientRect();
-      setRemarkPopoverPos({ top: rect.bottom + 6, left: rect.left });
-    }
-    const scrollEl = tableScrollRef.current;
-    scrollEl?.addEventListener('scroll', reposition, { passive: true });
-    window.addEventListener('resize', reposition);
-    return () => {
-      scrollEl?.removeEventListener('scroll', reposition);
-      window.removeEventListener('resize', reposition);
-    };
-  }, [editingRemarkKey, remarkAnchor]);
-
-  const editingRemarkRow = useMemo(() => rows.find((r) => r.key === editingRemarkKey) ?? null, [rows, editingRemarkKey]);
 
   const searchedRows = useMemo(() => {
     const query = searchTerm.toLowerCase();
@@ -1230,21 +1180,30 @@ export default function WalletStatus() {
           <td
             key={key}
             style={{ width: REMARKS_COLUMN_WIDTH_PX, minWidth: REMARKS_COLUMN_WIDTH_PX, maxWidth: REMARKS_COLUMN_WIDTH_PX }}
-            className={`${shopBase} !overflow-visible`}
+            className={`${shopBase} !overflow-visible align-top`}
           >
             <RemarksCell
-              remark={row.remark}
+              remark={isEditingThisRow && editDraft ? editDraft.remark : row.remark}
               updatedBy={row.remarkUpdatedBy}
               updatedAt={row.remarkUpdatedAt}
-              isEditing={editingRemarkKey === row.key}
-              onOpen={(anchor) => openRemarkEditor(row, anchor)}
+              editing={isEditingThisRow}
+              onChange={updateDraftRemark}
             />
           </td>
         );
       case 'walletStatusAction': {
+        // Sticky to the right edge — per explicit instruction, the user
+        // shouldn't have to scroll back across a wide table to reach
+        // Save/Cancel after editing a column near the left/middle (e.g.
+        // Remarks). An opaque background masks scrolled content sliding
+        // underneath; the editing-row tint is mirrored here since a sticky
+        // cell paints over its own row's normal background otherwise.
+        const stickyBg = isEditingThisRow
+          ? 'bg-[#F8F9FF] dark:bg-[#2a2a2d]'
+          : 'bg-white dark:bg-[#1c1c1e]';
         if (!isEditingThisRow) {
           return (
-            <td key={key} style={cellStyle} className={base}>
+            <td key={key} style={cellStyle} className={`${base} sticky right-0 z-[40] ${stickyBg}`}>
               <button
                 type="button"
                 onClick={() => startEdit(row)}
@@ -1259,17 +1218,20 @@ export default function WalletStatus() {
         }
         const canSave = rowHasChanges(row, editDraft);
         return (
-          <td key={key} style={cellStyle} className={base}>
+          <td key={key} style={cellStyle} className={`${base} sticky right-0 z-[40] ${stickyBg}`}>
             <span className="inline-flex items-center gap-1.5">
+              {/* Same size/shape as the Pencil icon above — plain rounded-md
+                  muted button, not the previous bold circular treatment —
+                  per explicit instruction. */}
               <button
                 type="button"
                 onClick={() => saveRow(row)}
                 disabled={!canSave || rowSaving}
                 aria-label="Save Changes"
                 title="Save Changes"
-                className="flex h-10 w-10 items-center justify-center rounded-[10px] bg-[#5B5CEB] text-white transition-[transform,opacity] duration-150 ease-out hover:-translate-y-px disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:translate-y-0"
+                className="flex h-8 w-8 items-center justify-center rounded-md text-muted-foreground transition-colors duration-150 ease-out hover:bg-muted hover:text-foreground disabled:cursor-not-allowed disabled:opacity-40"
               >
-                {rowSaving ? <Loader2 size={16} className="animate-spin" /> : <Check size={16} />}
+                {rowSaving ? <Loader2 size={15} className="animate-spin" /> : <Check size={15} />}
               </button>
               <button
                 type="button"
@@ -1277,9 +1239,9 @@ export default function WalletStatus() {
                 disabled={rowSaving}
                 aria-label="Cancel"
                 title="Cancel"
-                className="flex h-10 w-10 items-center justify-center rounded-[10px] border border-[#E5E7EB] bg-white text-slate-500 transition-colors duration-150 ease-out hover:border-rose-300 hover:bg-rose-50 hover:text-rose-600 disabled:opacity-50 dark:border-[#3a3a3d] dark:bg-[#2a2a2d] dark:text-[#9CA3AF] dark:hover:border-rose-900/60 dark:hover:bg-rose-500/10 dark:hover:text-rose-400"
+                className="flex h-8 w-8 items-center justify-center rounded-md text-muted-foreground transition-colors duration-150 ease-out hover:bg-rose-50 hover:text-rose-600 disabled:opacity-50 dark:hover:bg-rose-500/10 dark:hover:text-rose-400"
               >
-                <X size={16} />
+                <X size={15} />
               </button>
             </span>
           </td>
@@ -1295,56 +1257,6 @@ export default function WalletStatus() {
           <Check size={15} className="shrink-0 text-emerald-500" />
           {toast}
         </div>
-      )}
-      {editingRemarkRow && typeof document !== 'undefined' && createPortal(
-        <div
-          ref={remarkPopoverRef}
-          style={{ position: 'fixed', top: remarkPopoverPos.top, left: remarkPopoverPos.left }}
-          className="z-[200] w-[300px] rounded-[12px] border border-border bg-white p-3 shadow-lg dark:border-[#3a3a3d] dark:bg-[#2a2a2d]"
-        >
-          <p className="mb-1.5 text-[11px] font-semibold text-muted-foreground">Remark</p>
-          <textarea
-            autoFocus
-            maxLength={500}
-            rows={4}
-            value={remarkDraft}
-            onChange={(e) => setRemarkDraft(e.target.value)}
-            placeholder="Add a remark…"
-            className="w-full resize-none rounded-md border border-border bg-transparent px-2 py-1.5 text-[12px] text-foreground outline-none focus:border-[#2563EB] dark:border-[#3a3a3d]"
-          />
-          {/* Current (saved) metadata only — Cancel discards remarkDraft
-              without touching this, Save replaces it only after the
-              request succeeds (see saveRemark), so it never shows an
-              unsaved/optimistic value. */}
-          {editingRemarkRow.remarkUpdatedBy && (
-            <div className="mt-2.5 border-t border-border pt-2.5">
-              <p className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">Last Edited</p>
-              <p className="mt-0.5 text-[12px] font-medium text-foreground">{editingRemarkRow.remarkUpdatedBy}</p>
-              {editingRemarkRow.remarkUpdatedAt && (
-                <p className="text-[11px] text-muted-foreground">{formatRemarkTimestamp(editingRemarkRow.remarkUpdatedAt)}</p>
-              )}
-            </div>
-          )}
-          <div className="mt-2.5 flex items-center justify-end gap-1.5 border-t border-border pt-2.5">
-            <button
-              type="button"
-              onClick={cancelRemarkEdit}
-              disabled={remarkSaving}
-              className="flex h-8 items-center gap-1 rounded-[8px] border border-[#E5E7EB] bg-white px-2.5 text-[12px] font-medium text-slate-500 transition-colors duration-150 ease-out hover:border-rose-300 hover:bg-rose-50 hover:text-rose-600 disabled:opacity-50 dark:border-[#3a3a3d] dark:bg-[#2a2a2d] dark:text-[#9CA3AF] dark:hover:border-rose-900/60 dark:hover:bg-rose-500/10 dark:hover:text-rose-400"
-            >
-              <X size={13} /> Cancel
-            </button>
-            <button
-              type="button"
-              onClick={() => saveRemark(editingRemarkRow)}
-              disabled={remarkSaving}
-              className="flex h-8 items-center gap-1 rounded-[8px] bg-[#5B5CEB] px-2.5 text-[12px] font-semibold text-white transition-opacity duration-150 ease-out disabled:cursor-not-allowed disabled:opacity-40"
-            >
-              {remarkSaving ? <Loader2 size={13} className="animate-spin" /> : <Check size={13} />} Save
-            </button>
-          </div>
-        </div>,
-        document.body
       )}
       <SettlementHeader icon={Flag} title="Wallet Status" isRefreshing={spinning} onRefresh={fetchData} />
 
@@ -1433,7 +1345,7 @@ export default function WalletStatus() {
                           style={col.key === 'remarks'
                             ? { width: REMARKS_COLUMN_WIDTH_PX, minWidth: REMARKS_COLUMN_WIDTH_PX, maxWidth: REMARKS_COLUMN_WIDTH_PX }
                             : colWidthsPx[col.key] ? { width: colWidthsPx[col.key], minWidth: colWidthsPx[col.key] } : undefined}
-                          className={headerCellClasses(col.align)}
+                          className={`${headerCellClasses(col.align)} ${col.key === 'walletStatusAction' ? 'sticky right-0 z-[51] bg-[#FAFAFB] dark:bg-[#252528]' : ''}`}
                         >
                           {loading ? (
                             <div className={`h-3 w-3/5 max-w-[72px] dt-skeleton rounded-md ${col.align === 'right' ? 'ml-auto' : col.align === 'center' ? 'mx-auto' : ''}`} />
@@ -1485,7 +1397,7 @@ export default function WalletStatus() {
                               <td
                                 key={col.key}
                                 style={colWidth ? { width: colWidth, minWidth: colWidth } : undefined}
-                                className="px-4 py-[14px]"
+                                className={`px-4 py-[14px] ${col.key === 'walletStatusAction' ? 'sticky right-0 z-[40] bg-white dark:bg-[#1c1c1e]' : ''}`}
                               >
                                 <div className={`dt-skeleton h-2.5 rounded-md ${width}`} />
                               </td>
@@ -1645,11 +1557,11 @@ export default function WalletStatus() {
                           <div className="mt-2.5 border-t border-border pt-2.5">
                             <p className="mb-1 text-[9px] font-medium text-muted-foreground">Remarks</p>
                             <RemarksCell
-                              remark={row.remark}
+                              remark={isEditingThisRow && editDraft ? editDraft.remark : row.remark}
                               updatedBy={row.remarkUpdatedBy}
                               updatedAt={row.remarkUpdatedAt}
-                              isEditing={editingRemarkKey === row.key}
-                              onOpen={(anchor) => openRemarkEditor(row, anchor)}
+                              editing={isEditingThisRow}
+                              onChange={updateDraftRemark}
                             />
                           </div>
                         )}
