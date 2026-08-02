@@ -918,20 +918,21 @@ export default function AgentBalance() {
       // back to today-only to avoid counting it twice.
       //
       // Widen target: Opening's own "Updated Time" card date IF it's
-      // genuinely stale (older than today). But if that card has ALREADY
-      // ticked over to today while Estimated Balance still hasn't been
-      // confirmed (confirmed live on the Dashboard: Opening's card can flip
-      // to "today" independently of whether yesterday's Settlement/Top Up
-      // were ever folded into today's Opening figure), fall back one
-      // business day instead of snapping straight to today. Same
-      // cashoutLiveCutoff logic as app/page.tsx.
+      // genuinely stale (older than today) AND no valid Estimated Balance
+      // covers today yet. Matches Cashout's own cashoutLiveCutoff formula
+      // in app/page.tsx exactly (already reverted there per explicit
+      // instruction) — no "already ticked to today but unconfirmed"
+      // fallback. This file had been left on the older oneBusinessDayBack
+      // fallback, which kept pulling in a full extra day of Settlement
+      // once Opening's card refreshed for today (confirmed live on
+      // 2026-08-03: YUJI026 showed -3,000,000 Settlement — yesterday's
+      // -2,000,000 row plus today's real -1,000,000 — because the
+      // fallback widened the cutoff to yesterday even though Opening's
+      // card was already fresh for today).
       const businessToday = getBusinessToday();
-      const oneBusinessDayBack = new Date(businessToday.getTime() - 24 * 60 * 60 * 1000);
-      const topUpSettlementCutoff = estimatedOpeningValid
-        ? businessToday
-        : (reportCutoffDate !== null && reportCutoffDate.getTime() < businessToday.getTime())
-          ? reportCutoffDate
-          : oneBusinessDayBack;
+      const topUpSettlementCutoff = (reportCutoffDate !== null && reportCutoffDate.getTime() < businessToday.getTime() && !estimatedOpeningValid)
+        ? reportCutoffDate
+        : businessToday;
 
       const openingRows = openingRawRows
         .slice(1)
