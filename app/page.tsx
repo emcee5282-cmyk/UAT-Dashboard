@@ -1627,29 +1627,36 @@ export default function BalanceOverviewPage() {
       } = await estimatedSendMoneyRes.json();
 
       // Cashout's Opening Balance card figure switches to the sum of
-      // "Estimated Opening" (Assumed Balance) whenever a valid upload exists
-      // for today — same rule as the Balance tab (app/agentbal/page.tsx).
-      // Per explicit instruction: the upload's own "Last Updated" timestamp
-      // being from today's business day is the ONLY trigger. Previously this
-      // also required Opening AG's own "Updated Time" card to still be
-      // showing the previous business day — dropped: confirmed live that
-      // card can advance to "today" on its own well before the real data is
-      // ready, which silently blocked a genuinely valid, current-day upload
-      // from ever being used (Send Money showed 224,127,309.12 — the stale
-      // unoverridden Dashboard figure — while its Estimated Balance summed
-      // to 160,710,340.84, a ~63.4M discrepancy). Otherwise falls back to
-      // the "Dashboard Overview" sheet's own Opening figure, unchanged.
+      // "Estimated Opening" (Assumed Balance) once BOTH hold — same rule as
+      // the Balance tab (app/agentbal/page.tsx):
+      // 1. Opening AG's own "Updated Time" card is still showing the
+      //    PREVIOUS business day (the real reset for today hasn't happened).
+      // 2. The upload's own "Last Updated" timestamp is itself from TODAY's
+      //    business day (a stale, un-refreshed upload must not keep being
+      //    used just because Opening's own reset is also running late).
+      // Otherwise it falls back to the "Dashboard Overview" sheet's own
+      // Opening figure, unchanged. Per explicit instruction, kept as the
+      // original dual-condition check for Cashout specifically — Send
+      // Money's own version below dropped requirement 1 (see its comment).
       const cashoutCutoffDate = parseCashoutReportCutoffDate(openingText);
       const estimatedUploadedAt = estimatedData.uploadedAt ? new Date(estimatedData.uploadedAt) : null;
       const estimatedOpeningValid =
+        cashoutCutoffDate !== null &&
+        cashoutCutoffDate.getTime() < getBusinessToday().getTime() &&
         estimatedUploadedAt !== null &&
         toBusinessDate(estimatedUploadedAt).getTime() === getBusinessToday().getTime();
       const cashoutOpeningOverride = estimatedOpeningValid
         ? Object.values(estimatedData.balancesWithFallback ?? {}).reduce((sum, v) => sum + v, 0)
         : undefined;
 
-      // Send Money's own Opening Balance card figure — same rule as
-      // Cashout's above.
+      // Send Money's own Opening Balance card figure. Per explicit
+      // instruction, this one's validity is gated ONLY on the upload's own
+      // "Last Updated" timestamp being from today's business day — Opening's
+      // own card state is NOT a co-requirement here (confirmed live: that
+      // card can advance to "today" on its own well before the real data is
+      // ready, which silently blocked a genuinely valid, current-day upload
+      // from ever being used — 224,127,309.12 displayed vs an actual
+      // Estimated Balance sum of 160,710,340.84, a ~63.4M discrepancy).
       const sendMoneyCutoffDate = parseSendMoneyReportCutoffDate(openingText);
       const estimatedSendMoneyUploadedAt = estimatedSendMoneyData.uploadedAt ? new Date(estimatedSendMoneyData.uploadedAt) : null;
       const estimatedSendMoneyOpeningValid =
