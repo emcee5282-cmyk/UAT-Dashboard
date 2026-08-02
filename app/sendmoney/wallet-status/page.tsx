@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { ChevronDown, ChevronUp, ChevronsUpDown, Columns3, Download, RefreshCw, Search, Flag, Check, X, SquarePen, Loader2, Info, MessageSquare, User, Clock } from 'lucide-react';
+import { ChevronDown, ChevronUp, ChevronsUpDown, Columns3, Download, RefreshCw, Search, Flag, Check, X, SquarePen, Loader2, Info, MessageSquare, User } from 'lucide-react';
 import * as XLSX from 'xlsx';
 import SettlementHeader from '@/app/components/SettlementHeader';
 import ConnectionErrorState from '@/app/components/ConnectionErrorState';
@@ -545,23 +545,18 @@ function RemarksCell({
           <div className="mt-1.5 whitespace-pre-line break-words text-[13px] font-normal leading-relaxed text-[#334155]">
             {remark}
           </div>
-          {(updatedBy || updatedAt) && (
-            <div className="mt-3 space-y-2.5 border-t border-[#E5E7EB] pt-3">
-              {updatedBy && (
-                <div>
-                  <div className="flex items-center gap-1.5 text-[11px] font-semibold text-[#64748B]">
-                    <User size={12} className="shrink-0" /> Last Edited By
-                  </div>
-                  <div className="mt-0.5 text-[12px] font-medium text-[#334155]">{updatedBy}</div>
-                </div>
-              )}
+          {/* Per explicit instruction, kept combined in one block (Admin
+              name + date stacked together under a single "Updated by"
+              line) rather than split into separate "Last Edited By"/"Last
+              Updated" sections — scoped to the hover tooltip only, the
+              editor popover's own "Last Edited" metadata is untouched. */}
+          {updatedBy && (
+            <div className="mt-3 border-t border-[#E5E7EB] pt-3">
+              <div className="flex items-center gap-1.5 text-[11px] font-semibold text-[#64748B]">
+                <User size={12} className="shrink-0" /> Updated by: {updatedBy}
+              </div>
               {updatedAt && (
-                <div>
-                  <div className="flex items-center gap-1.5 text-[11px] font-semibold text-[#64748B]">
-                    <Clock size={12} className="shrink-0" /> Last Updated
-                  </div>
-                  <div className="mt-0.5 text-[12px] font-medium text-[#334155]">{formatRemarkTimestamp(updatedAt)}</div>
-                </div>
+                <div className="mt-0.5 text-[12px] font-medium text-[#334155]">{formatRemarkTimestamp(updatedAt)}</div>
               )}
             </div>
           )}
