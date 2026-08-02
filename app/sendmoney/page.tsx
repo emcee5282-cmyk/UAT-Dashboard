@@ -202,14 +202,13 @@ export default function SendMoneyDashboardPage() {
       // app/page.tsx.
       //
       // Widen target: Opening's own "UPDATED TIME" card date IF it's
-      // genuinely stale (older than today). But if that card has ALREADY
-      // ticked over to today while Estimated Balance still hasn't been
-      // confirmed (confirmed live: Send Money's card can flip to "today" via
-      // its own refresh independently of whether yesterday's Settlement/
-      // Top Up were ever folded into today's Opening figure — 67 real
-      // Settlement rows totaling ~18.26M went invisible this way, neither
-      // "today" nor shown anywhere), fall back one business day instead of
-      // snapping straight to today.
+      // genuinely stale (older than today) AND no valid Estimated Balance
+      // covers today yet. Per explicit instruction, this now matches
+      // Cashout's own cashoutLiveCutoff formula exactly (app/page.tsx) — no
+      // "already ticked to today but unconfirmed" fallback (the
+      // oneBusinessDayBack widen this page had, closing the gap where Send
+      // Money's Opening card flips to "today" before that day's Settlement/
+      // Top Up are folded in, is dropped for consistency with Cashout).
       // Estimated Balance validity itself is gated ONLY on the upload's own
       // "Last Updated" timestamp being from today's business day — per
       // explicit instruction, Opening's own card state is no longer a
@@ -221,12 +220,9 @@ export default function SendMoneyDashboardPage() {
         estimatedUploadedAt !== null &&
         toBusinessDate(estimatedUploadedAt).getTime() === getBusinessToday().getTime();
       const cutoff = getBusinessToday();
-      const oneBusinessDayBack = new Date(cutoff.getTime() - 24 * 60 * 60 * 1000);
-      const reportCutoffDate = estimatedSendMoneyOpeningValid
-        ? cutoff
-        : (sendMoneyCutoffDate !== null && sendMoneyCutoffDate.getTime() < cutoff.getTime())
-          ? sendMoneyCutoffDate
-          : oneBusinessDayBack;
+      const reportCutoffDate = (sendMoneyCutoffDate !== null && sendMoneyCutoffDate.getTime() < cutoff.getTime() && !estimatedSendMoneyOpeningValid)
+        ? sendMoneyCutoffDate
+        : cutoff;
 
       // Send Money's own roster lives in cols L-O (indices 11-14) of the same
       // "Opening AG" sheet Cashout uses for cols A-D.

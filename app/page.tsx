@@ -1681,27 +1681,23 @@ export default function BalanceOverviewPage() {
       // Per explicit instruction, Cashout's own cutoff is back to this
       // original two-condition rule (Opening genuinely stale AND Estimated
       // not valid) — no "already ticked to today but unconfirmed" fallback.
-      // Send Money's own version below keeps that fallback (see its
-      // comment) — the two are intentionally asymmetric now.
+      // Send Money's own version below now matches this same formula (see
+      // its own comment) — the two are intentionally symmetric again.
       const cutoff = getBusinessToday();
-      const oneBusinessDayBack = new Date(cutoff.getTime() - 24 * 60 * 60 * 1000);
       const cashoutLiveCutoff = (cashoutCutoffDate !== null && cashoutCutoffDate.getTime() < cutoff.getTime() && !estimatedOpeningValid)
         ? cashoutCutoffDate
         : cutoff;
-      // Widen target: Opening's own "Updated Time" card date IF it's
-      // genuinely stale (older than today). But if that card has ALREADY
-      // ticked over to today while Estimated Balance still hasn't been
-      // confirmed (confirmed live: Send Money's card can flip to "today" via
-      // its own refresh independently of whether yesterday's Settlement/Top
-      // Up were ever folded into today's Opening figure — 67 real Send
-      // Money Settlement rows totaling ~18.26M went invisible this way,
-      // neither "today" nor shown anywhere), fall back one business day
-      // instead of snapping straight to today.
-      const sendMoneyLiveCutoff = estimatedSendMoneyOpeningValid
-        ? cutoff
-        : (sendMoneyCutoffDate !== null && sendMoneyCutoffDate.getTime() < cutoff.getTime())
-          ? sendMoneyCutoffDate
-          : oneBusinessDayBack;
+      // Per explicit instruction, Send Money's own cutoff now matches
+      // Cashout's cashoutLiveCutoff formula exactly (same two-condition
+      // rule, own data source) — no "already ticked to today but
+      // unconfirmed" fallback. This re-admits the gap the oneBusinessDayBack
+      // fallback (30765ed) had closed — Send Money's Opening card can flip
+      // to "today" on its own before that day's Settlement/Top Up are
+      // folded in — but per instruction, consistency with Cashout's rule
+      // takes priority.
+      const sendMoneyLiveCutoff = (sendMoneyCutoffDate !== null && sendMoneyCutoffDate.getTime() < cutoff.getTime() && !estimatedSendMoneyOpeningValid)
+        ? sendMoneyCutoffDate
+        : cutoff;
       const cashoutTopUpStlm = computeCashoutTopUpStlm(agstlmText, cashoutLiveCutoff);
       const sendMoneyTopUpStlm = computeSendMoneyTopUpStlm(bundleText, sendMoneyLiveCutoff);
 

@@ -782,23 +782,18 @@ export default function SendMoneyAgentBalance() {
       // back to today-only to avoid counting it twice.
       //
       // Widen target: Opening's own "UPDATED TIME" card date IF it's
-      // genuinely stale (older than today). But if that card has ALREADY
-      // ticked over to today while Estimated Balance still hasn't been
-      // confirmed (confirmed live on the Dashboard: Opening's card can flip
-      // to "today" independently of whether yesterday's Settlement/Top Up
-      // were ever folded into today's Opening figure), fall back one
-      // business day instead of snapping straight to today. Same
-      // sendMoneyLiveCutoff logic as app/page.tsx / app/sendmoney/page.tsx —
-      // per explicit instruction, so this page's Company Balance and the
-      // Dashboard's own Top Up/Settlement never disagree (same figures
-      // whether read here or exported from this page).
+      // genuinely stale (older than today) AND no valid Estimated Balance
+      // covers today yet. Per explicit instruction, this now matches
+      // Cashout's own cashoutLiveCutoff formula exactly (app/page.tsx /
+      // app/agentbal/page.tsx) — no "already ticked to today but
+      // unconfirmed" fallback (the oneBusinessDayBack widen this page had is
+      // dropped for consistency with Cashout), so this page's Company
+      // Balance and the Dashboard's own Top Up/Settlement never disagree
+      // (same figures whether read here or exported from this page).
       const businessToday = getBusinessToday();
-      const oneBusinessDayBack = new Date(businessToday.getTime() - 24 * 60 * 60 * 1000);
-      const topUpSettlementCutoff = estimatedOpeningValid
-        ? businessToday
-        : (reportCutoffDate !== null && reportCutoffDate.getTime() < businessToday.getTime())
-          ? reportCutoffDate
-          : oneBusinessDayBack;
+      const topUpSettlementCutoff = (reportCutoffDate !== null && reportCutoffDate.getTime() < businessToday.getTime() && !estimatedOpeningValid)
+        ? reportCutoffDate
+        : businessToday;
 
       // Send Money's own roster lives in cols L-O (indices 11-14) of the same
       // "Opening AG" sheet Cashout uses for cols A-D — a separate ~9,983-row
