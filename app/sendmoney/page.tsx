@@ -209,14 +209,21 @@ export default function SendMoneyDashboardPage() {
       // oneBusinessDayBack widen this page had, closing the gap where Send
       // Money's Opening card flips to "today" before that day's Settlement/
       // Top Up are folded in, is dropped for consistency with Cashout).
-      // Estimated Balance validity itself is gated ONLY on the upload's own
-      // "Last Updated" timestamp being from today's business day — per
-      // explicit instruction, Opening's own card state is no longer a
-      // co-requirement here either (see the widen-cutoff comment above for
-      // why that card can't be trusted as a freshness signal).
+      // Estimated Balance validity is gated on BOTH conditions again,
+      // matching Cashout's exact dual-condition rule (app/page.tsx): (1)
+      // Opening's own "Updated Time" card is still showing the PREVIOUS
+      // business day, AND (2) the upload's own "Last Updated" timestamp is
+      // itself from TODAY's business day. Once Opening's card refreshes for
+      // today, this must turn off even if a same-day Estimated upload still
+      // exists — confirmed live on 2026-08-02: a stale 3:26 AM upload kept
+      // overriding Opening PS's own genuinely-refreshed 9:20 AM figure under
+      // the single-condition rule, an ~18.14M mismatch (see app/page.tsx's
+      // own comment for the exact numbers).
       const sendMoneyCutoffDate = parseSendMoneyReportCutoffDate(openingText);
       const estimatedUploadedAt = estimatedData.uploadedAt ? new Date(estimatedData.uploadedAt) : null;
       const estimatedSendMoneyOpeningValid =
+        sendMoneyCutoffDate !== null &&
+        sendMoneyCutoffDate.getTime() < getBusinessToday().getTime() &&
         estimatedUploadedAt !== null &&
         toBusinessDate(estimatedUploadedAt).getTime() === getBusinessToday().getTime();
       const cutoff = getBusinessToday();

@@ -1650,16 +1650,25 @@ export default function BalanceOverviewPage() {
         : undefined;
 
       // Send Money's own Opening Balance card figure. Per explicit
-      // instruction, this one's validity is gated ONLY on the upload's own
-      // "Last Updated" timestamp being from today's business day — Opening's
-      // own card state is NOT a co-requirement here (confirmed live: that
-      // card can advance to "today" on its own well before the real data is
-      // ready, which silently blocked a genuinely valid, current-day upload
-      // from ever being used — 224,127,309.12 displayed vs an actual
-      // Estimated Balance sum of 160,710,340.84, a ~63.4M discrepancy).
+      // instruction, this now matches Cashout's exact dual-condition rule
+      // again: BOTH (1) Opening's own "Updated Time" card is still showing
+      // the PREVIOUS business day, AND (2) the upload's own "Last Updated"
+      // timestamp is itself from TODAY's business day. Once Opening's card
+      // refreshes for today, the override turns off and the live "Dashboard
+      // Overview" figure wins even if a same-day Estimated upload still
+      // exists — confirmed live on 2026-08-02: Opening PS refreshed to
+      // 142,446,292.84 (matching Dashboard Overview) at 9:20 AM, but an
+      // earlier 3:26 AM upload's stale Estimated sum (160,584,473.94) kept
+      // overriding it under the single-condition rule, a ~18.14M mismatch.
+      // (The single-condition rule was introduced to fix the OPPOSITE
+      // failure — Opening's card ticking to "today" before its own numbers
+      // were ready — but that only matters while Opening is still stale;
+      // once it's genuinely refreshed, the live figure must win.)
       const sendMoneyCutoffDate = parseSendMoneyReportCutoffDate(openingText);
       const estimatedSendMoneyUploadedAt = estimatedSendMoneyData.uploadedAt ? new Date(estimatedSendMoneyData.uploadedAt) : null;
       const estimatedSendMoneyOpeningValid =
+        sendMoneyCutoffDate !== null &&
+        sendMoneyCutoffDate.getTime() < getBusinessToday().getTime() &&
         estimatedSendMoneyUploadedAt !== null &&
         toBusinessDate(estimatedSendMoneyUploadedAt).getTime() === getBusinessToday().getTime();
       const sendMoneyOpeningOverride = estimatedSendMoneyOpeningValid

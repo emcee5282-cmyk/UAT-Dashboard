@@ -761,14 +761,21 @@ export default function SendMoneyAgentBalance() {
       const openingRawRows = parseCsvLines(openingText);
       const reportCutoffDate = parseSendMoneyReportCutoffDate(openingRawRows);
 
-      // Estimated Balance validity is gated ONLY on the upload's own "Last
-      // Updated" timestamp being from today's business day — per explicit
-      // instruction, Opening's own card state is no longer a co-requirement
-      // (confirmed live: that card can advance to "today" on its own well
-      // before the real data is ready, which silently blocked a genuinely
-      // valid, current-day upload from ever being used).
+      // Estimated Balance validity is gated on BOTH conditions again,
+      // matching Cashout's exact dual-condition rule (app/agentbal/
+      // page.tsx): (1) Opening's own "Updated Time" card is still showing
+      // the PREVIOUS business day, AND (2) the upload's own "Last Updated"
+      // timestamp is itself from TODAY's business day. Once Opening's card
+      // refreshes for today, this must turn off even if a same-day
+      // Estimated upload still exists — confirmed live on 2026-08-02: a
+      // stale 3:26 AM upload kept overriding Opening PS's own
+      // genuinely-refreshed 9:20 AM figure under the single-condition rule,
+      // an ~18.14M mismatch (see app/page.tsx's own comment for the exact
+      // numbers).
       const estimatedUploadedAt = estimatedData.uploadedAt ? new Date(estimatedData.uploadedAt) : null;
       const estimatedOpeningValid =
+        reportCutoffDate !== null &&
+        reportCutoffDate.getTime() < getBusinessToday().getTime() &&
         estimatedUploadedAt !== null &&
         toBusinessDate(estimatedUploadedAt).getTime() === getBusinessToday().getTime();
       const estimatedBalances = new Map(Object.entries(estimatedData.balances ?? {}));
