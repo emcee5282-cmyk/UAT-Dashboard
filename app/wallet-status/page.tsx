@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { ChevronDown, ChevronUp, ChevronsUpDown, Columns3, Download, RefreshCw, Search, Flag, Check, X, SquarePen, Loader2, Info, MessageSquare } from 'lucide-react';
+import { ChevronDown, ChevronUp, ChevronsUpDown, Columns3, Download, RefreshCw, Search, Flag, Check, X, SquarePen, Loader2, Info, MessageSquare, User, Clock } from 'lucide-react';
 import * as XLSX from 'xlsx';
 import SettlementHeader from '../components/SettlementHeader';
 import ConnectionErrorState from '../components/ConnectionErrorState';
@@ -528,18 +528,43 @@ function RemarksCell({
         <span className="min-w-0 flex-1 overflow-hidden text-ellipsis whitespace-nowrap text-[12px] font-normal italic text-slate-400 dark:text-slate-500">− Add Remark −</span>
       )}
       {hasRemark && tooltip.rendered && typeof document !== 'undefined' && createPortal(
+        // Light "premium floating card" per spec (explicit literal hex
+        // values, not the semantic dark/light theme tokens the rest of the
+        // app pairs everything with) — a deliberate one-off design that
+        // stays white regardless of app theme, same treatment a raised
+        // info card gets in most dashboards for legibility over any
+        // background.
         <div
           style={{ position: 'fixed', top: tooltip.pos.top, left: tooltip.pos.left, transform: 'translate(-50%, 0)' }}
-          className={`pointer-events-none z-[9999] max-w-[420px] whitespace-pre-line break-words rounded-md bg-[#1F2937] px-3 py-2 text-left text-[11px] font-normal leading-relaxed text-white transition-opacity duration-150 ease-out ${tooltip.open ? 'opacity-100' : 'opacity-0'}`}
+          className={`pointer-events-none z-[9999] max-w-[420px] rounded-[12px] border border-[#E5E7EB] bg-white p-4 text-left shadow-[0_10px_30px_rgba(15,23,42,0.12)] transition-opacity duration-150 ease-out ${tooltip.open ? 'opacity-100' : 'opacity-0'}`}
         >
-          {remark}
-          {updatedBy && (
-            <div className="mt-1.5 space-y-0.5 border-t border-white/15 pt-1.5 text-[10px] text-white/70">
-              <div>Updated by: {updatedBy}</div>
-              {updatedAt && <div>Updated at: {formatRemarkTimestamp(updatedAt)}</div>}
+          <div className="flex items-center gap-1.5 text-[13px] font-semibold text-[#334155]">
+            <MessageSquare size={14} className="shrink-0" /> Remark
+          </div>
+          <div className="mt-1.5 whitespace-pre-line break-words text-[13px] font-normal leading-relaxed text-[#334155]">
+            {remark}
+          </div>
+          {(updatedBy || updatedAt) && (
+            <div className="mt-3 space-y-2.5 border-t border-[#E5E7EB] pt-3">
+              {updatedBy && (
+                <div>
+                  <div className="flex items-center gap-1.5 text-[11px] font-semibold text-[#64748B]">
+                    <User size={12} className="shrink-0" /> Last Edited By
+                  </div>
+                  <div className="mt-0.5 text-[12px] font-medium text-[#334155]">{updatedBy}</div>
+                </div>
+              )}
+              {updatedAt && (
+                <div>
+                  <div className="flex items-center gap-1.5 text-[11px] font-semibold text-[#64748B]">
+                    <Clock size={12} className="shrink-0" /> Last Updated
+                  </div>
+                  <div className="mt-0.5 text-[12px] font-medium text-[#334155]">{formatRemarkTimestamp(updatedAt)}</div>
+                </div>
+              )}
             </div>
           )}
-          <span className="absolute left-1/2 top-0 h-2 w-2 -translate-x-1/2 -translate-y-1/2 rotate-45 bg-[#1F2937]" />
+          <span className="absolute left-1/2 top-0 h-2 w-2 -translate-x-1/2 -translate-y-1/2 rotate-45 border-l border-t border-[#E5E7EB] bg-white" />
         </div>,
         document.body
       )}
@@ -1262,8 +1287,9 @@ export default function WalletStatus() {
         <div
           ref={remarkPopoverRef}
           style={{ position: 'fixed', top: remarkPopoverPos.top, left: remarkPopoverPos.left }}
-          className="z-[200] w-[280px] rounded-[10px] border border-border bg-white p-2.5 shadow-lg dark:border-[#3a3a3d] dark:bg-[#2a2a2d]"
+          className="z-[200] w-[300px] rounded-[12px] border border-border bg-white p-3 shadow-lg dark:border-[#3a3a3d] dark:bg-[#2a2a2d]"
         >
+          <p className="mb-1.5 text-[11px] font-semibold text-muted-foreground">Remark</p>
           <textarea
             autoFocus
             maxLength={500}
@@ -1273,7 +1299,20 @@ export default function WalletStatus() {
             placeholder="Add a remark…"
             className="w-full resize-none rounded-md border border-border bg-transparent px-2 py-1.5 text-[12px] text-foreground outline-none focus:border-[#2563EB] dark:border-[#3a3a3d]"
           />
-          <div className="mt-2 flex items-center justify-end gap-1.5">
+          {/* Current (saved) metadata only — Cancel discards remarkDraft
+              without touching this, Save replaces it only after the
+              request succeeds (see saveRemark), so it never shows an
+              unsaved/optimistic value. */}
+          {editingRemarkRow.remarkUpdatedBy && (
+            <div className="mt-2.5 border-t border-border pt-2.5">
+              <p className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">Last Edited</p>
+              <p className="mt-0.5 text-[12px] font-medium text-foreground">{editingRemarkRow.remarkUpdatedBy}</p>
+              {editingRemarkRow.remarkUpdatedAt && (
+                <p className="text-[11px] text-muted-foreground">{formatRemarkTimestamp(editingRemarkRow.remarkUpdatedAt)}</p>
+              )}
+            </div>
+          )}
+          <div className="mt-2.5 flex items-center justify-end gap-1.5 border-t border-border pt-2.5">
             <button
               type="button"
               onClick={cancelRemarkEdit}
