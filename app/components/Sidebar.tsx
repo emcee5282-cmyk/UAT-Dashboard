@@ -19,7 +19,9 @@ import {
   Home,
   ChevronLeft,
   ChevronRight,
+  ChevronDown,
   Flag,
+  SlidersHorizontal,
 } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { cn } from '@/lib/utils';
@@ -176,6 +178,14 @@ const MONITORING_ITEMS = [
   { href: '/wallet-status', label: 'Wallet Status', icon: Flag, isTransferQueue: false },
 ];
 
+// Not product-scoped (no resolveHref) — Configurations is global nav, same
+// route regardless of Cashout/Send Money. Only one child today; still an
+// array (not hardcoded inline) so a second config page later doesn't need
+// the parent's own toggle/render logic touched.
+const CONFIG_ITEMS = [
+  { href: '/configurations/transfer-queue-settings', label: 'Transfer Queue Settings', icon: SlidersHorizontal },
+];
+
 export default function Sidebar() {
   const pathname = usePathname();
   const searchParams = useSearchParams();
@@ -187,6 +197,12 @@ export default function Sidebar() {
   // open regardless of hover/mouse-leave until explicitly closed (X button
   // or the toggle again), per explicit instruction that it must persist.
   const [panelOpen, setPanelOpen] = useState(false);
+  // Configurations' own expand/collapse — first nested nav item in this
+  // file. Not persisted (unlike panelOpen) since it's a minor accordion,
+  // not a whole-sidebar layout choice; auto-expands below whenever the
+  // user is already on a Configurations page so the active route is never
+  // hidden inside a collapsed parent.
+  const [configExpanded, setConfigExpanded] = useState(false);
   // URL is the single source of truth for the active product — never client
   // state. The ?product= param only matters on shared routes (Balance
   // Overview), where the path alone can't distinguish the two.
@@ -233,6 +249,10 @@ export default function Sidebar() {
     const interval = setInterval(load, 3 * 60 * 1000);
     return () => clearInterval(interval);
   }, []);
+
+  useEffect(() => {
+    if (pathname.startsWith('/configurations')) setConfigExpanded(true);
+  }, [pathname]);
 
   const isMockup = pathname.startsWith('/mockup');
   const rawCount = activeProduct === 'cashout' ? cashoutTransferQueueCount : sendMoneyTransferQueueCount;
@@ -331,6 +351,34 @@ export default function Sidebar() {
                   badge={item.isTransferQueue ? displayCount : null}
                   onClick={() => setMobileOpen(false)}
                 />
+              ))}
+
+              <NavSection label="CONFIGURATION" expanded />
+              <div className="relative">
+                <DockRow
+                  icon={SlidersHorizontal}
+                  label="Configurations"
+                  expanded
+                  tooltip={false}
+                  onClick={() => setConfigExpanded((v) => !v)}
+                />
+                <ChevronDown
+                  size={13}
+                  className={`pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground transition-transform duration-200 ${configExpanded ? 'rotate-180' : ''}`}
+                />
+              </div>
+              {configExpanded && CONFIG_ITEMS.map((item) => (
+                <div key={item.href} className="pl-4">
+                  <DockRow
+                    href={item.href}
+                    icon={item.icon}
+                    label={item.label}
+                    active={pathname === item.href}
+                    expanded
+                    tooltip={false}
+                    onClick={() => setMobileOpen(false)}
+                  />
+                </div>
               ))}
 
               <NavSection label="SETTINGS" expanded />
@@ -452,6 +500,33 @@ export default function Sidebar() {
                   expanded={panelOpen}
                   badge={item.isTransferQueue ? displayCount : null}
                 />
+              ))}
+
+              <NavSection label="CONFIGURATION" expanded={panelOpen} />
+              <div className="relative">
+                <DockRow
+                  icon={SlidersHorizontal}
+                  label="Configurations"
+                  expanded={panelOpen}
+                  onClick={() => setConfigExpanded((v) => !v)}
+                />
+                {panelOpen && (
+                  <ChevronDown
+                    size={13}
+                    className={`pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground transition-transform duration-200 ${configExpanded ? 'rotate-180' : ''}`}
+                  />
+                )}
+              </div>
+              {configExpanded && CONFIG_ITEMS.map((item) => (
+                <div key={item.href} className="pl-4">
+                  <DockRow
+                    href={item.href}
+                    icon={item.icon}
+                    label={item.label}
+                    active={pathname === item.href}
+                    expanded={panelOpen}
+                  />
+                </div>
               ))}
             </>
           )}
