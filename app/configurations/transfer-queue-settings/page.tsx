@@ -14,7 +14,7 @@ import { classifyFetchError, type ClassifiedError, assertAllOk } from '../../lib
 // Plain-word form, not symbols — per explicit instruction, so staff reading
 // either the dropdown or the raw sheet cell understand it immediately.
 type Operator = 'Greater Than' | 'Greater Than or Equal' | 'Less Than' | 'Less Than or Equal' | 'Between' | 'Equal';
-type RuleSection = 'cashout_day' | 'cashout_extended' | 'cashout_247' | 'sendmoney_247';
+type RuleSection = 'cashout_day' | 'cashout_extended' | 'cashout_247' | 'sendmoney_247' | 'sendmoney_bd';
 
 type RuleRow = {
   section: RuleSection;
@@ -56,6 +56,11 @@ const SECTION_META: Record<RuleSection, { emoji: string; title: string; descript
     emoji: '🌙',
     title: '24/7 Configuration',
     description: 'Send Money — every brand except SH, exactly two possible outcomes.',
+  },
+  sendmoney_bd: {
+    emoji: '🏷️',
+    title: 'BD Limit',
+    description: 'Send Money — replaces the old blanket "BD"-wallet-name exclusion with an actual configurable limit.',
   },
 };
 
@@ -144,6 +149,7 @@ function RuleSectionCard({
                   type="text"
                   value={d.queueResult}
                   onChange={(e) => onChangeRow(i, { queueResult: e.target.value })}
+                  placeholder="Queue result…"
                   className={`${INPUT_CLASS} ${isBetween ? 'col-span-2' : 'col-span-5'}`}
                 />
               </div>
@@ -432,6 +438,7 @@ export default function TransferQueueSettingsPage() {
 
             <p className="mb-3 mt-8 text-[13px] font-bold text-foreground">🟢 SEND MONEY</p>
             <RuleSectionCard section="sendmoney_247" rules={rules} drafts={drafts} saving={savingSection === 'sendmoney_247'} onChangeRow={updateDraftRow} onSave={saveSection} onCancel={cancelSection} />
+            <RuleSectionCard section="sendmoney_bd" rules={rules} drafts={drafts} saving={savingSection === 'sendmoney_bd'} onChangeRow={updateDraftRow} onSave={saveSection} onCancel={cancelSection} />
             <BundleSectionCard saved={bundle} drafts={bundleDraft} saving={savingSection === 'bundle'} onChangeField={updateBundleField} onSave={saveBundle} onCancel={cancelBundle} />
           </>
         )}

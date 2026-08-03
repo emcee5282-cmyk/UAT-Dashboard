@@ -11,12 +11,12 @@ import { fetchRange } from './googleSheets';
 //
 // Unlike every other sheet-backed feature in this app (Wallet Status,
 // Estimated Opening — sparse, grow-by-append), this row set is 100% FIXED
-// and bootstrapped once: exactly 18 rule rows (4 cashout_day + 5
-// cashout_extended + 5 cashout_247 + 4 sendmoney_247) and 4 Bundle rows,
-// in a known, unchanging order. That means an update never needs to scan
-// for a matching row — the row's position IS its identity (sheet row
-// `2 + index`, header on row 1) — simpler and more robust than a
-// find-by-value scan, since the very field an admin might rename
+// and bootstrapped once: exactly 20 rule rows (4 cashout_day + 5
+// cashout_extended + 5 cashout_247 + 4 sendmoney_247 + 2 sendmoney_bd) and
+// 3 Bundle rows, in a known, unchanging order. That means an update never
+// needs to scan for a matching row — the row's position IS its identity
+// (sheet row `2 + index`, header on row 1) — simpler and more robust than
+// a find-by-value scan, since the very field an admin might rename
 // (Queue Result) can't double as a lookup key.
 const SHEET_TITLE = 'Transfer Queue Configurations';
 
@@ -27,7 +27,7 @@ const RULES_END_COL = 'H';
 const BUNDLE_START_COL = 'J';
 const BUNDLE_END_COL = 'M';
 
-export type RuleSection = 'cashout_day' | 'cashout_extended' | 'cashout_247' | 'sendmoney_247';
+export type RuleSection = 'cashout_day' | 'cashout_extended' | 'cashout_247' | 'sendmoney_247' | 'sendmoney_bd';
 // Plain-word form, not symbols (">"/"<=") — per explicit instruction, so
 // staff reading either the UI or the raw sheet cell understand it
 // immediately without decoding shorthand. Stored in the sheet as this
@@ -46,7 +46,7 @@ export type RuleRow = {
   updatedAt: string;
 };
 
-export type BundleFieldName = 'Excluded Brands' | 'Ignored Wallet Keyword' | 'Bundle Enabled' | 'Auto Grouping';
+export type BundleFieldName = 'Excluded Brands' | 'Bundle Enabled' | 'Auto Grouping';
 
 export type BundleField = {
   field: BundleFieldName;
@@ -82,14 +82,21 @@ const DEFAULT_RULES: Omit<RuleRow, 'updatedBy' | 'updatedAt'>[] = [
   { section: 'sendmoney_247', metric: 'Discrepancy', operator: 'Greater Than', value1: 10000, value2: null, queueResult: '24/7 WD Only' },
   { section: 'sendmoney_247', metric: 'Company Balance', operator: 'Greater Than', value1: 45000, value2: null, queueResult: '24/7 WD Only' },
   { section: 'sendmoney_247', metric: 'Company Balance', operator: 'Less Than', value1: 20000, value2: null, queueResult: '24/7 DP + WD' },
+
+  // Per explicit instruction: replaces the old blanket "BD"-wallet-name
+  // exclusion (a flat keyword match in the real code, no threshold at
+  // all) with an actual configurable limit — Company Balance and SDP vs
+  // Company Balance. No real current value exists to bootstrap from (the
+  // live rule is a pure keyword match, not a number), so these start
+  // blank/zero for an admin to fill in themselves.
+  { section: 'sendmoney_bd', metric: 'Company Balance', operator: 'Equal', value1: 0, value2: null, queueResult: '' },
+  { section: 'sendmoney_bd', metric: 'SDP VS Balance', operator: 'Equal', value1: 0, value2: null, queueResult: '' },
 ];
 
-// Forward-looking — no direct current-code equivalent beyond the two real
-// exclusions (SH never queued, "BD"-wallet-name shops excluded); the other
-// two fields have no live behavior to mirror yet.
+// Forward-looking — no direct current-code equivalent beyond "SH never
+// queued"; the other two fields have no live behavior to mirror yet.
 const DEFAULT_BUNDLE: Omit<BundleField, 'updatedBy' | 'updatedAt'>[] = [
   { field: 'Excluded Brands', value: 'SH' },
-  { field: 'Ignored Wallet Keyword', value: 'BD' },
   { field: 'Bundle Enabled', value: 'true' },
   { field: 'Auto Grouping', value: 'true' },
 ];
