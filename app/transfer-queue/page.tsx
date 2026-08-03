@@ -16,6 +16,14 @@ import { rawVal } from '@/app/lib/format';
 import { parseCsvLines } from '../lib/csv';
 import { getBusinessToday } from '../lib/businessDate';
 import { getPreference, setPreference } from '../lib/preferences';
+import { resolveCashoutCorrectGroup, normalizeGroup, type RuleRow } from '../lib/transferQueueRules';
+
+async function fetchEffectiveTransferQueueRules(): Promise<RuleRow[]> {
+  const res = await fetch(`/api/configurations/transfer-queue-settings/effective?t=${Date.now()}`);
+  if (!res.ok) throw new Error('Failed to fetch Transfer Queue configuration');
+  const data: { rules: RuleRow[] } = await res.json();
+  return data.rules;
+}
 
 // Ghost button — copied verbatim from Settlement/Top Up's own toolbar button
 // style, replacing this page's old smaller compact buttons.
@@ -112,90 +120,6 @@ function computeSdpVsBalance(leader: string, sdpRaw: string, sdpNum: number, com
 
 const EXCLUDED_WALLET_STATUSES = ['Wallet With Issue', 'Disconnected', 'No Record'];
 
-type Condition = {
-  sdpGt30000?: boolean;
-  discrepancyGt20000?: boolean;
-  companyBalanceLt20000?: boolean;
-  companyBalanceLt90000?: boolean;
-  companyBalanceBetween35kAnd180k?: boolean;
-  companyBalanceGt200000?: boolean;
-  companyBalanceGt90000?: boolean;
-};
-
-type Rule = { groupName: string; condition: Condition };
-type Base = { base: string; rules: Rule[] };
-
-const SOLO_DAY = (prefix: string): Rule[] => [
-  { groupName: `${prefix}-SOLO - DAY DP + WD`, condition: { companyBalanceLt90000: true } },
-  { groupName: `${prefix}-SOLO - DAY WD`, condition: { sdpGt30000: true, discrepancyGt20000: true, companyBalanceGt90000: true } },
-];
-
-const SOLO_247 = (prefix: string): Rule[] => [
-  { groupName: `${prefix}-SOLO- 24/7 Low balance DP Only`, condition: { companyBalanceLt20000: true } },
-  { groupName: `${prefix}-SOLO - 24/7 DP + WD`, condition: { companyBalanceBetween35kAnd180k: true } },
-  { groupName: `${prefix}-SOLO- 24/7 WD Only`, condition: { companyBalanceGt200000: true } },
-  { groupName: `${prefix}-SOLO - 24/7 Discrepancy / Clear Balance`, condition: { sdpGt30000: true, discrepancyGt20000: true } },
-];
-
-const BASES: Base[] = [
-  { base: 'B1 SOLO DAY', rules: SOLO_DAY('B1') },
-  { base: 'B1 SOLO 24/7', rules: SOLO_247('B1') },
-
-  { base: 'B2 SOLO DAY', rules: SOLO_DAY('B2') },
-  { base: 'B2 SOLO 24/7', rules: SOLO_247('B2') },
-
-  { base: 'B3 SOLO 24/7', rules: SOLO_247('B3') },
-
-  { base: 'B4 SOLO DAY', rules: SOLO_DAY('B4') },
-  { base: 'B4 SOLO 24/7', rules: SOLO_247('B4') },
-
-  { base: 'B5 SOLO DAY', rules: SOLO_DAY('B5') },
-  { base: 'B5 SOLO 24/7', rules: SOLO_247('B5') },
-
-  { base: 'J1 SOLO DAY', rules: SOLO_DAY('J1') },
-  { base: 'J1 SOLO 24/7', rules: SOLO_247('J1') },
-
-  {
-    base: 'K1 SOLO DAY',
-    rules: [
-      { groupName: 'K1 - SOLO - DAY DP + WD', condition: { companyBalanceLt90000: true } },
-      { groupName: 'K1 - SOLO - DAY WD', condition: { sdpGt30000: true, discrepancyGt20000: true, companyBalanceGt90000: true } },
-    ],
-  },
-  { base: 'K1 SOLO 24/7', rules: SOLO_247('K1') },
-
-  {
-    base: 'M1 Day',
-    rules: [
-      { groupName: 'M1 - Day Low balance DP Only', condition: { companyBalanceLt20000: true } },
-      { groupName: 'M1 - Day DP + WD', condition: { companyBalanceBetween35kAnd180k: true } },
-      { groupName: 'M1 - Day WD Only', condition: { companyBalanceGt200000: true } },
-      { groupName: 'M1 - Day Discrepancy / Clear Balance', condition: { sdpGt30000: true, discrepancyGt20000: true } },
-    ],
-  },
-  {
-    base: 'M1 24/7',
-    rules: [
-      { groupName: 'M1 - 24/7 Low Balance DP Only', condition: { companyBalanceLt20000: true } },
-      { groupName: 'M1 - 24/7 DP + WD', condition: { companyBalanceBetween35kAnd180k: true } },
-      { groupName: 'M1 - 24/7 WD Only', condition: { companyBalanceGt200000: true } },
-      { groupName: 'M1 - 24/7 Discrepancy / Clear Balance', condition: { sdpGt30000: true, discrepancyGt20000: true } },
-    ],
-  },
-
-  {
-    base: 'M2 SOLO DAY',
-    rules: [
-      { groupName: 'M2 - SOLO - DAY DP + WD', condition: { companyBalanceLt90000: true } },
-      { groupName: 'M2 - SOLO - DAY WD', condition: { sdpGt30000: true, discrepancyGt20000: true, companyBalanceGt90000: true } },
-    ],
-  },
-  { base: 'M2 SOLO 24/7', rules: SOLO_247('M2') },
-
-  { base: 'T1 SOLO DAY', rules: SOLO_DAY('T1') },
-  { base: 'T1 SOLO 24/7', rules: SOLO_247('T1') },
-];
-
 const BRAND_CODES = ['M1', 'M2', 'B1', 'B2', 'B3', 'B4', 'B5', 'K1', 'J1', 'T1'];
 const BRAND_PRIORITY = ['M1', 'M2', 'B1', 'B2', 'B3', 'B4', 'B5', 'K1', 'J1', 'T1'];
 const SKIP_GROUPS = ['wallet with issue', 'disconnected', 'dc account'];
@@ -242,69 +166,11 @@ function stripBrandSuffix(name: string): string {
   return name;
 }
 
-function normalizeGroup(s: string): string {
-  return s.toUpperCase().replace(/[\s-]+/g, '');
-}
-
 function stripAccountPrefix(raw: string): string {
   const trimmed = raw.trim();
   const idx = trimmed.indexOf(' - ');
   if (idx === -1) return trimmed;
   return trimmed.slice(idx + 3).trim();
-}
-
-function determineBaseLabel(rawGroup: string): string | null {
-  const trimmed = rawGroup.trim();
-  if (!trimmed || trimmed === '-') return null;
-
-  const upper = trimmed.toUpperCase();
-  const noSpaces = upper.replace(/[\s-]+/g, '');
-  const code = BRAND_CODES.find((c) => noSpaces.startsWith(c));
-  if (!code) return null;
-
-  const is247 = upper.includes('24/7');
-  const isDay = upper.includes('DAY');
-  if (!is247 && !isDay) return null;
-  const period = is247 ? '24/7' : 'DAY';
-
-  if (code === 'M1') return period === 'DAY' ? 'M1 Day' : 'M1 24/7';
-  return `${code} SOLO ${period}`;
-}
-
-function checkCondition(condition: Condition, companyBalance: number, sdpVsBalance: number, discrepancy: number): boolean {
-  if (condition.sdpGt30000 && !(sdpVsBalance > 30000)) return false;
-  if (condition.discrepancyGt20000 && !(discrepancy > 20000)) return false;
-  if (condition.companyBalanceLt20000 && !(companyBalance < 20000)) return false;
-  if (condition.companyBalanceLt90000 && !(companyBalance < 90000)) return false;
-  if (condition.companyBalanceBetween35kAnd180k && !(companyBalance >= 35000 && companyBalance <= 180000)) return false;
-  if (condition.companyBalanceGt200000 && !(companyBalance > 200000)) return false;
-  if (condition.companyBalanceGt90000 && !(companyBalance > 90000)) return false;
-  return true;
-}
-
-function reasonForCondition(condition: Condition): string {
-  if (condition.companyBalanceLt20000) return 'Company balance is below 20,000';
-  if (condition.companyBalanceBetween35kAnd180k) return 'Company balance is within normal range';
-  if (condition.companyBalanceGt200000) return 'Company balance exceeded 200,000';
-  if (condition.companyBalanceLt90000) return 'Company balance is below 90,000';
-  if (condition.companyBalanceGt90000) return 'Company balance exceeded 90,000';
-  return '';
-}
-
-function resolveCorrectGroup(rawGroup: string, companyBalance: number, sdpVsBalance: number, discrepancy: number): { groupName: string; remarks: string } | null {
-  const baseLabel = determineBaseLabel(rawGroup);
-  if (!baseLabel) return null;
-
-  const base = BASES.find((b) => b.base === baseLabel);
-  if (!base) return null;
-
-  const specialRule = base.rules.find((rule) => rule.condition.discrepancyGt20000 || rule.condition.sdpGt30000);
-  if (specialRule && discrepancy > 20000) return { groupName: specialRule.groupName, remarks: 'Discrepancy is higher than 20,000' };
-  if (specialRule && sdpVsBalance > 30000) return { groupName: specialRule.groupName, remarks: 'SDP VS Balance exceeded 30,000' };
-
-  const balanceRules = base.rules.filter((rule) => !rule.condition.discrepancyGt20000 && !rule.condition.sdpGt30000);
-  const matched = balanceRules.find((rule) => checkCondition(rule.condition, companyBalance, sdpVsBalance, discrepancy));
-  return matched ? { groupName: matched.groupName, remarks: reasonForCondition(matched.condition) } : null;
 }
 
 type QueueRow = {
@@ -634,10 +500,11 @@ export default function TransferQueue() {
       setLoading(true);
       setError(null);
 
-      const [openingRes, balRes, stlmRes] = await Promise.all([
+      const [openingRes, balRes, stlmRes, rules] = await Promise.all([
         fetch(`/api/opening?t=${Date.now()}`),
         fetch(`/api/agentbal?t=${Date.now()}`),
         fetch(`/api/agstlmtopup?t=${Date.now()}`),
+        fetchEffectiveTransferQueueRules(),
       ]);
 
       await assertAllOk([openingRes, balRes, stlmRes]);
@@ -775,7 +642,7 @@ export default function TransferQueue() {
 
         const currentGroup = bal.group.trim();
         if (currentGroup.toLowerCase().includes('top up')) return;
-        const resolved = resolveCorrectGroup(currentGroup, info.companyBalance, info.sdpVsBalance, info.discrepancy);
+        const resolved = resolveCashoutCorrectGroup(currentGroup, info.companyBalance, info.sdpVsBalance, info.discrepancy, rules);
         if (!resolved) return;
         if (normalizeGroup(currentGroup) === normalizeGroup(resolved.groupName)) return;
 

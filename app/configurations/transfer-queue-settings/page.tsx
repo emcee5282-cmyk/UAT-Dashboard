@@ -35,6 +35,9 @@ type BundleField = {
   updatedAt: string;
 };
 
+type TransferQueueMode = 'production' | 'configuration';
+type MetaConfig = { mode: TransferQueueMode; version: number; updatedBy: string; updatedAt: string };
+
 const OPERATORS: Operator[] = ['Greater Than', 'Greater Than or Equal', 'Less Than', 'Less Than or Equal', 'Between', 'Equal'];
 
 const SECTION_META: Record<RuleSection, { emoji: string; title: string; description: string }> = {
@@ -291,11 +294,70 @@ function BundleSectionCard({
   );
 }
 
+function ModeStatusCard({
+  meta,
+  saving,
+  onToggle,
+}: {
+  meta: MetaConfig | null;
+  saving: boolean;
+  onToggle: () => void;
+}) {
+  if (!meta) return null;
+  const isConfiguration = meta.mode === 'configuration';
+
+  return (
+    <div
+      className={`mb-6 flex items-start justify-between gap-3 rounded-xl border px-4 py-3 ${
+        isConfiguration
+          ? 'border-emerald-200 bg-emerald-50 dark:border-emerald-900/50 dark:bg-emerald-500/10'
+          : 'border-amber-200 bg-amber-50 dark:border-amber-900/50 dark:bg-amber-500/10'
+      }`}
+    >
+      <div className="flex items-start gap-2.5">
+        <span className="text-[14px] leading-none">{isConfiguration ? '🟢' : '🟡'}</span>
+        <div>
+          <p className={`text-[13px] font-semibold ${isConfiguration ? 'text-emerald-800 dark:text-emerald-300' : 'text-amber-800 dark:text-amber-300'}`}>
+            {isConfiguration ? 'Live — Configuration Mode' : 'Rollback — Production Mode'}
+          </p>
+          <p className={`mt-0.5 text-[12px] leading-relaxed ${isConfiguration ? 'text-emerald-700 dark:text-emerald-400/90' : 'text-amber-700 dark:text-amber-400/90'}`}>
+            {isConfiguration
+              ? 'These values are actively used by the live Transfer Queue right now.'
+              : 'The original hardcoded logic is active — every saved value below is being ignored until switched back.'}
+          </p>
+          <p className="mt-1.5 text-[11px] text-muted-foreground">
+            Version v{meta.version}
+            {meta.updatedAt && ` · Last applied ${formatTimestamp(meta.updatedAt)}${meta.updatedBy ? ` by ${meta.updatedBy}` : ''}`}
+          </p>
+        </div>
+      </div>
+
+      <div className="flex shrink-0 items-center gap-2.5 pt-0.5">
+        <span className={`text-[12px] font-semibold ${isConfiguration ? 'text-emerald-700 dark:text-emerald-400' : 'text-amber-700 dark:text-amber-400'}`}>
+          {isConfiguration ? 'Configuration' : 'Production'}
+        </span>
+        <button
+          type="button"
+          onClick={onToggle}
+          disabled={saving}
+          className={`relative h-[30px] w-[52px] shrink-0 cursor-pointer rounded-full border transition-colors duration-200 ease hover:brightness-95 disabled:cursor-not-allowed disabled:opacity-60 ${isConfiguration ? 'border-[#5B5CEB] bg-[#5B5CEB]' : 'border-[#D1D5DB] bg-[#E5E7EB] dark:border-[#4a4a4d] dark:bg-[#3a3a3d]'}`}
+        >
+          <span
+            className={`absolute left-[3px] top-[3px] h-6 w-6 rounded-full bg-white transition-transform duration-200 ease ${isConfiguration ? 'translate-x-[22px] shadow-[0_2px_6px_rgba(0,0,0,0.15)]' : 'translate-x-0'}`}
+          />
+        </button>
+      </div>
+    </div>
+  );
+}
+
 export default function TransferQueueSettingsPage() {
   const [rules, setRules] = useState<RuleRow[]>([]);
   const [drafts, setDrafts] = useState<RuleRow[]>([]);
   const [bundle, setBundle] = useState<BundleField[]>([]);
   const [bundleDraft, setBundleDraft] = useState<BundleField[]>([]);
+  const [meta, setMeta] = useState<MetaConfig | null>(null);
+  const [savingMode, setSavingMode] = useState(false);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<ClassifiedError | null>(null);
   const [savingSection, setSavingSection] = useState<RuleSection | 'bundle' | null>(null);
@@ -307,17 +369,39 @@ export default function TransferQueueSettingsPage() {
       setError(null);
       const res = await fetch(`/api/configurations/transfer-queue-settings?t=${Date.now()}`);
       await assertAllOk([res]);
-      const data: { rules: RuleRow[]; bundle: BundleField[] } = await res.json();
+      const data: { rules: RuleRow[]; bundle: BundleField[]; meta: MetaConfig } = await res.json();
       setRules(data.rules);
       setDrafts(data.rules);
       setBundle(data.bundle);
       setBundleDraft(data.bundle);
+      setMeta(data.meta);
     } catch (err) {
       setError(classifyFetchError(err instanceof Error ? err.message : String(err)));
     } finally {
       setLoading(false);
     }
   }, []);
+
+  const toggleMode = useCallback(async () => {
+    if (!meta) return;
+    const nextMode: TransferQueueMode = meta.mode === 'configuration' ? 'production' : 'configuration';
+    setSavingMode(true);
+    try {
+      const res = await fetch('/api/configurations/transfer-queue-settings/update-mode', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ mode: nextMode }),
+      });
+      if (!res.ok) throw new Error('Save failed');
+      const data: { updatedBy: string; updatedAt: string } = await res.json();
+      setMeta((current) => (current ? { ...current, mode: nextMode, updatedBy: data.updatedBy, updatedAt: data.updatedAt } : current));
+      setToast(nextMode === 'production' ? 'Switched to Production Mode — live logic reverted to hardcoded defaults.' : 'Switched to Configuration Mode — saved values are now live.');
+    } catch {
+      await fetchData();
+    } finally {
+      setSavingMode(false);
+    }
+  }, [meta, fetchData]);
 
   useEffect(() => {
     fetchData();
@@ -430,19 +514,11 @@ export default function TransferQueueSettingsPage() {
       <PageHeader
         icon={SlidersHorizontal}
         title="Transfer Queue Settings"
-        description="Configure the threshold that determines when a shop becomes eligible for Transfer Queue. Changes are saved only as configuration."
+        description="Configure the threshold that determines when a shop becomes eligible for Transfer Queue. Changes take effect on the live Transfer Queue."
       />
 
       <main className="mx-auto max-w-4xl px-4 pb-10 pt-24 md:px-8">
-        <div className="mb-6 flex items-start gap-2.5 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 dark:border-amber-900/50 dark:bg-amber-500/10">
-          <span className="text-[14px] leading-none">🟡</span>
-          <div>
-            <p className="text-[13px] font-semibold text-amber-800 dark:text-amber-300">Draft Configuration</p>
-            <p className="mt-0.5 text-[12px] leading-relaxed text-amber-700 dark:text-amber-400/90">
-              These values are stored in the backend but are NOT currently used by the live Transfer Queue. The existing Transfer Queue continues using the current production logic until this configuration is approved.
-            </p>
-          </div>
-        </div>
+        <ModeStatusCard meta={meta} saving={savingMode} onToggle={toggleMode} />
 
         {error && <ConnectionErrorState error={error} onRetry={fetchData} />}
 
@@ -467,8 +543,8 @@ export default function TransferQueueSettingsPage() {
         )}
       </main>
 
-      <div className="fixed inset-x-0 bottom-0 z-40 border-t border-amber-200 bg-amber-50 px-4 py-2.5 text-center text-[12px] text-amber-800 dark:border-amber-900/50 dark:bg-amber-500/10 dark:text-amber-300">
-        <span className="font-semibold">Configuration Mode Only</span> — Changes made here are saved for future implementation. Current Transfer Queue computation is NOT affected.
+      <div className="fixed inset-x-0 bottom-0 z-40 border-t border-border bg-white px-4 py-2.5 text-center text-[12px] text-muted-foreground dark:bg-[#2a2a2d]">
+        <span className="font-semibold text-foreground">Live Configuration</span> — Saved changes take effect on the real Transfer Queue (Cashout, Send Money, and the Sidebar badge counts) within about a minute. Use the Production/Configuration switch above for an instant rollback.
       </div>
     </div>
   );

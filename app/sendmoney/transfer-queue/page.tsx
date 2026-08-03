@@ -17,6 +17,14 @@ import { parseCsvLines } from '@/app/lib/csv';
 import { BRAND_CODES as CASHOUT_BRAND_CODES } from '@/app/lib/transferQueueCount';
 import { getBusinessToday } from '@/app/lib/businessDate';
 import { getPreference, setPreference } from '@/app/lib/preferences';
+import { resolveSendMoneyCorrectGroup, shouldExcludeBdWallet, normalizeGroup, type RuleRow } from '@/app/lib/transferQueueRules';
+
+async function fetchEffectiveTransferQueueRules(): Promise<RuleRow[]> {
+  const res = await fetch(`/api/configurations/transfer-queue-settings/effective?t=${Date.now()}`);
+  if (!res.ok) throw new Error('Failed to fetch Transfer Queue configuration');
+  const data: { rules: RuleRow[] } = await res.json();
+  return data.rules;
+}
 
 // Ghost button — copied verbatim from Settlement/Top Up's own toolbar button
 // style, replacing this page's old smaller compact buttons.
@@ -150,30 +158,6 @@ function resolveBrand(groups: string[], agentName: string): string {
   const brand = computeBrand(groups);
   if (brand !== '−' && BRAND_CODES.includes(brand)) return brand;
   return BRAND_CODES.find((code) => agentName.toUpperCase().includes(code)) ?? '−';
-}
-
-function normalizeGroup(s: string): string {
-  return s.toUpperCase().replace(/[\s-]+/g, '');
-}
-
-// Send Money's own Transfer Queue ruleset (confirmed with user): unlike
-// Cashout, there's no DAY variant and no separate "Low Balance"/"Discrepancy"
-// group names — every brand below has exactly two possible correct groups,
-// "{Brand} 24/7 DP + WD" and "{Brand} 24/7 WD Only". SDP VS Balance > 50,000,
-// Discrepancy > 10,000, and Company Balance > 45,000 are independent triggers
-// that all point to WD Only (checked first); Company Balance < 20,000 is the
-// only trigger for DP + WD. 'SH' (Sharing) has no rule and is never queued.
-const QUEUE_BRAND_CODES = ['M1', 'M2', 'B1', 'B2', 'B3', 'B4', 'B5', 'K1', 'J1', 'T1'];
-
-function resolveCorrectGroup(brand: string, companyBalance: number, sdpVsBalance: number, discrepancy: number): { groupName: string; remarks: string } | null {
-  if (!QUEUE_BRAND_CODES.includes(brand)) return null;
-
-  if (sdpVsBalance > 50000) return { groupName: `${brand} 24/7 WD Only`, remarks: 'SDP VS Balance exceeded 50,000' };
-  if (discrepancy > 10000) return { groupName: `${brand} 24/7 WD Only`, remarks: 'Discrepancy is higher than 10,000' };
-  if (companyBalance > 45000) return { groupName: `${brand} 24/7 WD Only`, remarks: 'Company balance exceeded 45,000' };
-  if (companyBalance < 20000) return { groupName: `${brand} 24/7 DP + WD`, remarks: 'Company balance is below 20,000' };
-
-  return null;
 }
 
 type QueueRow = {
@@ -501,10 +485,11 @@ export default function SendMoneyTransferQueue() {
       // BalanceLimit") and /api/sendmoney/stlmtopup ("PS BD STLM + TOPUP",
       // Send Money's own dedicated Settlement + Top Up sheet) — same three
       // sources as /sendmoney/balances.
-      const [openingRes, balRes, stlmRes] = await Promise.all([
+      const [openingRes, balRes, stlmRes, rules] = await Promise.all([
         fetch(`/api/opening?t=${Date.now()}`),
         fetch(`/api/sendmoney/balances?t=${Date.now()}`),
         fetch(`/api/sendmoney/stlmtopup?t=${Date.now()}`),
+        fetchEffectiveTransferQueueRules(),
       ]);
 
       await assertAllOk([openingRes, balRes, stlmRes]);
@@ -644,9 +629,11 @@ export default function SendMoneyTransferQueue() {
         const currentGroup = bal.group.trim();
         if (currentGroup.toLowerCase().includes('top up')) return;
         // Shops whose wallet name carries a "BD" segment (e.g. "D-M2BD-DELTA063-NG")
-        // are excluded from the Transfer Queue entirely, per user instruction.
-        if (bal.walletName.toUpperCase().includes('BD')) return;
-        const resolved = resolveCorrectGroup(info.brand, info.companyBalance, info.sdpVsBalance, info.discrepancy);
+        // are excluded from the Transfer Queue by default (keyword gate, always
+        // checked first) — unless an enabled BD Limit Configuration rule says
+        // otherwise.
+        if (shouldExcludeBdWallet(bal.walletName, info.companyBalance, info.sdpVsBalance, info.discrepancy, rules)) return;
+        const resolved = resolveSendMoneyCorrectGroup(info.brand, info.companyBalance, info.sdpVsBalance, info.discrepancy, rules);
         if (!resolved) return;
         if (normalizeGroup(currentGroup) === normalizeGroup(resolved.groupName)) return;
 

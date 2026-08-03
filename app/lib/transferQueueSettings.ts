@@ -19,13 +19,18 @@ import { fetchRange } from './googleSheets';
 // a find-by-value scan, since the very field an admin might rename
 // (Queue Result) can't double as a lookup key.
 const SHEET_TITLE = 'Transfer Queue Configurations';
+// Separate append-only tab (grows on every save) — the fixed-position model the Rules/
+// Bundle/Meta blocks use can't hold history without overwriting it.
+const HISTORY_SHEET_TITLE = 'Transfer Queue Rule History';
 
 const RULES_START_COL = 'A';
 const RULES_END_COL = 'I';
-// One blank column (J) separates the two blocks, same convention as
+// One blank column (J) separates each block, same convention as
 // app/lib/estimatedOpening.ts's own block spacing.
 const BUNDLE_START_COL = 'K';
 const BUNDLE_END_COL = 'N';
+const META_START_COL = 'P';
+const META_END_COL = 'S';
 
 export type RuleSection = 'cashout_day' | 'cashout_extended' | 'cashout_247' | 'sendmoney_247' | 'sendmoney_bd';
 // Plain-word form, not symbols (">"/"<=") — per explicit instruction, so
@@ -59,6 +64,35 @@ export type BundleField = {
   value: string;
   updatedBy: string;
   updatedAt: string;
+};
+
+// 'production' = ignore the sheet entirely, always evaluate against DEFAULT_RULES (the
+// real hardcoded values) — the instant-rollback kill-switch. 'configuration' = use
+// whatever's actually saved. Lives in the sheet (not an env var) specifically so
+// flipping it takes effect without a redeploy.
+export type TransferQueueMode = 'production' | 'configuration';
+export type MetaFieldName = 'Mode' | 'Version';
+
+export type MetaField = {
+  field: MetaFieldName;
+  value: string;
+  updatedBy: string;
+  updatedAt: string;
+};
+
+export type RuleHistoryEntry = {
+  timestamp: string;
+  section: RuleSection;
+  metric: Metric;
+  oldOperator: Operator;
+  oldValue1: number;
+  oldValue2: number | null;
+  oldQueueResult: string;
+  newOperator: Operator;
+  newValue1: number;
+  newValue2: number | null;
+  newQueueResult: string;
+  updatedBy: string;
 };
 
 // The real, currently-hardcoded values in app/lib/transferQueueCount.ts,
@@ -108,8 +142,23 @@ const DEFAULT_BUNDLE: Omit<BundleField, 'updatedBy' | 'updatedAt'>[] = [
   { field: 'Auto Grouping', value: 'true' },
 ];
 
+// Defaults to 'configuration' — today's DEFAULT_RULES already reproduce production
+// behavior exactly, so there's nothing to "roll back from" until an admin actually
+// changes a value; flipping to 'production' is the emergency kill-switch from then on.
+const DEFAULT_META: Omit<MetaField, 'updatedBy' | 'updatedAt'>[] = [
+  { field: 'Mode', value: 'configuration' },
+  { field: 'Version', value: '1' },
+];
+
 const RULES_FIRST_DATA_ROW = 2;
 const BUNDLE_FIRST_DATA_ROW = 2;
+const META_FIRST_DATA_ROW = 2;
+const HISTORY_FIRST_DATA_ROW = 2;
+const HISTORY_START_COL = 'A';
+const HISTORY_END_COL = 'L';
+
+const RULES_CACHE_TTL_MS = 60_000;
+let _rulesCache: { rules: RuleRow[]; expiresAt: number } | null = null;
 
 // No auth system exists in this app — same static label convention as
 // app/lib/estimatedOpening.ts's own IMPORTED_BY / app/lib/walletStatus.ts's
@@ -146,39 +195,149 @@ function getSpreadsheetId(): string {
   return id;
 }
 
+// Wide enough for every current + reasonably foreseeable block (Rules end at I,
+// Bundle at N, Meta at S) with headroom — explicit, so a fresh tab is never left at
+// whatever narrower default the Sheets API happens to pick.
+const SHEET_MIN_COLUMN_COUNT = 26;
+
 async function ensureSheetExists(sheetsApi: ReturnType<typeof google.sheets>, spreadsheetId: string): Promise<void> {
   const meta = await sheetsApi.spreadsheets.get({ spreadsheetId });
-  const exists = meta.data.sheets?.some((s) => s.properties?.title === SHEET_TITLE);
+  const sheet = meta.data.sheets?.find((s) => s.properties?.title === SHEET_TITLE);
+  const now = new Date().toISOString();
+
+  if (!sheet) {
+    await sheetsApi.spreadsheets.batchUpdate({
+      spreadsheetId,
+      requestBody: {
+        requests: [{
+          addSheet: {
+            properties: { title: SHEET_TITLE, gridProperties: { columnCount: SHEET_MIN_COLUMN_COUNT } },
+          },
+        }],
+      },
+    });
+
+    const ruleRows: (string | number)[][] = [
+      ['Section', 'Metric', 'Operator', 'Value1', 'Value2', 'Queue Result', 'Enabled', 'Updated By', 'Updated At'],
+      ...DEFAULT_RULES.map((r) => [r.section, r.metric, r.operator, r.value1, r.value2 ?? '', r.queueResult, r.enabled ? 'true' : 'false', UPDATED_BY, now]),
+    ];
+    const bundleRows: (string | number)[][] = [
+      ['Field', 'Value', 'Updated By', 'Updated At'],
+      ...DEFAULT_BUNDLE.map((b) => [b.field, b.value, UPDATED_BY, now]),
+    ];
+    const metaRows: (string | number)[][] = [
+      ['Field', 'Value', 'Updated By', 'Updated At'],
+      ...DEFAULT_META.map((m) => [m.field, m.value, UPDATED_BY, now]),
+    ];
+
+    await sheetsApi.spreadsheets.values.update({
+      spreadsheetId,
+      range: `${SHEET_TITLE}!${RULES_START_COL}1`,
+      valueInputOption: 'RAW',
+      requestBody: { values: ruleRows },
+    });
+    await sheetsApi.spreadsheets.values.update({
+      spreadsheetId,
+      range: `${SHEET_TITLE}!${BUNDLE_START_COL}1`,
+      valueInputOption: 'RAW',
+      requestBody: { values: bundleRows },
+    });
+    await sheetsApi.spreadsheets.values.update({
+      spreadsheetId,
+      range: `${SHEET_TITLE}!${META_START_COL}1`,
+      valueInputOption: 'RAW',
+      requestBody: { values: metaRows },
+    });
+    return;
+  }
+
+  // Tab already existed from before the Meta block (Mode/Version) was introduced —
+  // its grid may be too narrow to reach column P:S, and the Meta block itself was
+  // never bootstrapped (the early-return above used to skip it entirely for an
+  // already-existing tab). Backfill both, without touching the Rules/Bundle blocks
+  // that already have real saved data.
+  const sheetId = sheet.properties?.sheetId;
+  const currentColumnCount = sheet.properties?.gridProperties?.columnCount ?? 0;
+  if (sheetId !== undefined && sheetId !== null && currentColumnCount < SHEET_MIN_COLUMN_COUNT) {
+    await sheetsApi.spreadsheets.batchUpdate({
+      spreadsheetId,
+      requestBody: {
+        requests: [{
+          updateSheetProperties: {
+            properties: { sheetId, gridProperties: { columnCount: SHEET_MIN_COLUMN_COUNT } },
+            fields: 'gridProperties.columnCount',
+          },
+        }],
+      },
+    });
+  }
+
+  let metaHeaderExists = false;
+  try {
+    const existingMetaRows = await fetchRange(`${SHEET_TITLE}!${META_START_COL}1:${META_END_COL}1`);
+    metaHeaderExists = existingMetaRows.length > 0 && existingMetaRows[0]?.[0]?.trim() === 'Field';
+  } catch {
+    metaHeaderExists = false;
+  }
+
+  if (!metaHeaderExists) {
+    const metaRows: (string | number)[][] = [
+      ['Field', 'Value', 'Updated By', 'Updated At'],
+      ...DEFAULT_META.map((m) => [m.field, m.value, UPDATED_BY, now]),
+    ];
+    await sheetsApi.spreadsheets.values.update({
+      spreadsheetId,
+      range: `${SHEET_TITLE}!${META_START_COL}1`,
+      valueInputOption: 'RAW',
+      requestBody: { values: metaRows },
+    });
+  }
+}
+
+async function ensureHistorySheetExists(sheetsApi: ReturnType<typeof google.sheets>, spreadsheetId: string): Promise<void> {
+  const meta = await sheetsApi.spreadsheets.get({ spreadsheetId });
+  const exists = meta.data.sheets?.some((s) => s.properties?.title === HISTORY_SHEET_TITLE);
   if (exists) return;
 
   await sheetsApi.spreadsheets.batchUpdate({
     spreadsheetId,
     requestBody: {
-      requests: [{ addSheet: { properties: { title: SHEET_TITLE } } }],
+      requests: [{ addSheet: { properties: { title: HISTORY_SHEET_TITLE } } }],
     },
   });
 
-  const now = new Date().toISOString();
-  const ruleRows: (string | number)[][] = [
-    ['Section', 'Metric', 'Operator', 'Value1', 'Value2', 'Queue Result', 'Enabled', 'Updated By', 'Updated At'],
-    ...DEFAULT_RULES.map((r) => [r.section, r.metric, r.operator, r.value1, r.value2 ?? '', r.queueResult, r.enabled ? 'true' : 'false', UPDATED_BY, now]),
-  ];
-  const bundleRows: (string | number)[][] = [
-    ['Field', 'Value', 'Updated By', 'Updated At'],
-    ...DEFAULT_BUNDLE.map((b) => [b.field, b.value, UPDATED_BY, now]),
-  ];
-
   await sheetsApi.spreadsheets.values.update({
     spreadsheetId,
-    range: `${SHEET_TITLE}!${RULES_START_COL}1`,
+    range: `${HISTORY_SHEET_TITLE}!${HISTORY_START_COL}1`,
     valueInputOption: 'RAW',
-    requestBody: { values: ruleRows },
+    requestBody: {
+      values: [[
+        'Timestamp', 'Section', 'Metric', 'Old Operator', 'Old Value1', 'Old Value2', 'Old Queue Result',
+        'New Operator', 'New Value1', 'New Value2', 'New Queue Result', 'Updated By',
+      ]],
+    },
   });
-  await sheetsApi.spreadsheets.values.update({
+}
+
+async function appendRuleHistory(
+  sheetsApi: ReturnType<typeof google.sheets>,
+  spreadsheetId: string,
+  entry: RuleHistoryEntry
+): Promise<void> {
+  await ensureHistorySheetExists(sheetsApi, spreadsheetId);
+  await sheetsApi.spreadsheets.values.append({
     spreadsheetId,
-    range: `${SHEET_TITLE}!${BUNDLE_START_COL}1`,
+    range: `${HISTORY_SHEET_TITLE}!${HISTORY_START_COL}${HISTORY_FIRST_DATA_ROW}:${HISTORY_END_COL}`,
     valueInputOption: 'RAW',
-    requestBody: { values: bundleRows },
+    insertDataOption: 'INSERT_ROWS',
+    requestBody: {
+      values: [[
+        entry.timestamp, entry.section, entry.metric,
+        entry.oldOperator, entry.oldValue1, entry.oldValue2 ?? '', entry.oldQueueResult,
+        entry.newOperator, entry.newValue1, entry.newValue2 ?? '', entry.newQueueResult,
+        entry.updatedBy,
+      ]],
+    },
   });
 }
 
@@ -196,7 +355,7 @@ function parseNumber(val: string | number | undefined): number {
   return isNaN(num) ? 0 : num;
 }
 
-export async function readTransferQueueRules(): Promise<RuleRow[]> {
+async function fetchTransferQueueRulesFromSheet(): Promise<RuleRow[]> {
   let rows: string[][];
   try {
     rows = await fetchRange(`${SHEET_TITLE}!${RULES_START_COL}${RULES_FIRST_DATA_ROW}:${RULES_END_COL}${RULES_FIRST_DATA_ROW + DEFAULT_RULES.length}`);
@@ -227,6 +386,118 @@ export async function readTransferQueueRules(): Promise<RuleRow[]> {
       updatedAt: (row[8] ?? '').trim(),
     };
   });
+}
+
+// Cached — point 4's "don't read the Sheet on every request." 60s TTL, auto-refetches
+// once expired. Writes (updateTransferQueueRule) invalidate this immediately so an
+// admin's own Save is never masked by stale cached data.
+export async function readTransferQueueRules(): Promise<RuleRow[]> {
+  const now = Date.now();
+  if (_rulesCache && _rulesCache.expiresAt > now) return _rulesCache.rules;
+
+  const rules = await fetchTransferQueueRulesFromSheet();
+  _rulesCache = { rules, expiresAt: now + RULES_CACHE_TTL_MS };
+  return rules;
+}
+
+function invalidateRulesCache(): void {
+  _rulesCache = null;
+}
+
+// What the LIVE Transfer Queue consumers use (Cashout/Send Money pages + Sidebar badge)
+// — distinct from readTransferQueueRules() above, which the Configuration admin page
+// uses so an admin always sees/edits their real saved draft regardless of mode. In
+// 'production' mode this returns the hardcoded DEFAULT_RULES untouched, ignoring
+// whatever's saved — the instant-rollback kill-switch (point 5).
+export async function readEffectiveTransferQueueRules(): Promise<RuleRow[]> {
+  const meta = await readMetaConfig();
+  if (meta.mode === 'production') {
+    return DEFAULT_RULES.map((r) => ({ ...r, updatedBy: '', updatedAt: '' }));
+  }
+  return readTransferQueueRules();
+}
+
+export type MetaConfig = { mode: TransferQueueMode; version: number; updatedBy: string; updatedAt: string };
+
+let _metaCache: { meta: MetaConfig; expiresAt: number } | null = null;
+
+async function fetchMetaConfigFromSheet(): Promise<MetaConfig> {
+  let rows: string[][];
+  try {
+    rows = await fetchRange(`${SHEET_TITLE}!${META_START_COL}${META_FIRST_DATA_ROW}:${META_END_COL}${META_FIRST_DATA_ROW + DEFAULT_META.length}`);
+  } catch {
+    return { mode: 'configuration', version: 1, updatedBy: '', updatedAt: '' };
+  }
+  if (rows.length === 0) return { mode: 'configuration', version: 1, updatedBy: '', updatedAt: '' };
+
+  const modeRow = rows.find((r) => (r[0] ?? '').trim() === 'Mode');
+  const versionRow = rows.find((r) => (r[0] ?? '').trim() === 'Version');
+  const mode: TransferQueueMode = modeRow?.[1]?.trim() === 'production' ? 'production' : 'configuration';
+  const version = versionRow ? parseInt(versionRow[1], 10) || 1 : 1;
+  const updatedBy = modeRow?.[2]?.trim() || versionRow?.[2]?.trim() || '';
+  const updatedAt = [modeRow?.[3]?.trim(), versionRow?.[3]?.trim()].filter(Boolean).sort().pop() ?? '';
+
+  return { mode, version, updatedBy, updatedAt };
+}
+
+// Cached alongside the Rules cache — same "don't hit the Sheet every request" reason.
+export async function readMetaConfig(): Promise<MetaConfig> {
+  const now = Date.now();
+  if (_metaCache && _metaCache.expiresAt > now) return _metaCache.meta;
+
+  const metaConfig = await fetchMetaConfigFromSheet();
+  _metaCache = { meta: metaConfig, expiresAt: now + RULES_CACHE_TTL_MS };
+  return metaConfig;
+}
+
+function invalidateMetaCache(): void {
+  _metaCache = null;
+}
+
+async function writeMetaField(
+  sheetsApi: ReturnType<typeof google.sheets>,
+  spreadsheetId: string,
+  index: number,
+  value: string,
+  updatedAt: string
+): Promise<void> {
+  const field = DEFAULT_META[index];
+  const sheetRow = META_FIRST_DATA_ROW + index;
+  await sheetsApi.spreadsheets.values.update({
+    spreadsheetId,
+    range: `${SHEET_TITLE}!${META_START_COL}${sheetRow}:${META_END_COL}${sheetRow}`,
+    valueInputOption: 'RAW',
+    requestBody: { values: [[field.field, value, UPDATED_BY, updatedAt]] },
+  });
+}
+
+// The "instant rollback" lever (point 5) — flips the Sheet's Mode cell. Takes effect on
+// the next cache refresh (≤60s), no redeploy required.
+export async function setTransferQueueMode(mode: TransferQueueMode): Promise<{ updatedBy: string; updatedAt: string }> {
+  const auth = getAuthClient();
+  const spreadsheetId = getSpreadsheetId();
+  const sheetsApi = google.sheets({ version: 'v4', auth });
+  await ensureSheetExists(sheetsApi, spreadsheetId);
+
+  const updatedAt = new Date().toISOString();
+  await writeMetaField(sheetsApi, spreadsheetId, 0, mode, updatedAt);
+  invalidateMetaCache();
+  return { updatedBy: UPDATED_BY, updatedAt };
+}
+
+// Reads the current version fresh (not the cache) to avoid racing a concurrent bump,
+// then writes version+1. Called on every rule/bundle save (point 6).
+async function bumpVersion(sheetsApi: ReturnType<typeof google.sheets>, spreadsheetId: string): Promise<void> {
+  let currentVersion = 1;
+  try {
+    const rows = await fetchRange(`${SHEET_TITLE}!${META_START_COL}${META_FIRST_DATA_ROW}:${META_END_COL}${META_FIRST_DATA_ROW + DEFAULT_META.length}`);
+    const versionRow = rows.find((r) => (r[0] ?? '').trim() === 'Version');
+    currentVersion = versionRow ? parseInt(versionRow[1], 10) || 1 : 1;
+  } catch {
+    currentVersion = 1;
+  }
+  await writeMetaField(sheetsApi, spreadsheetId, 1, String(currentVersion + 1), new Date().toISOString());
+  invalidateMetaCache();
 }
 
 export async function readBundleConfig(): Promise<BundleField[]> {
@@ -271,6 +542,11 @@ export async function updateTransferQueueRule(
 
   await ensureSheetExists(sheetsApi, spreadsheetId);
 
+  // Read the row's current state BEFORE overwriting it, so the audit-history entry
+  // (point 8) can capture a real "previous value" — not just the new one.
+  const currentRules = await fetchTransferQueueRulesFromSheet();
+  const previous = currentRules[index] ?? DEFAULT_RULES[index];
+
   const rule = DEFAULT_RULES[index];
   const updatedAt = new Date().toISOString();
   const sheetRow = RULES_FIRST_DATA_ROW + index;
@@ -283,6 +559,23 @@ export async function updateTransferQueueRule(
       values: [[rule.section, rule.metric, operator, value1, value2 ?? '', queueResult, enabled ? 'true' : 'false', UPDATED_BY, updatedAt]],
     },
   });
+
+  await appendRuleHistory(sheetsApi, spreadsheetId, {
+    timestamp: updatedAt,
+    section: rule.section,
+    metric: rule.metric,
+    oldOperator: previous.operator,
+    oldValue1: previous.value1,
+    oldValue2: previous.value2,
+    oldQueueResult: previous.queueResult,
+    newOperator: operator,
+    newValue1: value1,
+    newValue2: value2,
+    newQueueResult: queueResult,
+    updatedBy: UPDATED_BY,
+  });
+  await bumpVersion(sheetsApi, spreadsheetId);
+  invalidateRulesCache();
 
   return { updatedBy: UPDATED_BY, updatedAt };
 }
@@ -308,6 +601,8 @@ export async function updateBundleField(index: number, value: string): Promise<{
       values: [[field.field, value, UPDATED_BY, updatedAt]],
     },
   });
+
+  await bumpVersion(sheetsApi, spreadsheetId);
 
   return { updatedBy: UPDATED_BY, updatedAt };
 }
