@@ -142,12 +142,12 @@ function RuleSectionCard({
                 </button>
               </div>
               <div className={`grid grid-cols-12 items-center gap-2 transition-opacity duration-150 ease-out ${d.enabled ? '' : 'opacity-50'}`}>
-                <div className="col-span-3 text-[12px] font-medium text-foreground">{d.metric}</div>
+                <div className="col-span-2 text-[12px] font-medium text-foreground">{d.metric}</div>
                 <select
                   value={d.operator}
                   onChange={(e) => onChangeRow(i, { operator: e.target.value as Operator })}
                   disabled={!d.enabled}
-                  className={`${INPUT_CLASS} col-span-2 disabled:cursor-not-allowed`}
+                  className={`${INPUT_CLASS} col-span-3 disabled:cursor-not-allowed`}
                 >
                   {OPERATORS.map((op) => <option key={op} value={op}>{op}</option>)}
                 </select>
