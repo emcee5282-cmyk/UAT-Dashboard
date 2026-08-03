@@ -119,8 +119,8 @@ function RuleSectionCard({
           const saved = rules[i];
           const isBetween = d.operator === 'Between';
           return (
-            <div key={i} className="rounded-lg border border-border p-3">
-              <div className="mb-3 flex items-center justify-end gap-2.5">
+            <div key={i} className="overflow-hidden rounded-lg border border-border p-3">
+              <div className="mb-3 flex flex-wrap items-center justify-end gap-2.5 pr-1">
                 <span className={`text-[12px] font-semibold ${d.enabled ? 'text-[#5B5CEB]' : 'text-muted-foreground'}`}>
                   {d.enabled ? '🟣 ON' : '⚪ OFF'}
                 </span>
@@ -129,8 +129,15 @@ function RuleSectionCard({
                   onClick={() => onChangeRow(i, { enabled: !d.enabled })}
                   className={`relative h-[30px] w-[52px] shrink-0 cursor-pointer rounded-full border transition-colors duration-200 ease hover:brightness-95 ${d.enabled ? 'border-[#5B5CEB] bg-[#5B5CEB]' : 'border-[#D1D5DB] bg-[#E5E7EB] dark:border-[#4a4a4d] dark:bg-[#3a3a3d]'}`}
                 >
+                  {/* Base position is an explicit left-[3px], never `auto` —
+                      translate is only the incremental shift (22px = track
+                      52 − thumb 24 − 3px inset on each side), so the thumb's
+                      final position is provably always inside the track
+                      regardless of the button's own layout context (the
+                      previous `auto`-based left let the browser's static
+                      positioning push the thumb outside the track). */}
                   <span
-                    className={`absolute top-[3px] h-6 w-6 rounded-full bg-white transition-transform duration-200 ease ${d.enabled ? 'translate-x-[25px] shadow-[0_2px_6px_rgba(0,0,0,0.15)]' : 'translate-x-[3px]'}`}
+                    className={`absolute left-[3px] top-[3px] h-6 w-6 rounded-full bg-white transition-transform duration-200 ease ${d.enabled ? 'translate-x-[22px] shadow-[0_2px_6px_rgba(0,0,0,0.15)]' : 'translate-x-0'}`}
                   />
                 </button>
               </div>
