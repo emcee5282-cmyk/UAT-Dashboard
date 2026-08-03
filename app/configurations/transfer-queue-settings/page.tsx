@@ -121,9 +121,6 @@ function RuleSectionCard({
           return (
             <div key={i} className="overflow-hidden rounded-lg border border-border p-3">
               <div className="mb-3 flex flex-wrap items-center justify-end gap-2.5 pr-1">
-                <span className={`text-[12px] font-semibold ${d.enabled ? 'text-[#5B5CEB]' : 'text-muted-foreground'}`}>
-                  {d.enabled ? '🟣 ON' : '⚪ OFF'}
-                </span>
                 <button
                   type="button"
                   onClick={() => onChangeRow(i, { enabled: !d.enabled })}
