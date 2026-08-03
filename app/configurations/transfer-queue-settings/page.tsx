@@ -23,7 +23,6 @@ type RuleRow = {
   value1: number;
   value2: number | null;
   queueResult: string;
-  enabled: boolean;
   updatedBy: string;
   updatedAt: string;
 };
@@ -80,7 +79,7 @@ function formatTimestamp(iso: string): string {
 }
 
 function rowIsDirty(saved: RuleRow, draft: RuleRow): boolean {
-  return saved.operator !== draft.operator || saved.value1 !== draft.value1 || saved.value2 !== draft.value2 || saved.queueResult !== draft.queueResult || saved.enabled !== draft.enabled;
+  return saved.operator !== draft.operator || saved.value1 !== draft.value1 || saved.value2 !== draft.value2 || saved.queueResult !== draft.queueResult;
 }
 
 const INPUT_CLASS = 'h-8 w-full rounded-md border border-border bg-white px-2 text-[12px] text-foreground outline-none focus:border-[#2563EB] dark:bg-[#1c1c1e]';
@@ -119,35 +118,13 @@ function RuleSectionCard({
           const saved = rules[i];
           const isBetween = d.operator === 'Between';
           return (
-            <div key={i} className="overflow-hidden rounded-lg border border-border p-3">
-              <div className="mb-3 flex flex-wrap items-center justify-end gap-2.5 pr-1">
-                <span className={`text-[12px] font-semibold ${d.enabled ? 'text-[#5B5CEB]' : 'text-muted-foreground'}`}>
-                  {d.enabled ? '🟣 ON' : '⚪ OFF'}
-                </span>
-                <button
-                  type="button"
-                  onClick={() => onChangeRow(i, { enabled: !d.enabled })}
-                  className={`relative h-[30px] w-[52px] shrink-0 cursor-pointer rounded-full border transition-colors duration-200 ease hover:brightness-95 ${d.enabled ? 'border-[#5B5CEB] bg-[#5B5CEB]' : 'border-[#D1D5DB] bg-[#E5E7EB] dark:border-[#4a4a4d] dark:bg-[#3a3a3d]'}`}
-                >
-                  {/* Base position is an explicit left-[3px], never `auto` —
-                      translate is only the incremental shift (22px = track
-                      52 − thumb 24 − 3px inset on each side), so the thumb's
-                      final position is provably always inside the track
-                      regardless of the button's own layout context (the
-                      previous `auto`-based left let the browser's static
-                      positioning push the thumb outside the track). */}
-                  <span
-                    className={`absolute left-[3px] top-[3px] h-6 w-6 rounded-full bg-white transition-transform duration-200 ease ${d.enabled ? 'translate-x-[22px] shadow-[0_2px_6px_rgba(0,0,0,0.15)]' : 'translate-x-0'}`}
-                  />
-                </button>
-              </div>
-              <div className={`grid grid-cols-12 items-center gap-2 transition-opacity duration-150 ease-out ${d.enabled ? '' : 'opacity-50'}`}>
+            <div key={i} className="rounded-lg border border-border p-3">
+              <div className="grid grid-cols-12 items-center gap-2">
                 <div className="col-span-3 text-[12px] font-medium text-foreground">{d.metric}</div>
                 <select
                   value={d.operator}
                   onChange={(e) => onChangeRow(i, { operator: e.target.value as Operator })}
-                  disabled={!d.enabled}
-                  className={`${INPUT_CLASS} col-span-2 disabled:cursor-not-allowed`}
+                  className={`${INPUT_CLASS} col-span-2`}
                 >
                   {OPERATORS.map((op) => <option key={op} value={op}>{op}</option>)}
                 </select>
@@ -155,8 +132,7 @@ function RuleSectionCard({
                   type="number"
                   value={d.value1}
                   onChange={(e) => onChangeRow(i, { value1: Number(e.target.value) })}
-                  disabled={!d.enabled}
-                  className={`${INPUT_CLASS} col-span-2 tabular-nums disabled:cursor-not-allowed`}
+                  className={`${INPUT_CLASS} col-span-2 tabular-nums`}
                 />
                 {isBetween && (
                   <>
@@ -165,8 +141,7 @@ function RuleSectionCard({
                       type="number"
                       value={d.value2 ?? 0}
                       onChange={(e) => onChangeRow(i, { value2: Number(e.target.value) })}
-                      disabled={!d.enabled}
-                      className={`${INPUT_CLASS} col-span-2 tabular-nums disabled:cursor-not-allowed`}
+                      className={`${INPUT_CLASS} col-span-2 tabular-nums`}
                     />
                   </>
                 )}
@@ -175,8 +150,7 @@ function RuleSectionCard({
                   value={d.queueResult}
                   onChange={(e) => onChangeRow(i, { queueResult: e.target.value })}
                   placeholder="Queue result…"
-                  disabled={!d.enabled}
-                  className={`${INPUT_CLASS} ${isBetween ? 'col-span-2' : 'col-span-5'} disabled:cursor-not-allowed`}
+                  className={`${INPUT_CLASS} ${isBetween ? 'col-span-2' : 'col-span-5'}`}
                 />
               </div>
               {/* Per-row (not just per-section) so it's clear exactly which
@@ -357,7 +331,7 @@ export default function TransferQueueSettingsPage() {
         const res = await fetch('/api/configurations/transfer-queue-settings/update-rule', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ index: i, operator: d.operator, value1: d.value1, value2: d.value2, queueResult: d.queueResult, enabled: d.enabled }),
+          body: JSON.stringify({ index: i, operator: d.operator, value1: d.value1, value2: d.value2, queueResult: d.queueResult }),
         });
         if (!res.ok) throw new Error('Save failed');
         const data: { updatedBy: string; updatedAt: string } = await res.json();
