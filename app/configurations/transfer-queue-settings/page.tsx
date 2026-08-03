@@ -120,14 +120,18 @@ function RuleSectionCard({
           const isBetween = d.operator === 'Between';
           return (
             <div key={i} className="rounded-lg border border-border p-3">
-              <div className="mb-2 flex items-center justify-between gap-2">
-                <span className={`text-[11px] font-medium ${d.enabled ? 'text-muted-foreground' : 'text-foreground'}`}>{d.enabled ? 'Enabled' : 'Disabled — not applied'}</span>
+              <div className="mb-3 flex items-center justify-end gap-2.5">
+                <span className={`text-[12px] font-semibold ${d.enabled ? 'text-[#5B5CEB]' : 'text-muted-foreground'}`}>
+                  {d.enabled ? '🟣 ON' : '⚪ OFF'}
+                </span>
                 <button
                   type="button"
                   onClick={() => onChangeRow(i, { enabled: !d.enabled })}
-                  className={`relative h-5 w-9 shrink-0 rounded-full border transition-colors duration-150 ease-out ${d.enabled ? 'border-[#5B5CEB] bg-[#5B5CEB]' : 'border-slate-300 bg-slate-200 dark:border-[#4a4a4d] dark:bg-[#3a3a3d]'}`}
+                  className={`relative h-[30px] w-[52px] shrink-0 cursor-pointer rounded-full border transition-colors duration-200 ease hover:brightness-95 ${d.enabled ? 'border-[#5B5CEB] bg-[#5B5CEB]' : 'border-[#D1D5DB] bg-[#E5E7EB] dark:border-[#4a4a4d] dark:bg-[#3a3a3d]'}`}
                 >
-                  <span className={`absolute top-0.5 h-3.5 w-3.5 rounded-full bg-white shadow transition-transform duration-150 ease-out ${d.enabled ? 'translate-x-[18px]' : 'translate-x-0.5'}`} />
+                  <span
+                    className={`absolute top-[3px] h-6 w-6 rounded-full bg-white transition-transform duration-200 ease ${d.enabled ? 'translate-x-[25px] shadow-[0_2px_6px_rgba(0,0,0,0.15)]' : 'translate-x-[3px]'}`}
+                  />
                 </button>
               </div>
               <div className={`grid grid-cols-12 items-center gap-2 transition-opacity duration-150 ease-out ${d.enabled ? '' : 'opacity-50'}`}>
