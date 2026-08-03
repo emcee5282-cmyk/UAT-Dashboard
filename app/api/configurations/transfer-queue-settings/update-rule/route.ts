@@ -1,7 +1,5 @@
 import { NextResponse } from 'next/server';
-import { updateTransferQueueRule, type Operator } from '@/app/lib/transferQueueSettings';
-
-const VALID_OPERATORS: Operator[] = ['>', '>=', '<', '<=', 'Between', 'Equal'];
+import { updateTransferQueueRule, VALID_OPERATORS, type Operator } from '@/app/lib/transferQueueSettings';
 
 export async function POST(request: Request) {
   try {

@@ -28,7 +28,11 @@ const BUNDLE_START_COL = 'J';
 const BUNDLE_END_COL = 'M';
 
 export type RuleSection = 'cashout_day' | 'cashout_extended' | 'cashout_247' | 'sendmoney_247';
-export type Operator = '>' | '>=' | '<' | '<=' | 'Between' | 'Equal';
+// Plain-word form, not symbols (">"/"<=") — per explicit instruction, so
+// staff reading either the UI or the raw sheet cell understand it
+// immediately without decoding shorthand. Stored in the sheet as this
+// same word text, not a symbol/code, for the same reason.
+export type Operator = 'Greater Than' | 'Greater Than or Equal' | 'Less Than' | 'Less Than or Equal' | 'Between' | 'Equal';
 export type Metric = 'SDP VS Balance' | 'Discrepancy' | 'Company Balance';
 
 export type RuleRow = {
@@ -57,27 +61,27 @@ export type BundleField = {
 // today (M1's own "Day" reuses the generic 4-rule 24/7 template) but are
 // independently editable from here on.
 const DEFAULT_RULES: Omit<RuleRow, 'updatedBy' | 'updatedAt'>[] = [
-  { section: 'cashout_day', metric: 'Company Balance', operator: '<', value1: 90000, value2: null, queueResult: 'Day DP + WD' },
-  { section: 'cashout_day', metric: 'SDP VS Balance', operator: '>', value1: 30000, value2: null, queueResult: 'Day WD Only' },
-  { section: 'cashout_day', metric: 'Discrepancy', operator: '>', value1: 20000, value2: null, queueResult: 'Day WD Only' },
-  { section: 'cashout_day', metric: 'Company Balance', operator: '>', value1: 90000, value2: null, queueResult: 'Day WD Only' },
+  { section: 'cashout_day', metric: 'Company Balance', operator: 'Less Than', value1: 90000, value2: null, queueResult: 'Day DP + WD' },
+  { section: 'cashout_day', metric: 'SDP VS Balance', operator: 'Greater Than', value1: 30000, value2: null, queueResult: 'Day WD Only' },
+  { section: 'cashout_day', metric: 'Discrepancy', operator: 'Greater Than', value1: 20000, value2: null, queueResult: 'Day WD Only' },
+  { section: 'cashout_day', metric: 'Company Balance', operator: 'Greater Than', value1: 90000, value2: null, queueResult: 'Day WD Only' },
 
-  { section: 'cashout_extended', metric: 'Company Balance', operator: '<', value1: 20000, value2: null, queueResult: 'Low Balance DP Only' },
+  { section: 'cashout_extended', metric: 'Company Balance', operator: 'Less Than', value1: 20000, value2: null, queueResult: 'Low Balance DP Only' },
   { section: 'cashout_extended', metric: 'Company Balance', operator: 'Between', value1: 35000, value2: 180000, queueResult: 'DP + WD' },
-  { section: 'cashout_extended', metric: 'Company Balance', operator: '>', value1: 200000, value2: null, queueResult: 'WD Only' },
-  { section: 'cashout_extended', metric: 'SDP VS Balance', operator: '>', value1: 30000, value2: null, queueResult: 'Discrepancy / Clear Balance' },
-  { section: 'cashout_extended', metric: 'Discrepancy', operator: '>', value1: 20000, value2: null, queueResult: 'Discrepancy / Clear Balance' },
+  { section: 'cashout_extended', metric: 'Company Balance', operator: 'Greater Than', value1: 200000, value2: null, queueResult: 'WD Only' },
+  { section: 'cashout_extended', metric: 'SDP VS Balance', operator: 'Greater Than', value1: 30000, value2: null, queueResult: 'Discrepancy / Clear Balance' },
+  { section: 'cashout_extended', metric: 'Discrepancy', operator: 'Greater Than', value1: 20000, value2: null, queueResult: 'Discrepancy / Clear Balance' },
 
-  { section: 'cashout_247', metric: 'Company Balance', operator: '<', value1: 20000, value2: null, queueResult: 'Low Balance DP Only' },
+  { section: 'cashout_247', metric: 'Company Balance', operator: 'Less Than', value1: 20000, value2: null, queueResult: 'Low Balance DP Only' },
   { section: 'cashout_247', metric: 'Company Balance', operator: 'Between', value1: 35000, value2: 180000, queueResult: 'DP + WD' },
-  { section: 'cashout_247', metric: 'Company Balance', operator: '>', value1: 200000, value2: null, queueResult: 'WD Only' },
-  { section: 'cashout_247', metric: 'SDP VS Balance', operator: '>', value1: 30000, value2: null, queueResult: 'Discrepancy / Clear Balance' },
-  { section: 'cashout_247', metric: 'Discrepancy', operator: '>', value1: 20000, value2: null, queueResult: 'Discrepancy / Clear Balance' },
+  { section: 'cashout_247', metric: 'Company Balance', operator: 'Greater Than', value1: 200000, value2: null, queueResult: 'WD Only' },
+  { section: 'cashout_247', metric: 'SDP VS Balance', operator: 'Greater Than', value1: 30000, value2: null, queueResult: 'Discrepancy / Clear Balance' },
+  { section: 'cashout_247', metric: 'Discrepancy', operator: 'Greater Than', value1: 20000, value2: null, queueResult: 'Discrepancy / Clear Balance' },
 
-  { section: 'sendmoney_247', metric: 'SDP VS Balance', operator: '>', value1: 50000, value2: null, queueResult: '24/7 WD Only' },
-  { section: 'sendmoney_247', metric: 'Discrepancy', operator: '>', value1: 10000, value2: null, queueResult: '24/7 WD Only' },
-  { section: 'sendmoney_247', metric: 'Company Balance', operator: '>', value1: 45000, value2: null, queueResult: '24/7 WD Only' },
-  { section: 'sendmoney_247', metric: 'Company Balance', operator: '<', value1: 20000, value2: null, queueResult: '24/7 DP + WD' },
+  { section: 'sendmoney_247', metric: 'SDP VS Balance', operator: 'Greater Than', value1: 50000, value2: null, queueResult: '24/7 WD Only' },
+  { section: 'sendmoney_247', metric: 'Discrepancy', operator: 'Greater Than', value1: 10000, value2: null, queueResult: '24/7 WD Only' },
+  { section: 'sendmoney_247', metric: 'Company Balance', operator: 'Greater Than', value1: 45000, value2: null, queueResult: '24/7 WD Only' },
+  { section: 'sendmoney_247', metric: 'Company Balance', operator: 'Less Than', value1: 20000, value2: null, queueResult: '24/7 DP + WD' },
 ];
 
 // Forward-looking — no direct current-code equivalent beyond the two real
@@ -164,10 +168,11 @@ async function ensureSheetExists(sheetsApi: ReturnType<typeof google.sheets>, sp
   });
 }
 
+export const VALID_OPERATORS: Operator[] = ['Greater Than', 'Greater Than or Equal', 'Less Than', 'Less Than or Equal', 'Between', 'Equal'];
+
 function parseOperator(raw: string): Operator {
   const trimmed = raw.trim();
-  if (trimmed === '>' || trimmed === '>=' || trimmed === '<' || trimmed === '<=' || trimmed === 'Between' || trimmed === 'Equal') return trimmed;
-  return 'Equal';
+  return (VALID_OPERATORS as string[]).includes(trimmed) ? (trimmed as Operator) : 'Equal';
 }
 
 function parseNumber(val: string | number | undefined): number {

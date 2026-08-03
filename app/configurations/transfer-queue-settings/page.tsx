@@ -11,7 +11,9 @@ import { classifyFetchError, type ClassifiedError, assertAllOk } from '../../lib
 // client bundle); same "fetch via API route, define a matching local type"
 // convention every other write-capable feature in this app follows (e.g.
 // app/wallet-status/page.tsx re-declaring app/lib/walletStatus.ts's types).
-type Operator = '>' | '>=' | '<' | '<=' | 'Between' | 'Equal';
+// Plain-word form, not symbols — per explicit instruction, so staff reading
+// either the dropdown or the raw sheet cell understand it immediately.
+type Operator = 'Greater Than' | 'Greater Than or Equal' | 'Less Than' | 'Less Than or Equal' | 'Between' | 'Equal';
 type RuleSection = 'cashout_day' | 'cashout_extended' | 'cashout_247' | 'sendmoney_247';
 
 type RuleRow = {
@@ -32,7 +34,7 @@ type BundleField = {
   updatedAt: string;
 };
 
-const OPERATORS: Operator[] = ['>', '>=', '<', '<=', 'Between', 'Equal'];
+const OPERATORS: Operator[] = ['Greater Than', 'Greater Than or Equal', 'Less Than', 'Less Than or Equal', 'Between', 'Equal'];
 
 const SECTION_META: Record<RuleSection, { emoji: string; title: string; description: string }> = {
   cashout_day: {
@@ -97,10 +99,6 @@ function RuleSectionCard({
   const meta = SECTION_META[section];
   const indices = drafts.map((_, i) => i).filter((i) => drafts[i].section === section);
   const hasChanges = indices.some((i) => rowIsDirty(rules[i], drafts[i]));
-  const lastUpdated = indices
-    .map((i) => rules[i])
-    .filter((r) => r.updatedAt)
-    .sort((a, b) => (a.updatedAt < b.updatedAt ? 1 : -1))[0];
 
   return (
     <div className="mb-6 rounded-xl border border-border bg-white p-5 dark:bg-[#2a2a2d]">
@@ -112,49 +110,54 @@ function RuleSectionCard({
       <div className="space-y-2.5">
         {indices.map((i) => {
           const d = drafts[i];
+          const saved = rules[i];
           const isBetween = d.operator === 'Between';
           return (
-            <div key={i} className="grid grid-cols-12 items-center gap-2 rounded-lg border border-border p-3">
-              <div className="col-span-3 text-[12px] font-medium text-foreground">{d.metric}</div>
-              <select
-                value={d.operator}
-                onChange={(e) => onChangeRow(i, { operator: e.target.value as Operator })}
-                className={`${INPUT_CLASS} col-span-2`}
-              >
-                {OPERATORS.map((op) => <option key={op} value={op}>{op}</option>)}
-              </select>
-              <input
-                type="number"
-                value={d.value1}
-                onChange={(e) => onChangeRow(i, { value1: Number(e.target.value) })}
-                className={`${INPUT_CLASS} col-span-2 tabular-nums`}
-              />
-              {isBetween && (
-                <>
-                  <span className="col-span-1 text-center text-[11px] text-muted-foreground">and</span>
-                  <input
-                    type="number"
-                    value={d.value2 ?? 0}
-                    onChange={(e) => onChangeRow(i, { value2: Number(e.target.value) })}
-                    className={`${INPUT_CLASS} col-span-2 tabular-nums`}
-                  />
-                </>
-              )}
-              <input
-                type="text"
-                value={d.queueResult}
-                onChange={(e) => onChangeRow(i, { queueResult: e.target.value })}
-                className={`${INPUT_CLASS} ${isBetween ? 'col-span-2' : 'col-span-5'}`}
-              />
+            <div key={i} className="rounded-lg border border-border p-3">
+              <div className="grid grid-cols-12 items-center gap-2">
+                <div className="col-span-3 text-[12px] font-medium text-foreground">{d.metric}</div>
+                <select
+                  value={d.operator}
+                  onChange={(e) => onChangeRow(i, { operator: e.target.value as Operator })}
+                  className={`${INPUT_CLASS} col-span-2`}
+                >
+                  {OPERATORS.map((op) => <option key={op} value={op}>{op}</option>)}
+                </select>
+                <input
+                  type="number"
+                  value={d.value1}
+                  onChange={(e) => onChangeRow(i, { value1: Number(e.target.value) })}
+                  className={`${INPUT_CLASS} col-span-2 tabular-nums`}
+                />
+                {isBetween && (
+                  <>
+                    <span className="col-span-1 text-center text-[11px] text-muted-foreground">and</span>
+                    <input
+                      type="number"
+                      value={d.value2 ?? 0}
+                      onChange={(e) => onChangeRow(i, { value2: Number(e.target.value) })}
+                      className={`${INPUT_CLASS} col-span-2 tabular-nums`}
+                    />
+                  </>
+                )}
+                <input
+                  type="text"
+                  value={d.queueResult}
+                  onChange={(e) => onChangeRow(i, { queueResult: e.target.value })}
+                  className={`${INPUT_CLASS} ${isBetween ? 'col-span-2' : 'col-span-5'}`}
+                />
+              </div>
+              {/* Per-row (not just per-section) so it's clear exactly which
+                  rule was last touched, per explicit instruction. */}
+              <p className="mt-2 text-[10px] text-muted-foreground">
+                {saved.updatedAt ? `Last updated ${formatTimestamp(saved.updatedAt)} by ${saved.updatedBy}` : 'Never updated'}
+              </p>
             </div>
           );
         })}
       </div>
 
-      <div className="mt-3 flex items-center justify-between">
-        <p className="text-[11px] text-muted-foreground">
-          {lastUpdated ? `Last updated ${formatTimestamp(lastUpdated.updatedAt)} by ${lastUpdated.updatedBy}` : 'Never updated'}
-        </p>
+      <div className="mt-3 flex items-center justify-end">
         <div className="flex items-center gap-1.5">
           <button
             type="button"
@@ -194,7 +197,6 @@ function BundleSectionCard({
   onCancel: () => void;
 }) {
   const hasChanges = drafts.some((d, i) => d.value !== saved[i]?.value);
-  const lastUpdated = saved.filter((f) => f.updatedAt).sort((a, b) => (a.updatedAt < b.updatedAt ? 1 : -1))[0];
 
   return (
     <div className="mb-6 rounded-xl border border-border bg-white p-5 dark:bg-[#2a2a2d]">
@@ -206,34 +208,37 @@ function BundleSectionCard({
       <div className="space-y-2.5">
         {drafts.map((f, i) => {
           const isToggle = f.field === 'Bundle Enabled' || f.field === 'Auto Grouping';
+          const savedField = saved[i];
           return (
-            <div key={f.field} className="flex items-center justify-between gap-3 rounded-lg border border-border p-3">
-              <span className="text-[12px] font-medium text-foreground">{f.field}</span>
-              {isToggle ? (
-                <button
-                  type="button"
-                  onClick={() => onChangeField(i, f.value === 'true' ? 'false' : 'true')}
-                  className={`relative h-6 w-11 shrink-0 rounded-full transition-colors duration-150 ease-out ${f.value === 'true' ? 'bg-[#5B5CEB]' : 'bg-muted'}`}
-                >
-                  <span className={`absolute top-0.5 h-5 w-5 rounded-full bg-white shadow transition-transform duration-150 ease-out ${f.value === 'true' ? 'translate-x-[22px]' : 'translate-x-0.5'}`} />
-                </button>
-              ) : (
-                <input
-                  type="text"
-                  value={f.value}
-                  onChange={(e) => onChangeField(i, e.target.value)}
-                  className={`${INPUT_CLASS} max-w-[220px]`}
-                />
-              )}
+            <div key={f.field} className="rounded-lg border border-border p-3">
+              <div className="flex items-center justify-between gap-3">
+                <span className="text-[12px] font-medium text-foreground">{f.field}</span>
+                {isToggle ? (
+                  <button
+                    type="button"
+                    onClick={() => onChangeField(i, f.value === 'true' ? 'false' : 'true')}
+                    className={`relative h-6 w-11 shrink-0 rounded-full transition-colors duration-150 ease-out ${f.value === 'true' ? 'bg-[#5B5CEB]' : 'bg-muted'}`}
+                  >
+                    <span className={`absolute top-0.5 h-5 w-5 rounded-full bg-white shadow transition-transform duration-150 ease-out ${f.value === 'true' ? 'translate-x-[22px]' : 'translate-x-0.5'}`} />
+                  </button>
+                ) : (
+                  <input
+                    type="text"
+                    value={f.value}
+                    onChange={(e) => onChangeField(i, e.target.value)}
+                    className={`${INPUT_CLASS} max-w-[220px]`}
+                  />
+                )}
+              </div>
+              <p className="mt-2 text-[10px] text-muted-foreground">
+                {savedField?.updatedAt ? `Last updated ${formatTimestamp(savedField.updatedAt)} by ${savedField.updatedBy}` : 'Never updated'}
+              </p>
             </div>
           );
         })}
       </div>
 
-      <div className="mt-3 flex items-center justify-between">
-        <p className="text-[11px] text-muted-foreground">
-          {lastUpdated ? `Last updated ${formatTimestamp(lastUpdated.updatedAt)} by ${lastUpdated.updatedBy}` : 'Never updated'}
-        </p>
+      <div className="mt-3 flex items-center justify-end">
         <div className="flex items-center gap-1.5">
           <button
             type="button"
