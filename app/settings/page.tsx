@@ -2,9 +2,9 @@
 
 import { useCallback, useEffect, useState } from 'react';
 import { SlidersHorizontal, Check, X, Loader2 } from 'lucide-react';
-import PageHeader from '../../components/PageHeader';
-import ConnectionErrorState from '../../components/ConnectionErrorState';
-import { classifyFetchError, type ClassifiedError, assertAllOk } from '../../lib/errors';
+import PageHeader from '../components/PageHeader';
+import ConnectionErrorState from '../components/ConnectionErrorState';
+import { classifyFetchError, type ClassifiedError, assertAllOk } from '../lib/errors';
 
 // Mirrors app/lib/transferQueueSettings.ts's own types — not imported
 // directly since that file pulls in `googleapis` (Node-only, breaks the
@@ -351,7 +351,7 @@ function ModeStatusCard({
   );
 }
 
-export default function TransferQueueSettingsPage() {
+export default function SettingsPage() {
   const [rules, setRules] = useState<RuleRow[]>([]);
   const [drafts, setDrafts] = useState<RuleRow[]>([]);
   const [bundle, setBundle] = useState<BundleField[]>([]);
