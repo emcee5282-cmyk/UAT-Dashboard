@@ -119,18 +119,18 @@ function RuleSectionCard({
           const saved = rules[i];
           const isBetween = d.operator === 'Between';
           return (
-            <div key={i} className={`rounded-lg border border-border p-3 transition-opacity duration-150 ease-out ${d.enabled ? '' : 'opacity-50'}`}>
+            <div key={i} className="rounded-lg border border-border p-3">
               <div className="mb-2 flex items-center justify-between gap-2">
-                <span className="text-[11px] font-medium text-muted-foreground">{d.enabled ? 'Enabled' : 'Disabled — not applied'}</span>
+                <span className={`text-[11px] font-medium ${d.enabled ? 'text-muted-foreground' : 'text-foreground'}`}>{d.enabled ? 'Enabled' : 'Disabled — not applied'}</span>
                 <button
                   type="button"
                   onClick={() => onChangeRow(i, { enabled: !d.enabled })}
-                  className={`relative h-5 w-9 shrink-0 rounded-full transition-colors duration-150 ease-out ${d.enabled ? 'bg-[#5B5CEB]' : 'bg-muted'}`}
+                  className={`relative h-5 w-9 shrink-0 rounded-full border transition-colors duration-150 ease-out ${d.enabled ? 'border-[#5B5CEB] bg-[#5B5CEB]' : 'border-slate-300 bg-slate-200 dark:border-[#4a4a4d] dark:bg-[#3a3a3d]'}`}
                 >
-                  <span className={`absolute top-0.5 h-4 w-4 rounded-full bg-white shadow transition-transform duration-150 ease-out ${d.enabled ? 'translate-x-[18px]' : 'translate-x-0.5'}`} />
+                  <span className={`absolute top-0.5 h-3.5 w-3.5 rounded-full bg-white shadow transition-transform duration-150 ease-out ${d.enabled ? 'translate-x-[18px]' : 'translate-x-0.5'}`} />
                 </button>
               </div>
-              <div className="grid grid-cols-12 items-center gap-2">
+              <div className={`grid grid-cols-12 items-center gap-2 transition-opacity duration-150 ease-out ${d.enabled ? '' : 'opacity-50'}`}>
                 <div className="col-span-3 text-[12px] font-medium text-foreground">{d.metric}</div>
                 <select
                   value={d.operator}
