@@ -21,11 +21,11 @@ import { fetchRange } from './googleSheets';
 const SHEET_TITLE = 'Transfer Queue Configurations';
 
 const RULES_START_COL = 'A';
-const RULES_END_COL = 'H';
-// One blank column (I) separates the two blocks, same convention as
+const RULES_END_COL = 'I';
+// One blank column (J) separates the two blocks, same convention as
 // app/lib/estimatedOpening.ts's own block spacing.
-const BUNDLE_START_COL = 'J';
-const BUNDLE_END_COL = 'M';
+const BUNDLE_START_COL = 'K';
+const BUNDLE_END_COL = 'N';
 
 export type RuleSection = 'cashout_day' | 'cashout_extended' | 'cashout_247' | 'sendmoney_247' | 'sendmoney_bd';
 // Plain-word form, not symbols (">"/"<=") — per explicit instruction, so
@@ -42,6 +42,12 @@ export type RuleRow = {
   value1: number;
   value2: number | null;
   queueResult: string;
+  // Per explicit instruction: lets an admin mark a row "don't apply this"
+  // without needing a real Value/Queue Result — distinct from leaving
+  // Value at 0/Queue Result blank, which was ambiguous (looked unset vs.
+  // deliberately off). Still config-only either way; this only matters
+  // once a future migration starts reading this table live.
+  enabled: boolean;
   updatedBy: string;
   updatedAt: string;
 };
@@ -61,36 +67,37 @@ export type BundleField = {
 // today (M1's own "Day" reuses the generic 4-rule 24/7 template) but are
 // independently editable from here on.
 const DEFAULT_RULES: Omit<RuleRow, 'updatedBy' | 'updatedAt'>[] = [
-  { section: 'cashout_day', metric: 'Company Balance', operator: 'Less Than', value1: 90000, value2: null, queueResult: 'Day DP + WD' },
-  { section: 'cashout_day', metric: 'SDP VS Balance', operator: 'Greater Than', value1: 30000, value2: null, queueResult: 'Day WD Only' },
-  { section: 'cashout_day', metric: 'Discrepancy', operator: 'Greater Than', value1: 20000, value2: null, queueResult: 'Day WD Only' },
-  { section: 'cashout_day', metric: 'Company Balance', operator: 'Greater Than', value1: 90000, value2: null, queueResult: 'Day WD Only' },
+  { section: 'cashout_day', metric: 'Company Balance', operator: 'Less Than', value1: 90000, value2: null, queueResult: 'Day DP + WD', enabled: true },
+  { section: 'cashout_day', metric: 'SDP VS Balance', operator: 'Greater Than', value1: 30000, value2: null, queueResult: 'Day WD Only', enabled: true },
+  { section: 'cashout_day', metric: 'Discrepancy', operator: 'Greater Than', value1: 20000, value2: null, queueResult: 'Day WD Only', enabled: true },
+  { section: 'cashout_day', metric: 'Company Balance', operator: 'Greater Than', value1: 90000, value2: null, queueResult: 'Day WD Only', enabled: true },
 
-  { section: 'cashout_extended', metric: 'Company Balance', operator: 'Less Than', value1: 20000, value2: null, queueResult: 'Low Balance DP Only' },
-  { section: 'cashout_extended', metric: 'Company Balance', operator: 'Between', value1: 35000, value2: 180000, queueResult: 'DP + WD' },
-  { section: 'cashout_extended', metric: 'Company Balance', operator: 'Greater Than', value1: 200000, value2: null, queueResult: 'WD Only' },
-  { section: 'cashout_extended', metric: 'SDP VS Balance', operator: 'Greater Than', value1: 30000, value2: null, queueResult: 'Discrepancy / Clear Balance' },
-  { section: 'cashout_extended', metric: 'Discrepancy', operator: 'Greater Than', value1: 20000, value2: null, queueResult: 'Discrepancy / Clear Balance' },
+  { section: 'cashout_extended', metric: 'Company Balance', operator: 'Less Than', value1: 20000, value2: null, queueResult: 'Low Balance DP Only', enabled: true },
+  { section: 'cashout_extended', metric: 'Company Balance', operator: 'Between', value1: 35000, value2: 180000, queueResult: 'DP + WD', enabled: true },
+  { section: 'cashout_extended', metric: 'Company Balance', operator: 'Greater Than', value1: 200000, value2: null, queueResult: 'WD Only', enabled: true },
+  { section: 'cashout_extended', metric: 'SDP VS Balance', operator: 'Greater Than', value1: 30000, value2: null, queueResult: 'Discrepancy / Clear Balance', enabled: true },
+  { section: 'cashout_extended', metric: 'Discrepancy', operator: 'Greater Than', value1: 20000, value2: null, queueResult: 'Discrepancy / Clear Balance', enabled: true },
 
-  { section: 'cashout_247', metric: 'Company Balance', operator: 'Less Than', value1: 20000, value2: null, queueResult: 'Low Balance DP Only' },
-  { section: 'cashout_247', metric: 'Company Balance', operator: 'Between', value1: 35000, value2: 180000, queueResult: 'DP + WD' },
-  { section: 'cashout_247', metric: 'Company Balance', operator: 'Greater Than', value1: 200000, value2: null, queueResult: 'WD Only' },
-  { section: 'cashout_247', metric: 'SDP VS Balance', operator: 'Greater Than', value1: 30000, value2: null, queueResult: 'Discrepancy / Clear Balance' },
-  { section: 'cashout_247', metric: 'Discrepancy', operator: 'Greater Than', value1: 20000, value2: null, queueResult: 'Discrepancy / Clear Balance' },
+  { section: 'cashout_247', metric: 'Company Balance', operator: 'Less Than', value1: 20000, value2: null, queueResult: 'Low Balance DP Only', enabled: true },
+  { section: 'cashout_247', metric: 'Company Balance', operator: 'Between', value1: 35000, value2: 180000, queueResult: 'DP + WD', enabled: true },
+  { section: 'cashout_247', metric: 'Company Balance', operator: 'Greater Than', value1: 200000, value2: null, queueResult: 'WD Only', enabled: true },
+  { section: 'cashout_247', metric: 'SDP VS Balance', operator: 'Greater Than', value1: 30000, value2: null, queueResult: 'Discrepancy / Clear Balance', enabled: true },
+  { section: 'cashout_247', metric: 'Discrepancy', operator: 'Greater Than', value1: 20000, value2: null, queueResult: 'Discrepancy / Clear Balance', enabled: true },
 
-  { section: 'sendmoney_247', metric: 'SDP VS Balance', operator: 'Greater Than', value1: 50000, value2: null, queueResult: '24/7 WD Only' },
-  { section: 'sendmoney_247', metric: 'Discrepancy', operator: 'Greater Than', value1: 10000, value2: null, queueResult: '24/7 WD Only' },
-  { section: 'sendmoney_247', metric: 'Company Balance', operator: 'Greater Than', value1: 45000, value2: null, queueResult: '24/7 WD Only' },
-  { section: 'sendmoney_247', metric: 'Company Balance', operator: 'Less Than', value1: 20000, value2: null, queueResult: '24/7 DP + WD' },
+  { section: 'sendmoney_247', metric: 'SDP VS Balance', operator: 'Greater Than', value1: 50000, value2: null, queueResult: '24/7 WD Only', enabled: true },
+  { section: 'sendmoney_247', metric: 'Discrepancy', operator: 'Greater Than', value1: 10000, value2: null, queueResult: '24/7 WD Only', enabled: true },
+  { section: 'sendmoney_247', metric: 'Company Balance', operator: 'Greater Than', value1: 45000, value2: null, queueResult: '24/7 WD Only', enabled: true },
+  { section: 'sendmoney_247', metric: 'Company Balance', operator: 'Less Than', value1: 20000, value2: null, queueResult: '24/7 DP + WD', enabled: true },
 
   // Per explicit instruction: replaces the old blanket "BD"-wallet-name
   // exclusion (a flat keyword match in the real code, no threshold at
   // all) with an actual configurable limit — Company Balance and SDP vs
   // Company Balance. No real current value exists to bootstrap from (the
   // live rule is a pure keyword match, not a number), so these start
-  // blank/zero for an admin to fill in themselves.
-  { section: 'sendmoney_bd', metric: 'Company Balance', operator: 'Equal', value1: 0, value2: null, queueResult: '' },
-  { section: 'sendmoney_bd', metric: 'SDP VS Balance', operator: 'Equal', value1: 0, value2: null, queueResult: '' },
+  // blank/zero AND disabled — an admin must both fill in a real value and
+  // flip Enabled on before this row means anything.
+  { section: 'sendmoney_bd', metric: 'Company Balance', operator: 'Equal', value1: 0, value2: null, queueResult: '', enabled: false },
+  { section: 'sendmoney_bd', metric: 'SDP VS Balance', operator: 'Equal', value1: 0, value2: null, queueResult: '', enabled: false },
 ];
 
 // Forward-looking — no direct current-code equivalent beyond "SH never
@@ -153,8 +160,8 @@ async function ensureSheetExists(sheetsApi: ReturnType<typeof google.sheets>, sp
 
   const now = new Date().toISOString();
   const ruleRows: (string | number)[][] = [
-    ['Section', 'Metric', 'Operator', 'Value1', 'Value2', 'Queue Result', 'Updated By', 'Updated At'],
-    ...DEFAULT_RULES.map((r) => [r.section, r.metric, r.operator, r.value1, r.value2 ?? '', r.queueResult, UPDATED_BY, now]),
+    ['Section', 'Metric', 'Operator', 'Value1', 'Value2', 'Queue Result', 'Enabled', 'Updated By', 'Updated At'],
+    ...DEFAULT_RULES.map((r) => [r.section, r.metric, r.operator, r.value1, r.value2 ?? '', r.queueResult, r.enabled ? 'true' : 'false', UPDATED_BY, now]),
   ];
   const bundleRows: (string | number)[][] = [
     ['Field', 'Value', 'Updated By', 'Updated At'],
@@ -207,6 +214,7 @@ export async function readTransferQueueRules(): Promise<RuleRow[]> {
   return rows.map((row, i) => {
     const fallback = DEFAULT_RULES[i];
     const value2Raw = (row[4] ?? '').trim();
+    const enabledRaw = (row[6] ?? '').trim();
     return {
       section: (row[0]?.trim() as RuleSection) || fallback.section,
       metric: (row[1]?.trim() as Metric) || fallback.metric,
@@ -214,8 +222,9 @@ export async function readTransferQueueRules(): Promise<RuleRow[]> {
       value1: row[3] !== undefined && row[3] !== '' ? parseNumber(row[3]) : fallback.value1,
       value2: value2Raw ? parseNumber(value2Raw) : null,
       queueResult: (row[5] ?? '').trim() || fallback.queueResult,
-      updatedBy: (row[6] ?? '').trim(),
-      updatedAt: (row[7] ?? '').trim(),
+      enabled: enabledRaw ? enabledRaw.toLowerCase() === 'true' : fallback.enabled,
+      updatedBy: (row[7] ?? '').trim(),
+      updatedAt: (row[8] ?? '').trim(),
     };
   });
 }
@@ -251,7 +260,8 @@ export async function updateTransferQueueRule(
   operator: Operator,
   value1: number,
   value2: number | null,
-  queueResult: string
+  queueResult: string,
+  enabled: boolean
 ): Promise<{ updatedBy: string; updatedAt: string }> {
   if (index < 0 || index >= DEFAULT_RULES.length) throw new Error('Invalid rule index.');
 
@@ -270,7 +280,7 @@ export async function updateTransferQueueRule(
     range: `${SHEET_TITLE}!${RULES_START_COL}${sheetRow}:${RULES_END_COL}${sheetRow}`,
     valueInputOption: 'RAW',
     requestBody: {
-      values: [[rule.section, rule.metric, operator, value1, value2 ?? '', queueResult, UPDATED_BY, updatedAt]],
+      values: [[rule.section, rule.metric, operator, value1, value2 ?? '', queueResult, enabled ? 'true' : 'false', UPDATED_BY, updatedAt]],
     },
   });
 
