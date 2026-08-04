@@ -226,8 +226,8 @@ type ColumnDef = {
 
 const DEFAULT_COLUMNS: ColumnDef[] = [
   { key: COLUMN_IDS.BRAND, label: 'Brand', visible: true, sortable: true, hideable: true, align: 'center' },
-  { key: COLUMN_IDS.SHOP_NAME, label: 'Shop Name', visible: true, sortable: true, hideable: true, align: 'left' },
   { key: COLUMN_IDS.LEADER, label: 'Leader', visible: true, sortable: true, hideable: true, align: 'left' },
+  { key: COLUMN_IDS.SHOP_NAME, label: 'Shop Name', visible: true, sortable: true, hideable: true, align: 'left' },
   { key: COLUMN_IDS.COMPANY_BALANCE, label: 'Company Balance', visible: true, sortable: true, hideable: true, align: 'center' },
   { key: COLUMN_IDS.AVAILABLE_LIMIT, label: 'Available Limit', visible: true, sortable: true, hideable: true, align: 'center' },
   { key: COLUMN_IDS.FROZEN_AMOUNT, label: 'Frozen Amount', visible: true, sortable: true, hideable: true, align: 'center' },
@@ -1520,14 +1520,14 @@ export default function WalletStatus() {
                           isEditingThisRow ? 'border-[#5B5CEB] bg-[#F8F9FF] dark:bg-[#5B5CEB]/[0.08]' : 'border-border bg-white'
                         }`}
                       >
+                        {showLeader && (
+                          <p className="truncate text-[11px] font-medium text-muted-foreground">{row.leader}</p>
+                        )}
                         {(showShop || showBrand) && (
-                          <div className="flex items-start justify-between gap-2">
+                          <div className={`flex items-start justify-between gap-2 ${showLeader ? 'mt-0.5' : ''}`}>
                             {showShop && <p className="min-w-0 truncate text-sm font-bold text-foreground">{row.shopName}</p>}
                             {showBrand && <span className="shrink-0 text-[11px] font-medium text-muted-foreground">{row.brand}</span>}
                           </div>
-                        )}
-                        {showLeader && (
-                          <p className={`truncate text-[11px] font-medium text-muted-foreground ${(showShop || showBrand) ? 'mt-0.5' : ''}`}>{row.leader}</p>
                         )}
                         {(showBalance || showAvailableLimit || showFrozenAmount || showSdp) && (
                           <div className={`grid grid-cols-2 gap-2 ${(showShop || showBrand || showLeader) ? 'mt-2.5 border-t border-border pt-2.5' : ''}`}>
