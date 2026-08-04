@@ -1,20 +1,15 @@
 'use client';
 
-import { useEffect, useState, useCallback, useMemo, useRef } from 'react';
-import { createPortal } from 'react-dom';
+import { useEffect, useState, useCallback, useMemo } from 'react';
 import Image from 'next/image';
 import * as XLSX from 'xlsx';
-import { ArrowLeftRight, Wallet, Banknote, Building2, Download, Send, ChevronUp, ChevronDown, LayoutDashboard, RefreshCw, Info } from 'lucide-react';
+import { ArrowLeftRight, Wallet, Banknote, Building2, Download, Send, ChevronUp, ChevronDown, LayoutDashboard, RefreshCw } from 'lucide-react';
 import PageHeader from './components/PageHeader';
 import ThemeToggle from './components/ThemeToggle';
 import ConnectionErrorState from './components/ConnectionErrorState';
 import Toast, { type ToastState } from './components/Toast';
 import { classifyFetchError, type ClassifiedError, assertAllOk } from './lib/errors';
 import { getBusinessToday, toBusinessDate, parseCardCutoffDate, manilaMidnight, manilaFields } from './lib/businessDate';
-import { parseCsvLines } from './lib/csv';
-import { rawVal } from './lib/format';
-import { computeCompanyBalance } from './lib/balanceEngine';
-import { BRAND_CODES as CASHOUT_BRAND_CODES } from './lib/transferQueueCount';
 
 function clean(val: string): number {
   return parseFloat((val ?? '0').replace(/"/g, '').replace(/,/g, '').trim()) || 0;
@@ -447,129 +442,6 @@ function computeSendMoneyTopUpStlm(text: string, cutoff: Date | null): { topUp: 
   return { topUp, stlm: -stlm };
 }
 
-// "To Agent"/"From Agent" values on "AG BD STLM + TOPUP" sometimes carry a
-// trailing "-<brand>" suffix (e.g. "KONAN001-M1"), sometimes not — strip it
-// so the bare code matches Opening AG's own (always-bare) agent names. Same
-// helper app/lib/transferQueueCount.ts and app/agentbal/page.tsx already
-// have; Send Money's own "PS BD STLM + TOPUP" sheet never has this suffix,
-// so only Cashout's Frozen Amount computation below uses it.
-function stripBrandSuffix(name: string): string {
-  const parts = name.split('-');
-  if (parts.length >= 2 && CASHOUT_BRAND_CODES.includes(parts[parts.length - 1].toUpperCase())) {
-    return parts.slice(0, -1).join('-');
-  }
-  return name;
-}
-
-type FrozenAmountCols = {
-  rosterAgentName: number;
-  rosterOpeningBal: number;
-  rosterLeader: number;
-  balWalletName: number;
-  balTotalDP: number;
-  balTotalWD: number;
-  stripTopUpBrandSuffix: boolean;
-};
-
-// "Frozen Amount (Onemen)" — total Company Balance (app/lib/balanceEngine.ts's
-// computeCompanyBalance; a DIFFERENT metric from that same file's own
-// computeFrozenAmount shown on the Wallet Status page) of every shop whose
-// Leader is "Onemen", per explicit instruction. Same per-shop roster/DP-WD/
-// TopUp-Settlement pattern app/agentbal/page.tsx (Cashout) and
-// app/sendmoney/balances/page.tsx (Send Money) already use for their own
-// per-shop Company Balance column — column offsets differ between the two
-// products, passed in via `cols` rather than duplicating the whole function.
-function computeFrozenAmountForLeader(
-  openingText: string,
-  // Already-parsed rows, not raw CSV text — both /api/agentbal and
-  // /api/sendmoney/balances return JSON `string[][]`, unlike the other
-  // (CSV-text) sources this file otherwise reads.
-  balRows: string[][],
-  stlmText: string,
-  cutoff: Date | null,
-  leaderName: string,
-  cols: FrozenAmountCols
-): number {
-  const targetLeader = leaderName.trim().toUpperCase();
-  const normalizeAgentKey = (name: string): string => name.toUpperCase().replace(/\s+/g, '');
-
-  const openingRows = parseCsvLines(openingText)
-    .slice(1)
-    .filter((row) => row.some((cell) => cell.trim() !== ''))
-    .map((row) => ({
-      agentName: rawVal(row[cols.rosterAgentName]),
-      openingBal: rawVal(row[cols.rosterOpeningBal]),
-      leader: rawVal(row[cols.rosterLeader]),
-    }))
-    .filter((row) => row.agentName && row.agentName !== '-' && row.agentName !== 'OLD' && row.leader.trim().toUpperCase() === targetLeader);
-
-  if (openingRows.length === 0) return 0;
-
-  const balanceTotals = new Map<string, { dp: number; wd: number }>();
-  balRows
-    .slice(1)
-    .filter((row) => row.some((cell) => cell.trim() !== ''))
-    .forEach((row) => {
-      const walletName = rawVal(row[cols.balWalletName]);
-      if (!walletName || walletName === '-') return;
-      const dp = clean(row[cols.balTotalDP]);
-      const wd = clean(row[cols.balTotalWD]);
-      const existing = balanceTotals.get(walletName) ?? { dp: 0, wd: 0 };
-      balanceTotals.set(walletName, { dp: existing.dp + dp, wd: existing.wd + wd });
-    });
-
-  const topUpTotals = new Map<string, number>();
-  const stlmTotals = new Map<string, number>();
-  parseCsvLines(stlmText)
-    .slice(1)
-    .filter((row) => row.some((cell) => cell.trim() !== ''))
-    .forEach((row) => {
-      const rawTopUpAgent = rawVal(row[1]);
-      const topUpAgent = normalizeAgentKey(cols.stripTopUpBrandSuffix ? stripBrandSuffix(rawTopUpAgent) : rawTopUpAgent);
-      const topUpAmount = rawVal(row[2]);
-      const topUpDate = cutoff ? parseSlashDate(rawVal(row[3])) : null;
-      if (topUpAgent && topUpAgent !== '-' && topUpAmount && topUpAmount !== '-' && (!cutoff || (topUpDate && topUpDate >= cutoff))) {
-        topUpTotals.set(topUpAgent, (topUpTotals.get(topUpAgent) ?? 0) + Math.abs(clean(topUpAmount)));
-      }
-
-      const rawStlmAgent = rawVal(row[7]);
-      const stlmAgent = normalizeAgentKey(cols.stripTopUpBrandSuffix ? stripBrandSuffix(rawStlmAgent) : rawStlmAgent);
-      const stlmAmount = rawVal(row[8]);
-      const stlmDate = cutoff ? parseSlashDate(rawVal(row[9])) : null;
-      if (stlmAgent && stlmAgent !== '-' && stlmAmount && stlmAmount !== '-' && (!cutoff || (stlmDate && stlmDate >= cutoff))) {
-        stlmTotals.set(stlmAgent, (stlmTotals.get(stlmAgent) ?? 0) + Math.abs(clean(stlmAmount)));
-      }
-    });
-
-  return openingRows.reduce((sum, opening) => {
-    const totals = balanceTotals.get(opening.agentName) ?? { dp: 0, wd: 0 };
-    const totalTopUp = topUpTotals.get(normalizeAgentKey(opening.agentName)) ?? 0;
-    const totalStlm = stlmTotals.get(normalizeAgentKey(opening.agentName)) ?? 0;
-    return sum + computeCompanyBalance(clean(opening.openingBal), totals.dp, totalTopUp, totals.wd, totalStlm);
-  }, 0);
-}
-
-// Cashout's "Opening AG" roster: agent name/opening/leader at cols A/B/D
-// (idx 0/1/3, matching app/agentbal/page.tsx:941-944); "SSP AG BalanceLimit"
-// wallet name/DP/WD at cols B/L/N (idx 1/11/13, matching
-// app/agentbal/page.tsx:957-960).
-const CASHOUT_FROZEN_COLS: FrozenAmountCols = {
-  rosterAgentName: 0, rosterOpeningBal: 1, rosterLeader: 3,
-  balWalletName: 1, balTotalDP: 11, balTotalWD: 13,
-  stripTopUpBrandSuffix: true,
-};
-
-// Send Money's own "Opening AG" roster lives at cols L/M/O (idx 11/12/14,
-// matching app/sendmoney/balances/page.tsx:812-815); "SSP PS BalanceLimit"
-// lines up with Cashout's own from index 4 on, no leading Reference column,
-// so wallet name/DP/WD sit at idx 0/11/13 (matching
-// app/sendmoney/balances/page.tsx:832-834).
-const SENDMONEY_FROZEN_COLS: FrozenAmountCols = {
-  rosterAgentName: 11, rosterOpeningBal: 12, rosterLeader: 14,
-  balWalletName: 0, balTotalDP: 11, balTotalWD: 13,
-  stripTopUpBrandSuffix: false,
-};
-
 // Same source/cutoff/column layout as computeSendMoneyTopUpStlm, but grouped
 // by wallet type (col[4] for Top Up, col[10] for Settlement — identical
 // column positions to computeCashoutWalletTopUpStlm's own agstlm sheet, only
@@ -759,11 +631,6 @@ type CardData = {
   withdrawal: number;
   bdTransferIn: number;
   stlmOut: number;
-  // Total Company Balance of every shop whose Leader is "Onemen" — already
-  // subtracted out of `ending` below, per explicit instruction. Shown as its
-  // own "Frozen Amount (Onemen)" row between Ending Balance and the
-  // CashGo/Bundle Transfer Today strip.
-  frozenAmount: number;
   ending: number;
   wallets: CardWallet[];
   todayLabel: string;
@@ -782,7 +649,6 @@ function buildCardData(
   todayWallets: TodayWallet[],
   todayQuota: TodayQuota | null,
   topUpStlm: { topUp: number; stlm: number },
-  frozenAmount: number,
   openingOverride?: number,
   walletRunningBalOverride?: Map<string, number>
 ): CardData {
@@ -810,10 +676,8 @@ function buildCardData(
   const bdTransferIn = topUpStlm.topUp;
   const stlmOut = topUpStlm.stlm;
   // Both already signed (IN positive, OUT negative), so Adjustment's net
-  // effect on Ending Balance is a straight sum, not a subtraction. Frozen
-  // Amount (Onemen) is subtracted per explicit instruction — Ending Balance
-  // now excludes it.
-  const ending = opening + deposit - withdrawal + bdTransferIn + stlmOut - frozenAmount;
+  // effect on Ending Balance is a straight sum, not a subtraction.
+  const ending = opening + deposit - withdrawal + bdTransferIn + stlmOut;
 
   const wallets: CardWallet[] = WALLET_ORDER.map((key) => {
     const row = rows.find((r) => r.wallet.toUpperCase() === key);
@@ -829,7 +693,7 @@ function buildCardData(
     };
   });
 
-  return { productLabel, product, opening, deposit, withdrawal, bdTransferIn, stlmOut, frozenAmount, ending, wallets, todayLabel, todayWallets, todayQuota };
+  return { productLabel, product, opening, deposit, withdrawal, bdTransferIn, stlmOut, ending, wallets, todayLabel, todayWallets, todayQuota };
 }
 
 // Zero is neutral, not a "movement" — no +/- sign, no emerald/rose tint.
@@ -937,64 +801,6 @@ function TodayStrip({ label, wallets, quota }: { label: string; wallets: TodayWa
   );
 }
 
-// Portal-rendered dark tooltip anchored below its trigger — same mechanics
-// as app/wallet-status/page.tsx's own useBelowTooltip/HeaderInfoIcon (copied
-// here rather than shared, since that file's version is scoped to a table
-// header trigger and this app has no shared tooltip component yet).
-function useBelowTooltip(triggerRef: React.RefObject<HTMLElement | null>) {
-  const [open, setOpen] = useState(false);
-  const [rendered, setRendered] = useState(false);
-  const [pos, setPos] = useState({ top: 0, left: 0 });
-
-  useEffect(() => {
-    if (open) {
-      const rect = triggerRef.current?.getBoundingClientRect();
-      if (rect) setPos({ top: rect.bottom + 8, left: rect.left + rect.width / 2 });
-      setRendered(true);
-    } else {
-      const timeout = setTimeout(() => setRendered(false), 150);
-      return () => clearTimeout(timeout);
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [open]);
-
-  return {
-    open,
-    rendered,
-    pos,
-    handlers: {
-      onMouseEnter: () => setOpen(true),
-      onMouseLeave: () => setOpen(false),
-    },
-  };
-}
-
-function InfoTooltipIcon({ text }: { text: string }) {
-  const triggerRef = useRef<HTMLSpanElement>(null);
-  const tooltip = useBelowTooltip(triggerRef);
-  return (
-    <span
-      ref={triggerRef}
-      role="img"
-      aria-label="Info"
-      {...tooltip.handlers}
-      className="flex items-center text-[#94A3B8] transition-colors duration-150 hover:text-[#475569] dark:hover:text-[#CBD5E1]"
-    >
-      <Info size={11} />
-      {tooltip.rendered && typeof document !== 'undefined' && createPortal(
-        <div
-          style={{ position: 'fixed', top: tooltip.pos.top, left: tooltip.pos.left, transform: 'translate(-50%, 0)' }}
-          className={`pointer-events-none z-[9999] w-[240px] whitespace-pre-line rounded-md bg-[#1F2937] px-3 py-2 text-left text-[11px] font-normal leading-relaxed text-white transition-opacity duration-150 ease-out ${tooltip.open ? 'opacity-100' : 'opacity-0'}`}
-        >
-          {text}
-          <span className="absolute left-1/2 top-0 h-2 w-2 -translate-x-1/2 -translate-y-1/2 rotate-45 bg-[#1F2937]" />
-        </div>,
-        document.body
-      )}
-    </span>
-  );
-}
-
 function BalanceCard({ data }: { data: CardData }) {
   return (
     <div data-product={data.product} className="overflow-hidden rounded-2xl border border-border bg-white shadow-sm dark:bg-[#2a2a2d]">
@@ -1027,19 +833,6 @@ function BalanceCard({ data }: { data: CardData }) {
             <span>{data.ending >= data.opening ? '▲' : '▼'}</span>
             <span className="tabular-nums">{fmt(data.ending - data.opening)}</span>
           </div>
-        </div>
-
-        <div className="mt-3 rounded-[10px] bg-muted/40 px-3.5 py-3">
-          <div className="flex items-center justify-between">
-            <div className="flex items-center gap-1.5">
-              <span className="text-[13px] font-medium text-muted-foreground">Frozen Amount (Onemen)</span>
-              <InfoTooltipIcon text={'Total Company Balance of every shop whose Leader is "Onemen".\n\nFormula:\nSUM(Company Balance) WHERE Leader = Onemen\n\nAlready excluded from Ending Balance above.'} />
-            </div>
-            <span className="text-[15px] font-semibold tabular-nums text-foreground">
-              {data.frozenAmount < 0 ? '−' : ''}{fmt(data.frozenAmount)}
-            </span>
-          </div>
-          <p className="mt-0.5 text-[11px] text-muted-foreground">Excluded from Ending Balance</p>
         </div>
 
         <div className="mt-3">
@@ -1797,7 +1590,7 @@ export default function BalanceOverviewPage() {
       setLoading(true);
       setError(null);
 
-      const [cashoutRes, sendMoneyRes, cashGoRes, bundleRes, sspLine1Res, sspLine1SendMoneyRes, brandCashRes, agstlmRes, openingRes, estimatedRes, estimatedSendMoneyRes, agentBalRes, sendMoneyBalRes] = await Promise.all([
+      const [cashoutRes, sendMoneyRes, cashGoRes, bundleRes, sspLine1Res, sspLine1SendMoneyRes, brandCashRes, agstlmRes, openingRes, estimatedRes, estimatedSendMoneyRes] = await Promise.all([
         fetch(`/api/sheet?t=${Date.now()}`),
         fetch(`/api/sendmoney/sheet?t=${Date.now()}`),
         fetch(`/api/cashgo?t=${Date.now()}`),
@@ -1809,21 +1602,12 @@ export default function BalanceOverviewPage() {
         fetch(`/api/opening?t=${Date.now()}`),
         fetch(`/api/opening/estimated-balance?t=${Date.now()}`),
         fetch(`/api/sendmoney/opening/estimated-balance?t=${Date.now()}`),
-        // Per-shop DP/WD, needed only for the new "Frozen Amount (Onemen)"
-        // figure — same routes app/agentbal/page.tsx and
-        // app/sendmoney/balances/page.tsx already fetch (as JSON) for their
-        // own per-shop Company Balance column. Not /api/agentbal — that
-        // route returns CSV text, a different shape.
-        fetch(`/api/balance-limit?t=${Date.now()}`),
-        fetch(`/api/sendmoney/balances?t=${Date.now()}`),
       ]);
-      await assertAllOk([cashoutRes, sendMoneyRes, cashGoRes, bundleRes, sspLine1Res, sspLine1SendMoneyRes, brandCashRes, agstlmRes, openingRes, estimatedRes, estimatedSendMoneyRes, agentBalRes, sendMoneyBalRes]);
+      await assertAllOk([cashoutRes, sendMoneyRes, cashGoRes, bundleRes, sspLine1Res, sspLine1SendMoneyRes, brandCashRes, agstlmRes, openingRes, estimatedRes, estimatedSendMoneyRes]);
       const cashoutText = await cashoutRes.text();
       const sendMoneyText = await sendMoneyRes.text();
       const cashGoText = await cashGoRes.text();
       const bundleText = await bundleRes.text();
-      const agentBalRows: string[][] = await agentBalRes.json();
-      const sendMoneyBalRows: string[][] = await sendMoneyBalRes.json();
       const sspLine1Text = await sspLine1Res.text();
       const sspLine1SendMoneyText = await sspLine1SendMoneyRes.text();
       const brandCashText = await brandCashRes.text();
@@ -1926,9 +1710,6 @@ export default function BalanceOverviewPage() {
       const cashoutTopUpStlm = computeCashoutTopUpStlm(agstlmText, cashoutLiveCutoff);
       const sendMoneyTopUpStlm = computeSendMoneyTopUpStlm(bundleText, sendMoneyLiveCutoff);
 
-      const cashoutFrozenAmount = computeFrozenAmountForLeader(openingText, agentBalRows, agstlmText, cashoutLiveCutoff, 'Onemen', CASHOUT_FROZEN_COLS);
-      const sendMoneyFrozenAmount = computeFrozenAmountForLeader(openingText, sendMoneyBalRows, bundleText, sendMoneyLiveCutoff, 'Onemen', SENDMONEY_FROZEN_COLS);
-
       const todayCashGo = parseTodayCashGo(cashGoText, cashoutLiveCutoff);
       const todayBundle = parseTodayBundle(bundleText, sendMoneyLiveCutoff);
 
@@ -1981,12 +1762,12 @@ export default function BalanceOverviewPage() {
       setCashoutCard(buildCardData(cashoutRows, 'cashout', 'Cashout', 'CashGo', [
         { key: 'bk', label: 'Bkash', value: todayCashGo.bk, quota: todayCashGo.quotaBk },
         { key: 'ng', label: 'Nagad', value: todayCashGo.ng, quota: todayCashGo.quotaNg },
-      ], cashGoQuota, cashoutTopUpStlm, cashoutFrozenAmount, cashoutOpeningOverride, cashoutWalletRunningBalOverride));
+      ], cashGoQuota, cashoutTopUpStlm, cashoutOpeningOverride, cashoutWalletRunningBalOverride));
       setSendMoneyCard(buildCardData(sendMoneyRows, 'sendmoney', 'Send Money', 'Bundle Transfer', [
         { key: 'nagad', label: 'Nagad', value: todayBundle.nagad },
         { key: 'rocket', label: 'Rocket', value: todayBundle.rocket },
         { key: 'upay', label: 'UPay', value: todayBundle.upay },
-      ], null, sendMoneyTopUpStlm, sendMoneyFrozenAmount, sendMoneyOpeningOverride, sendMoneyWalletRunningBalOverride));
+      ], null, sendMoneyTopUpStlm, sendMoneyOpeningOverride, sendMoneyWalletRunningBalOverride));
 
       // Same widened cutoff as the KPI cards/Today strip above (cashoutLiveCutoff,
       // not the plain clock-based `cutoff`) — otherwise SSP Line 1's Top Up/
