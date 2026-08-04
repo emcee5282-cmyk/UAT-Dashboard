@@ -2,15 +2,20 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { ChevronDown, ChevronUp, ChevronsUpDown, Columns3, Download, RefreshCw, Search, Flag, Check, X, SquarePen, Loader2, Info } from 'lucide-react';
+import {
+  ChevronDown, ChevronUp, ChevronsUpDown, Columns3, Download, RefreshCw, Search, Flag, Check, X,
+  SquarePen, Loader2, Info, FilterX, CheckSquare, Pencil, Trash2, User, ArrowDownCircle,
+  ArrowUpCircle, Clock, CircleDot,
+} from 'lucide-react';
 import * as XLSX from 'xlsx';
 import SettlementHeader from '../components/SettlementHeader';
 import ConnectionErrorState from '../components/ConnectionErrorState';
 import DataTable from '../components/DataTable';
-import Toolbar from '../components/Toolbar';
+import FilterDropdown from '../components/FilterDropdown';
 import ColumnsDropdown from '../components/ColumnsDropdown';
 import TableFooter from '../components/TableFooter';
 import EmptyState from '../components/EmptyState';
+import BulkEditModal, { type BulkEditUpdates } from '../components/BulkEditModal';
 import { classifyFetchError, type ClassifiedError, assertAllOk } from '../lib/errors';
 import { rawVal } from '@/app/lib/format';
 import { parseCsvLines } from '../lib/csv';
@@ -85,10 +90,252 @@ function deriveWalletFlags(computedStatus: string): { walletStatus: WalletStatus
 // widths use Balance's own dynamic per-column measurement system (see
 // computeColumnWidthsPx below) rather than colgroup/table-fixed — per
 // explicit instruction to arrange sizing the same way as Balance.
-const GHOST_BUTTON =
-  'inline-flex h-9 items-center gap-1.5 rounded-[8px] border border-[#E2E8F0] px-3 text-[13px] font-medium text-[#475569] transition-colors duration-150 ease-out hover:bg-[#F8FAFC] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#2563EB] dark:border-[#3a3a3d] dark:text-[#9CA3AF] dark:hover:bg-white/5';
+// Toolbar button shells — same style/arrangement as Top Up/Settlement
+// (app/topup/page.tsx, app/stlm/page.tsx), copied verbatim so this page's
+// filter/search/action row matches theirs pixel-for-pixel, per explicit
+// instruction. Icon+text when the viewport has room, collapsing to
+// icon-only (40x40) once space gets tight.
+const ICON_BUTTON =
+  'flex h-10 w-10 xl:w-auto shrink-0 items-center justify-center xl:justify-start gap-1.5 rounded-[12px] border border-[#E2E8F0] bg-white px-0 xl:px-3 text-[13px] font-medium text-[#475569] transition-[color,background-color,border-color,box-shadow,transform] duration-150 ease-[var(--ease-out-strong)] hover:border-[#2563EB] hover:bg-[#F1F5F9] hover:ring-2 hover:ring-[#2563EB]/20 active:scale-[0.97] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#2563EB] dark:border-[#3a3a3d] dark:bg-[#2a2a2d] dark:text-[#9CA3AF] dark:hover:bg-white/5';
+
+// Always-icon-only variant (never shows a text label) — Columns only.
+const ICON_ONLY_BUTTON =
+  'flex h-10 w-10 shrink-0 items-center justify-center rounded-[12px] border border-[#E2E8F0] bg-white text-[13px] font-medium text-[#475569] transition-[color,background-color,border-color,box-shadow,transform] duration-150 ease-[var(--ease-out-strong)] hover:border-[#2563EB] hover:bg-[#F1F5F9] hover:ring-2 hover:ring-[#2563EB]/20 active:scale-[0.97] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#2563EB] dark:border-[#3a3a3d] dark:bg-[#2a2a2d] dark:text-[#9CA3AF] dark:hover:bg-white/5';
+
+// Same shell as ICON_ONLY_BUTTON, indigo text/icon instead of slate —
+// Refresh only.
+const REFRESH_ICON_BUTTON =
+  'flex h-10 w-10 shrink-0 items-center justify-center rounded-[12px] border border-[#E2E8F0] bg-white text-[13px] font-medium text-indigo-600 transition-[color,background-color,border-color,box-shadow,transform] duration-150 ease-[var(--ease-out-strong)] hover:border-[#2563EB] hover:bg-[#F1F5F9] hover:ring-2 hover:ring-[#2563EB]/20 active:scale-[0.97] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#2563EB] dark:border-[#3a3a3d] dark:bg-[#2a2a2d] dark:text-indigo-400 dark:hover:bg-white/5';
 
 const PAGE_SIZE_OPTIONS = [50, 100, 250, 500];
+
+// Shared hover/focus-driven tooltip state for toolbar buttons — portal
+// rendered so it's never clipped by the toolbar's overflow-x-auto.
+// Positions ABOVE its trigger (unlike useBelowTooltip further down this
+// file, which anchors table-header info icons BELOW theirs) — copied
+// verbatim from Top Up (app/topup/page.tsx), page-local by established
+// project convention.
+function useToolbarTooltip(triggerRef: React.RefObject<HTMLElement | null>) {
+  const [open, setOpen] = useState(false);
+  const [rendered, setRendered] = useState(false);
+  const [pos, setPos] = useState({ top: 0, left: 0 });
+
+  useEffect(() => {
+    if (open) {
+      const rect = triggerRef.current?.getBoundingClientRect();
+      if (rect) setPos({ top: rect.top - 8, left: rect.left + rect.width / 2 });
+      setRendered(true);
+    } else {
+      const timeout = setTimeout(() => setRendered(false), 150);
+      return () => clearTimeout(timeout);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open]);
+
+  return {
+    open,
+    rendered,
+    pos,
+    handlers: {
+      onMouseEnter: () => setOpen(true),
+      onMouseLeave: () => setOpen(false),
+      onFocus: () => setOpen(true),
+      onBlur: () => setOpen(false),
+    },
+  };
+}
+
+function ToolbarTooltip({
+  label,
+  open,
+  pos,
+  onlyWhenCompact = false,
+}: {
+  label: string;
+  open: boolean;
+  pos: { top: number; left: number };
+  onlyWhenCompact?: boolean;
+}) {
+  if (typeof document === 'undefined') return null;
+  return createPortal(
+    <div
+      style={{ position: 'fixed', top: pos.top, left: pos.left, transform: 'translate(-50%, -100%)' }}
+      className={`pointer-events-none z-[9999] whitespace-nowrap rounded-md bg-[#1F2937] px-2.5 py-1.5 text-[12px] text-white transition-opacity duration-150 ease-out ${
+        open ? 'opacity-100' : 'opacity-0'
+      } ${onlyWhenCompact ? 'xl:hidden' : ''}`}
+    >
+      {label}
+      <span className="absolute left-1/2 top-full h-2 w-2 -translate-x-1/2 -translate-y-1/2 rotate-45 bg-[#1F2937]" />
+    </div>,
+    document.body
+  );
+}
+
+// Toolbar filter trigger — Leader/Deposit/Withdrawal/Schedule/Wallet Status.
+// Trigger only; the panel beneath it is the shared FilterDropdown
+// (app/components/FilterDropdown.tsx). Copied verbatim from Top Up.
+function FilterTriggerButton({
+  label,
+  icon: Icon,
+  anyUnchecked,
+  selectedCount,
+  menuOpen,
+  buttonRef,
+  onClick,
+}: {
+  label: string;
+  icon: React.ComponentType<{ size?: number; className?: string }>;
+  anyUnchecked: boolean;
+  selectedCount: number;
+  menuOpen: boolean;
+  buttonRef: React.RefObject<HTMLButtonElement | null>;
+  onClick: () => void;
+}) {
+  const tooltip = useToolbarTooltip(buttonRef);
+  return (
+    <div className="relative">
+      <button
+        type="button"
+        ref={buttonRef}
+        onClick={onClick}
+        aria-label={label}
+        {...tooltip.handlers}
+        className="inline-flex h-10 w-10 xl:w-auto shrink-0 items-center justify-center xl:justify-start gap-1.5 rounded-[12px] border border-[#E2E8F0] bg-white px-0 xl:px-3 text-[13px] font-medium text-[#475569] transition-[color,background-color,border-color,box-shadow,transform] duration-150 ease-[var(--ease-out-strong)] hover:border-[#2563EB] hover:bg-[#F1F5F9] hover:ring-2 hover:ring-[#2563EB]/20 active:scale-[0.97] dark:border-[#3a3a3d] dark:bg-[#2a2a2d] dark:text-[#9CA3AF] dark:hover:bg-white/5"
+      >
+        <Icon size={15} className="text-[#475569] dark:text-[#9CA3AF]" />
+        <span className="hidden xl:inline">{label}</span>
+        {anyUnchecked && (
+          <span className="flex h-4 min-w-[16px] items-center justify-center rounded-full bg-indigo-600 px-1 text-[10px] font-semibold text-white">
+            {selectedCount}
+          </span>
+        )}
+        <ChevronDown
+          size={14}
+          className={`hidden text-[#475569] transition-transform duration-150 ease-[var(--ease-in-out-strong)] dark:text-[#9CA3AF] xl:inline ${menuOpen ? 'rotate-180' : ''}`}
+        />
+      </button>
+      {tooltip.rendered && <ToolbarTooltip label={label} open={tooltip.open} pos={tooltip.pos} onlyWhenCompact />}
+    </div>
+  );
+}
+
+// "Reset All Filters" trigger — filled indigo icon once a filter is active.
+// Copied verbatim from Top Up.
+function ResetFiltersButton({ anyFilterActive, onClick }: { anyFilterActive: boolean; onClick: () => void }) {
+  const buttonRef = useRef<HTMLButtonElement>(null);
+  const tooltip = useToolbarTooltip(buttonRef);
+
+  return (
+    <div className="relative">
+      <button
+        ref={buttonRef}
+        type="button"
+        onClick={() => { if (anyFilterActive) onClick(); }}
+        {...tooltip.handlers}
+        aria-label="Reset all filters"
+        aria-disabled={!anyFilterActive}
+        className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-[12px] border transition-[color,background-color,border-color,transform] duration-150 ease-[var(--ease-out-strong)] ${
+          anyFilterActive
+            ? 'cursor-pointer border-[#E2E8F0] bg-white text-indigo-600 hover:border-[#FCA5A5] hover:bg-[#FEF2F2] hover:text-[#DC2626] active:scale-[0.97] active:border-[#FCA5A5] active:bg-[#FEF2F2] active:text-[#DC2626] dark:border-[#3a3a3d] dark:bg-[#2a2a2d] dark:text-indigo-400'
+            : 'cursor-default border-[#E2E8F0] bg-white text-[#475569] opacity-40 dark:border-[#3a3a3d] dark:bg-[#2a2a2d] dark:text-[#9CA3AF]'
+        }`}
+      >
+        <FilterX size={20} fill={anyFilterActive ? 'currentColor' : 'none'} />
+      </button>
+      {tooltip.rendered && <ToolbarTooltip label="Reset all filters" open={tooltip.open} pos={tooltip.pos} />}
+    </div>
+  );
+}
+
+// Bulk Actions dropdown — appears alongside (never instead of) the standard
+// toolbar: Export/Refresh/Columns stay exactly where they are; this is
+// purely an added segment while 1+ rows are checked. Portal-rendered, same
+// click-outside-close pattern as the Columns dropdown. Copied verbatim from
+// Top Up/Settlement.
+function BulkActionsMenu({
+  count,
+  onBulkEdit,
+  onExportSelected,
+  onClearSelection,
+}: {
+  count: number;
+  onBulkEdit: () => void;
+  onExportSelected: () => void;
+  onClearSelection: () => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const [pos, setPos] = useState({ top: 0, left: 0 });
+  const btnRef = useRef<HTMLButtonElement>(null);
+  const menuRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!open) return;
+    const handlePointerDown = (event: MouseEvent) => {
+      const target = event.target as Node;
+      if (
+        btnRef.current && !btnRef.current.contains(target) &&
+        menuRef.current && !menuRef.current.contains(target)
+      ) {
+        setOpen(false);
+      }
+    };
+    document.addEventListener('mousedown', handlePointerDown);
+    return () => document.removeEventListener('mousedown', handlePointerDown);
+  }, [open]);
+
+  return (
+    <div className="flex items-center gap-2">
+      <span className="flex items-center gap-1.5 text-[13px] font-medium text-foreground">
+        <CheckSquare size={15} className="text-indigo-600 dark:text-indigo-400" />
+        {count} Selected
+      </span>
+      <div className="relative">
+        <button
+          type="button"
+          ref={btnRef}
+          onClick={() => {
+            const rect = btnRef.current?.getBoundingClientRect();
+            if (rect) setPos({ top: rect.bottom + 6, left: rect.left });
+            setOpen((current) => !current);
+          }}
+          aria-haspopup="true"
+          aria-expanded={open}
+          className="inline-flex h-9 items-center gap-1.5 rounded-[8px] bg-indigo-600 px-3 text-[13px] font-medium text-white transition-colors hover:bg-indigo-700 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#2563EB]"
+        >
+          Bulk Actions
+          <ChevronDown size={14} className={`transition-transform duration-150 ease-[var(--ease-in-out-strong)] ${open ? 'rotate-180' : ''}`} />
+        </button>
+        {open && typeof document !== 'undefined' && createPortal(
+          <div
+            ref={menuRef}
+            style={{ position: 'fixed', top: pos.top, left: pos.left }}
+            className="z-[9999] w-48 rounded-xl border border-[#e5e5e7] bg-white p-1 shadow-xl dark:border-[#3a3a3d] dark:bg-[#2a2a2d]"
+            onClick={(event) => event.stopPropagation()}
+          >
+            <button type="button" onClick={() => { setOpen(false); onBulkEdit(); }} className="flex w-full items-center gap-2 rounded-lg px-2.5 py-1.5 text-left text-[12px] font-normal text-[#475569] transition-colors hover:bg-[#F1F5F9] dark:text-[#9CA3AF] dark:hover:bg-white/5">
+              <Pencil size={13} />
+              Bulk Edit
+            </button>
+            <button type="button" onClick={() => { setOpen(false); onExportSelected(); }} className="flex w-full items-center gap-2 rounded-lg px-2.5 py-1.5 text-left text-[12px] font-normal text-[#475569] transition-colors hover:bg-[#F1F5F9] dark:text-[#9CA3AF] dark:hover:bg-white/5">
+              <Download size={13} />
+              Export Selected
+            </button>
+            <button type="button" disabled title="Coming soon" className="flex w-full cursor-not-allowed items-center gap-2 rounded-lg px-2.5 py-1.5 text-left text-[12px] font-normal text-[#b3b8c2] dark:text-[#5a5f66]">
+              <Trash2 size={13} />
+              Delete Selected
+            </button>
+            <div className="my-1 border-t border-[#F1F5F9] dark:border-[#2f2f32]" />
+            <button type="button" onClick={() => { setOpen(false); onClearSelection(); }} className="flex w-full items-center gap-2 rounded-lg px-2.5 py-1.5 text-left text-[12px] font-normal text-[#475569] transition-colors hover:bg-[#F1F5F9] dark:text-[#9CA3AF] dark:hover:bg-white/5">
+              <X size={13} />
+              Clear Selection
+            </button>
+          </div>,
+          document.body
+        )}
+      </div>
+    </div>
+  );
+}
 
 function displayNum(num: number): string {
   if (Math.abs(num) < 0.01) return '−';
@@ -188,7 +435,24 @@ const SCHEDULE_RANK: Record<Schedule, number> = Object.fromEntries(
   SCHEDULE_SORT_ORDER.map((s, i) => [s, i])
 ) as Record<Schedule, number>;
 
+// Fixed small domains — unlike Leader (open-ended, derived from the roster
+// below), Deposit/Withdrawal/Wallet Status only ever take these values.
+const DEPOSIT_WITHDRAWAL_OPTIONS: DepositWithdrawal[] = ['Yes', 'No'];
+const WALLET_STATUS_FILTER_OPTIONS: WalletStatusValue[] = ['Active', 'Inactive', 'Wallet With Issue'];
+const SCHEDULE_FILTER_LABEL: Record<Schedule, string> = {
+  '24/7': '24/7',
+  'Day': 'Day',
+  'Early Ext.': 'Early Ext.',
+  'Extended': 'Extended',
+  '': 'No Schedule',
+};
+
 type WalletStatusRow = {
+  // Sequential index assigned once at fetch time — the row-selection
+  // checkbox system's only stable identity (shopName/`key` also works, but
+  // matches the numeric-id convention Top Up/Settlement's own bulk
+  // selection already uses).
+  _id: number;
   key: string;
   shopName: string;
   brand: string;
@@ -256,7 +520,7 @@ const DEFAULT_COLUMNS: ColumnDef[] = [
   // Edit/Save/Cancel per ROW — Priority is the only field this saves;
   // Deposit/Withdrawal/Wallet Status are computed and read-only. Never
   // hideable — it's the only edit affordance for the row.
-  { key: COLUMN_IDS.WALLET_STATUS_ACTION, label: '', visible: true, sortable: false, hideable: false, align: 'center' },
+  { key: COLUMN_IDS.WALLET_STATUS_ACTION, label: 'Action', visible: true, sortable: false, hideable: false, align: 'center' },
 ];
 
 const COLUMN_VISIBILITY_STORAGE_KEY = 'walletStatusColumnVisibility';
@@ -759,10 +1023,46 @@ export default function WalletStatus() {
   const [columnsMenuOpen, setColumnsMenuOpen] = useState(false);
   const [mounted, setMounted] = useState(false);
   const columnsButtonRef = useRef<HTMLButtonElement>(null);
+  const exportButtonRef = useRef<HTMLButtonElement>(null);
+  const refreshButtonRef = useRef<HTMLButtonElement>(null);
+  const exportTooltip = useToolbarTooltip(exportButtonRef);
+  const refreshTooltip = useToolbarTooltip(refreshButtonRef);
+  const columnsTooltip = useToolbarTooltip(columnsButtonRef);
   const [page, setPage] = useState(1);
   const [rowsPerPage, setRowsPerPage] = useState(50);
   const [saveError, setSaveError] = useState<string | null>(null);
   const [toast, setToast] = useState<string | null>(null);
+
+  // Toolbar filters — Leader/Deposit/Withdrawal/Schedule/Wallet Status, same
+  // shape/behavior as Top Up/Settlement's own Brand/Leader/Wallet filters:
+  // absence from the map means checked, a value is only ever written
+  // `false`.
+  const [leaderFilter, setLeaderFilter] = useState<Record<string, boolean>>({});
+  const [depositFilter, setDepositFilter] = useState<Record<string, boolean>>({});
+  const [withdrawalFilter, setWithdrawalFilter] = useState<Record<string, boolean>>({});
+  const [scheduleFilter, setScheduleFilter] = useState<Record<string, boolean>>({});
+  const [walletStatusFilter, setWalletStatusFilter] = useState<Record<string, boolean>>({});
+  const [leaderMenuOpen, setLeaderMenuOpen] = useState(false);
+  const [depositMenuOpen, setDepositMenuOpen] = useState(false);
+  const [withdrawalMenuOpen, setWithdrawalMenuOpen] = useState(false);
+  const [scheduleMenuOpen, setScheduleMenuOpen] = useState(false);
+  const [walletStatusMenuOpen, setWalletStatusMenuOpen] = useState(false);
+  const leaderButtonRef = useRef<HTMLButtonElement>(null);
+  const depositButtonRef = useRef<HTMLButtonElement>(null);
+  const withdrawalButtonRef = useRef<HTMLButtonElement>(null);
+  const scheduleButtonRef = useRef<HTMLButtonElement>(null);
+  const walletStatusButtonRef = useRef<HTMLButtonElement>(null);
+
+  // Row-selection checkboxes + Bulk Edit — selection is keyed by each row's
+  // `_id` (see WalletStatusRow), reset on every fresh fetch since a refetch
+  // means brand-new row objects.
+  const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set());
+  const [selectionBarRendered, setSelectionBarRendered] = useState(false);
+  const [bulkEditOpen, setBulkEditOpen] = useState(false);
+  const [bulkSaving, setBulkSaving] = useState(false);
+  useEffect(() => {
+    setSelectionBarRendered(selectedIds.size > 0);
+  }, [selectedIds.size]);
 
   // One row editable at a time — Priority is the only field this stages.
   // editingRowKey being a single value (not a Set/per-field map) is what
@@ -886,7 +1186,7 @@ export default function WalletStatus() {
           }
         });
 
-      const merged: WalletStatusRow[] = openingRows.map((opening) => {
+      const merged: WalletStatusRow[] = openingRows.map((opening, index) => {
         const totals = balanceTotals.get(opening.agentName) ?? { dp: 0, wd: 0 };
         const totalTopUp = topUpTotals.get(opening.agentName) ?? 0;
         const totalStlm = stlmTotals.get(opening.agentName) ?? 0;
@@ -906,6 +1206,7 @@ export default function WalletStatus() {
         // shown, per explicit instruction.
         const availableLimit = flags.walletStatus === 'Inactive' ? 0 : computeAvailableLimit(baseLimit, companyBalance, totals.dp);
         return {
+          _id: index,
           key: opening.agentName,
           shopName: opening.agentName,
           brand: resolveBrand(brandGroups.get(opening.agentName) ?? [], opening.agentName, { brandPriority: BRAND_PRIORITY, brandCodes: BRAND_CODES }),
@@ -927,6 +1228,7 @@ export default function WalletStatus() {
       });
 
       setRows(merged);
+      setSelectedIds(new Set());
     } catch (err) {
       setError(classifyFetchError(err instanceof Error ? err.message : String(err)));
     } finally {
@@ -941,7 +1243,7 @@ export default function WalletStatus() {
 
   useEffect(() => {
     setPage(1);
-  }, [searchTerm, sortColumn, sortDirection, rowsPerPage]);
+  }, [searchTerm, sortColumn, sortDirection, rowsPerPage, leaderFilter, depositFilter, withdrawalFilter, scheduleFilter, walletStatusFilter]);
 
   const handlePageSizeChange = useCallback((size: number) => {
     setRowsPerPage(size);
@@ -1048,8 +1350,121 @@ export default function WalletStatus() {
     return rows.filter((row) => `${row.shopName} ${row.brand} ${row.remark} ${row.leader} ${row.schedule}`.toLowerCase().includes(query));
   }, [rows, searchTerm]);
 
+  // Toolbar filters — Leader/Deposit/Withdrawal/Schedule/Wallet Status, same
+  // shape/behavior as Top Up/Settlement's own Brand/Leader/Wallet filters:
+  // the full distinct option universe comes from the whole dataset (`rows`),
+  // but each dropdown's own per-option counts are faceted — computed by
+  // applying every OTHER filter except its own, so unchecking an option in
+  // a dropdown never shrinks that same dropdown's own list toward zero.
+  const leaderOptions = useMemo(
+    () => Array.from(new Set(rows.map((r) => r.leader))).sort((a, b) => toProperCase(a).localeCompare(toProperCase(b))),
+    [rows]
+  );
+  const depositOptions = DEPOSIT_WITHDRAWAL_OPTIONS;
+  const withdrawalOptions = DEPOSIT_WITHDRAWAL_OPTIONS;
+  const scheduleOptions = SCHEDULE_SORT_ORDER;
+  const walletStatusOptions = WALLET_STATUS_FILTER_OPTIONS;
+
+  const isLeaderChecked = (name: string) => leaderFilter[name] !== false;
+  const isDepositChecked = (name: string) => depositFilter[name] !== false;
+  const isWithdrawalChecked = (name: string) => withdrawalFilter[name] !== false;
+  const isScheduleChecked = (name: string) => scheduleFilter[name] !== false;
+  const isWalletStatusChecked = (name: string) => walletStatusFilter[name] !== false;
+
+  const anyLeaderUnchecked = leaderOptions.some((name) => !isLeaderChecked(name));
+  const anyDepositUnchecked = depositOptions.some((name) => !isDepositChecked(name));
+  const anyWithdrawalUnchecked = withdrawalOptions.some((name) => !isWithdrawalChecked(name));
+  const anyScheduleUnchecked = scheduleOptions.some((name) => !isScheduleChecked(name));
+  const anyWalletStatusUnchecked = walletStatusOptions.some((name) => !isWalletStatusChecked(name));
+
+  const selectedLeaderCount = leaderOptions.filter((name) => isLeaderChecked(name)).length;
+  const selectedDepositCount = depositOptions.filter((name) => isDepositChecked(name)).length;
+  const selectedWithdrawalCount = withdrawalOptions.filter((name) => isWithdrawalChecked(name)).length;
+  const selectedScheduleCount = scheduleOptions.filter((name) => isScheduleChecked(name)).length;
+  const selectedWalletStatusCount = walletStatusOptions.filter((name) => isWalletStatusChecked(name)).length;
+
+  const anyFilterActive = anyLeaderUnchecked || anyDepositUnchecked || anyWithdrawalUnchecked || anyScheduleUnchecked || anyWalletStatusUnchecked;
+
+  const resetAllFilters = useCallback(() => {
+    setLeaderFilter({});
+    setDepositFilter({});
+    setWithdrawalFilter({});
+    setScheduleFilter({});
+    setWalletStatusFilter({});
+    setLeaderMenuOpen(false);
+    setDepositMenuOpen(false);
+    setWithdrawalMenuOpen(false);
+    setScheduleMenuOpen(false);
+    setWalletStatusMenuOpen(false);
+  }, []);
+
+  const leaderFilterOptions = useMemo(() => {
+    let list = searchedRows;
+    if (depositOptions.some((name) => depositFilter[name] === false)) list = list.filter((row) => depositFilter[row.deposit] !== false);
+    if (withdrawalOptions.some((name) => withdrawalFilter[name] === false)) list = list.filter((row) => withdrawalFilter[row.withdrawal] !== false);
+    if (scheduleOptions.some((name) => scheduleFilter[name] === false)) list = list.filter((row) => scheduleFilter[row.schedule] !== false);
+    if (walletStatusOptions.some((name) => walletStatusFilter[name] === false)) list = list.filter((row) => walletStatusFilter[row.walletStatus] !== false);
+    const counts = new Map<string, number>();
+    for (const row of list) counts.set(row.leader, (counts.get(row.leader) ?? 0) + 1);
+    return leaderOptions.map((name) => ({ value: name, label: toProperCase(name), count: counts.get(name) ?? 0 }));
+  }, [searchedRows, depositFilter, depositOptions, withdrawalFilter, withdrawalOptions, scheduleFilter, scheduleOptions, walletStatusFilter, walletStatusOptions, leaderOptions]);
+
+  const depositFilterOptions = useMemo(() => {
+    let list = searchedRows;
+    if (leaderOptions.some((name) => leaderFilter[name] === false)) list = list.filter((row) => leaderFilter[row.leader] !== false);
+    if (withdrawalOptions.some((name) => withdrawalFilter[name] === false)) list = list.filter((row) => withdrawalFilter[row.withdrawal] !== false);
+    if (scheduleOptions.some((name) => scheduleFilter[name] === false)) list = list.filter((row) => scheduleFilter[row.schedule] !== false);
+    if (walletStatusOptions.some((name) => walletStatusFilter[name] === false)) list = list.filter((row) => walletStatusFilter[row.walletStatus] !== false);
+    const counts = new Map<string, number>();
+    for (const row of list) counts.set(row.deposit, (counts.get(row.deposit) ?? 0) + 1);
+    return depositOptions.map((name) => ({ value: name, label: name, count: counts.get(name) ?? 0 }));
+  }, [searchedRows, leaderFilter, leaderOptions, withdrawalFilter, withdrawalOptions, scheduleFilter, scheduleOptions, walletStatusFilter, walletStatusOptions, depositOptions]);
+
+  const withdrawalFilterOptions = useMemo(() => {
+    let list = searchedRows;
+    if (leaderOptions.some((name) => leaderFilter[name] === false)) list = list.filter((row) => leaderFilter[row.leader] !== false);
+    if (depositOptions.some((name) => depositFilter[name] === false)) list = list.filter((row) => depositFilter[row.deposit] !== false);
+    if (scheduleOptions.some((name) => scheduleFilter[name] === false)) list = list.filter((row) => scheduleFilter[row.schedule] !== false);
+    if (walletStatusOptions.some((name) => walletStatusFilter[name] === false)) list = list.filter((row) => walletStatusFilter[row.walletStatus] !== false);
+    const counts = new Map<string, number>();
+    for (const row of list) counts.set(row.withdrawal, (counts.get(row.withdrawal) ?? 0) + 1);
+    return withdrawalOptions.map((name) => ({ value: name, label: name, count: counts.get(name) ?? 0 }));
+  }, [searchedRows, leaderFilter, leaderOptions, depositFilter, depositOptions, scheduleFilter, scheduleOptions, walletStatusFilter, walletStatusOptions, withdrawalOptions]);
+
+  const scheduleFilterOptions = useMemo(() => {
+    let list = searchedRows;
+    if (leaderOptions.some((name) => leaderFilter[name] === false)) list = list.filter((row) => leaderFilter[row.leader] !== false);
+    if (depositOptions.some((name) => depositFilter[name] === false)) list = list.filter((row) => depositFilter[row.deposit] !== false);
+    if (withdrawalOptions.some((name) => withdrawalFilter[name] === false)) list = list.filter((row) => withdrawalFilter[row.withdrawal] !== false);
+    if (walletStatusOptions.some((name) => walletStatusFilter[name] === false)) list = list.filter((row) => walletStatusFilter[row.walletStatus] !== false);
+    const counts = new Map<string, number>();
+    for (const row of list) counts.set(row.schedule, (counts.get(row.schedule) ?? 0) + 1);
+    return scheduleOptions.map((name) => ({ value: name, label: SCHEDULE_FILTER_LABEL[name], count: counts.get(name) ?? 0 }));
+  }, [searchedRows, leaderFilter, leaderOptions, depositFilter, depositOptions, withdrawalFilter, withdrawalOptions, walletStatusFilter, walletStatusOptions, scheduleOptions]);
+
+  const walletStatusFilterOptions = useMemo(() => {
+    let list = searchedRows;
+    if (leaderOptions.some((name) => leaderFilter[name] === false)) list = list.filter((row) => leaderFilter[row.leader] !== false);
+    if (depositOptions.some((name) => depositFilter[name] === false)) list = list.filter((row) => depositFilter[row.deposit] !== false);
+    if (withdrawalOptions.some((name) => withdrawalFilter[name] === false)) list = list.filter((row) => withdrawalFilter[row.withdrawal] !== false);
+    if (scheduleOptions.some((name) => scheduleFilter[name] === false)) list = list.filter((row) => scheduleFilter[row.schedule] !== false);
+    const counts = new Map<string, number>();
+    for (const row of list) counts.set(row.walletStatus, (counts.get(row.walletStatus) ?? 0) + 1);
+    return walletStatusOptions.map((name) => ({ value: name, label: name, count: counts.get(name) ?? 0 }));
+  }, [searchedRows, leaderFilter, leaderOptions, depositFilter, depositOptions, withdrawalFilter, withdrawalOptions, scheduleFilter, scheduleOptions, walletStatusOptions]);
+
+  const filteredRows = useMemo(() => {
+    let list = searchedRows;
+    if (leaderOptions.some((name) => leaderFilter[name] === false)) list = list.filter((row) => leaderFilter[row.leader] !== false);
+    if (depositOptions.some((name) => depositFilter[name] === false)) list = list.filter((row) => depositFilter[row.deposit] !== false);
+    if (withdrawalOptions.some((name) => withdrawalFilter[name] === false)) list = list.filter((row) => withdrawalFilter[row.withdrawal] !== false);
+    if (scheduleOptions.some((name) => scheduleFilter[name] === false)) list = list.filter((row) => scheduleFilter[row.schedule] !== false);
+    if (walletStatusOptions.some((name) => walletStatusFilter[name] === false)) list = list.filter((row) => walletStatusFilter[row.walletStatus] !== false);
+    return list;
+  }, [searchedRows, leaderFilter, leaderOptions, depositFilter, depositOptions, withdrawalFilter, withdrawalOptions, scheduleFilter, scheduleOptions, walletStatusFilter, walletStatusOptions]);
+
   const sortedRows = useMemo(() => {
-    const list = [...searchedRows];
+    const list = [...filteredRows];
     list.sort((a, b) => {
       // Remarks sorts by string, but per spec, rows with no remark always
       // sort to the end regardless of asc/desc direction — handled as its
@@ -1091,16 +1506,45 @@ export default function WalletStatus() {
       return sortDirection === 'asc' ? comparison : -comparison;
     });
     return list;
-  }, [searchedRows, sortColumn, sortDirection]);
+  }, [filteredRows, sortColumn, sortDirection]);
 
   const totalPages = Math.max(1, Math.ceil(sortedRows.length / rowsPerPage));
   const currentPage = Math.min(page, totalPages);
   const startIndex = (currentPage - 1) * rowsPerPage;
   const pagedRows = sortedRows.slice(startIndex, startIndex + rowsPerPage);
 
+  // Selection only ever acts on the CURRENT PAGE's rows, not the full
+  // filtered dataset — same convention as Top Up/Settlement's own "select
+  // all" checkbox.
+  const pageRowIds = useMemo(() => pagedRows.map((row) => row._id), [pagedRows]);
+  const selectedOnPageCount = pageRowIds.filter((id) => selectedIds.has(id)).length;
+  const allOnPageSelected = pageRowIds.length > 0 && selectedOnPageCount === pageRowIds.length;
+
+  const toggleRowSelection = useCallback((id: number) => {
+    setSelectedIds((current) => {
+      const next = new Set(current);
+      if (next.has(id)) next.delete(id); else next.add(id);
+      return next;
+    });
+  }, []);
+
+  const toggleSelectAllOnPage = useCallback(() => {
+    setSelectedIds((current) => {
+      const onPageSelectedCount = pageRowIds.filter((id) => current.has(id)).length;
+      if (pageRowIds.length > 0 && onPageSelectedCount === pageRowIds.length) {
+        const next = new Set(current);
+        pageRowIds.forEach((id) => next.delete(id));
+        return next;
+      }
+      const next = new Set(current);
+      pageRowIds.forEach((id) => next.add(id));
+      return next;
+    });
+  }, [pageRowIds]);
+
   const visibleColumns = useMemo(() => (mounted ? columnDefs : []).filter((col) => col.visible), [columnDefs, mounted]);
 
-  const handleExport = useCallback(() => {
+  const handleExport = useCallback((rowsOverride?: WalletStatusRow[]) => {
     const getExportValue = (row: WalletStatusRow, key: ColumnKey) => {
       switch (key) {
         case 'brand': return row.brand;
@@ -1122,7 +1566,7 @@ export default function WalletStatus() {
     // from the sheet rather than producing an empty, unlabeled column.
     const exportColumns = visibleColumns.filter((col) => col.key !== 'walletStatusAction');
     const headers = exportColumns.map((col) => col.label);
-    const data = sortedRows.map((row) => exportColumns.map((col) => getExportValue(row, col.key)));
+    const data = (rowsOverride ?? sortedRows).map((row) => exportColumns.map((col) => getExportValue(row, col.key)));
     const worksheet = XLSX.utils.aoa_to_sheet([headers, ...data]);
     worksheet['!cols'] = headers.map(() => ({ wch: 18 }));
     const workbook = XLSX.utils.book_new();
@@ -1132,6 +1576,67 @@ export default function WalletStatus() {
     const timePart = `${String(now.getHours()).padStart(2, '0')}${String(now.getMinutes()).padStart(2, '0')}`;
     XLSX.writeFile(workbook, `WALLET_STATUS_${datePart}_${timePart}.xlsx`);
   }, [sortedRows, visibleColumns]);
+
+  const handleExportSelected = useCallback(() => {
+    handleExport(sortedRows.filter((row) => selectedIds.has(row._id)));
+  }, [handleExport, sortedRows, selectedIds]);
+
+  // Bulk Edit's real persistence path — mirrors saveRow's own POST calls but
+  // batched server-side (see /api/wallet-status/bulk-update +
+  // updateCashoutWalletStatusBulk) instead of firing one request per
+  // selected shop per field. On success, patches every selected row's local
+  // state directly from the response (same optimistic-update convention
+  // saveRow already uses) instead of forcing a full refetch. On failure,
+  // refetches to confirm what actually landed — same as saveRow's own
+  // catch path.
+  const handleBulkEditApply = useCallback((updates: BulkEditUpdates) => {
+    if (bulkSaving) return;
+    const selectedRows = rows.filter((row) => selectedIds.has(row._id));
+    if (selectedRows.length === 0) return;
+
+    const priority = updates.priority as Priority | undefined;
+    const remark = updates.remarks;
+
+    const payload = selectedRows.map((row) => ({
+      shopName: row.shopName,
+      ...(priority !== undefined ? { priority } : {}),
+      ...(remark !== undefined ? { remark } : {}),
+    }));
+
+    setBulkSaving(true);
+    setSaveError(null);
+
+    fetch('/api/wallet-status/bulk-update', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ updates: payload }),
+    })
+      .then(async (res) => {
+        if (!res.ok) throw new Error('Bulk save failed');
+        return (await res.json()) as { updatedBy: string; updatedAt: string };
+      })
+      .then((result) => {
+        setRows((current) => current.map((r) => (selectedIds.has(r._id) ? {
+          ...r,
+          priority: priority !== undefined ? priority : r.priority,
+          remark: remark !== undefined ? remark : r.remark,
+          remarkUpdatedBy: remark !== undefined ? result.updatedBy : r.remarkUpdatedBy,
+          remarkUpdatedAt: remark !== undefined ? result.updatedAt : r.remarkUpdatedAt,
+        } : r)));
+        setBulkEditOpen(false);
+        setSelectedIds(new Set());
+        setToast(`${selectedRows.length} Shop${selectedRows.length === 1 ? '' : 's'} Updated`);
+      })
+      .catch(() => {
+        setSaveError('Bulk save failed — reloading to confirm what actually saved.');
+        setTimeout(() => setSaveError(null), 5000);
+        setBulkEditOpen(false);
+        fetchData();
+      })
+      .finally(() => {
+        setBulkSaving(false);
+      });
+  }, [rows, selectedIds, fetchData, bulkSaving]);
 
   useEffect(() => {
     if (page !== currentPage) setPage(currentPage);
@@ -1263,7 +1768,9 @@ export default function WalletStatus() {
         // cell paints over its own row's normal background otherwise.
         const stickyBg = isEditingThisRow
           ? 'bg-[#F8F9FF] dark:bg-[#2a2a2d]'
-          : 'bg-white dark:bg-[#1c1c1e]';
+          : selectedIds.has(row._id)
+            ? 'bg-[#EFF6FF] dark:bg-[#1e2a3d]'
+            : 'bg-white dark:bg-[#1c1c1e]';
         if (!isEditingThisRow) {
           return (
             <td key={key} style={cellStyle} className={`${base} sticky right-0 z-[40] ${stickyBg}`}>
@@ -1333,40 +1840,170 @@ export default function WalletStatus() {
                 {saveError}
               </div>
             )}
-            <Toolbar>
-              <Toolbar.Left>
-                <div className="flex h-10 w-full min-w-[200px] items-center gap-2 rounded-[10px] border border-border bg-white px-[14px] transition-colors focus-within:border-[#2563EB] focus-within:ring-2 focus-within:ring-[#2563EB]/20 dark:bg-[#2a2a2d] sm:w-[380px]">
-                  {loading ? (
-                    <div className="dt-skeleton h-3 w-32 rounded-md" />
-                  ) : (
-                    <>
-                      <Search size={16} className="shrink-0 text-muted-foreground" />
-                      <input
-                        aria-label="Search shops or brands"
-                        value={searchTerm}
-                        onChange={(event) => setSearchTerm(event.target.value)}
-                        className="flex-1 bg-transparent text-[13px] font-normal text-foreground placeholder:text-muted-foreground outline-none border-none"
-                        placeholder="Search shops or brands..."
-                      />
-                    </>
-                  )}
+            {/* Same style/arrangement as Top Up/Settlement (app/topup/page.tsx):
+                Filters (mr-3) -> Search (flex-1, rounded-full) -> [Bulk
+                Actions, only while rows are selected] -> Actions (ml-3),
+                replacing the old Toolbar/Toolbar.Left/Toolbar.Right layout. */}
+            <div className="flex shrink-0 flex-nowrap items-center overflow-x-auto border-b border-[#E5E7EB] px-4 py-3 dark:border-[#3a3a3d]">
+              {loading ? (
+                <div className="mr-3 flex shrink-0 items-center gap-3">
+                  <div className="h-10 w-10 shrink-0 dt-skeleton rounded-[12px] xl:w-[92px]" />
+                  <div className="h-10 w-10 shrink-0 dt-skeleton rounded-[12px] xl:w-[100px]" />
+                  <div className="h-10 w-10 shrink-0 dt-skeleton rounded-[12px] xl:w-[112px]" />
+                  <div className="h-10 w-10 shrink-0 dt-skeleton rounded-[12px] xl:w-[104px]" />
+                  <div className="h-10 w-10 shrink-0 dt-skeleton rounded-[12px] xl:w-[128px]" />
+                  <div className="h-10 w-10 shrink-0 dt-skeleton rounded-[12px]" />
                 </div>
-              </Toolbar.Left>
-              <Toolbar.Right>
-                {loading && <div className="dt-skeleton h-8 w-8 rounded-[8px]" />}
-                {!loading && (
-                  <button type="button" onClick={fetchData} aria-label="Refresh" title="Refresh" className={GHOST_BUTTON}>
-                    <RefreshCw size={15} className={spinning ? 'animate-spin' : ''} />
-                  </button>
+              ) : (
+                <div className="mr-3 flex shrink-0 items-center gap-3">
+                  <div className="relative">
+                    <FilterTriggerButton
+                      label="Leader"
+                      icon={User}
+                      anyUnchecked={anyLeaderUnchecked}
+                      selectedCount={selectedLeaderCount}
+                      menuOpen={leaderMenuOpen}
+                      buttonRef={leaderButtonRef}
+                      onClick={() => setLeaderMenuOpen((current) => !current)}
+                    />
+                    <FilterDropdown
+                      open={leaderMenuOpen}
+                      onOpenChange={setLeaderMenuOpen}
+                      anchorRef={leaderButtonRef}
+                      options={leaderFilterOptions}
+                      selected={leaderFilter}
+                      onChange={setLeaderFilter}
+                    />
+                  </div>
+                  <div className="relative">
+                    <FilterTriggerButton
+                      label="Deposit"
+                      icon={ArrowDownCircle}
+                      anyUnchecked={anyDepositUnchecked}
+                      selectedCount={selectedDepositCount}
+                      menuOpen={depositMenuOpen}
+                      buttonRef={depositButtonRef}
+                      onClick={() => setDepositMenuOpen((current) => !current)}
+                    />
+                    <FilterDropdown
+                      open={depositMenuOpen}
+                      onOpenChange={setDepositMenuOpen}
+                      anchorRef={depositButtonRef}
+                      options={depositFilterOptions}
+                      selected={depositFilter}
+                      onChange={setDepositFilter}
+                    />
+                  </div>
+                  <div className="relative">
+                    <FilterTriggerButton
+                      label="Withdrawal"
+                      icon={ArrowUpCircle}
+                      anyUnchecked={anyWithdrawalUnchecked}
+                      selectedCount={selectedWithdrawalCount}
+                      menuOpen={withdrawalMenuOpen}
+                      buttonRef={withdrawalButtonRef}
+                      onClick={() => setWithdrawalMenuOpen((current) => !current)}
+                    />
+                    <FilterDropdown
+                      open={withdrawalMenuOpen}
+                      onOpenChange={setWithdrawalMenuOpen}
+                      anchorRef={withdrawalButtonRef}
+                      options={withdrawalFilterOptions}
+                      selected={withdrawalFilter}
+                      onChange={setWithdrawalFilter}
+                    />
+                  </div>
+                  <div className="relative">
+                    <FilterTriggerButton
+                      label="Schedule"
+                      icon={Clock}
+                      anyUnchecked={anyScheduleUnchecked}
+                      selectedCount={selectedScheduleCount}
+                      menuOpen={scheduleMenuOpen}
+                      buttonRef={scheduleButtonRef}
+                      onClick={() => setScheduleMenuOpen((current) => !current)}
+                    />
+                    <FilterDropdown
+                      open={scheduleMenuOpen}
+                      onOpenChange={setScheduleMenuOpen}
+                      anchorRef={scheduleButtonRef}
+                      options={scheduleFilterOptions}
+                      selected={scheduleFilter}
+                      onChange={setScheduleFilter}
+                    />
+                  </div>
+                  <div className="relative">
+                    <FilterTriggerButton
+                      label="Wallet Status"
+                      icon={CircleDot}
+                      anyUnchecked={anyWalletStatusUnchecked}
+                      selectedCount={selectedWalletStatusCount}
+                      menuOpen={walletStatusMenuOpen}
+                      buttonRef={walletStatusButtonRef}
+                      onClick={() => setWalletStatusMenuOpen((current) => !current)}
+                    />
+                    <FilterDropdown
+                      open={walletStatusMenuOpen}
+                      onOpenChange={setWalletStatusMenuOpen}
+                      anchorRef={walletStatusButtonRef}
+                      options={walletStatusFilterOptions}
+                      selected={walletStatusFilter}
+                      onChange={setWalletStatusFilter}
+                    />
+                  </div>
+                  <ResetFiltersButton anyFilterActive={anyFilterActive} onClick={resetAllFilters} />
+                </div>
+              )}
+
+              <div className="flex h-10 flex-1 min-w-[200px] items-center gap-2 rounded-full border border-[#E5E7EB] bg-white px-[16px] transition-colors focus-within:border-[#2563EB] focus-within:ring-2 focus-within:ring-[#2563EB]/20 dark:border-[#3a3a3d] dark:bg-[#2a2a2d]">
+                {loading ? (
+                  <div className="dt-skeleton h-3 w-32 rounded-md" />
+                ) : (
+                  <>
+                    <Search size={16} className="shrink-0 text-[#475569] dark:text-[#9CA3AF]" />
+                    <input
+                      aria-label="Search shop, leader, or brand"
+                      value={searchTerm}
+                      onChange={(event) => setSearchTerm(event.target.value)}
+                      className="flex-1 bg-transparent text-[13px] font-normal text-foreground placeholder:text-muted-foreground outline-none border-none"
+                      placeholder="Search shop, leader, or brand..."
+                    />
+                  </>
                 )}
-                {loading && <div className="dt-skeleton h-9 w-[88px] rounded-[8px]" />}
+              </div>
+
+              {!loading && selectionBarRendered && (
+                <div className="ml-3 flex shrink-0 items-center">
+                  <BulkActionsMenu
+                    count={selectedIds.size}
+                    onBulkEdit={() => setBulkEditOpen(true)}
+                    onExportSelected={handleExportSelected}
+                    onClearSelection={() => setSelectedIds(new Set())}
+                  />
+                </div>
+              )}
+
+              <div className="ml-3 flex shrink-0 items-center gap-3">
+                {loading && <div className="h-10 w-10 shrink-0 dt-skeleton rounded-[12px] xl:w-[92px]" />}
                 {!loading && (
-                  <button type="button" onClick={handleExport} aria-label="Export to Excel" title="Export to Excel" className={GHOST_BUTTON}>
-                    <Download size={15} />
-                    Export
-                  </button>
+                  <div className="relative">
+                    <button type="button" ref={exportButtonRef} onClick={() => handleExport()} aria-label="Export to Excel" {...exportTooltip.handlers} className={ICON_BUTTON}>
+                      <Download size={16} />
+                      <span className="hidden xl:inline">Export</span>
+                    </button>
+                    {exportTooltip.rendered && <ToolbarTooltip label="Export" open={exportTooltip.open} pos={exportTooltip.pos} onlyWhenCompact />}
+                  </div>
                 )}
-                {loading && <div className="dt-skeleton h-9 w-[104px] rounded-[8px]" />}
+                {loading && <div className="h-10 w-10 shrink-0 dt-skeleton rounded-[12px]" />}
+                {!loading && (
+                  <div className="relative">
+                    <button type="button" ref={refreshButtonRef} onClick={fetchData} aria-label="Refresh Data" {...refreshTooltip.handlers} className={REFRESH_ICON_BUTTON}>
+                      <RefreshCw size={16} className={spinning ? 'animate-spin' : ''} />
+                    </button>
+                    {refreshTooltip.rendered && <ToolbarTooltip label="Refresh Data" open={refreshTooltip.open} pos={refreshTooltip.pos} />}
+                  </div>
+                )}
+                {loading && <div className="h-10 w-10 shrink-0 dt-skeleton rounded-[12px]" />}
                 {!loading && (
                   <div className="relative">
                     <button
@@ -1376,13 +2013,13 @@ export default function WalletStatus() {
                       aria-haspopup="true"
                       aria-expanded={columnsMenuOpen}
                       aria-controls="wallet-status-columns-popover"
-                      aria-label="Columns"
-                      title="Columns"
-                      className={GHOST_BUTTON}
+                      aria-label="Customize Columns"
+                      {...columnsTooltip.handlers}
+                      className={ICON_ONLY_BUTTON}
                     >
-                      <Columns3 size={15} />
-                      Columns
+                      <Columns3 size={16} />
                     </button>
+                    {columnsTooltip.rendered && <ToolbarTooltip label="Customize Columns" open={columnsTooltip.open} pos={columnsTooltip.pos} />}
                     <ColumnsDropdown
                       id="wallet-status-columns-popover"
                       open={columnsMenuOpen}
@@ -1394,14 +2031,25 @@ export default function WalletStatus() {
                     />
                   </div>
                 )}
-              </Toolbar.Right>
-            </Toolbar>
+              </div>
+            </div>
             <div className="hidden h-1.5 shrink-0 sm:block" />
             <div className="relative hidden flex-1 min-h-0 sm:block">
               <div ref={tableScrollRef} className="dt-scroll h-full overflow-y-auto overflow-x-auto">
                 <table className="w-full text-xs">
                   <thead className={`sticky top-0 z-[50] bg-[#FAFAFB] dark:bg-[#252528] border-b border-[#E2E8F0] dark:border-[#3a3a3d] transition-shadow duration-150 ease-out ${isScrolled ? 'shadow-[0_2px_4px_rgba(15,23,42,0.1)] dark:shadow-[0_2px_4px_rgba(0,0,0,0.35)]' : ''}`}>
                     <tr className="h-[48px]">
+                      <th className={`${headerCellClasses('center')} w-[44px]`}>
+                        {!loading && (
+                          <input
+                            type="checkbox"
+                            aria-label="Select all rows on this page"
+                            checked={allOnPageSelected}
+                            onChange={toggleSelectAllOnPage}
+                            className="h-3.5 w-3.5 cursor-pointer"
+                          />
+                        )}
+                      </th>
                       {visibleColumns.map((col) => (
                         <th
                           key={col.key}
@@ -1452,6 +2100,7 @@ export default function WalletStatus() {
                     {loading ? (
                       Array.from({ length: 18 }).map((_, rowIndex) => (
                         <tr key={rowIndex}>
+                          <td className="px-4 py-[14px]" />
                           {visibleColumns.map((col) => {
                             const widths = rowSkeletonWidths[col.key];
                             const width = widths[rowIndex % widths.length];
@@ -1474,14 +2123,25 @@ export default function WalletStatus() {
                         className={`border-b last:border-0 transition-[background-color,border-color] duration-150 ease-out hover:bg-muted/10 ${
                           editingRowKey === row.key
                             ? 'border-b-border border-l-[3px] border-l-[#5B5CEB] bg-[#F8F9FF] dark:bg-[#5B5CEB]/[0.08]'
-                            : `border-border ${i % 2 === 1 ? 'bg-muted/5' : ''}`
+                            : selectedIds.has(row._id)
+                              ? 'border-border bg-[#EFF6FF] dark:bg-[#1e2a3d]'
+                              : `border-border ${i % 2 === 1 ? 'bg-muted/5' : ''}`
                         }`}
                       >
+                        <td className="px-4 py-[14px] text-center align-top" onClick={(event) => event.stopPropagation()}>
+                          <input
+                            type="checkbox"
+                            aria-label={`Select ${row.shopName}`}
+                            checked={selectedIds.has(row._id)}
+                            onChange={() => toggleRowSelection(row._id)}
+                            className="h-3.5 w-3.5 cursor-pointer"
+                          />
+                        </td>
                         {visibleColumns.map((col) => renderCell(row, col.key, colWidthsPx))}
                       </tr>
                     )) : (
                       <tr>
-                        <td colSpan={Math.max(visibleColumns.length, 1)}>
+                        <td colSpan={Math.max(visibleColumns.length, 1) + 1}>
                           <EmptyState title="No shops found" description="No shops match the current search." />
                         </td>
                       </tr>
@@ -1525,13 +2185,25 @@ export default function WalletStatus() {
                     const isEditingThisRow = editingRowKey === row.key;
                     const priorityValue = isEditingThisRow && editDraft ? editDraft.priority : row.priority;
                     const canSave = rowHasChanges(row, editDraft);
+                    const isSelected = selectedIds.has(row._id);
                     return (
                       <div
                         key={row.key}
-                        className={`rounded-xl border p-3.5 transition-[background-color,border-color] duration-150 ease-out dark:bg-[#2a2a2d] ${
-                          isEditingThisRow ? 'border-[#5B5CEB] bg-[#F8F9FF] dark:bg-[#5B5CEB]/[0.08]' : 'border-border bg-white'
+                        className={`relative rounded-xl border p-3.5 pr-9 transition-[background-color,border-color] duration-150 ease-out dark:bg-[#2a2a2d] ${
+                          isEditingThisRow
+                            ? 'border-[#5B5CEB] bg-[#F8F9FF] dark:bg-[#5B5CEB]/[0.08]'
+                            : isSelected
+                              ? 'border-[#2563EB]/40 bg-[#EFF6FF] dark:bg-[#1e2a3d]'
+                              : 'border-border bg-white'
                         }`}
                       >
+                        <input
+                          type="checkbox"
+                          aria-label={`Select ${row.shopName}`}
+                          checked={isSelected}
+                          onChange={() => toggleRowSelection(row._id)}
+                          className="absolute right-3.5 top-3.5 h-3.5 w-3.5 cursor-pointer"
+                        />
                         {showLeader && (
                           <p className="truncate text-[11px] font-medium text-muted-foreground">{toProperCase(row.leader)}</p>
                         )}
@@ -1698,6 +2370,17 @@ export default function WalletStatus() {
           </DataTable>
         )}
       </main>
+
+      <BulkEditModal
+        isOpen={bulkEditOpen}
+        onClose={() => setBulkEditOpen(false)}
+        onApply={handleBulkEditApply}
+        selectedCount={selectedIds.size}
+        priorityOptions={PRIORITY_OPTIONS}
+        remarksSuggestions={[]}
+        showDateField={false}
+        primaryButtonClassName="bg-indigo-600 hover:bg-indigo-700"
+      />
     </div>
   );
 }

@@ -237,6 +237,101 @@ export async function updateSendMoneyWalletStatusField(shopName: string, field: 
   return updateWalletStatusField(SENDMONEY_START_COL, SENDMONEY_END_COL, shopName, field, value);
 }
 
+export type WalletStatusBulkUpdate = { shopName: string; priority?: Priority; remark?: string };
+
+// Bulk Edit's own write path — deliberately NOT N parallel calls into
+// updateWalletStatusField/updateWalletRemark above. Each of those does a
+// full-range read to find its one row before writing a single cell; firing
+// that per selected shop (Priority is only one of up to 2 bulk fields)
+// would mean up to 2x the selection count of full-sheet reads landing on
+// Google Sheets concurrently from one Bulk Edit click, which is exactly the
+// kind of burst that trips Sheets API rate limits. Instead this reads the
+// Priority block and the Remarks block ONCE EACH (only if that field is
+// actually part of the bulk edit), resolves every shop's row offset (or
+// appends past the end for shops with no existing row) against that single
+// snapshot, and writes every changed cell/row in ONE values.batchUpdate
+// call. New rows appended within the same batch get sequential offsets
+// past the snapshot's own length — safe because nothing else can write to
+// this sheet between the read and the batchUpdate inside one request.
+async function updateWalletStatusBulk(
+  statusStartCol: string,
+  statusEndCol: string,
+  remarksStartCol: string,
+  remarksEndCol: string,
+  updates: WalletStatusBulkUpdate[]
+): Promise<{ updatedBy: string; updatedAt: string }> {
+  const auth = getAuthClient();
+  const spreadsheetId = getSpreadsheetId();
+  const sheetsApi = google.sheets({ version: 'v4', auth });
+
+  await ensureSheetExists(sheetsApi, spreadsheetId);
+
+  const priorityUpdates = updates.filter((u) => u.priority !== undefined);
+  const remarkUpdates = updates.filter((u) => u.remark !== undefined);
+
+  const data: { range: string; values: string[][] }[] = [];
+  const updatedBy = REMARK_UPDATED_BY;
+  const updatedAt = new Date().toISOString();
+
+  if (priorityUpdates.length > 0) {
+    const rows = await sheetsApi.spreadsheets.values.get({
+      spreadsheetId,
+      range: `${SHEET_TITLE}!${statusStartCol}2:${statusEndCol}20000`,
+      valueRenderOption: 'UNFORMATTED_VALUE',
+    });
+    const existingRows = rows.data.values ?? [];
+    const colLetters = Array.from({ length: 5 }, (_, i) => String.fromCharCode(statusStartCol.charCodeAt(0) + i));
+    let nextNewRow = existingRows.length + 2;
+    for (const u of priorityUpdates) {
+      const normalizedShop = u.shopName.trim().toUpperCase();
+      const rowOffset = existingRows.findIndex((row) => String(row[0] ?? '').trim().toUpperCase() === normalizedShop);
+      if (rowOffset !== -1) {
+        const sheetRow = rowOffset + 2; // data starts at row 2
+        data.push({ range: `${SHEET_TITLE}!${colLetters[3]}${sheetRow}`, values: [[u.priority as string]] });
+      } else {
+        const sheetRow = nextNewRow++;
+        const newRow = [u.shopName, 'No', 'No', u.priority as string, ''];
+        data.push({ range: `${SHEET_TITLE}!${statusStartCol}${sheetRow}:${statusEndCol}${sheetRow}`, values: [newRow] });
+      }
+    }
+  }
+
+  if (remarkUpdates.length > 0) {
+    await ensureRemarksHeader(sheetsApi, spreadsheetId, remarksStartCol, remarksEndCol);
+    const rows = await sheetsApi.spreadsheets.values.get({
+      spreadsheetId,
+      range: `${SHEET_TITLE}!${remarksStartCol}2:${remarksEndCol}20000`,
+      valueRenderOption: 'UNFORMATTED_VALUE',
+    });
+    const existingRows = rows.data.values ?? [];
+    let nextNewRow = existingRows.length + 2;
+    for (const u of remarkUpdates) {
+      const normalizedShop = u.shopName.trim().toUpperCase();
+      const rowOffset = existingRows.findIndex((row) => String(row[0] ?? '').trim().toUpperCase() === normalizedShop);
+      const sheetRow = rowOffset !== -1 ? rowOffset + 2 : nextNewRow++;
+      const newRow = [u.shopName, u.remark as string, updatedBy, updatedAt];
+      data.push({ range: `${SHEET_TITLE}!${remarksStartCol}${sheetRow}:${remarksEndCol}${sheetRow}`, values: [newRow] });
+    }
+  }
+
+  if (data.length > 0) {
+    await sheetsApi.spreadsheets.values.batchUpdate({
+      spreadsheetId,
+      requestBody: { valueInputOption: 'RAW', data },
+    });
+  }
+
+  return { updatedBy, updatedAt };
+}
+
+export async function updateCashoutWalletStatusBulk(updates: WalletStatusBulkUpdate[]): Promise<{ updatedBy: string; updatedAt: string }> {
+  return updateWalletStatusBulk(CASHOUT_START_COL, CASHOUT_END_COL, CASHOUT_REMARKS_START_COL, CASHOUT_REMARKS_END_COL, updates);
+}
+
+export async function updateSendMoneyWalletStatusBulk(updates: WalletStatusBulkUpdate[]): Promise<{ updatedBy: string; updatedAt: string }> {
+  return updateWalletStatusBulk(SENDMONEY_START_COL, SENDMONEY_END_COL, SENDMONEY_REMARKS_START_COL, SENDMONEY_REMARKS_END_COL, updates);
+}
+
 // Remarks — own independent block (see column constants above). Own Shop
 // Name key column (col 0 of the block) since this table's row set doesn't
 // necessarily match the Deposit/Withdrawal/Priority/Wallet Status block's.

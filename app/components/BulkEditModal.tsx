@@ -28,6 +28,9 @@ export type BulkEditUpdates = {
   leader?: string;
   openingBalance?: string;
   sdp?: string;
+  // Wallet Status-only field — a fixed option list (Low/Normal/High), not
+  // free text, so it renders as a <select> rather than SearchableCombobox.
+  priority?: string;
 };
 
 type BulkEditModalProps = {
@@ -52,6 +55,9 @@ type BulkEditModalProps = {
   showLeaderField?: boolean;
   showOpeningBalanceField?: boolean;
   showSdpField?: boolean;
+  // Omit entirely for modules with no Priority field (every module except
+  // Wallet Status) — the "Update Priority" row simply doesn't render.
+  priorityOptions?: string[];
   primaryButtonClassName: string;
   // Same fix as BulkImportModal/RecordFormModal — Send Money's
   // primaryButtonClassName resolves var(--product-accent), scoped to
@@ -71,6 +77,7 @@ export default function BulkEditModal({
   showLeaderField = false,
   showOpeningBalanceField = false,
   showSdpField = false,
+  priorityOptions,
   primaryButtonClassName,
   dataProduct,
 }: BulkEditModalProps) {
@@ -80,12 +87,14 @@ export default function BulkEditModal({
   const [leaderEnabled, setLeaderEnabled] = useState(false);
   const [openingBalanceEnabled, setOpeningBalanceEnabled] = useState(false);
   const [sdpEnabled, setSdpEnabled] = useState(false);
+  const [priorityEnabled, setPriorityEnabled] = useState(false);
   const [wallet, setWallet] = useState('');
   const [remarks, setRemarks] = useState('');
   const [date, setDate] = useState('');
   const [leader, setLeader] = useState('');
   const [openingBalance, setOpeningBalance] = useState('');
   const [sdp, setSdp] = useState('');
+  const [priority, setPriority] = useState('');
   // Same open/close animation-lag pattern as RecordFormModal/
   // BulkImportModal — the closing fade/scale gets to actually play.
   const [rendered, setRendered] = useState(isOpen);
@@ -100,12 +109,14 @@ export default function BulkEditModal({
       setLeaderEnabled(false);
       setOpeningBalanceEnabled(false);
       setSdpEnabled(false);
+      setPriorityEnabled(false);
       setWallet('');
       setRemarks('');
       setDate('');
       setLeader('');
       setOpeningBalance('');
       setSdp('');
+      setPriority(priorityOptions?.[0] ?? '');
       setRendered(true);
       setClosing(false);
     } else if (rendered) {
@@ -129,16 +140,20 @@ export default function BulkEditModal({
 
   const hasWalletField = walletOptions !== undefined;
   const hasRemarksField = remarksSuggestions !== undefined;
-  const hasAnyFieldEnabled = walletEnabled || remarksEnabled || dateEnabled || leaderEnabled || openingBalanceEnabled || sdpEnabled;
+  const hasPriorityField = priorityOptions !== undefined;
+  const hasAnyFieldEnabled = walletEnabled || remarksEnabled || dateEnabled || leaderEnabled || openingBalanceEnabled || sdpEnabled || priorityEnabled;
   // Opening Balance/SDP are genuinely optional amounts (blank is valid on
   // both products), so an enabled-but-blank value is fine for those two —
   // unlike Wallet/Remarks/Date/Leader, where enabling the field implies the
-  // user wants to actually set something.
+  // user wants to actually set something. Priority is always non-blank once
+  // enabled — it's a <select> seeded from priorityOptions[0], never a free
+  // text field a user could leave empty.
   const canApply = hasAnyFieldEnabled
     && (!walletEnabled || wallet.trim() !== '')
     && (!remarksEnabled || remarks.trim() !== '')
     && (!dateEnabled || date.trim() !== '')
-    && (!leaderEnabled || leader.trim() !== '');
+    && (!leaderEnabled || leader.trim() !== '')
+    && (!priorityEnabled || priority.trim() !== '');
 
   const handleApplyClick = () => {
     if (!canApply) return;
@@ -149,6 +164,7 @@ export default function BulkEditModal({
       ...(leaderEnabled ? { leader } : {}),
       ...(openingBalanceEnabled ? { openingBalance } : {}),
       ...(sdpEnabled ? { sdp } : {}),
+      ...(priorityEnabled ? { priority } : {}),
     });
   };
 
@@ -202,6 +218,32 @@ export default function BulkEditModal({
                     options={walletOptions ?? []}
                     placeholder="Select wallet"
                   />
+                </div>
+              )}
+            </div>
+          )}
+
+          {hasPriorityField && (
+            <div>
+              <label className="flex items-center gap-2 text-[12px] font-medium text-foreground">
+                <input
+                  type="checkbox"
+                  checked={priorityEnabled}
+                  onChange={(event) => setPriorityEnabled(event.target.checked)}
+                />
+                Update Priority
+              </label>
+              {priorityEnabled && (
+                <div className="mt-1.5">
+                  <select
+                    value={priority}
+                    onChange={(event) => setPriority(event.target.value)}
+                    className="h-10 w-full rounded-lg border border-border bg-white px-3 text-[13px] text-foreground outline-none transition-colors focus:border-[#2563EB] focus:ring-2 focus:ring-[#2563EB]/20 dark:bg-[#1c1c1e]"
+                  >
+                    {(priorityOptions ?? []).map((opt) => (
+                      <option key={opt} value={opt}>{opt}</option>
+                    ))}
+                  </select>
                 </div>
               )}
             </div>
