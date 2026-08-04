@@ -145,10 +145,42 @@ function stripBrandSuffix(name: string): string {
 const PRIORITY_OPTIONS: Priority[] = ['Low', 'Normal', 'High'];
 const PRIORITY_RANK: Record<Priority, number> = { Low: 0, Normal: 1, High: 2 };
 
+// Schedule is never staff-entered — it's derived purely from Leader via
+// SCHEDULE_GROUPS below. '' means the leader isn't in any group (renders
+// as a blank cell, never "Unknown"/"N/A"/a default, per explicit spec).
+type Schedule = 'Early Ext.' | 'Extended' | 'Day' | '24/7' | '';
+
+// Single centralized mapping — add new leaders under the relevant group
+// only, never hardcode a Schedule value anywhere else.
+const SCHEDULE_GROUPS: Record<Exclude<Schedule, ''>, string[]> = {
+  'Early Ext.': ['SHARIF', 'SHAD', 'RIDOY', 'MRLEE', 'SOHARD', 'MIR', 'SONCHOY', 'BERLIN', 'CHAK', 'LIMON', 'SHIK'],
+  'Extended': ['RIPAN', 'RC', 'TAPAN', 'LEOLIZA', 'JISAN', 'MONIR', 'NIJHUM'],
+  'Day': ['ROSE', 'JAVED', 'DARAZ', 'ROBI', 'SHAKIL', 'SAM', 'NURNOBY', 'MUNIM'],
+  '24/7': ['DEAN', 'ALADDIN', 'RAYHAN', 'EMON', 'TANVIR'],
+};
+
+const LEADER_SCHEDULE_LOOKUP = new Map<string, Schedule>(
+  Object.entries(SCHEDULE_GROUPS).flatMap(([schedule, leaders]) =>
+    leaders.map((leader) => [leader, schedule as Schedule] as const)
+  )
+);
+
+function resolveSchedule(leader: string): Schedule {
+  return LEADER_SCHEDULE_LOOKUP.get(leader.trim().toUpperCase()) ?? '';
+}
+
+// Sort order per spec: 24/7, Day, Early Ext., Extended, then blank last —
+// same rank-based approach as PRIORITY_RANK, reversible by sort direction.
+const SCHEDULE_SORT_ORDER: Schedule[] = ['24/7', 'Day', 'Early Ext.', 'Extended', ''];
+const SCHEDULE_RANK: Record<Schedule, number> = Object.fromEntries(
+  SCHEDULE_SORT_ORDER.map((s, i) => [s, i])
+) as Record<Schedule, number>;
+
 type WalletStatusRow = {
   key: string;
   shopName: string;
   brand: string;
+  leader: string;
   companyBalance: number;
   baseLimit: number;
   availableLimit: number;
@@ -157,6 +189,7 @@ type WalletStatusRow = {
   deposit: DepositWithdrawal;
   withdrawal: DepositWithdrawal;
   priority: Priority;
+  schedule: Schedule;
   walletStatus: WalletStatusValue;
   remark: string;
   remarkUpdatedBy: string;
@@ -166,6 +199,7 @@ type WalletStatusRow = {
 const COLUMN_IDS = {
   BRAND: 'brand',
   SHOP_NAME: 'shopName',
+  LEADER: 'leader',
   COMPANY_BALANCE: 'companyBalance',
   AVAILABLE_LIMIT: 'availableLimit',
   FROZEN_AMOUNT: 'frozenAmount',
@@ -173,6 +207,7 @@ const COLUMN_IDS = {
   DEPOSIT: 'deposit',
   WITHDRAWAL: 'withdrawal',
   PRIORITY: 'priority',
+  SCHEDULE: 'schedule',
   WALLET_STATUS: 'walletStatus',
   REMARKS: 'remarks',
   WALLET_STATUS_ACTION: 'walletStatusAction',
@@ -192,6 +227,7 @@ type ColumnDef = {
 const DEFAULT_COLUMNS: ColumnDef[] = [
   { key: COLUMN_IDS.BRAND, label: 'Brand', visible: true, sortable: true, hideable: true, align: 'center' },
   { key: COLUMN_IDS.SHOP_NAME, label: 'Shop Name', visible: true, sortable: true, hideable: true, align: 'left' },
+  { key: COLUMN_IDS.LEADER, label: 'Leader', visible: true, sortable: true, hideable: true, align: 'left' },
   { key: COLUMN_IDS.COMPANY_BALANCE, label: 'Company Balance', visible: true, sortable: true, hideable: true, align: 'center' },
   { key: COLUMN_IDS.AVAILABLE_LIMIT, label: 'Available Limit', visible: true, sortable: true, hideable: true, align: 'center' },
   { key: COLUMN_IDS.FROZEN_AMOUNT, label: 'Frozen Amount', visible: true, sortable: true, hideable: true, align: 'center' },
@@ -199,6 +235,7 @@ const DEFAULT_COLUMNS: ColumnDef[] = [
   { key: COLUMN_IDS.DEPOSIT, label: 'Deposit', visible: true, sortable: true, hideable: true, align: 'center' },
   { key: COLUMN_IDS.WITHDRAWAL, label: 'Withdrawal', visible: true, sortable: true, hideable: true, align: 'center' },
   { key: COLUMN_IDS.PRIORITY, label: 'Priority', visible: true, sortable: true, hideable: true, align: 'center' },
+  { key: COLUMN_IDS.SCHEDULE, label: 'Schedule', visible: true, sortable: true, hideable: true, align: 'left' },
   { key: COLUMN_IDS.WALLET_STATUS, label: 'Wallet Status', visible: true, sortable: true, hideable: false, align: 'left' },
   // Independent of Wallet Status/Priority — its own click-to-edit popover,
   // not tied to the row-wide Edit/Save/Cancel below. Fixed width (see
@@ -281,6 +318,7 @@ function getColumnDisplayText(row: WalletStatusRow, key: ColumnKey): string {
   switch (key) {
     case 'brand': return row.brand;
     case 'shopName': return row.shopName;
+    case 'leader': return row.leader;
     case 'companyBalance': return displayNum(row.companyBalance);
     case 'availableLimit': return displayAvailableLimit(row.availableLimit);
     case 'frozenAmount': return displayNum(row.frozenAmount);
@@ -288,6 +326,7 @@ function getColumnDisplayText(row: WalletStatusRow, key: ColumnKey): string {
     case 'deposit': return row.deposit;
     case 'withdrawal': return row.withdrawal;
     case 'priority': return priorityDisplay(row);
+    case 'schedule': return row.schedule;
     case 'walletStatus': return row.walletStatus;
     case 'remarks': return row.remark;
     default: return '';
@@ -340,6 +379,7 @@ function computeColumnWidthsPx(rows: WalletStatusRow[], columns: ColumnDef[]): P
 const rowSkeletonWidths: Record<ColumnKey, string[]> = {
   brand: ['w-8', 'w-10', 'w-9'],
   shopName: ['w-24', 'w-28', 'w-20'],
+  leader: ['w-16', 'w-20', 'w-14'],
   companyBalance: ['w-16', 'w-20', 'w-14'],
   availableLimit: ['w-16', 'w-14', 'w-20'],
   frozenAmount: ['w-14', 'w-10', 'w-16'],
@@ -347,6 +387,7 @@ const rowSkeletonWidths: Record<ColumnKey, string[]> = {
   deposit: ['w-10', 'w-10', 'w-10'],
   withdrawal: ['w-10', 'w-10', 'w-10'],
   priority: ['w-14', 'w-14', 'w-14'],
+  schedule: ['w-14', 'w-16', 'w-12'],
   walletStatus: ['w-20', 'w-24', 'w-16'],
   remarks: ['w-32', 'w-24', 'w-36'],
   walletStatusAction: ['w-8', 'w-8', 'w-8'],
@@ -856,6 +897,7 @@ export default function WalletStatus() {
           key: opening.agentName,
           shopName: opening.agentName,
           brand: resolveBrand(brandGroups.get(opening.agentName) ?? [], opening.agentName, { brandPriority: BRAND_PRIORITY, brandCodes: BRAND_CODES }),
+          leader: opening.leader,
           companyBalance,
           baseLimit,
           availableLimit,
@@ -864,6 +906,7 @@ export default function WalletStatus() {
           deposit: flags.deposit,
           withdrawal: flags.withdrawal,
           priority: priorityEntry.priority,
+          schedule: resolveSchedule(opening.leader),
           walletStatus: flags.walletStatus,
           remark: priorityEntry.remark,
           remarkUpdatedBy: priorityEntry.updatedBy,
@@ -990,7 +1033,7 @@ export default function WalletStatus() {
   const searchedRows = useMemo(() => {
     const query = searchTerm.toLowerCase();
     if (!query) return rows;
-    return rows.filter((row) => `${row.shopName} ${row.brand} ${row.remark}`.toLowerCase().includes(query));
+    return rows.filter((row) => `${row.shopName} ${row.brand} ${row.remark} ${row.leader} ${row.schedule}`.toLowerCase().includes(query));
   }, [rows, searchTerm]);
 
   const sortedRows = useMemo(() => {
@@ -1013,6 +1056,7 @@ export default function WalletStatus() {
         switch (column) {
           case 'brand': return row.brand.toLowerCase();
           case 'shopName': return row.shopName.toLowerCase();
+          case 'leader': return row.leader.toLowerCase();
           case 'companyBalance': return row.companyBalance;
           case 'availableLimit': return row.availableLimit;
           case 'frozenAmount': return row.frozenAmount;
@@ -1020,6 +1064,7 @@ export default function WalletStatus() {
           case 'deposit': return row.deposit;
           case 'withdrawal': return row.withdrawal;
           case 'priority': return PRIORITY_RANK[row.priority];
+          case 'schedule': return SCHEDULE_RANK[row.schedule];
           case 'walletStatus': return row.walletStatus;
           default: return row.companyBalance;
         }
@@ -1048,6 +1093,7 @@ export default function WalletStatus() {
       switch (key) {
         case 'brand': return row.brand;
         case 'shopName': return row.shopName;
+        case 'leader': return row.leader;
         case 'companyBalance': return row.companyBalance;
         case 'availableLimit': return row.availableLimit;
         case 'frozenAmount': return row.frozenAmount > 0 ? row.frozenAmount : undefined;
@@ -1055,6 +1101,7 @@ export default function WalletStatus() {
         case 'deposit': return row.deposit;
         case 'withdrawal': return row.withdrawal;
         case 'priority': return priorityDisplay(row);
+        case 'schedule': return row.schedule || undefined;
         case 'walletStatus': return row.walletStatus;
         case 'remarks': return row.remark || '—';
       }
@@ -1096,6 +1143,8 @@ export default function WalletStatus() {
         return <td key={key} style={cellStyle} className={base}><BrandBadge>{row.brand}</BrandBadge></td>;
       case 'shopName':
         return <td key={key} style={cellStyle} className={`${shopBase} text-foreground`}>{row.shopName}</td>;
+      case 'leader':
+        return <td key={key} style={cellStyle} className={`${shopBase} text-foreground`}>{row.leader}</td>;
       case 'companyBalance':
         return (
           <td key={key} style={cellStyle} className={`${base} tabular-nums ${row.companyBalance < 0 ? 'text-rose-600 dark:text-rose-400' : 'text-foreground'}`}>
@@ -1163,6 +1212,8 @@ export default function WalletStatus() {
           </td>
         );
       }
+      case 'schedule':
+        return <td key={key} style={cellStyle} className={`${shopBase} text-foreground`}>{row.schedule}</td>;
       case 'walletStatus':
         return (
           <td key={key} style={cellStyle} className={shopBase}>
@@ -1448,6 +1499,7 @@ export default function WalletStatus() {
                   pagedRows.map((row) => {
                     const showShop = visibleColumns.some((c) => c.key === 'shopName');
                     const showBrand = visibleColumns.some((c) => c.key === 'brand');
+                    const showLeader = visibleColumns.some((c) => c.key === 'leader');
                     const showBalance = visibleColumns.some((c) => c.key === 'companyBalance');
                     const showAvailableLimit = visibleColumns.some((c) => c.key === 'availableLimit');
                     const showFrozenAmount = visibleColumns.some((c) => c.key === 'frozenAmount');
@@ -1455,6 +1507,7 @@ export default function WalletStatus() {
                     const showDeposit = visibleColumns.some((c) => c.key === 'deposit');
                     const showWithdrawal = visibleColumns.some((c) => c.key === 'withdrawal');
                     const showPriority = visibleColumns.some((c) => c.key === 'priority');
+                    const showSchedule = visibleColumns.some((c) => c.key === 'schedule');
                     const showWalletStatus = visibleColumns.some((c) => c.key === 'walletStatus');
                     const showRemarks = visibleColumns.some((c) => c.key === 'remarks');
                     const isEditingThisRow = editingRowKey === row.key;
@@ -1473,8 +1526,11 @@ export default function WalletStatus() {
                             {showBrand && <span className="shrink-0 text-[11px] font-medium text-muted-foreground">{row.brand}</span>}
                           </div>
                         )}
+                        {showLeader && (
+                          <p className={`truncate text-[11px] font-medium text-muted-foreground ${(showShop || showBrand) ? 'mt-0.5' : ''}`}>{row.leader}</p>
+                        )}
                         {(showBalance || showAvailableLimit || showFrozenAmount || showSdp) && (
-                          <div className={`grid grid-cols-2 gap-2 ${(showShop || showBrand) ? 'mt-2.5 border-t border-border pt-2.5' : ''}`}>
+                          <div className={`grid grid-cols-2 gap-2 ${(showShop || showBrand || showLeader) ? 'mt-2.5 border-t border-border pt-2.5' : ''}`}>
                             {showBalance && (
                               <div>
                                 <p className="text-[9px] font-medium text-muted-foreground">Company Balance</p>
@@ -1501,8 +1557,8 @@ export default function WalletStatus() {
                             )}
                           </div>
                         )}
-                        {(showDeposit || showWithdrawal || showPriority) && (
-                          <div className={`flex flex-wrap items-center gap-2 ${(showShop || showBrand || showBalance || showAvailableLimit || showFrozenAmount || showSdp) ? 'mt-2.5 border-t border-border pt-2.5' : ''}`}>
+                        {(showDeposit || showWithdrawal || showPriority || showSchedule) && (
+                          <div className={`flex flex-wrap items-center gap-2 ${(showShop || showBrand || showLeader || showBalance || showAvailableLimit || showFrozenAmount || showSdp) ? 'mt-2.5 border-t border-border pt-2.5' : ''}`}>
                             {showDeposit && (
                               <div>
                                 <p className="mb-1 text-[9px] font-medium text-muted-foreground">Deposit</p>
@@ -1542,10 +1598,16 @@ export default function WalletStatus() {
                                 )}
                               </div>
                             )}
+                            {showSchedule && (
+                              <div>
+                                <p className="mb-1 text-[9px] font-medium text-muted-foreground">Schedule</p>
+                                <p className="text-[12px] font-medium text-foreground">{row.schedule}</p>
+                              </div>
+                            )}
                           </div>
                         )}
                         {showWalletStatus && (
-                          <div className={`flex items-center gap-1.5 ${(showShop || showBrand || showBalance || showAvailableLimit || showFrozenAmount || showSdp || showDeposit || showWithdrawal || showPriority) ? 'mt-2.5 border-t border-border pt-2.5' : ''}`}>
+                          <div className={`flex items-center gap-1.5 ${(showShop || showBrand || showLeader || showBalance || showAvailableLimit || showFrozenAmount || showSdp || showDeposit || showWithdrawal || showPriority || showSchedule) ? 'mt-2.5 border-t border-border pt-2.5' : ''}`}>
                             <p className="text-[9px] font-medium text-muted-foreground">Wallet Status</p>
                             <span className="inline-flex items-center gap-1.5 text-[12px] font-medium text-foreground">
                               <span className={`h-2 w-2 shrink-0 rounded-full ${WALLET_STATUS_DOT[row.walletStatus]}`} />
