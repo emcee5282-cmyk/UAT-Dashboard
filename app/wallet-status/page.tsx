@@ -354,12 +354,10 @@ function displayAvailableLimit(num: number): string {
 // Exact hex values per spec — kept as literal Tailwind arbitrary-value
 // classes (not the theme's semantic rose/emerald tokens) since these 4
 // thresholds are a distinct, deliberately-specified palette.
-function availableLimitColorClass(availableLimit: number, baseLimit: number): string {
-  if (availableLimit <= 0 || baseLimit <= 0) return 'text-[#EF4444]';
-  const pct = (availableLimit / baseLimit) * 100;
-  if (pct < 30) return 'text-[#F97316]';
-  if (pct < 70) return 'text-[#F59E0B]';
-  return 'text-[#10B981]';
+// Green while limit remains, neutral once it's fully used — per explicit
+// instruction, replacing the old 4-tier red/orange/amber/green gradient.
+function availableLimitColorClass(availableLimit: number): string {
+  return availableLimit > 0 ? 'text-[#10B981]' : 'text-foreground';
 }
 
 function parseNumber(val: string): number {
@@ -585,7 +583,7 @@ const REMARKS_COLUMN_WIDTH_PX = 280;
 // quick pass-over the cell doesn't flash it, per spec.
 const REMARKS_TOOLTIP_HOVER_DELAY_MS = 275;
 
-const COLUMNS_WITH_INFO_ICON: ColumnKey[] = ['availableLimit', 'frozenAmount'];
+const COLUMNS_WITH_INFO_ICON: ColumnKey[] = ['availableLimit', 'frozenAmount', 'schedule'];
 const PILL_BADGE_COLUMNS: ColumnKey[] = ['deposit', 'withdrawal', 'priority'];
 
 // Exact display string per column — mirrors renderCell's own per-column
@@ -747,6 +745,7 @@ function useBelowTooltip(triggerRef: React.RefObject<HTMLElement | null>, option
 const COLUMN_INFO_TEXT: Partial<Record<ColumnKey, string>> = {
   availableLimit: "Remaining receiving capacity for today.\n\nFormula:\nBase Limit − Company Balance − Today's Total DP\n\nResets every day at 2:00 AM.",
   frozenAmount: 'Amount exceeding the allowed receiving limit.\n\nFormula:\nCompany Balance − Base Limit\n\nOnly shown when Company Balance exceeds the allowed limit.',
+  schedule: 'Shop operating schedule.\n\nDay\n7:00 AM – 10:00 PM\n\nExtended\n7:00 AM – 11:00 PM\n\nEarly Ext.\n6:00 AM – 12:00 AM\n\n24/7\nOpen 24 Hours\n\nAutomatically determined\nby the assigned Leader.',
 };
 
 function HeaderInfoIcon({ text }: { text: string }) {
@@ -1664,13 +1663,13 @@ export default function WalletStatus() {
         return <td key={key} style={cellStyle} className={`${shopBase} text-foreground`}>{toProperCase(row.leader)}</td>;
       case 'companyBalance':
         return (
-          <td key={key} style={cellStyle} className={`${base} tabular-nums ${row.companyBalance < 0 ? 'text-rose-600 dark:text-rose-400' : 'text-foreground'}`}>
+          <td key={key} style={cellStyle} className={`${base} tabular-nums text-foreground`}>
             {displayNum(row.companyBalance)}
           </td>
         );
       case 'availableLimit':
         return (
-          <td key={key} style={cellStyle} className={`${base} tabular-nums ${availableLimitColorClass(row.availableLimit, row.baseLimit)}`}>
+          <td key={key} style={cellStyle} className={`${base} tabular-nums ${availableLimitColorClass(row.availableLimit)}`}>
             {displayAvailableLimit(row.availableLimit)}
           </td>
         );
@@ -2218,13 +2217,13 @@ export default function WalletStatus() {
                             {showBalance && (
                               <div>
                                 <p className="text-[9px] font-medium text-muted-foreground">Company Balance</p>
-                                <p className={`text-[13px] font-bold tabular-nums ${row.companyBalance < 0 ? 'text-rose-600 dark:text-rose-400' : 'text-foreground'}`}>{displayNum(row.companyBalance)}</p>
+                                <p className="text-[13px] font-bold tabular-nums text-foreground">{displayNum(row.companyBalance)}</p>
                               </div>
                             )}
                             {showAvailableLimit && (
                               <div>
                                 <p className="text-[9px] font-medium text-muted-foreground">Available Limit</p>
-                                <p className={`text-[13px] font-semibold tabular-nums ${availableLimitColorClass(row.availableLimit, row.baseLimit)}`}>{displayAvailableLimit(row.availableLimit)}</p>
+                                <p className={`text-[13px] font-semibold tabular-nums ${availableLimitColorClass(row.availableLimit)}`}>{displayAvailableLimit(row.availableLimit)}</p>
                               </div>
                             )}
                             {showFrozenAmount && (
