@@ -140,7 +140,22 @@ type LiveShopFigures = {
   openingByShop: Map<string, number>;
   topUpByShop: Map<string, number>;
   stlmByShop: Map<string, number>;
+  leaderByShop: Map<string, string>;
 };
+
+// Leaders whose Company Balance must NOT be counted in the Estimated
+// Opening (Assumed Balance) total that feeds the Balance Overview's
+// Opening figure — per explicit instruction. A separate, deliberate
+// exclusion from the unrelated "Frozen Amount (Onemen)" KPI card that was
+// built and then reverted earlier — this one only ever touches
+// `balancesWithFallback` below (the sum), never `balances` itself (still
+// used as-is by app/agentbal/page.tsx and app/sendmoney/balances/page.tsx,
+// which show every shop regardless of leader).
+const ESTIMATED_OPENING_EXCLUDED_LEADERS = ['ONEMEN'];
+
+function isExcludedFromEstimatedOpening(leader: string | undefined): boolean {
+  return ESTIMATED_OPENING_EXCLUDED_LEADERS.includes((leader ?? '').trim().toUpperCase());
+}
 
 // Reads the same two live sheets app/agentbal/page.tsx already reads for
 // Company Balance — "Opening AG" (Opening Balance per shop) and "AG BD STLM
@@ -173,10 +188,12 @@ async function fetchLiveShopFigures(): Promise<LiveShopFigures> {
   // undercounting Settlement for any shop whose name wasn't already
   // all-caps in the sheet.
   const openingByShop = new Map<string, number>();
+  const leaderByShop = new Map<string, string>();
   openingRows.slice(1).forEach((row) => {
     const agentName = (row[0] ?? '').trim();
     if (!agentName || agentName === '-' || agentName === 'OLD') return;
     openingByShop.set(agentName.toUpperCase(), parseNumber(row[1]));
+    leaderByShop.set(agentName.toUpperCase(), (row[3] ?? '').trim());
   });
 
   let reportCutoffDate: Date | null = null;
@@ -220,7 +237,7 @@ async function fetchLiveShopFigures(): Promise<LiveShopFigures> {
     }
   });
 
-  return { openingByShop, topUpByShop, stlmByShop };
+  return { openingByShop, topUpByShop, stlmByShop, leaderByShop };
 }
 
 type ShopTotals = { shopName: string; totalDP: number; totalWD: number };
@@ -543,10 +560,15 @@ async function fetchLiveSendMoneyShopFigures(): Promise<LiveShopFigures> {
   ]);
 
   const openingByShop = new Map<string, number>();
+  const leaderByShop = new Map<string, string>();
   openingRows.slice(1).forEach((row) => {
     const agentName = (row[0] ?? '').trim();
     if (!agentName || agentName === '-' || agentName === 'OLD') return;
     openingByShop.set(agentName.toUpperCase(), parseNumber(row[1]));
+    // Roster is scoped to L:O here, so relative index 3 = col O (Leader) —
+    // same [agentName, opening, sdp, leader] layout as Cashout's own
+    // unscoped roster, per app/lib/sendMoneyOpening.ts's own parsing.
+    leaderByShop.set(agentName.toUpperCase(), (row[3] ?? '').trim());
   });
 
   let reportCutoffDate: Date | null = null;
@@ -590,7 +612,7 @@ async function fetchLiveSendMoneyShopFigures(): Promise<LiveShopFigures> {
     }
   });
 
-  return { openingByShop, topUpByShop, stlmByShop };
+  return { openingByShop, topUpByShop, stlmByShop, leaderByShop };
 }
 
 /**
@@ -757,8 +779,12 @@ export async function readCashoutEstimatedOpening(): Promise<{
   });
 
   const balancesWithFallback = new Map<string, number>();
-  const { openingByShop, topUpByShop, stlmByShop } = await fetchLiveShopFigures();
+  const { openingByShop, topUpByShop, stlmByShop, leaderByShop } = await fetchLiveShopFigures();
   openingByShop.forEach((opening, shopName) => {
+    // Excluded leaders' shops contribute nothing to the Opening-override
+    // total — `balances` (the raw upload) is left untouched for other
+    // consumers; only this fallback sum skips them.
+    if (isExcludedFromEstimatedOpening(leaderByShop.get(shopName))) return;
     const uploadedBase = balances.get(shopName);
     if (uploadedBase !== undefined) {
       // Already includes that day's TopUp/Settlement (baked in at write
@@ -825,8 +851,12 @@ export async function readSendMoneyEstimatedOpening(): Promise<{
   });
 
   const balancesWithFallback = new Map<string, number>();
-  const { openingByShop, topUpByShop, stlmByShop } = await fetchLiveSendMoneyShopFigures();
+  const { openingByShop, topUpByShop, stlmByShop, leaderByShop } = await fetchLiveSendMoneyShopFigures();
   openingByShop.forEach((opening, shopName) => {
+    // Excluded leaders' shops contribute nothing to the Opening-override
+    // total — `balances` (the raw upload) is left untouched for other
+    // consumers; only this fallback sum skips them.
+    if (isExcludedFromEstimatedOpening(leaderByShop.get(shopName))) return;
     const uploadedBase = balances.get(shopName);
     if (uploadedBase !== undefined) {
       // Already includes that day's TopUp/Settlement (baked in at write
