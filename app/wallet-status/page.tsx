@@ -1877,7 +1877,7 @@ export default function WalletStatus() {
                   </div>
                   <div className="relative">
                     <FilterTriggerButton
-                      label="Deposit"
+                      label="DP"
                       icon={ArrowDownCircle}
                       anyUnchecked={anyDepositUnchecked}
                       selectedCount={selectedDepositCount}
@@ -1896,7 +1896,7 @@ export default function WalletStatus() {
                   </div>
                   <div className="relative">
                     <FilterTriggerButton
-                      label="Withdrawal"
+                      label="WD"
                       icon={ArrowUpCircle}
                       anyUnchecked={anyWithdrawalUnchecked}
                       selectedCount={selectedWithdrawalCount}
