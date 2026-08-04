@@ -141,6 +141,18 @@ function stripBrandSuffix(name: string): string {
   return name;
 }
 
+// Display-only formatting — the sheet stores Leader in raw ALL CAPS
+// ("ONEMEN", "MRLEE"); matching/search/schedule-lookup all stay on that
+// raw value (see resolveSchedule, searchedRows), only the rendered text
+// gets Title Cased so it reads as a proper name instead of shouting.
+function toProperCase(text: string): string {
+  return text
+    .toLowerCase()
+    .split(' ')
+    .map((word) => (word ? word.charAt(0).toUpperCase() + word.slice(1) : word))
+    .join(' ');
+}
+
 // Fixed dropdown/sort order — Low, Normal, High (ascending urgency).
 const PRIORITY_OPTIONS: Priority[] = ['Low', 'Normal', 'High'];
 const PRIORITY_RANK: Record<Priority, number> = { Low: 0, Normal: 1, High: 2 };
@@ -318,7 +330,7 @@ function getColumnDisplayText(row: WalletStatusRow, key: ColumnKey): string {
   switch (key) {
     case 'brand': return row.brand;
     case 'shopName': return row.shopName;
-    case 'leader': return row.leader;
+    case 'leader': return toProperCase(row.leader);
     case 'companyBalance': return displayNum(row.companyBalance);
     case 'availableLimit': return displayAvailableLimit(row.availableLimit);
     case 'frozenAmount': return displayNum(row.frozenAmount);
@@ -1093,7 +1105,7 @@ export default function WalletStatus() {
       switch (key) {
         case 'brand': return row.brand;
         case 'shopName': return row.shopName;
-        case 'leader': return row.leader;
+        case 'leader': return toProperCase(row.leader);
         case 'companyBalance': return row.companyBalance;
         case 'availableLimit': return row.availableLimit;
         case 'frozenAmount': return row.frozenAmount > 0 ? row.frozenAmount : undefined;
@@ -1144,7 +1156,7 @@ export default function WalletStatus() {
       case 'shopName':
         return <td key={key} style={cellStyle} className={`${shopBase} text-foreground`}>{row.shopName}</td>;
       case 'leader':
-        return <td key={key} style={cellStyle} className={`${shopBase} text-foreground`}>{row.leader}</td>;
+        return <td key={key} style={cellStyle} className={`${shopBase} text-foreground`}>{toProperCase(row.leader)}</td>;
       case 'companyBalance':
         return (
           <td key={key} style={cellStyle} className={`${base} tabular-nums ${row.companyBalance < 0 ? 'text-rose-600 dark:text-rose-400' : 'text-foreground'}`}>
@@ -1521,7 +1533,7 @@ export default function WalletStatus() {
                         }`}
                       >
                         {showLeader && (
-                          <p className="truncate text-[11px] font-medium text-muted-foreground">{row.leader}</p>
+                          <p className="truncate text-[11px] font-medium text-muted-foreground">{toProperCase(row.leader)}</p>
                         )}
                         {(showShop || showBrand) && (
                           <div className={`flex items-start justify-between gap-2 ${showLeader ? 'mt-0.5' : ''}`}>
