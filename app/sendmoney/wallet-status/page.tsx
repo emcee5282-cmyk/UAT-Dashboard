@@ -397,7 +397,7 @@ type Schedule = 'Early Ext.' | 'Extended' | 'Day' | '24/7' | '';
 
 const SCHEDULE_GROUPS: Record<Exclude<Schedule, ''>, string[]> = {
   'Early Ext.': ['SHARIF', 'SHAD', 'RIDOY', 'MRLEE', 'SOHARD', 'MIR', 'SONCHOY', 'BERLIN', 'CHAK', 'LIMON', 'SHIK'],
-  'Extended': ['RIPAN', 'RC', 'TAPAN', 'LEOLIZA', 'JISAN', 'MONIR', 'NIJHUM'],
+  'Extended': ['RIPAN', 'RC', 'TAPAN', 'LEOLIZA', 'JISAN', 'MONIR', 'NIJHUM', 'AFF JAR'],
   'Day': ['ROSE', 'JAVED', 'DARAZ', 'ROBI', 'SHAKIL', 'SAM', 'NURNOBY', 'MUNIM'],
   '24/7': ['DEAN', 'ALADDIN', 'RAYHAN', 'EMON', 'TANVIR'],
 };
