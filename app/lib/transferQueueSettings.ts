@@ -11,13 +11,17 @@ import { fetchRange } from './googleSheets';
 //
 // Unlike every other sheet-backed feature in this app (Wallet Status,
 // Estimated Opening — sparse, grow-by-append), this row set is 100% FIXED
-// and bootstrapped once: exactly 20 rule rows (4 cashout_day + 5
-// cashout_extended + 5 cashout_247 + 4 sendmoney_247 + 2 sendmoney_bd) and
-// 3 Bundle rows, in a known, unchanging order. That means an update never
-// needs to scan for a matching row — the row's position IS its identity
-// (sheet row `2 + index`, header on row 1) — simpler and more robust than
-// a find-by-value scan, since the very field an admin might rename
-// (Queue Result) can't double as a lookup key.
+// and bootstrapped once: exactly 34 rule rows (4 cashout_day + 5
+// cashout_extended + 5 cashout_247 + 5 cashout_sh_day + 2
+// cashout_sh_early_extended + 2 cashout_sh_extended + 5 cashout_sh_247 + 4
+// sendmoney_247 + 2 sendmoney_bd) and 3 Bundle rows, in a known, unchanging
+// order. That means an update never needs to scan for a matching row — the
+// row's position IS its identity (sheet row `2 + index`, header on row 1)
+// — simpler and more robust than a find-by-value scan, since the very
+// field an admin might rename (Queue Result) can't double as a lookup key.
+// Row COUNT has changed once already (20 -> 34, when the SH-based sections
+// were added) — see migrateRulesSchemaIfNeeded() below for how that's
+// handled safely without losing any section's saved values.
 const SHEET_TITLE = 'Transfer Queue Configurations';
 // Separate append-only tab (grows on every save) — the fixed-position model the Rules/
 // Bundle/Meta blocks use can't hold history without overwriting it.
@@ -32,7 +36,17 @@ const BUNDLE_END_COL = 'N';
 const META_START_COL = 'P';
 const META_END_COL = 'S';
 
-export type RuleSection = 'cashout_day' | 'cashout_extended' | 'cashout_247' | 'sendmoney_247' | 'sendmoney_bd';
+// cashout_day/cashout_extended/cashout_247 are the REAL, LIVE sections —
+// app/lib/transferQueueRules.ts's resolveCashoutCorrectGroup() reads these
+// three by exact string match and is actually called from
+// app/transfer-queue/page.tsx to assign real shops to real queue groups.
+// Never rename/remove/reorder-within-section these three; the SH-based
+// sections added alongside them (cashout_sh_*) are a separate, currently
+// admin-only draft per explicit instruction — nothing reads those yet.
+export type RuleSection =
+  | 'cashout_day' | 'cashout_extended' | 'cashout_247'
+  | 'cashout_sh_day' | 'cashout_sh_early_extended' | 'cashout_sh_extended' | 'cashout_sh_247'
+  | 'sendmoney_247' | 'sendmoney_bd';
 // Plain-word form, not symbols (">"/"<=") — per explicit instruction, so
 // staff reading either the UI or the raw sheet cell understand it
 // immediately without decoding shorthand. Stored in the sheet as this
@@ -117,6 +131,30 @@ const DEFAULT_RULES: Omit<RuleRow, 'updatedBy' | 'updatedAt'>[] = [
   { section: 'cashout_247', metric: 'Company Balance', operator: 'Greater Than', value1: 200000, value2: null, queueResult: 'WD Only', enabled: true },
   { section: 'cashout_247', metric: 'SDP VS Balance', operator: 'Greater Than', value1: 30000, value2: null, queueResult: 'Discrepancy / Clear Balance', enabled: true },
   { section: 'cashout_247', metric: 'Discrepancy', operator: 'Greater Than', value1: 20000, value2: null, queueResult: 'Discrepancy / Clear Balance', enabled: true },
+
+  // SH-based sections — one shared configuration applied to every Cashout
+  // shop based on its schedule, replacing the old per-brand model above for
+  // admin-editing purposes. Per explicit instruction: draft only for now,
+  // NOT read by app/lib/transferQueueRules.ts or the live Transfer Queue —
+  // the three sections above stay the real evaluation source until a
+  // future migration wires these in.
+  { section: 'cashout_sh_day', metric: 'SDP VS Balance', operator: 'Greater Than', value1: 30000, value2: null, queueResult: 'SH-Day Discrepancy / Clear Balance', enabled: true },
+  { section: 'cashout_sh_day', metric: 'Discrepancy', operator: 'Greater Than', value1: 20000, value2: null, queueResult: 'SH-Day Discrepancy / Clear Balance', enabled: true },
+  { section: 'cashout_sh_day', metric: 'Company Balance', operator: 'Less Than', value1: 15000, value2: null, queueResult: 'SH-Day DP Only', enabled: true },
+  { section: 'cashout_sh_day', metric: 'Company Balance', operator: 'Between', value1: 35000, value2: 140000, queueResult: 'SH-Day DP + WD', enabled: true },
+  { section: 'cashout_sh_day', metric: 'Company Balance', operator: 'Greater Than', value1: 150000, value2: null, queueResult: 'SH-Day WD Only', enabled: true },
+
+  { section: 'cashout_sh_early_extended', metric: 'Company Balance', operator: 'Between', value1: 35000, value2: 140000, queueResult: 'SH-Early Day DP + WD', enabled: true },
+  { section: 'cashout_sh_early_extended', metric: 'Company Balance', operator: 'Greater Than', value1: 150000, value2: null, queueResult: 'SH-Early Day WD Only', enabled: true },
+
+  { section: 'cashout_sh_extended', metric: 'Company Balance', operator: 'Between', value1: 35000, value2: 140000, queueResult: 'SH-Extended Day DP + WD', enabled: true },
+  { section: 'cashout_sh_extended', metric: 'Company Balance', operator: 'Greater Than', value1: 150000, value2: null, queueResult: 'SH-Extended Day WD Only', enabled: true },
+
+  { section: 'cashout_sh_247', metric: 'SDP VS Balance', operator: 'Greater Than', value1: 30000, value2: null, queueResult: 'SH-24/7 Discrepancy / Clear Balance', enabled: true },
+  { section: 'cashout_sh_247', metric: 'Discrepancy', operator: 'Greater Than', value1: 20000, value2: null, queueResult: 'SH-24/7 Discrepancy / Clear Balance', enabled: true },
+  { section: 'cashout_sh_247', metric: 'Company Balance', operator: 'Less Than', value1: 15000, value2: null, queueResult: 'SH-24/7 DP Only', enabled: true },
+  { section: 'cashout_sh_247', metric: 'Company Balance', operator: 'Between', value1: 35000, value2: 190000, queueResult: 'SH-24/7 DP + WD', enabled: true },
+  { section: 'cashout_sh_247', metric: 'Company Balance', operator: 'Greater Than', value1: 200000, value2: null, queueResult: 'SH-24/7 WD Only', enabled: true },
 
   { section: 'sendmoney_247', metric: 'SDP VS Balance', operator: 'Greater Than', value1: 50000, value2: null, queueResult: '24/7 WD Only', enabled: true },
   { section: 'sendmoney_247', metric: 'Discrepancy', operator: 'Greater Than', value1: 10000, value2: null, queueResult: '24/7 WD Only', enabled: true },
@@ -355,10 +393,78 @@ function parseNumber(val: string | number | undefined): number {
   return isNaN(num) ? 0 : num;
 }
 
+// The Rules block's row COUNT/ORDER changed (20 -> 34) when the SH-based
+// sections were added — a sheet saved under the old 20-row layout no
+// longer lines up against DEFAULT_RULES by position (e.g. old row 14 was
+// sendmoney_247's first row; new row 14 belongs to cashout_sh_day). Every
+// section label that existed before is STILL a valid section today
+// (cashout_day/extended/247 and sendmoney_247/bd are untouched — only new
+// sections were inserted before them), so this reflows the block by each
+// row's own stable section label rather than its position: every section's
+// saved values (operator/value/queueResult/enabled) are fully preserved,
+// only their sheet ROW moves to match the new layout. Brand-new sections
+// (cashout_sh_*) have no old data to carry forward and get fresh defaults.
+function rowsMatchCurrentSchema(rows: string[][]): boolean {
+  if (rows.length < DEFAULT_RULES.length) return false;
+  return DEFAULT_RULES.every((rule, i) => (rows[i]?.[0] ?? '').trim() === rule.section);
+}
+
+async function migrateRulesSchemaIfNeeded(rows: string[][]): Promise<string[][]> {
+  if (rowsMatchCurrentSchema(rows)) return rows;
+
+  const bySection = new Map<string, string[][]>();
+  for (const row of rows) {
+    const key = (row[0] ?? '').trim();
+    if (!key) continue;
+    const bucket = bySection.get(key) ?? [];
+    bucket.push(row);
+    bySection.set(key, bucket);
+  }
+
+  const now = new Date().toISOString();
+  const newRows: (string | number)[][] = DEFAULT_RULES.map((rule) => {
+    const bucket = bySection.get(rule.section);
+    const old = bucket?.shift();
+    if (old) {
+      return [
+        rule.section, rule.metric,
+        (old[2] ?? '').trim() || rule.operator,
+        old[3] !== undefined && old[3] !== '' ? old[3] : rule.value1,
+        old[4] ?? '',
+        (old[5] ?? '').trim() || rule.queueResult,
+        (old[6] ?? '').trim() || (rule.enabled ? 'true' : 'false'),
+        old[7] ?? '', old[8] ?? '',
+      ];
+    }
+    return [rule.section, rule.metric, rule.operator, rule.value1, rule.value2 ?? '', rule.queueResult, rule.enabled ? 'true' : 'false', UPDATED_BY, now];
+  });
+
+  const auth = getAuthClient();
+  const spreadsheetId = getSpreadsheetId();
+  const sheetsApi = google.sheets({ version: 'v4', auth });
+
+  // Clear a generous range first — the old block (20 rows) is shorter than
+  // the new one (34), so a plain overwrite would leave no stale rows
+  // behind, but clearing first is the same safety margin every other
+  // reflow in this codebase uses when a block's shape changes.
+  await sheetsApi.spreadsheets.values.clear({
+    spreadsheetId,
+    range: `${SHEET_TITLE}!${RULES_START_COL}${RULES_FIRST_DATA_ROW}:${RULES_END_COL}500`,
+  });
+  await sheetsApi.spreadsheets.values.update({
+    spreadsheetId,
+    range: `${SHEET_TITLE}!${RULES_START_COL}${RULES_FIRST_DATA_ROW}`,
+    valueInputOption: 'RAW',
+    requestBody: { values: newRows },
+  });
+
+  return newRows.map((r) => r.map((cell) => String(cell)));
+}
+
 async function fetchTransferQueueRulesFromSheet(): Promise<RuleRow[]> {
   let rows: string[][];
   try {
-    rows = await fetchRange(`${SHEET_TITLE}!${RULES_START_COL}${RULES_FIRST_DATA_ROW}:${RULES_END_COL}${RULES_FIRST_DATA_ROW + DEFAULT_RULES.length}`);
+    rows = await fetchRange(`${SHEET_TITLE}!${RULES_START_COL}${RULES_FIRST_DATA_ROW}:${RULES_END_COL}${RULES_FIRST_DATA_ROW + DEFAULT_RULES.length + 20}`);
   } catch {
     // Sheet/tab doesn't exist yet — return the real bootstrap defaults
     // directly so the page still shows accurate current-logic values
@@ -370,7 +476,9 @@ async function fetchTransferQueueRulesFromSheet(): Promise<RuleRow[]> {
 
   if (rows.length === 0) return DEFAULT_RULES.map((r) => ({ ...r, updatedBy: '', updatedAt: '' }));
 
-  return rows.map((row, i) => {
+  rows = await migrateRulesSchemaIfNeeded(rows);
+
+  return rows.slice(0, DEFAULT_RULES.length).map((row, i) => {
     const fallback = DEFAULT_RULES[i];
     const value2Raw = (row[4] ?? '').trim();
     const enabledRaw = (row[6] ?? '').trim();

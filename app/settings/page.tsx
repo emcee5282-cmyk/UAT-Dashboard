@@ -14,7 +14,17 @@ import { classifyFetchError, type ClassifiedError, assertAllOk } from '../lib/er
 // Plain-word form, not symbols — per explicit instruction, so staff reading
 // either the dropdown or the raw sheet cell understand it immediately.
 type Operator = 'Greater Than' | 'Greater Than or Equal' | 'Less Than' | 'Less Than or Equal' | 'Between' | 'Equal';
-type RuleSection = 'cashout_day' | 'cashout_extended' | 'cashout_247' | 'sendmoney_247' | 'sendmoney_bd';
+// cashout_day/cashout_extended/cashout_247 are the REAL, LIVE sections
+// (app/lib/transferQueueRules.ts reads these to assign real shops to real
+// queue groups) — kept in the union for type accuracy but deliberately
+// never rendered below anymore (see "Do not display them anymore" in the
+// SH-restructure spec). The four cashout_sh_* sections are the new
+// SH-based, schedule-driven admin config — draft only, not yet wired to
+// the live Transfer Queue.
+type RuleSection =
+  | 'cashout_day' | 'cashout_extended' | 'cashout_247'
+  | 'cashout_sh_day' | 'cashout_sh_early_extended' | 'cashout_sh_extended' | 'cashout_sh_247'
+  | 'sendmoney_247' | 'sendmoney_bd';
 
 type RuleRow = {
   section: RuleSection;
@@ -41,20 +51,31 @@ type MetaConfig = { mode: TransferQueueMode; version: number; updatedBy: string;
 const OPERATORS: Operator[] = ['Greater Than', 'Greater Than or Equal', 'Less Than', 'Less Than or Equal', 'Between', 'Equal'];
 
 const SECTION_META: Record<RuleSection, { emoji: string; title: string; description: string }> = {
-  cashout_day: {
+  // Real, live sections — no longer rendered (see RuleSectionCard usage
+  // below), kept here only so SECTION_META still satisfies
+  // Record<RuleSection, ...> for every value in the type.
+  cashout_day: { emoji: '☀️', title: 'Day Configuration', description: '' },
+  cashout_extended: { emoji: '🌇', title: 'Extended Configuration', description: '' },
+  cashout_247: { emoji: '🌙', title: '24/7 Configuration', description: '' },
+  cashout_sh_day: {
     emoji: '☀️',
     title: 'Day Configuration',
-    description: 'Cashout — Day variant, used by most brands (B1, B2, B4, B5, J1, K1, M2, T1).',
+    description: 'SH — one shared configuration applied to every Cashout shop on the Day schedule. Draft only — not yet applied to the live Transfer Queue.',
   },
-  cashout_extended: {
+  cashout_sh_early_extended: {
+    emoji: '🌅',
+    title: 'Early Extended Configuration',
+    description: 'SH — one shared configuration applied to every Cashout shop on the Early Extended schedule. Draft only — not yet applied to the live Transfer Queue.',
+  },
+  cashout_sh_extended: {
     emoji: '🌇',
     title: 'Extended Configuration',
-    description: 'Cashout — M1’s own Day ruleset (M1 uses a fuller 4-rule shape instead of the standard 2-rule Day template).',
+    description: 'SH — one shared configuration applied to every Cashout shop on the Extended schedule. Draft only — not yet applied to the live Transfer Queue.',
   },
-  cashout_247: {
+  cashout_sh_247: {
     emoji: '🌙',
     title: '24/7 Configuration',
-    description: 'Cashout — 24/7 variant, applies to all 10 brands.',
+    description: 'SH — one shared configuration applied to every Cashout shop on the 24/7 schedule. Draft only — not yet applied to the live Transfer Queue.',
   },
   sendmoney_247: {
     emoji: '🌙',
@@ -289,6 +310,29 @@ function BundleSectionCard({
             {saving ? <Loader2 size={13} className="animate-spin" /> : <Check size={13} />} Save
           </button>
         </div>
+      </div>
+    </div>
+  );
+}
+
+// Static — no threshold editing, no backend row, no Save/Cancel. Per
+// explicit instruction: these two just exist as a fixed reference list
+// alongside the four SH schedule configs.
+const WALLET_WITH_ISSUE_ROWS = ['SH Wallet with Issue', 'SH DC Account'];
+
+function WalletWithIssueCard() {
+  return (
+    <div className="mb-6 rounded-xl border border-border bg-white p-5 dark:bg-[#2a2a2d]">
+      <div className="mb-1 flex items-center gap-2 text-[15px] font-semibold text-foreground">
+        <span>⚠️</span> Wallet With Issue
+      </div>
+      <p className="mb-4 text-[12px] text-muted-foreground">Static reference — no threshold editing required.</p>
+      <div className="space-y-2.5">
+        {WALLET_WITH_ISSUE_ROWS.map((label) => (
+          <div key={label} className="rounded-lg border border-border p-3 text-[12px] font-medium text-foreground">
+            {label}
+          </div>
+        ))}
       </div>
     </div>
   );
@@ -530,10 +574,12 @@ export default function SettingsPage() {
 
         {!error && !loading && (
           <>
-            <p className="mb-3 text-[13px] font-bold text-foreground">🟣 CASHOUT</p>
-            <RuleSectionCard section="cashout_day" rules={rules} drafts={drafts} saving={savingSection === 'cashout_day'} onChangeRow={updateDraftRow} onSave={saveSection} onCancel={cancelSection} />
-            <RuleSectionCard section="cashout_extended" rules={rules} drafts={drafts} saving={savingSection === 'cashout_extended'} onChangeRow={updateDraftRow} onSave={saveSection} onCancel={cancelSection} />
-            <RuleSectionCard section="cashout_247" rules={rules} drafts={drafts} saving={savingSection === 'cashout_247'} onChangeRow={updateDraftRow} onSave={saveSection} onCancel={cancelSection} />
+            <p className="mb-3 text-[13px] font-bold text-foreground">🟣 CASHOUT — SSP Transfer Queue Configuration (SH)</p>
+            <RuleSectionCard section="cashout_sh_day" rules={rules} drafts={drafts} saving={savingSection === 'cashout_sh_day'} onChangeRow={updateDraftRow} onSave={saveSection} onCancel={cancelSection} />
+            <RuleSectionCard section="cashout_sh_early_extended" rules={rules} drafts={drafts} saving={savingSection === 'cashout_sh_early_extended'} onChangeRow={updateDraftRow} onSave={saveSection} onCancel={cancelSection} />
+            <RuleSectionCard section="cashout_sh_extended" rules={rules} drafts={drafts} saving={savingSection === 'cashout_sh_extended'} onChangeRow={updateDraftRow} onSave={saveSection} onCancel={cancelSection} />
+            <RuleSectionCard section="cashout_sh_247" rules={rules} drafts={drafts} saving={savingSection === 'cashout_sh_247'} onChangeRow={updateDraftRow} onSave={saveSection} onCancel={cancelSection} />
+            <WalletWithIssueCard />
 
             <p className="mb-3 mt-8 text-[13px] font-bold text-foreground">🟢 SEND MONEY</p>
             <RuleSectionCard section="sendmoney_247" rules={rules} drafts={drafts} saving={savingSection === 'sendmoney_247'} onChangeRow={updateDraftRow} onSave={saveSection} onCancel={cancelSection} />
