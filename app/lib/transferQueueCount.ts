@@ -8,6 +8,7 @@ import {
   normalizeGroup,
   type RuleRow,
 } from '@/app/lib/transferQueueRules';
+import { computeCashoutCompanyBalanceByAgent } from '@/app/lib/cashoutAgentBalance';
 
 async function fetchEffectiveTransferQueueRules(): Promise<RuleRow[]> {
   const res = await fetch(`/api/configurations/transfer-queue-settings/effective?t=${Date.now()}`);
@@ -278,18 +279,27 @@ function resolveSendMoneyBrand(groups: string[], agentName: string): string {
 }
 
 export async function fetchSendMoneyTransferQueueCount(): Promise<number> {
-  const [openingRes, balRes, stlmRes, rules] = await Promise.all([
+  const [openingRes, balRes, stlmRes, agentBalRes, agstlmRes, linkedAccountsRes, rules] = await Promise.all([
     fetch(`/api/opening?t=${Date.now()}`),
     fetch(`/api/sendmoney/balances?t=${Date.now()}`),
     fetch(`/api/sendmoney/stlmtopup?t=${Date.now()}`),
+    fetch(`/api/agentbal?t=${Date.now()}`),
+    fetch(`/api/agstlmtopup?t=${Date.now()}`),
+    fetch(`/api/configurations/transfer-queue-settings/linked-accounts?t=${Date.now()}`),
     fetchEffectiveTransferQueueRules(),
   ]);
 
-  if (!openingRes.ok || !balRes.ok || !stlmRes.ok) throw new Error('Failed to fetch');
+  if (!openingRes.ok || !balRes.ok || !stlmRes.ok || !agentBalRes.ok || !agstlmRes.ok || !linkedAccountsRes.ok) throw new Error('Failed to fetch');
 
   const openingText = await openingRes.text();
   const balData: string[][] = await balRes.json();
   const stlmText = await stlmRes.text();
+  // Send Money Bundle (BD) wallets are evaluated against their linked
+  // Cashout account's own Company Balance, not this account's own figures
+  // — see app/lib/cashoutAgentBalance.ts's own header comment for why this
+  // computation is shared instead of re-derived here.
+  const cashoutCompanyBalanceByAgent = computeCashoutCompanyBalanceByAgent(openingText, await agentBalRes.text(), await agstlmRes.text());
+  const linkedAccounts: Record<string, string> = await linkedAccountsRes.json();
 
   const openingRawRows = parseCsvLines(openingText);
   // Top Up/Settlement totals reset at the 2AM business-day rollover (see
@@ -417,11 +427,26 @@ export async function fetchSendMoneyTransferQueueCount(): Promise<number> {
 
     const currentGroup = bal.group.trim();
     if (currentGroup.toLowerCase().includes('top up')) return;
+
+    // SH-prefixed labels (virtually every real Send Money shop today) skip
+    // the legacy BD-exclusion gate entirely — Bundle wallets are evaluated
+    // via their linked Cashout account's balance instead. Only a
+    // non-SH-prefixed label falls back to the old keyword-exclusion path.
+    if (currentGroup.toUpperCase().startsWith('SH')) {
+      const linkedTo = linkedAccounts[bal.walletName.toUpperCase()];
+      const cashoutAccountBalance = linkedTo ? (cashoutCompanyBalanceByAgent.get(linkedTo) ?? null) : null;
+      const resolved = resolveSendMoneyGroup(currentGroup, bal.walletName, info.brand, info.companyBalance, info.sdpVsBalance, info.discrepancy, cashoutAccountBalance, rules);
+      if (!resolved) return;
+      if (normalizeGroup(currentGroup) === normalizeGroup(resolved.groupName)) return;
+      count += 1;
+      return;
+    }
+
     // Shops whose wallet name carries a "BD" segment are excluded from the
     // Transfer Queue by default (keyword gate, always checked first) — unless an
     // enabled BD Limit Configuration rule says otherwise (point 14).
     if (shouldExcludeBdWallet(bal.walletName, info.companyBalance, info.sdpVsBalance, info.discrepancy, rules)) return;
-    const resolved = resolveSendMoneyGroup(info.brand, info.companyBalance, info.sdpVsBalance, info.discrepancy, rules);
+    const resolved = resolveSendMoneyGroup(currentGroup, bal.walletName, info.brand, info.companyBalance, info.sdpVsBalance, info.discrepancy, null, rules);
     if (!resolved) return;
     if (normalizeGroup(currentGroup) === normalizeGroup(resolved.groupName)) return;
 

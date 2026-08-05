@@ -38,6 +38,15 @@ const RULES_END_COL = 'I';
 // app/lib/estimatedOpening.ts's own block spacing.
 const BUNDLE_START_COL = 'K';
 const BUNDLE_END_COL = 'N';
+// Manually-maintained reference table (staff edit this directly in the
+// sheet, not through this app's UI) — one row per Send Money Bundle (BD)
+// wallet, pointing at the specific Cashout account/wallet whose Company
+// Balance decides that Bundle wallet's DP/WD placement. Cols U (From
+// Agent = Send Money wallet name) / V (To Agent = the linked Cashout
+// account) — header row on row 1, same as every other block here.
+const LINKED_ACCOUNTS_START_COL = 'U';
+const LINKED_ACCOUNTS_END_COL = 'V';
+const LINKED_ACCOUNTS_FIRST_DATA_ROW = 2;
 const META_START_COL = 'P';
 const META_END_COL = 'S';
 
@@ -643,6 +652,31 @@ async function bumpVersion(sheetsApi: ReturnType<typeof google.sheets>, spreadsh
   }
   await writeMetaField(sheetsApi, spreadsheetId, 1, String(currentVersion + 1), new Date().toISOString());
   invalidateMetaCache();
+}
+
+// Read-only — this table is edited directly in the sheet, not via this
+// app's Settings UI. Keys/values normalized uppercase+trimmed to match
+// this file's usual agent-key convention (same reasoning as Wallet
+// Status's own shopName.toUpperCase() lookups). A wallet with no entry
+// here (or an entry pointing at a Cashout code that doesn't resolve to
+// any live agent) is simply unmatched — the caller decides what "no
+// linked account" means for evaluation, this function only reports what
+// the sheet says.
+export async function readLinkedCashoutAccounts(): Promise<Map<string, string>> {
+  let rows: string[][];
+  try {
+    rows = await fetchRange(`${SHEET_TITLE}!${LINKED_ACCOUNTS_START_COL}${LINKED_ACCOUNTS_FIRST_DATA_ROW}:${LINKED_ACCOUNTS_END_COL}20000`);
+  } catch {
+    return new Map();
+  }
+
+  const map = new Map<string, string>();
+  rows.forEach((row) => {
+    const from = (row[0] ?? '').trim().toUpperCase();
+    const to = (row[1] ?? '').trim().toUpperCase();
+    if (from && to) map.set(from, to);
+  });
+  return map;
 }
 
 export async function readBundleConfig(): Promise<BundleField[]> {

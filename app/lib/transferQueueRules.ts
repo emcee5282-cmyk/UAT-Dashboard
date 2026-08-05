@@ -14,12 +14,24 @@
 // (8AM-10PM)") — the brand-based sections below them were never updated to
 // recognize that format, so resolveCashoutCorrectGroup was returning null for
 // virtually every Cashout shop and the live Transfer Queue was showing 0 entries.
+// sendmoney_sh_247/sendmoney_sh_day — Send Money's own SH-based sections.
+// Confirmed live (2026-08-05): every current-group label on the real "SSP
+// PS BalanceLimit" sheet is already SH-prefixed too (e.g. "SH- Day Solo
+// DP+WD", "SH- 24/7 Bundle DP Only") — resolveSendMoneyCorrectGroup only
+// recognized the old brand-based format and explicitly excluded 'SH', so
+// it was returning null for virtually every Send Money shop and the live
+// queue was showing 0 entries, same failure mode Cashout had.
 export type RuleSection =
   | 'cashout_day' | 'cashout_extended' | 'cashout_247'
   | 'cashout_sh_day' | 'cashout_sh_early_extended' | 'cashout_sh_extended' | 'cashout_sh_247'
-  | 'sendmoney_247' | 'sendmoney_bd';
+  | 'sendmoney_247' | 'sendmoney_bd'
+  | 'sendmoney_sh_247' | 'sendmoney_sh_day';
 export type Operator = 'Greater Than' | 'Greater Than or Equal' | 'Less Than' | 'Less Than or Equal' | 'Between' | 'Equal';
-export type Metric = 'SDP VS Balance' | 'Discrepancy' | 'Company Balance';
+// 'Cashout Account Balance' — Send Money Bundle rows only: the linked
+// Cashout account's own Company Balance, looked up via the "Transfer Queue
+// Configurations" sheet's U:V reference table (Send Money wallet -> Cashout
+// account), read by readLinkedCashoutAccounts() in transferQueueSettings.ts.
+export type Metric = 'SDP VS Balance' | 'Discrepancy' | 'Company Balance' | 'Cashout Account Balance';
 
 export type RuleRow = {
   section: RuleSection;
@@ -35,18 +47,21 @@ export type RuleRow = {
 
 export type ResolvedGroup = { groupName: string; remarks: string };
 
-function metricValue(metric: Metric, companyBalance: number, sdpVsBalance: number, discrepancy: number): number {
+function metricValue(metric: Metric, companyBalance: number, sdpVsBalance: number, discrepancy: number, cashoutAccountBalance: number): number {
   if (metric === 'Company Balance') return companyBalance;
   if (metric === 'SDP VS Balance') return sdpVsBalance;
+  if (metric === 'Cashout Account Balance') return cashoutAccountBalance;
   return discrepancy;
 }
 
 // Generic, operator-respecting evaluator — an admin flipping an Operator or Value on an
 // existing row genuinely takes effect, not just the number. Returns false immediately if
-// the row is disabled — exactly what `enabled` was built for.
-export function evaluateRule(row: RuleRow, companyBalance: number, sdpVsBalance: number, discrepancy: number): boolean {
+// the row is disabled — exactly what `enabled` was built for. `cashoutAccountBalance`
+// defaults to 0 for every caller except the new Send Money Bundle path, which is the
+// only place a "Cashout Account Balance" metric row can ever actually appear.
+export function evaluateRule(row: RuleRow, companyBalance: number, sdpVsBalance: number, discrepancy: number, cashoutAccountBalance = 0): boolean {
   if (!row.enabled) return false;
-  const value = metricValue(row.metric, companyBalance, sdpVsBalance, discrepancy);
+  const value = metricValue(row.metric, companyBalance, sdpVsBalance, discrepancy, cashoutAccountBalance);
   switch (row.operator) {
     case 'Greater Than': return value > row.value1;
     case 'Greater Than or Equal': return value >= row.value1;
@@ -77,6 +92,9 @@ function reasonForRow(row: RuleRow | undefined): string {
       return `SDP VS Balance exceeded ${fmt(row.value1)}`;
     case 'Discrepancy':
       return `Discrepancy is higher than ${fmt(row.value1)}`;
+    case 'Cashout Account Balance':
+      if (row.operator === 'Less Than' || row.operator === 'Less Than or Equal') return `Linked Cashout account balance is below ${fmt(row.value1)}`;
+      return `Linked Cashout account balance exceeded ${fmt(row.value1)}`;
   }
 }
 
@@ -309,7 +327,7 @@ export function resolveCashoutCorrectGroup(
 // -> WD Only, [2] Company Balance > X -> WD Only, [3] Company Balance < X -> DP + WD.
 // This is a plain sequential if-chain today (no specialRule/fallback split) and already
 // matches Configuration's row order 1:1.
-export function resolveSendMoneyCorrectGroup(
+function resolveSendMoneyCorrectGroupLegacy(
   brand: string,
   companyBalance: number,
   sdpVsBalance: number,
@@ -339,12 +357,85 @@ export function resolveSendMoneyCorrectGroup(
   return null;
 }
 
-// The "BD" keyword exclusion stays the always-first, default-deny gate — reproduces
-// today's exact behavior while the 2 sendmoney_bd rows stay disabled/blank. Layered on
-// top: if an enabled sendmoney_bd rule matches, the wallet escapes the exclusion and
-// flows into the normal resolveSendMoneyCorrectGroup evaluation above (a BD-tagged
-// wallet still nominally belongs to a real brand, e.g. "M2BD-...", so its resulting
-// label is that brand's own real template — never a separate "BD" label).
+// --- SH-based (schedule-driven) path — the real, current format ---
+
+type SMScheduleSection = 'sendmoney_sh_247' | 'sendmoney_sh_day';
+
+// Static groups (DC Account / Wallet with Issue) are never reassigned by
+// this resolver — same "leave alone" convention as Cashout's own SH path.
+function determineSMScheduleSection(rawGroup: string): SMScheduleSection | 'static' | null {
+  const upper = rawGroup.trim().toUpperCase();
+  if (!upper.startsWith('SH')) return null;
+  if (upper.includes('WALLET WITH ISSUE') || upper.includes('DC ACCOUNT')) return 'static';
+  if (upper.includes('24/7')) return 'sendmoney_sh_247';
+  if (upper.includes('DAY')) return 'sendmoney_sh_day';
+  return null;
+}
+
+// Bundle (BD-tagged) wallets only ever evaluate a section's Bundle rows
+// (metric "Cashout Account Balance"); every other wallet ("Solo") only
+// ever evaluates that section's Solo rows — the two never cross, matching
+// the spec's "Bundle DP Only... determined by the linked Cashout Account
+// Balance only" (never by this account's own SDP/Discrepancy/Company
+// Balance, and vice versa for Solo wallets).
+function resolveSendMoneyCorrectGroupSH(
+  rawGroup: string,
+  walletName: string,
+  companyBalance: number,
+  sdpVsBalance: number,
+  discrepancy: number,
+  cashoutAccountBalance: number | null,
+  rules: RuleRow[]
+): ResolvedGroup | null {
+  const section = determineSMScheduleSection(rawGroup);
+  if (section === null || section === 'static') return null;
+
+  const isBundle = walletName.toUpperCase().includes('BD');
+  const rows = sectionRows(rules, section);
+
+  for (const row of rows) {
+    const isBundleRow = row.metric === 'Cashout Account Balance';
+    if (isBundleRow !== isBundle) continue;
+    // No linked Cashout account found (or it doesn't resolve to a live
+    // agent) — can't evaluate a Bundle row without a real balance to
+    // check, so this Bundle wallet is simply left unmatched rather than
+    // guessed at.
+    if (isBundleRow && cashoutAccountBalance === null) continue;
+    if (evaluateRule(row, companyBalance, sdpVsBalance, discrepancy, cashoutAccountBalance ?? 0)) {
+      return { groupName: row.queueResult, remarks: reasonForRow(row) };
+    }
+  }
+  return null;
+}
+
+// `cashoutAccountBalance`: the linked Cashout account's Company Balance
+// (via readLinkedCashoutAccounts' U:V reference table), null if this
+// wallet has no linked-account entry or that entry doesn't resolve to a
+// live Cashout agent — irrelevant for Solo (non-BD) wallets either way.
+export function resolveSendMoneyCorrectGroup(
+  rawGroup: string,
+  walletName: string,
+  brand: string,
+  companyBalance: number,
+  sdpVsBalance: number,
+  discrepancy: number,
+  cashoutAccountBalance: number | null,
+  rules: RuleRow[]
+): ResolvedGroup | null {
+  const trimmed = rawGroup.trim();
+  if (trimmed.toUpperCase().startsWith('SH')) {
+    return resolveSendMoneyCorrectGroupSH(trimmed, walletName, companyBalance, sdpVsBalance, discrepancy, cashoutAccountBalance, rules);
+  }
+  return resolveSendMoneyCorrectGroupLegacy(brand, companyBalance, sdpVsBalance, discrepancy, rules);
+}
+
+// The "BD" keyword exclusion — legacy-path-only gate now (per explicit
+// instruction, SH-labeled Bundle wallets are evaluated via the Cashout
+// Account Balance path above instead of a blanket exclusion; the caller
+// only invokes this for the non-SH branch — see
+// app/sendmoney/transfer-queue/page.tsx). Layered on top of the legacy
+// path: if an enabled sendmoney_bd rule matches, the wallet escapes the
+// exclusion and flows into resolveSendMoneyCorrectGroupLegacy above.
 export function shouldExcludeBdWallet(
   walletName: string,
   companyBalance: number,

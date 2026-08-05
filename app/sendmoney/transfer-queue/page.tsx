@@ -18,6 +18,7 @@ import { BRAND_CODES as CASHOUT_BRAND_CODES } from '@/app/lib/transferQueueCount
 import { getBusinessToday } from '@/app/lib/businessDate';
 import { getPreference, setPreference } from '@/app/lib/preferences';
 import { resolveSendMoneyCorrectGroup, shouldExcludeBdWallet, normalizeGroup, type RuleRow } from '@/app/lib/transferQueueRules';
+import { computeCashoutCompanyBalanceByAgent } from '@/app/lib/cashoutAgentBalance';
 
 async function fetchEffectiveTransferQueueRules(): Promise<RuleRow[]> {
   const res = await fetch(`/api/configurations/transfer-queue-settings/effective?t=${Date.now()}`);
@@ -484,19 +485,26 @@ export default function SendMoneyTransferQueue() {
       // Send Money-specific routes: /api/sendmoney/balances ("SSP PS
       // BalanceLimit") and /api/sendmoney/stlmtopup ("PS BD STLM + TOPUP",
       // Send Money's own dedicated Settlement + Top Up sheet) — same three
-      // sources as /sendmoney/balances.
-      const [openingRes, balRes, stlmRes, rules] = await Promise.all([
+      // sources as /sendmoney/balances. Plus 2 new Cashout-side fetches +
+      // the linked-accounts lookup, needed only for Bundle (BD) wallets —
+      // see app/lib/cashoutAgentBalance.ts's own header comment.
+      const [openingRes, balRes, stlmRes, agentBalRes, agstlmRes, linkedAccountsRes, rules] = await Promise.all([
         fetch(`/api/opening?t=${Date.now()}`),
         fetch(`/api/sendmoney/balances?t=${Date.now()}`),
         fetch(`/api/sendmoney/stlmtopup?t=${Date.now()}`),
+        fetch(`/api/agentbal?t=${Date.now()}`),
+        fetch(`/api/agstlmtopup?t=${Date.now()}`),
+        fetch(`/api/configurations/transfer-queue-settings/linked-accounts?t=${Date.now()}`),
         fetchEffectiveTransferQueueRules(),
       ]);
 
-      await assertAllOk([openingRes, balRes, stlmRes]);
+      await assertAllOk([openingRes, balRes, stlmRes, agentBalRes, agstlmRes, linkedAccountsRes]);
 
       const openingText = await openingRes.text();
       const balData: string[][] = await balRes.json();
       const stlmText = await stlmRes.text();
+      const cashoutCompanyBalanceByAgent = computeCashoutCompanyBalanceByAgent(openingText, await agentBalRes.text(), await agstlmRes.text());
+      const linkedAccounts: Record<string, string> = await linkedAccountsRes.json();
 
       const openingRawRows = parseCsvLines(openingText);
       // Top Up/Settlement totals reset at the 2AM business-day rollover
@@ -628,12 +636,24 @@ export default function SendMoneyTransferQueue() {
 
         const currentGroup = bal.group.trim();
         if (currentGroup.toLowerCase().includes('top up')) return;
-        // Shops whose wallet name carries a "BD" segment (e.g. "D-M2BD-DELTA063-NG")
-        // are excluded from the Transfer Queue by default (keyword gate, always
-        // checked first) — unless an enabled BD Limit Configuration rule says
-        // otherwise.
-        if (shouldExcludeBdWallet(bal.walletName, info.companyBalance, info.sdpVsBalance, info.discrepancy, rules)) return;
-        const resolved = resolveSendMoneyCorrectGroup(info.brand, info.companyBalance, info.sdpVsBalance, info.discrepancy, rules);
+
+        let resolved: ReturnType<typeof resolveSendMoneyCorrectGroup>;
+        if (currentGroup.toUpperCase().startsWith('SH')) {
+          // SH-prefixed labels (virtually every real Send Money shop today)
+          // skip the legacy BD-exclusion gate entirely — Bundle wallets are
+          // evaluated against their linked Cashout account's own Company
+          // Balance instead (see app/lib/cashoutAgentBalance.ts).
+          const linkedTo = linkedAccounts[bal.walletName.toUpperCase()];
+          const cashoutAccountBalance = linkedTo ? (cashoutCompanyBalanceByAgent.get(linkedTo) ?? null) : null;
+          resolved = resolveSendMoneyCorrectGroup(currentGroup, bal.walletName, info.brand, info.companyBalance, info.sdpVsBalance, info.discrepancy, cashoutAccountBalance, rules);
+        } else {
+          // Legacy path — shops whose wallet name carries a "BD" segment
+          // (e.g. "D-M2BD-DELTA063-NG") are excluded from the Transfer
+          // Queue by default (keyword gate, always checked first) — unless
+          // an enabled BD Limit Configuration rule says otherwise.
+          if (shouldExcludeBdWallet(bal.walletName, info.companyBalance, info.sdpVsBalance, info.discrepancy, rules)) return;
+          resolved = resolveSendMoneyCorrectGroup(currentGroup, bal.walletName, info.brand, info.companyBalance, info.sdpVsBalance, info.discrepancy, null, rules);
+        }
         if (!resolved) return;
         if (normalizeGroup(currentGroup) === normalizeGroup(resolved.groupName)) return;
 
