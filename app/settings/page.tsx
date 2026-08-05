@@ -14,17 +14,20 @@ import { classifyFetchError, type ClassifiedError, assertAllOk } from '../lib/er
 // Plain-word form, not symbols — per explicit instruction, so staff reading
 // either the dropdown or the raw sheet cell understand it immediately.
 type Operator = 'Greater Than' | 'Greater Than or Equal' | 'Less Than' | 'Less Than or Equal' | 'Between' | 'Equal';
-// cashout_day/cashout_extended/cashout_247 are the REAL, LIVE sections
-// (app/lib/transferQueueRules.ts reads these to assign real shops to real
-// queue groups) — kept in the union for type accuracy but deliberately
-// never rendered below anymore (see "Do not display them anymore" in the
-// SH-restructure spec). The four cashout_sh_* sections are the new
-// SH-based, schedule-driven admin config — draft only, not yet wired to
-// the live Transfer Queue.
+// cashout_day/cashout_extended/cashout_247 and sendmoney_247/sendmoney_bd
+// are the REAL, LIVE sections (app/lib/transferQueueRules.ts reads these
+// to assign real shops to real queue groups) — kept in the union for type
+// accuracy but deliberately never rendered below anymore (see "Do not
+// display them anymore" in the SH-restructure spec). cashout_sh_* and
+// sendmoney_sh_* are the new SH-based, schedule-driven admin config —
+// draft only, not yet wired to the live Transfer Queue (Send Money's
+// Bundle rows additionally need a "linked Cashout account" lookup that
+// doesn't exist anywhere yet).
 type RuleSection =
   | 'cashout_day' | 'cashout_extended' | 'cashout_247'
   | 'cashout_sh_day' | 'cashout_sh_early_extended' | 'cashout_sh_extended' | 'cashout_sh_247'
-  | 'sendmoney_247' | 'sendmoney_bd';
+  | 'sendmoney_247' | 'sendmoney_bd'
+  | 'sendmoney_sh_247' | 'sendmoney_sh_day';
 
 type RuleRow = {
   section: RuleSection;
@@ -77,15 +80,19 @@ const SECTION_META: Record<RuleSection, { emoji: string; title: string; descript
     title: '24/7 Configuration',
     description: 'SH — one shared configuration applied to every Cashout shop on the 24/7 schedule. Draft only — not yet applied to the live Transfer Queue.',
   },
-  sendmoney_247: {
+  // Real, live sections — no longer rendered, kept only for type
+  // completeness (same reasoning as the Cashout ones above).
+  sendmoney_247: { emoji: '🌙', title: '24/7 Configuration', description: '' },
+  sendmoney_bd: { emoji: '🏷️', title: 'BD Limit', description: '' },
+  sendmoney_sh_247: {
     emoji: '🌙',
-    title: '24/7 Configuration',
-    description: 'Send Money — every brand except SH, exactly two possible outcomes.',
+    title: '24/7',
+    description: 'SH — one shared configuration applied to every SH Send Money account on the 24/7 schedule. Bundle rows use the linked Cashout account\'s balance. Draft only — not yet applied to the live Transfer Queue.',
   },
-  sendmoney_bd: {
-    emoji: '🏷️',
-    title: 'BD Limit',
-    description: 'Send Money — replaces the old blanket "BD"-wallet-name exclusion with an actual configurable limit.',
+  sendmoney_sh_day: {
+    emoji: '☀️',
+    title: 'Day',
+    description: 'SH — one shared configuration applied to every SH Send Money account on the Day schedule. Bundle rows use the linked Cashout account\'s balance. Draft only — not yet applied to the live Transfer Queue.',
   },
 };
 
@@ -316,19 +323,18 @@ function BundleSectionCard({
 }
 
 // Static — no threshold editing, no backend row, no Save/Cancel. Per
-// explicit instruction: these two just exist as a fixed reference list
-// alongside the four SH schedule configs.
-const WALLET_WITH_ISSUE_ROWS = ['SH Wallet with Issue', 'SH DC Account'];
-
-function WalletWithIssueCard() {
+// explicit instruction: these just exist as a fixed reference list
+// alongside the real schedule configs (Cashout's own Wallet With Issue,
+// and Send Money's DC Account / Wallet with Issue "Special Groups").
+function StaticGroupsCard({ emoji, title, rows }: { emoji: string; title: string; rows: string[] }) {
   return (
     <div className="mb-6 rounded-xl border border-border bg-white p-5 dark:bg-[#2a2a2d]">
       <div className="mb-1 flex items-center gap-2 text-[15px] font-semibold text-foreground">
-        <span>⚠️</span> Wallet With Issue
+        <span>{emoji}</span> {title}
       </div>
       <p className="mb-4 text-[12px] text-muted-foreground">Static reference — no threshold editing required.</p>
       <div className="space-y-2.5">
-        {WALLET_WITH_ISSUE_ROWS.map((label) => (
+        {rows.map((label) => (
           <div key={label} className="rounded-lg border border-border p-3 text-[12px] font-medium text-foreground">
             {label}
           </div>
@@ -579,11 +585,12 @@ export default function SettingsPage() {
             <RuleSectionCard section="cashout_sh_early_extended" rules={rules} drafts={drafts} saving={savingSection === 'cashout_sh_early_extended'} onChangeRow={updateDraftRow} onSave={saveSection} onCancel={cancelSection} />
             <RuleSectionCard section="cashout_sh_extended" rules={rules} drafts={drafts} saving={savingSection === 'cashout_sh_extended'} onChangeRow={updateDraftRow} onSave={saveSection} onCancel={cancelSection} />
             <RuleSectionCard section="cashout_sh_247" rules={rules} drafts={drafts} saving={savingSection === 'cashout_sh_247'} onChangeRow={updateDraftRow} onSave={saveSection} onCancel={cancelSection} />
-            <WalletWithIssueCard />
+            <StaticGroupsCard emoji="⚠️" title="Wallet With Issue" rows={['SH Wallet with Issue', 'SH DC Account']} />
 
-            <p className="mb-3 mt-8 text-[13px] font-bold text-foreground">🟢 SEND MONEY</p>
-            <RuleSectionCard section="sendmoney_247" rules={rules} drafts={drafts} saving={savingSection === 'sendmoney_247'} onChangeRow={updateDraftRow} onSave={saveSection} onCancel={cancelSection} />
-            <RuleSectionCard section="sendmoney_bd" rules={rules} drafts={drafts} saving={savingSection === 'sendmoney_bd'} onChangeRow={updateDraftRow} onSave={saveSection} onCancel={cancelSection} />
+            <p className="mb-3 mt-8 text-[13px] font-bold text-foreground">🟢 SEND MONEY — SSP Transfer Queue Configuration (SH)</p>
+            <RuleSectionCard section="sendmoney_sh_247" rules={rules} drafts={drafts} saving={savingSection === 'sendmoney_sh_247'} onChangeRow={updateDraftRow} onSave={saveSection} onCancel={cancelSection} />
+            <RuleSectionCard section="sendmoney_sh_day" rules={rules} drafts={drafts} saving={savingSection === 'sendmoney_sh_day'} onChangeRow={updateDraftRow} onSave={saveSection} onCancel={cancelSection} />
+            <StaticGroupsCard emoji="⚠️" title="Special Groups" rows={['SH - DC Account', 'SH - Wallet with Issue']} />
             <BundleSectionCard saved={bundle} drafts={bundleDraft} saving={savingSection === 'bundle'} onChangeField={updateBundleField} onSave={saveBundle} onCancel={cancelBundle} />
           </>
         )}

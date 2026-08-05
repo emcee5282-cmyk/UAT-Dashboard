@@ -1,26 +1,31 @@
 import { google, Auth } from 'googleapis';
 import { fetchRange } from './googleSheets';
 
-// "Transfer Queue Configurations" — a dedicated sheet tab holding DRAFT
-// threshold values for a future Transfer Queue migration. Per explicit
-// instruction, this is config-only: nothing in app/transfer-queue/page.tsx,
-// app/sendmoney/transfer-queue/page.tsx, or app/lib/transferQueueCount.ts
-// (the real, currently-hardcoded queue logic) reads from this tab. This
-// module only stores and returns values for the Configurations UI to
-// display/edit.
+// "Transfer Queue Configurations" — a dedicated sheet tab holding threshold
+// values for the Transfer Queue. Originally config-only/draft (nothing live
+// read it), but that's no longer fully true: app/lib/transferQueueRules.ts
+// now reads the cashout_day/cashout_extended/cashout_247 AND
+// cashout_sh_day/cashout_sh_early_extended/cashout_sh_extended/
+// cashout_sh_247 sections live (via readEffectiveTransferQueueRules), used
+// by the real Cashout Transfer Queue. sendmoney_247/sendmoney_bd are also
+// still read live (Send Money's own resolver + BD-wallet exclusion gate).
+// The sendmoney_sh_247/sendmoney_sh_day sections added alongside them are
+// the newest ones and are STILL config-only/draft — Bundle rows need a
+// "linked Cashout account" lookup that doesn't exist yet.
 //
 // Unlike every other sheet-backed feature in this app (Wallet Status,
 // Estimated Opening — sparse, grow-by-append), this row set is 100% FIXED
-// and bootstrapped once: exactly 34 rule rows (4 cashout_day + 5
+// and bootstrapped once: exactly 46 rule rows (4 cashout_day + 5
 // cashout_extended + 5 cashout_247 + 5 cashout_sh_day + 2
 // cashout_sh_early_extended + 2 cashout_sh_extended + 5 cashout_sh_247 + 4
-// sendmoney_247 + 2 sendmoney_bd) and 3 Bundle rows, in a known, unchanging
-// order. That means an update never needs to scan for a matching row — the
-// row's position IS its identity (sheet row `2 + index`, header on row 1)
-// — simpler and more robust than a find-by-value scan, since the very
-// field an admin might rename (Queue Result) can't double as a lookup key.
-// Row COUNT has changed once already (20 -> 34, when the SH-based sections
-// were added) — see migrateRulesSchemaIfNeeded() below for how that's
+// sendmoney_247 + 2 sendmoney_bd + 6 sendmoney_sh_247 + 6 sendmoney_sh_day)
+// and 3 Bundle rows, in a known, unchanging order. That means an update
+// never needs to scan for a matching row — the row's position IS its
+// identity (sheet row `2 + index`, header on row 1) — simpler and more
+// robust than a find-by-value scan, since the very field an admin might
+// rename (Queue Result) can't double as a lookup key. Row COUNT has
+// changed twice now (20 -> 34 -> 46, each time a new SH-based section set
+// was added) — see migrateRulesSchemaIfNeeded() below for how that's
 // handled safely without losing any section's saved values.
 const SHEET_TITLE = 'Transfer Queue Configurations';
 // Separate append-only tab (grows on every save) — the fixed-position model the Rules/
@@ -36,23 +41,33 @@ const BUNDLE_END_COL = 'N';
 const META_START_COL = 'P';
 const META_END_COL = 'S';
 
-// cashout_day/cashout_extended/cashout_247 are the REAL, LIVE sections —
-// app/lib/transferQueueRules.ts's resolveCashoutCorrectGroup() reads these
-// three by exact string match and is actually called from
-// app/transfer-queue/page.tsx to assign real shops to real queue groups.
-// Never rename/remove/reorder-within-section these three; the SH-based
-// sections added alongside them (cashout_sh_*) are a separate, currently
-// admin-only draft per explicit instruction — nothing reads those yet.
+// cashout_day/cashout_extended/cashout_247 and sendmoney_247/sendmoney_bd
+// are the REAL, LIVE sections — app/lib/transferQueueRules.ts's
+// resolveCashoutCorrectGroup()/resolveSendMoneyCorrectGroup()/
+// shouldExcludeBdWallet() read these by exact string match and are
+// actually called from app/transfer-queue/page.tsx +
+// app/sendmoney/transfer-queue/page.tsx to assign real shops to real queue
+// groups. Never rename/remove/reorder-within-section these five; the
+// SH-based sections added alongside them (cashout_sh_*, sendmoney_sh_*)
+// are a separate, currently admin-only draft per explicit instruction —
+// nothing reads those yet (Send Money's SH sections additionally need a
+// "linked Cashout account" lookup that doesn't exist anywhere yet — the
+// user will provide where that data lives before this gets wired live).
 export type RuleSection =
   | 'cashout_day' | 'cashout_extended' | 'cashout_247'
   | 'cashout_sh_day' | 'cashout_sh_early_extended' | 'cashout_sh_extended' | 'cashout_sh_247'
-  | 'sendmoney_247' | 'sendmoney_bd';
+  | 'sendmoney_247' | 'sendmoney_bd'
+  | 'sendmoney_sh_247' | 'sendmoney_sh_day';
 // Plain-word form, not symbols (">"/"<=") — per explicit instruction, so
 // staff reading either the UI or the raw sheet cell understand it
 // immediately without decoding shorthand. Stored in the sheet as this
 // same word text, not a symbol/code, for the same reason.
 export type Operator = 'Greater Than' | 'Greater Than or Equal' | 'Less Than' | 'Less Than or Equal' | 'Between' | 'Equal';
-export type Metric = 'SDP VS Balance' | 'Discrepancy' | 'Company Balance';
+// 'Cashout Account Balance' — Send Money Bundle rows only: the Bundle
+// account's own Company Balance is irrelevant; the linked Cashout
+// account's balance decides Bundle DP/WD instead. Config-only for now —
+// nothing evaluates this metric live yet.
+export type Metric = 'SDP VS Balance' | 'Discrepancy' | 'Company Balance' | 'Cashout Account Balance';
 
 export type RuleRow = {
   section: RuleSection;
@@ -170,6 +185,28 @@ const DEFAULT_RULES: Omit<RuleRow, 'updatedBy' | 'updatedAt'>[] = [
   // flip Enabled on before this row means anything.
   { section: 'sendmoney_bd', metric: 'Company Balance', operator: 'Equal', value1: 0, value2: null, queueResult: '', enabled: false },
   { section: 'sendmoney_bd', metric: 'SDP VS Balance', operator: 'Equal', value1: 0, value2: null, queueResult: '', enabled: false },
+
+  // Send Money SH sections — one shared configuration applied to every SH
+  // Send Money account, replacing the old brand-based sendmoney_247/
+  // sendmoney_bd above for admin-editing purposes. Per explicit
+  // instruction: config-only for now — Bundle rows use "Cashout Account
+  // Balance" (the linked Cashout account's own balance, not this
+  // account's own SDP/Discrepancy/Company Balance), but no live resolver
+  // reads any of this yet since there's no existing way to determine which
+  // Cashout account a given Send Money Bundle wallet is linked to.
+  { section: 'sendmoney_sh_247', metric: 'Cashout Account Balance', operator: 'Less Than', value1: 480000, value2: null, queueResult: 'SH - 24/7 Bundle DP Only', enabled: true },
+  { section: 'sendmoney_sh_247', metric: 'Company Balance', operator: 'Less Than', value1: 20000, value2: null, queueResult: 'SH - 24/7 Solo DP+WD', enabled: true },
+  { section: 'sendmoney_sh_247', metric: 'SDP VS Balance', operator: 'Greater Than', value1: 8000, value2: null, queueResult: 'SH - 24/7 Solo WD Only', enabled: true },
+  { section: 'sendmoney_sh_247', metric: 'Discrepancy', operator: 'Greater Than', value1: 8000, value2: null, queueResult: 'SH - 24/7 Solo WD Only', enabled: true },
+  { section: 'sendmoney_sh_247', metric: 'Company Balance', operator: 'Greater Than', value1: 45000, value2: null, queueResult: 'SH - 24/7 Solo WD Only', enabled: true },
+  { section: 'sendmoney_sh_247', metric: 'Cashout Account Balance', operator: 'Greater Than', value1: 5000000, value2: null, queueResult: 'SH - 24/7 Bundle WD Only', enabled: true },
+
+  { section: 'sendmoney_sh_day', metric: 'Cashout Account Balance', operator: 'Less Than', value1: 480000, value2: null, queueResult: 'SH - Day Bundle DP Only', enabled: true },
+  { section: 'sendmoney_sh_day', metric: 'Company Balance', operator: 'Less Than', value1: 20000, value2: null, queueResult: 'SH - Day Solo DP+WD', enabled: true },
+  { section: 'sendmoney_sh_day', metric: 'SDP VS Balance', operator: 'Greater Than', value1: 8000, value2: null, queueResult: 'SH - Day Solo WD Only', enabled: true },
+  { section: 'sendmoney_sh_day', metric: 'Discrepancy', operator: 'Greater Than', value1: 8000, value2: null, queueResult: 'SH - Day Solo WD Only', enabled: true },
+  { section: 'sendmoney_sh_day', metric: 'Company Balance', operator: 'Greater Than', value1: 45000, value2: null, queueResult: 'SH - Day Solo WD Only', enabled: true },
+  { section: 'sendmoney_sh_day', metric: 'Cashout Account Balance', operator: 'Greater Than', value1: 5000000, value2: null, queueResult: 'SH - Day Bundle WD Only', enabled: true },
 ];
 
 // Forward-looking — no direct current-code equivalent beyond "SH never
