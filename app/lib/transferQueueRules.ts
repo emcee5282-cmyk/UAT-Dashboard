@@ -8,7 +8,16 @@
 // original BASES arrays, since Configuration only ever decides WHEN a wallet crosses
 // into a group, never WHAT it's called.
 
-export type RuleSection = 'cashout_day' | 'cashout_extended' | 'cashout_247' | 'sendmoney_247' | 'sendmoney_bd';
+// cashout_sh_* — the SH-based sections, mirroring app/lib/transferQueueSettings.ts's
+// own union. Confirmed live (2026-08-05): 5,173 of 5,174 "SSP AG BalanceLimit" rows
+// already carry an "SH-" prefixed current-group label (e.g. "SH- Day DP+WD
+// (8AM-10PM)") — the brand-based sections below them were never updated to
+// recognize that format, so resolveCashoutCorrectGroup was returning null for
+// virtually every Cashout shop and the live Transfer Queue was showing 0 entries.
+export type RuleSection =
+  | 'cashout_day' | 'cashout_extended' | 'cashout_247'
+  | 'cashout_sh_day' | 'cashout_sh_early_extended' | 'cashout_sh_extended' | 'cashout_sh_247'
+  | 'sendmoney_247' | 'sendmoney_bd';
 export type Operator = 'Greater Than' | 'Greater Than or Equal' | 'Less Than' | 'Less Than or Equal' | 'Between' | 'Equal';
 export type Metric = 'SDP VS Balance' | 'Discrepancy' | 'Company Balance';
 
@@ -200,7 +209,12 @@ function resolveExtendedShape(
   return null;
 }
 
-export function resolveCashoutCorrectGroup(
+// Legacy brand-based path — kept for any shop still on the old "M1 SOLO DAY"
+// / "B4-SOLO - 24/7 DP + WD" style label (confirmed live: only 1 of 5,174
+// Cashout rows still uses this format as of 2026-08-05). resolveCashout
+// CorrectGroup below tries the SH-based path first and only falls back to
+// this for labels that aren't SH-prefixed.
+function resolveCashoutCorrectGroupLegacy(
   rawGroup: string,
   companyBalance: number,
   sdpVsBalance: number,
@@ -227,6 +241,66 @@ export function resolveCashoutCorrectGroup(
   }
 
   return resolveExtendedShape(solo247GroupNames(code), sectionRows(rules, 'cashout_247'), companyBalance, sdpVsBalance, discrepancy);
+}
+
+// --- SH-based (schedule-driven) path — the real, current format ---
+
+type SHScheduleSection = 'cashout_sh_day' | 'cashout_sh_early_extended' | 'cashout_sh_extended' | 'cashout_sh_247';
+
+// Order matters: "EARLY DAY"/"EXTENDED DAY" must be checked before the bare
+// "DAY" check below them, since both contain "DAY" as a substring — a plain
+// `includes('DAY')` first would misclassify every Early/Extended shop as
+// vanilla Day. Static groups (Wallet with Issue / DC Account / Top up only)
+// return 'static' — per explicit instruction these are never reassigned by
+// this resolver; Top Up's own threshold rules haven't been provided yet.
+function determineSHScheduleSection(rawGroup: string): SHScheduleSection | 'static' | null {
+  const upper = rawGroup.trim().toUpperCase();
+  if (!upper.startsWith('SH')) return null;
+
+  if (upper.includes('WALLET WITH ISSUE') || upper.includes('DC ACCOUNT')) return 'static';
+  if (upper.includes('TOP UP') || upper.includes('TOP-UP') || upper.includes('TOPUP')) return 'static';
+
+  if (upper.includes('EARLY')) return 'cashout_sh_early_extended';
+  if (upper.includes('EXTENDED')) return 'cashout_sh_extended';
+  if (upper.includes('24/7')) return 'cashout_sh_247';
+  if (upper.includes('DAY')) return 'cashout_sh_day';
+  return null;
+}
+
+// Generic, priority-order evaluator — unlike the legacy path above (which
+// needed separate per-brand GROUP_NAMES templates since the same rule shape
+// produced different labels per brand), every SH rule's `queueResult` IS
+// already the exact, final group name to use — nothing else to template.
+// Rows are evaluated in their own stored order (first match wins), which is
+// also why DEFAULT_RULES lists Discrepancy/SDP rows before the plain
+// Company Balance buckets for each SH section, mirroring the legacy path's
+// same "discrepancy checked first" priority.
+function resolveSHShape(rows: RuleRow[], companyBalance: number, sdpVsBalance: number, discrepancy: number): ResolvedGroup | null {
+  for (const row of rows) {
+    if (evaluateRule(row, companyBalance, sdpVsBalance, discrepancy)) {
+      return { groupName: row.queueResult, remarks: reasonForRow(row) };
+    }
+  }
+  return null;
+}
+
+export function resolveCashoutCorrectGroup(
+  rawGroup: string,
+  companyBalance: number,
+  sdpVsBalance: number,
+  discrepancy: number,
+  rules: RuleRow[]
+): ResolvedGroup | null {
+  const trimmed = rawGroup.trim();
+  if (!trimmed || trimmed === '-') return null;
+
+  const shSection = determineSHScheduleSection(trimmed);
+  if (shSection === 'static') return null;
+  if (shSection !== null) {
+    return resolveSHShape(sectionRows(rules, shSection), companyBalance, sdpVsBalance, discrepancy);
+  }
+
+  return resolveCashoutCorrectGroupLegacy(trimmed, companyBalance, sdpVsBalance, discrepancy, rules);
 }
 
 // --- Send Money ---
