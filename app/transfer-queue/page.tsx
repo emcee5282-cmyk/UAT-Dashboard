@@ -354,12 +354,59 @@ function brandBadgeClasses(brand: string): string {
   return BRAND_BADGE_TINTS[brand] ?? 'bg-slate-100 text-slate-600 border-slate-200 dark:bg-slate-500/10 dark:text-slate-400 dark:border-slate-700';
 }
 
-function BrandBadge({ children }: { children: string }) {
+function BrandBadge({ children, brand }: { children: React.ReactNode; brand: string }) {
   return (
-    <span className={`inline-flex h-[28px] items-center rounded-[999px] border px-[10px] text-[12px] font-semibold transition-[filter] duration-150 hover:brightness-95 dark:hover:brightness-110 ${brandBadgeClasses(children)}`}>
+    <span className={`inline-flex h-[28px] items-center rounded-[999px] border px-[10px] text-[12px] font-semibold transition-[filter] duration-150 hover:brightness-95 dark:hover:brightness-110 ${brandBadgeClasses(brand)}`}>
       {children}
     </span>
   );
+}
+
+// Blue text, no background — same accent pair (`#2563EB` / dark `#60A5FA`)
+// already used app-wide for active/interactive text (sort icons, TableFooter
+// "Show", ColumnsDropdown reset), not the old yellow/blue-fill <mark>.
+function highlightMatch(text: string, query: string): React.ReactNode {
+  const q = query.trim();
+  if (!q) return text;
+  const escaped = q.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const parts = text.split(new RegExp(`(${escaped})`, 'gi'));
+  if (parts.length === 1) return text;
+  return parts.map((part, i) =>
+    i % 2 === 1 ? (
+      <mark key={i} className="bg-transparent font-medium text-[#2563EB] no-underline dark:text-[#60A5FA]">{part}</mark>
+    ) : (
+      part
+    )
+  );
+}
+
+// Mirrors renderCell's per-column display text — the single source of truth
+// for what "global search across every visible column" actually searches,
+// so a match always corresponds to text the user can literally see on
+// screen (and highlightMatch above can always find it to underline).
+function searchableCellText(row: QueueRow, key: ColumnKey): string {
+  switch (key) {
+    case 'brand':
+      return row.brand;
+    case 'shopName':
+      return row.account;
+    case 'companyBalance':
+      return displayNum(row.companyBalance);
+    case 'balanceInside':
+      return displayNum(row.balanceInside);
+    case 'discrepancy':
+      return displayNum(row.discrepancy);
+    case 'sdpVsBalance':
+      return row.sdpVsBalance > 0 ? displayNum(Math.abs(row.sdpVsBalance)) : '';
+    case 'currentGroup':
+      return row.currentGroup;
+    case 'correctGroup':
+      return row.correctGroup;
+    case 'remarks':
+      return row.remarks;
+    default:
+      return '';
+  }
 }
 
 function mobileNumericField(row: QueueRow, key: ColumnKey): { value: string; className: string } {
@@ -380,7 +427,7 @@ function mobileNumericField(row: QueueRow, key: ColumnKey): { value: string; cla
 // cells — NOT the old legacy 11px) — per explicit "same font style lang
 // lahat" instruction. The only exception is the rose color for a negative
 // balance, which is a semantic flag (not a font-style difference).
-function renderCell(row: QueueRow, key: ColumnKey) {
+function renderCell(row: QueueRow, key: ColumnKey, searchTerm: string) {
   // align-top on every cell (not just the wrapping ones) — rows with a
   // 2-line Current Group/Correct Group/Remarks are taller than the rest,
   // and without this the plain single-line cells vertically CENTER within
@@ -402,39 +449,39 @@ function renderCell(row: QueueRow, key: ColumnKey) {
   const wrapSpan = 'block text-[13px] font-normal whitespace-normal break-words leading-snug line-clamp-2';
   switch (key) {
     case 'brand':
-      return <td key={key} className={base}><BrandBadge>{row.brand}</BrandBadge></td>;
+      return <td key={key} className={base}><BrandBadge brand={row.brand}>{highlightMatch(row.brand, searchTerm)}</BrandBadge></td>;
     case 'shopName':
-      return <td key={key} className={`${agentBase} text-foreground`}>{row.account}</td>;
+      return <td key={key} className={`${agentBase} text-foreground`}>{highlightMatch(row.account, searchTerm)}</td>;
     case 'companyBalance':
       return (
         <td key={key} className={`${base} tabular-nums ${row.companyBalance < 0 ? 'text-rose-600 dark:text-rose-400' : 'text-foreground'}`}>
-          {displayNum(row.companyBalance)}
+          {highlightMatch(displayNum(row.companyBalance), searchTerm)}
         </td>
       );
     case 'balanceInside':
       return (
         <td key={key} className={`${base} tabular-nums ${row.balanceInside < 0 ? 'text-rose-600 dark:text-rose-400' : 'text-foreground'}`}>
-          {displayNum(row.balanceInside)}
+          {highlightMatch(displayNum(row.balanceInside), searchTerm)}
         </td>
       );
     case 'discrepancy':
       return (
         <td key={key} className={`${base} tabular-nums text-foreground`}>
-          {displayNum(row.discrepancy)}
+          {highlightMatch(displayNum(row.discrepancy), searchTerm)}
         </td>
       );
     case 'sdpVsBalance':
       return (
         <td key={key} className={`${base} tabular-nums text-foreground`}>
-          {row.sdpVsBalance > 0 ? displayNum(Math.abs(row.sdpVsBalance)) : '−'}
+          {row.sdpVsBalance > 0 ? highlightMatch(displayNum(Math.abs(row.sdpVsBalance)), searchTerm) : '−'}
         </td>
       );
     case 'currentGroup':
-      return <td key={key} className={wrapCell}><span className={`${wrapSpan} text-foreground`}>{row.currentGroup}</span></td>;
+      return <td key={key} className={wrapCell}><span className={`${wrapSpan} text-foreground`}>{highlightMatch(row.currentGroup, searchTerm)}</span></td>;
     case 'correctGroup':
-      return <td key={key} className={wrapCell}><span className={`${wrapSpan} text-foreground`}>{row.correctGroup}</span></td>;
+      return <td key={key} className={wrapCell}><span className={`${wrapSpan} text-foreground`}>{highlightMatch(row.correctGroup, searchTerm)}</span></td>;
     case 'remarks':
-      return <td key={key} className={wrapCell}><span className={`${wrapSpan} text-foreground`}>{row.remarks}</span></td>;
+      return <td key={key} className={wrapCell}><span className={`${wrapSpan} text-foreground`}>{highlightMatch(row.remarks, searchTerm)}</span></td>;
   }
 }
 
@@ -731,13 +778,19 @@ export default function TransferQueue() {
     setPreference(COLUMN_VISIBILITY_STORAGE_KEY, visibility);
   }, [columnDefs, mounted]);
 
+  // Global search: scoped to whichever columns are currently toggled visible
+  // (via the Columns dropdown), not a fixed subset — hide a column and it
+  // drops out of search scope too, so a match always traces back to
+  // something the user can actually see highlighted in the table.
   const searchedRows = useMemo(() => {
     const query = searchTerm.toLowerCase();
     if (!query) return queueRows;
-    return queueRows.filter((row) =>
-      `${row.shopName} ${row.currentGroup} ${row.correctGroup}`.toLowerCase().includes(query)
-    );
-  }, [queueRows, searchTerm]);
+    const visibleKeys = columnDefs.filter((c) => c.visible).map((c) => c.key);
+    return queueRows.filter((row) => {
+      const haystack = visibleKeys.map((key) => searchableCellText(row, key)).join(' ').toLowerCase();
+      return haystack.includes(query);
+    });
+  }, [queueRows, searchTerm, columnDefs]);
 
   const brandOptions = useMemo(() => {
     const rows = searchedRows.filter((row) => correctGroupFilter[row.correctGroup] !== false);
@@ -891,11 +944,11 @@ export default function TransferQueue() {
                     <>
                       <Search size={16} className="shrink-0 text-muted-foreground" />
                       <input
-                        aria-label="Search shops or brands"
+                        aria-label="Search for anything"
                         value={searchTerm}
                         onChange={(event) => setSearchTerm(event.target.value)}
                         className="flex-1 bg-transparent text-[13px] font-normal text-foreground placeholder:text-muted-foreground outline-none border-none"
-                        placeholder="Search shops or brands..."
+                        placeholder="Search for anything"
                       />
                     </>
                   )}
@@ -1206,7 +1259,7 @@ export default function TransferQueue() {
                     ))
                   ) : pagedRows.length > 0 ? pagedRows.map((row, i) => (
                     <tr key={row.key} className={`border-b border-border last:border-0 transition-colors hover:bg-muted/10 ${i % 2 === 1 ? 'bg-muted/5' : ''}`}>
-                      {visibleColumns.map((col) => renderCell(row, col.key))}
+                      {visibleColumns.map((col) => renderCell(row, col.key, searchTerm))}
                     </tr>
                   )) : (
                     <tr>
@@ -1254,8 +1307,8 @@ export default function TransferQueue() {
                       <div key={row.key} className="rounded-xl border border-border bg-white p-3.5 dark:bg-[#2a2a2d]">
                         {(showAgent || showBrand) && (
                           <div className="flex items-start justify-between gap-2">
-                            {showAgent && <p className="min-w-0 truncate text-sm font-bold text-foreground">{row.account}</p>}
-                            {showBrand && <span className="shrink-0 text-[11px] font-medium text-muted-foreground">{row.brand}</span>}
+                            {showAgent && <p className="min-w-0 truncate text-sm font-bold text-foreground">{highlightMatch(row.account, searchTerm)}</p>}
+                            {showBrand && <span className="shrink-0 text-[11px] font-medium text-muted-foreground">{highlightMatch(row.brand, searchTerm)}</span>}
                           </div>
                         )}
 
@@ -1263,7 +1316,7 @@ export default function TransferQueue() {
                           <div className={`flex items-baseline justify-between ${(showAgent || showBrand) ? 'mt-2.5' : ''}`}>
                             <span className="text-[10px] font-medium text-muted-foreground">Company Balance</span>
                             <span className={`text-lg font-bold tabular-nums ${row.companyBalance < 0 ? 'text-rose-600 dark:text-rose-400' : 'text-foreground'}`}>
-                              {displayNum(row.companyBalance)}
+                              {highlightMatch(displayNum(row.companyBalance), searchTerm)}
                             </span>
                           </div>
                         )}
@@ -1275,7 +1328,7 @@ export default function TransferQueue() {
                               return (
                                 <div key={col.key}>
                                   <p className="text-[9px] font-medium text-muted-foreground">{col.label}</p>
-                                  <p className={`text-[11px] font-semibold tabular-nums ${className}`}>{value}</p>
+                                  <p className={`text-[11px] font-semibold tabular-nums ${className}`}>{highlightMatch(value, searchTerm)}</p>
                                 </div>
                               );
                             })}
@@ -1287,20 +1340,20 @@ export default function TransferQueue() {
                             {showCurrentGroup && (
                               <div>
                                 <p className="text-[9px] font-medium text-muted-foreground">Current Group</p>
-                                <p className="text-[11px] text-muted-foreground">{row.currentGroup}</p>
+                                <p className="text-[11px] text-muted-foreground">{highlightMatch(row.currentGroup, searchTerm)}</p>
                               </div>
                             )}
                             {showCorrectGroup && (
                               <div>
                                 <p className="text-[9px] font-medium text-muted-foreground">Correct Group</p>
-                                <p className="text-[11px] font-medium text-foreground">{row.correctGroup}</p>
+                                <p className="text-[11px] font-medium text-foreground">{highlightMatch(row.correctGroup, searchTerm)}</p>
                               </div>
                             )}
                           </div>
                         )}
 
                         {showRemarks && row.remarks && (
-                          <p className="mt-2 text-[10px] text-muted-foreground">{row.remarks}</p>
+                          <p className="mt-2 text-[10px] text-muted-foreground">{highlightMatch(row.remarks, searchTerm)}</p>
                         )}
                       </div>
                     );

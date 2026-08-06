@@ -103,7 +103,11 @@ function reasonForRow(row: RuleRow | undefined): string {
 const CASHOUT_BRAND_CODES = ['M1', 'M2', 'B1', 'B2', 'B3', 'B4', 'B5', 'K1', 'J1', 'T1'];
 
 export function normalizeGroup(s: string): string {
-  return s.toUpperCase().replace(/[\s-]+/g, '');
+  // Live "Current Group" labels sometimes carry a trailing schedule window,
+  // e.g. "SH- Extended Day WD Only (7AM-11PM)" — the configured queueResult
+  // never includes this, so strip parenthetical text before comparing or a
+  // correctly-grouped shop gets falsely flagged as needing a transfer.
+  return s.replace(/\([^)]*\)/g, '').toUpperCase().replace(/[\s-]+/g, '');
 }
 
 function determineBaseLabel(rawGroup: string): string | null {
