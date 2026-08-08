@@ -86,7 +86,20 @@
       "Bash(curl -s -o /dev/null -w \"%{http_code}\\\\n\" http://localhost:3000/sendmoney/opening)",
       "Bash(echo \"EXIT:$?\")",
       "Bash(node \"C:/Users/ejboy/AppData/Local/Temp/claude/c--Users-ejboy-Desktop-dashbaord-project/7b2f94bd-a3d4-449f-97ac-b23e63c8b1fd/scratchpad/verify-3pages-kpi.js\")",
-      "Bash(node verify_filterdropdown_tmp.js)"
+      "Bash(node verify_filterdropdown_tmp.js)",
+      "Bash(powershell -NoProfile -Command \"Get-CimInstance Win32_Process -Filter \\\\\"Name='node.exe'\\\\\" | Select-Object ProcessId, CommandLine | Format-List\")",
+      "Bash(curl -s -o /dev/null -w \"wallet-status: %{http_code}\\\\n\" http://localhost:3000/wallet-status)",
+      "Bash(curl -s -o /dev/null -w \"api/wallet-status: %{http_code}\\\\n\" http://localhost:3000/api/wallet-status)",
+      "Bash(curl -s http://localhost:3000/api/wallet-status)",
+      "Bash(curl -s -X POST http://localhost:3000/api/wallet-status/update-settings -H 'Content-Type: application/json' -d '{\"shopName\":\"ZTEST_WALLETSETTINGS_TMP\",\"priority\":\"High\",\"remark\":\"Test remark from modal verification\",\"mainIssue\":\"Wallet Issue\",\"balanceLimitOverride\":500000,\"scheduleOverride\":\"24/7\"}')",
+      "Bash(node check_overrides_tmp.mjs)",
+      "Bash(curl -s -X POST http://localhost:3000/api/wallet-status/bulk-update -H 'Content-Type: application/json' -d '{\"updates\":[{\"shopName\":\"ZTEST_WALLETSETTINGS_TMP\",\"balanceLimitOverride\":750000}]}')",
+      "Bash(curl -s -X POST http://localhost:3000/api/wallet-status/update-settings -H 'Content-Type: application/json' -d '{\"shopName\":\"ZTEST_WALLETSETTINGS_TMP\",\"priority\":\"Normal\",\"remark\":\"\",\"mainIssue\":\"\",\"balanceLimitOverride\":null,\"scheduleOverride\":\"\"}')",
+      "Bash(curl -s http://localhost:3000/wallet-status -o /dev/null -w \"wallet-status: %{http_code}\\\\n\")",
+      "Bash(curl -s http://localhost:3000/api/wallet-status -o /dev/null -w \"api/wallet-status: %{http_code}\\\\n\")",
+      "Bash(curl -s http://localhost:3000/wallet-status -o /dev/null -w \"trigger compile: %{http_code}\\\\n\")",
+      "Bash(curl -s http://localhost:3000/wallet-status -o \"C:\\\\Users\\\\ejboy\\\\AppData\\\\Local\\\\Temp\\\\claude\\\\c--Users-ejboy-Desktop-dashbaord-project\\\\7b2f94bd-a3d4-449f-97ac-b23e63c8b1fd\\\\scratchpad\\\\ws_check.html\")",
+      "Bash(curl -s -X POST http://localhost:3000/api/wallet-status/update-settings -H 'Content-Type: application/json' -d '{\"shopName\":\"ZTEST_WALLETSETTINGS_TMP\",\"remark\":\"Server maintenance due to unstable statement updates.\",\"mainReason\":\"System Maintenance\",\"closureType\":\"Temporary Close\",\"affectedServices\":[\"Deposit\",\"Withdrawal\"],\"minimumAmountCanTake\":20000,\"balanceLimitOverride\":500000,\"scheduleOverride\":\"Extended\"}')"
     ]
   }
 }

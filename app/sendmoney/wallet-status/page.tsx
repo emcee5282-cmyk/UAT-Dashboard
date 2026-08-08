@@ -15,19 +15,14 @@ import FilterDropdown from '@/app/components/FilterDropdown';
 import ColumnsDropdown from '@/app/components/ColumnsDropdown';
 import TableFooter from '@/app/components/TableFooter';
 import EmptyState from '@/app/components/EmptyState';
-import BulkEditModal, { type BulkEditUpdates } from '@/app/components/BulkEditModal';
+import WalletSettingsModal, { type WalletSettingsValues } from '@/app/components/WalletSettingsModal';
 import { classifyFetchError, type ClassifiedError, assertAllOk } from '@/app/lib/errors';
 import { rawVal } from '@/app/lib/format';
 import { parseCsvLines } from '@/app/lib/csv';
-import { getBusinessToday } from '@/app/lib/businessDate';
 import { getPreference, setPreference } from '@/app/lib/preferences';
 import {
-  computeCompanyBalance,
   resolveBrand,
   computeWalletStatus,
-  computeBaseLimit,
-  computeFrozenAmount,
-  computeAvailableLimit,
 } from '@/app/lib/balanceEngine';
 import { BRAND_CODES as CASHOUT_BRAND_CODES } from '@/app/lib/transferQueueCount';
 
@@ -55,8 +50,32 @@ type WalletStatusValue = 'Active' | 'Inactive' | 'Wallet With Issue';
 // reload showed no "Updated by" section at all) while masking itself
 // right after a Save, since that path updates row state directly from the
 // POST response instead of refetching.
-type PriorityEntry = { priority: Priority; remark: string; updatedBy: string; updatedAt: string };
-const DEFAULT_PRIORITY_ENTRY: PriorityEntry = { priority: 'Normal', remark: '', updatedBy: '', updatedAt: '' };
+// Main Reason / Closure Type / Affected Services / Minimum Amount Can Take
+// / Balance Limit Override / Schedule Override ride along on the same
+// merged API response (mergeWalletStatusRemarksAndOverrides in
+// app/lib/walletStatus.ts) — added for the unified Edit Wallet Settings
+// modal, same as Cashout's own Wallet Status page. Priority stays exactly
+// as it is today (still read from the same status block) — it's just no
+// longer editable through that modal, per the real design reference.
+type MainReason = '' | 'Closed by Operations' | 'High Running Balance' | 'Reduce as per Leader' | 'Wallet Issue' | 'Blocked by Wallet Office' | 'Others';
+type ClosureType = '' | 'Temporary Close' | 'Permanent Close';
+type AffectedService = 'Deposit' | 'Withdrawal';
+type PriorityEntry = {
+  priority: Priority;
+  remark: string;
+  updatedBy: string;
+  updatedAt: string;
+  mainReason: MainReason;
+  closureType: ClosureType;
+  affectedServices: AffectedService[];
+  minimumAmountCanTake: number | null;
+  balanceLimitOverride: number | null;
+  scheduleOverride: Schedule;
+};
+const DEFAULT_PRIORITY_ENTRY: PriorityEntry = {
+  priority: 'Normal', remark: '', updatedBy: '', updatedAt: '',
+  mainReason: '', closureType: '', affectedServices: [], minimumAmountCanTake: null, balanceLimitOverride: null, scheduleOverride: '',
+};
 
 const WALLET_STATUS_DOT: Record<WalletStatusValue, string> = {
   Active: 'bg-emerald-500',
@@ -330,23 +349,21 @@ function BulkActionsMenu({
   );
 }
 
+// Whole numbers only (no decimals) — per explicit instruction, SDP/Daily
+// Limit/Available Limit show "200,000" not "200,000.00".
 function displayNum(num: number): string {
-  if (Math.abs(num) < 0.01) return '−';
-  const formatted = Math.abs(num).toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  if (Math.abs(num) < 0.5) return '−';
+  const formatted = Math.round(Math.abs(num)).toLocaleString('en-PH');
   return num < 0 ? `-${formatted}` : formatted;
 }
 
-// Unlike displayNum, Available Limit always shows a real number — 0 is a
-// meaningful, distinct state (limit fully used) from "no data", so it's
-// never collapsed into the dash.
+// Unlike displayNum, Daily Limit/Available Limit always show a real
+// number — 0 is a meaningful, distinct state (limit fully used, or the
+// wallet is Inactive) from "no data", so it's never collapsed into the
+// dash. Whole numbers only, same as displayNum.
 function displayAvailableLimit(num: number): string {
-  const formatted = Math.abs(num).toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  const formatted = Math.round(Math.abs(num)).toLocaleString('en-PH');
   return num < 0 ? `-${formatted}` : formatted;
-}
-
-// Green while limit remains, neutral once it's fully used.
-function availableLimitColorClass(availableLimit: number): string {
-  return availableLimit > 0 ? 'text-[#10B981]' : 'text-foreground';
 }
 
 function parseNumber(val: string): number {
@@ -356,26 +373,33 @@ function parseNumber(val: string): number {
   return isNaN(num) ? 0 : num;
 }
 
-function parseSheetDate(dateStr: string): Date | null {
-  const parts = (dateStr ?? '').trim().split('/');
-  if (parts.length !== 3) return null;
-  const [m, d, y] = parts.map(Number);
-  if (!m || !d || !y) return null;
-  return new Date(y, m - 1, d);
-}
-
-// Send Money's own agent keys aren't always cased/spaced the same between
-// "Opening AG" and "PS BD STLM + TOPUP" — normalized before every map
-// lookup, same fix as app/sendmoney/balances/page.tsx.
-function normalizeAgentKey(name: string): string {
-  return name.toUpperCase().replace(/\s+/g, '');
-}
-
 const BRAND_PRIORITY = ['M1', 'M2', 'B1', 'B2', 'B3', 'B4', 'B5', 'K1', 'J1', 'T1', 'SH'];
 const BRAND_CODES = [...CASHOUT_BRAND_CODES, 'SH'];
 
-const PRIORITY_OPTIONS: Priority[] = ['Low', 'Normal', 'High'];
-const PRIORITY_RANK: Record<Priority, number> = { Low: 0, Normal: 1, High: 2 };
+// Every wallet's own default receiving ceiling before a staff-set Balance
+// Limit override (Edit Wallet Settings) replaces it — flat per wallet, not
+// scaled by the shop's SDP. Each wallet carries its own independent limit
+// (never pooled with the shop's other wallets), per explicit instruction —
+// Company Balance/SDP no longer factor into Available Limit at all.
+//
+// Send Money's own default differs by wallet type (unlike Cashout, which is
+// a flat 200,000 for every wallet): Bundle wallets default to 200,000,
+// every other ("Solo"/PS) wallet defaults to 50,000. A wallet's code
+// segment right after the brand — "PS<1-4>" vs "BD" (e.g. "N-M1PS3-..." vs
+// "D-M1BD-...") — is what actually marks it Bundle or not; confirmed
+// against the live roster (every code follows this exact shape, no other
+// variant seen).
+const BUNDLE_DEFAULT_BASE_LIMIT = 200000;
+const SOLO_DEFAULT_BASE_LIMIT = 50000;
+
+function isBundleWalletCode(walletCode: string): boolean {
+  const segment = walletCode.split('-')[1] ?? '';
+  return segment.includes('BD');
+}
+
+function defaultBaseLimitFor(walletCode: string): number {
+  return isBundleWalletCode(walletCode) ? BUNDLE_DEFAULT_BASE_LIMIT : SOLO_DEFAULT_BASE_LIMIT;
+}
 
 // Display-only formatting — the sheet stores Leader in raw ALL CAPS;
 // matching/search/schedule-lookup all stay on that raw value, only the
@@ -433,32 +457,42 @@ type WalletStatusRow = {
   shopName: string;
   brand: string;
   leader: string;
-  companyBalance: number;
-  baseLimit: number;
+  // Always a real number — the configured override, or the Solo/Bundle
+  // default, or 0 when the wallet is Inactive (see the Daily Limit column
+  // rules).
+  dailyLimit: number;
   availableLimit: number;
-  frozenAmount: number;
   sdpDisplay: string;
   deposit: DepositWithdrawal;
   withdrawal: DepositWithdrawal;
-  priority: Priority;
   schedule: Schedule;
   walletStatus: WalletStatusValue;
   remark: string;
   remarkUpdatedBy: string;
   remarkUpdatedAt: string;
+  // Not visible table columns — only surfaced via the Remarks tooltip /
+  // Excel export / the unified Edit Wallet Settings modal itself.
+  mainReason: MainReason;
+  closureType: ClosureType;
+  affectedServices: AffectedService[];
+  minimumAmountCanTake: number | null;
+  // null = not overridden (availableLimit above already reflects the live-
+  // computed value or the override, whichever applies).
+  balanceLimitOverride: number | null;
+  // '' = no override, schedule above already reflects the Leader-based
+  // auto mapping.
+  scheduleOverride: Schedule;
 };
 
 const COLUMN_IDS = {
   BRAND: 'brand',
   LEADER: 'leader',
   SHOP_NAME: 'shopName',
-  COMPANY_BALANCE: 'companyBalance',
+  BALANCE_LIMIT: 'balanceLimit',
   AVAILABLE_LIMIT: 'availableLimit',
-  FROZEN_AMOUNT: 'frozenAmount',
   SDP: 'sdp',
   DEPOSIT: 'deposit',
   WITHDRAWAL: 'withdrawal',
-  PRIORITY: 'priority',
   SCHEDULE: 'schedule',
   WALLET_STATUS: 'walletStatus',
   REMARKS: 'remarks',
@@ -480,19 +514,17 @@ const DEFAULT_COLUMNS: ColumnDef[] = [
   { key: COLUMN_IDS.BRAND, label: 'Brand', visible: true, sortable: true, hideable: true, align: 'center' },
   { key: COLUMN_IDS.LEADER, label: 'Leader', visible: true, sortable: true, hideable: true, align: 'left' },
   { key: COLUMN_IDS.SHOP_NAME, label: 'Shop Name', visible: true, sortable: true, hideable: true, align: 'left' },
-  { key: COLUMN_IDS.COMPANY_BALANCE, label: 'Company Balance', visible: true, sortable: true, hideable: true, align: 'center' },
+  { key: COLUMN_IDS.BALANCE_LIMIT, label: 'Daily Limit', visible: true, sortable: true, hideable: true, align: 'center' },
   { key: COLUMN_IDS.AVAILABLE_LIMIT, label: 'Available Limit', visible: true, sortable: true, hideable: true, align: 'center' },
-  { key: COLUMN_IDS.FROZEN_AMOUNT, label: 'Frozen Amount', visible: true, sortable: true, hideable: true, align: 'center' },
   { key: COLUMN_IDS.SDP, label: 'SDP', visible: true, sortable: true, hideable: true, align: 'center' },
   { key: COLUMN_IDS.DEPOSIT, label: 'Deposit', visible: true, sortable: true, hideable: true, align: 'center' },
   { key: COLUMN_IDS.WITHDRAWAL, label: 'Withdrawal', visible: true, sortable: true, hideable: true, align: 'center' },
-  { key: COLUMN_IDS.PRIORITY, label: 'Priority', visible: true, sortable: true, hideable: true, align: 'center' },
-  { key: COLUMN_IDS.SCHEDULE, label: 'Schedule', visible: true, sortable: true, hideable: true, align: 'left' },
+  { key: COLUMN_IDS.SCHEDULE, label: 'Schedule', visible: true, sortable: true, hideable: true, align: 'center' },
   { key: COLUMN_IDS.WALLET_STATUS, label: 'Wallet Status', visible: true, sortable: true, hideable: false, align: 'left' },
   // Independent of Wallet Status/Priority — its own click-to-edit popover,
   // not tied to the row-wide Edit/Save/Cancel below. Fixed width (see
   // computeColumnWidthsPx's own special-case), never measured from content.
-  { key: COLUMN_IDS.REMARKS, label: 'Remarks', visible: true, sortable: true, hideable: true, align: 'left' },
+  { key: COLUMN_IDS.REMARKS, label: 'Remarks', visible: true, sortable: true, hideable: true, align: 'center' },
   // Edit/Save/Cancel per ROW — Priority is the only field this saves;
   // Deposit/Withdrawal/Wallet Status are computed and read-only. Never
   // hideable — it's the only edit affordance for the row.
@@ -555,14 +587,15 @@ const WALLET_STATUS_ACTION_WIDTH_PX = 96;
 // it when content is short (confirmed: a lone min:240/width:280 rendered
 // at 240, not 280). Pinning all three equal is what actually guarantees a
 // provably constant column, matching the spec's "must never change based
-// on content" requirement literally.
-const REMARKS_COLUMN_WIDTH_PX = 280;
+// on content" requirement literally. Trimmed 30px narrower than the
+// original 280 — reclaimed and handed to SDP/Schedule below (+15px each).
+const REMARKS_COLUMN_WIDTH_PX = 250;
 // Hover delay before the full-remark tooltip appears — long enough that a
 // quick pass-over the cell doesn't flash it, per spec.
 const REMARKS_TOOLTIP_HOVER_DELAY_MS = 275;
 
-const COLUMNS_WITH_INFO_ICON: ColumnKey[] = ['availableLimit', 'frozenAmount', 'schedule'];
-const PILL_BADGE_COLUMNS: ColumnKey[] = ['deposit', 'withdrawal', 'priority'];
+const COLUMNS_WITH_INFO_ICON: ColumnKey[] = ['balanceLimit', 'availableLimit', 'schedule'];
+const PILL_BADGE_COLUMNS: ColumnKey[] = ['deposit', 'withdrawal'];
 
 // Exact display string per column — mirrors renderCell's own per-column
 // JSX content, kept as plain strings here purely for width measurement.
@@ -571,13 +604,11 @@ function getColumnDisplayText(row: WalletStatusRow, key: ColumnKey): string {
     case 'brand': return row.brand;
     case 'shopName': return row.shopName;
     case 'leader': return toProperCase(row.leader);
-    case 'companyBalance': return displayNum(row.companyBalance);
+    case 'balanceLimit': return displayAvailableLimit(row.dailyLimit);
     case 'availableLimit': return displayAvailableLimit(row.availableLimit);
-    case 'frozenAmount': return displayNum(row.frozenAmount);
     case 'sdp': return row.sdpDisplay;
     case 'deposit': return row.deposit;
     case 'withdrawal': return row.withdrawal;
-    case 'priority': return priorityDisplay(row);
     case 'schedule': return row.schedule;
     case 'walletStatus': return row.walletStatus;
     case 'remarks': return row.remark;
@@ -622,7 +653,8 @@ function computeColumnWidthsPx(rows: WalletStatusRow[], columns: ColumnDef[]): P
       + (col.sortable ? HEADER_SORT_ICON_RESERVE_PX : 0)
       + (COLUMNS_WITH_INFO_ICON.includes(col.key) ? HEADER_INFO_ICON_RESERVE_PX : 0);
 
-    const width = Math.max(dataWidth, headerWidth);
+    // +15px each to SDP and Schedule — the 30px reclaimed from Remarks above.
+    const width = Math.max(dataWidth, headerWidth) + (col.key === 'sdp' || col.key === 'schedule' ? 15 : 0);
     if (width > 0) result[col.key] = width;
   }
   return result;
@@ -632,13 +664,11 @@ const rowSkeletonWidths: Record<ColumnKey, string[]> = {
   brand: ['w-8', 'w-10', 'w-9'],
   leader: ['w-16', 'w-20', 'w-14'],
   shopName: ['w-24', 'w-28', 'w-20'],
-  companyBalance: ['w-16', 'w-20', 'w-14'],
+  balanceLimit: ['w-16', 'w-20', 'w-14'],
   availableLimit: ['w-16', 'w-14', 'w-20'],
-  frozenAmount: ['w-14', 'w-10', 'w-16'],
   sdp: ['w-14', 'w-16', 'w-12'],
   deposit: ['w-10', 'w-10', 'w-10'],
   withdrawal: ['w-10', 'w-10', 'w-10'],
-  priority: ['w-14', 'w-14', 'w-14'],
   schedule: ['w-14', 'w-16', 'w-12'],
   walletStatus: ['w-20', 'w-24', 'w-16'],
   remarks: ['w-32', 'w-24', 'w-36'],
@@ -672,12 +702,25 @@ function SortIcon({ active, direction }: { active: boolean; direction: 'asc' | '
 // instant, per spec ("close automatically when mouse leaves"). A pending
 // show-timer is cancelled if the pointer leaves before it fires, so a
 // quick pass-over never flashes the tooltip.
+// Safe distance kept from every viewport edge when clamping — per explicit
+// spec, "approximately 12-16px". Mirrors Cashout's own Wallet Status page.
+const TOOLTIP_VIEWPORT_MARGIN = 14;
+
 function useBelowTooltip(triggerRef: React.RefObject<HTMLElement | null>, options?: { delayMs?: number }) {
   const delayMs = options?.delayMs ?? 0;
   const [open, setOpen] = useState(false);
   const [rendered, setRendered] = useState(false);
   const [pos, setPos] = useState({ top: 0, left: 0 });
+  // Which side of the trigger the tooltip actually ended up on, and where
+  // (as a 0-100% offset from its own left edge) its pointer arrow should
+  // sit — both only ever change from the defaults when viewport clamping
+  // below actually had to move the tooltip away from directly-below-
+  // centered, so a caller that never renders near an edge sees no
+  // behavior change at all.
+  const [placement, setPlacement] = useState<'below' | 'above'>('below');
+  const [arrowOffsetPercent, setArrowOffsetPercent] = useState(50);
   const showTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const tooltipRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     if (open) {
@@ -690,6 +733,51 @@ function useBelowTooltip(triggerRef: React.RefObject<HTMLElement | null>, option
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open]);
+
+  // The effect above only ever guesses "below and centered on the
+  // trigger" — real tooltip content isn't known until it's actually in
+  // the DOM, so this second pass measures the real rendered size once
+  // `rendered` flips true and repositions/clamps against the actual
+  // viewport: flips above the trigger if there's more room there than
+  // below, and slides horizontally (never off either side) while
+  // dragging the pointer arrow along so it still visually points at the
+  // trigger instead of just the tooltip's own center.
+  useEffect(() => {
+    if (!open || !rendered) return;
+    const triggerRect = triggerRef.current?.getBoundingClientRect();
+    const tooltipEl = tooltipRef.current;
+    if (!triggerRect || !tooltipEl) return;
+
+    const tooltipRect = tooltipEl.getBoundingClientRect();
+    const vw = window.innerWidth;
+    const vh = window.innerHeight;
+    const margin = TOOLTIP_VIEWPORT_MARGIN;
+
+    let top = triggerRect.bottom + 8;
+    let nextPlacement: 'below' | 'above' = 'below';
+    const spaceBelow = vh - triggerRect.bottom;
+    const spaceAbove = triggerRect.top;
+    if (top + tooltipRect.height > vh - margin && spaceAbove > spaceBelow) {
+      top = triggerRect.top - 8 - tooltipRect.height;
+      nextPlacement = 'above';
+    }
+    top = Math.min(Math.max(top, margin), Math.max(margin, vh - tooltipRect.height - margin));
+
+    const halfWidth = tooltipRect.width / 2;
+    let left = triggerRect.left + triggerRect.width / 2;
+    left = Math.min(Math.max(left, halfWidth + margin), Math.max(halfWidth + margin, vw - halfWidth - margin));
+
+    const triggerCenterX = triggerRect.left + triggerRect.width / 2;
+    const tooltipLeftEdge = left - halfWidth;
+    const arrowPercent = tooltipRect.width > 0
+      ? Math.min(Math.max(((triggerCenterX - tooltipLeftEdge) / tooltipRect.width) * 100, 8), 92)
+      : 50;
+
+    setPos((current) => (current.top === top && current.left === left ? current : { top, left }));
+    setPlacement((current) => (current === nextPlacement ? current : nextPlacement));
+    setArrowOffsetPercent((current) => (Math.abs(current - arrowPercent) < 0.5 ? current : arrowPercent));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open, rendered]);
 
   const scheduleOpen = useCallback(() => {
     if (delayMs > 0) {
@@ -711,6 +799,9 @@ function useBelowTooltip(triggerRef: React.RefObject<HTMLElement | null>, option
     open,
     rendered,
     pos,
+    placement,
+    arrowOffsetPercent,
+    tooltipRef,
     handlers: {
       onMouseEnter: scheduleOpen,
       onMouseLeave: cancelOpen,
@@ -721,8 +812,8 @@ function useBelowTooltip(triggerRef: React.RefObject<HTMLElement | null>, option
 }
 
 const COLUMN_INFO_TEXT: Partial<Record<ColumnKey, string>> = {
-  availableLimit: "Remaining receiving capacity for today.\n\nFormula:\nBase Limit − Company Balance − Today's Total DP\n\nResets every day at 2:00 AM.",
-  frozenAmount: 'Amount exceeding the allowed receiving limit.\n\nFormula:\nCompany Balance − Base Limit\n\nOnly shown when Company Balance exceeds the allowed limit.',
+  balanceLimit: 'This wallet\'s own configured daily limit, set in Edit Wallet Settings.\n\nNever pooled with the shop\'s other wallets — each wallet keeps its own limit. Leave blank there to use the default: 200,000 for Bundle wallets, 50,000 for Solo (PS) wallets. Shows 0 while the wallet is Inactive.',
+  availableLimit: "Remaining receiving capacity for today, for this wallet alone.\n\nFormula:\nDaily Limit − This Wallet's Today's Total Deposit\n\nDoes not factor in Company Balance or SDP. Resets every day at 2:00 AM.",
   schedule: 'Shop operating schedule.\n\nDay\n7:00 AM – 10:00 PM\n\nExtended\n7:00 AM – 11:00 PM\n\nEarly Ext.\n6:00 AM – 12:00 AM\n\n24/7\nOpen 24 Hours\n\nAutomatically determined\nby the assigned Leader.',
 };
 
@@ -792,168 +883,182 @@ function formatRemarkTimestamp(iso: string): string {
   return `${get('month')} ${get('day')}, ${get('year')} ${get('hour')}:${get('minute')} ${get('dayPeriod')}`;
 }
 
-// The Remarks trigger — a single-line, ellipsis-truncated value (or an
-// italic "Add Remark" placeholder when empty) that opens the shared,
-// portal-rendered edit popover (see the page component's own
-// `editingRemarkKey`/`RemarkEditorPopover`) on click, and shows the full
-// remark + attribution on hover via the same useBelowTooltip pattern
-// already used by HeaderInfoIcon. Independent of Priority/Wallet Status —
-// no row-wide edit mode gates this.
+// Same 6-color mapping as Cashout's own Wallet Status page (kept in sync
+// manually, matching the other established "duplicate small helpers
+// across files" convention already used throughout this codebase for
+// Send Money's own copies of Cashout logic).
+const MAIN_REASON_BADGE_STYLES: Record<Exclude<MainReason, ''>, string> = {
+  'Closed by Operations': 'bg-slate-50 text-slate-600 dark:bg-slate-500/10 dark:text-slate-400',
+  'High Running Balance': 'bg-rose-50 text-rose-600 dark:bg-rose-500/10 dark:text-rose-400',
+  'Reduce as per Leader': 'bg-blue-50 text-blue-600 dark:bg-blue-500/10 dark:text-blue-400',
+  'Wallet Issue': 'bg-amber-50 text-amber-600 dark:bg-amber-500/10 dark:text-amber-400',
+  'Blocked by Wallet Office': 'bg-orange-50 text-orange-600 dark:bg-orange-500/10 dark:text-orange-400',
+  'Others': 'bg-indigo-50 text-indigo-600 dark:bg-indigo-500/10 dark:text-indigo-400',
+};
+const MAIN_REASON_DOT_STYLES: Record<Exclude<MainReason, ''>, string> = {
+  'Closed by Operations': 'bg-slate-400',
+  'High Running Balance': 'bg-rose-500',
+  'Reduce as per Leader': 'bg-blue-500',
+  'Wallet Issue': 'bg-amber-500',
+  'Blocked by Wallet Office': 'bg-orange-500',
+  'Others': 'bg-indigo-500',
+};
+const CLOSURE_TYPE_BADGE_STYLES: Record<Exclude<ClosureType, ''>, string> = {
+  'Temporary Close': 'bg-amber-50 text-amber-700 dark:bg-amber-500/10 dark:text-amber-400',
+  'Permanent Close': 'bg-rose-50 text-rose-700 dark:bg-rose-500/10 dark:text-rose-400',
+};
+
+// Read-only — editing now happens exclusively through the unified Edit
+// Wallet Settings modal (opened from the row's own Pencil icon), never
+// inline here (no more click-to-edit popover). A single-line, ellipsis-
+// truncated value (or an italic "Add Remark" placeholder when empty) with
+// the full remark + operational summary + attribution on hover via the
+// same useBelowTooltip pattern already used by HeaderInfoIcon. Per
+// explicit instruction this tooltip is Remarks information only —
+// Minimum Amount/Balance Limit/Schedule/Available Limit/Frozen Amount/
+// Priority are never shown here, they stay in their own visible table
+// columns. Mirrors Cashout's own Wallet Status page exactly.
 function RemarksCell({
   remark,
   updatedBy,
   updatedAt,
-  isEditing,
-  onOpen,
+  mainReason,
+  closureType,
+  affectedServices,
 }: {
   remark: string;
   updatedBy: string;
   updatedAt: string;
-  isEditing: boolean;
-  onOpen: (anchor: HTMLElement) => void;
+  mainReason: MainReason;
+  closureType: ClosureType;
+  affectedServices: AffectedService[];
 }) {
-  const triggerRef = useRef<HTMLButtonElement>(null);
+  const triggerRef = useRef<HTMLSpanElement>(null);
   const tooltip = useBelowTooltip(triggerRef, { delayMs: REMARKS_TOOLTIP_HOVER_DELAY_MS });
   const hasRemark = remark.trim() !== '';
+  const hasMainReason = mainReason !== '';
+  const hasClosureType = closureType !== '';
+  const hasOperationalInfo = hasMainReason || hasClosureType;
+  const hasTooltipContent = hasRemark || hasOperationalInfo;
+  const depositClosed = affectedServices.includes('Deposit');
+  const withdrawalClosed = affectedServices.includes('Withdrawal');
 
   return (
-    <button
+    <span
       ref={triggerRef}
-      type="button"
-      onClick={() => triggerRef.current && onOpen(triggerRef.current)}
-      {...(hasRemark ? tooltip.handlers : {})}
-      className={`flex h-7 w-full max-w-full items-center gap-1 overflow-hidden rounded-md px-1.5 text-left transition-colors duration-150 ease-out hover:bg-muted/40 ${isEditing ? 'bg-muted/40' : ''}`}
+      {...(hasTooltipContent ? tooltip.handlers : {})}
+      className="flex h-7 w-full max-w-full items-center overflow-hidden"
     >
-      {hasRemark && <MessageSquare size={12} className="shrink-0 text-muted-foreground" />}
       {hasRemark ? (
-        <span className="min-w-0 flex-1 overflow-hidden text-ellipsis whitespace-nowrap text-[12px] font-normal text-slate-700 dark:text-slate-300">{remark}</span>
+        <span className="min-w-0 flex-1 overflow-hidden text-ellipsis whitespace-nowrap text-left text-[12px] font-normal text-slate-700 dark:text-slate-300">{remark}</span>
       ) : (
-        <span className="min-w-0 flex-1 overflow-hidden text-ellipsis whitespace-nowrap text-[12px] font-normal italic text-slate-400 dark:text-slate-500">− Add Remark −</span>
+        <span className="min-w-0 flex-1 overflow-hidden text-ellipsis whitespace-nowrap text-center text-[12px] font-normal italic text-slate-400 dark:text-slate-500">No Remarks</span>
       )}
-      {hasRemark && tooltip.rendered && typeof document !== 'undefined' && createPortal(
+      {hasTooltipContent && tooltip.rendered && typeof document !== 'undefined' && createPortal(
         // Light "premium floating card" per spec (explicit literal hex
         // values, not the semantic dark/light theme tokens the rest of the
         // app pairs everything with) — a deliberate one-off design that
-        // stays white regardless of app theme, same treatment a raised
-        // info card gets in most dashboards for legibility over any
-        // background.
+        // stays white regardless of app theme. Enters with a fade + slight
+        // 4px upward lift + scale from 0.97; exits the same transition
+        // reversed.
         <div
-          style={{ position: 'fixed', top: tooltip.pos.top, left: tooltip.pos.left, transform: 'translate(-50%, 0)' }}
-          className={`pointer-events-none z-[9999] max-w-[420px] rounded-[12px] border border-[#E5E7EB] bg-white p-4 text-left shadow-[0_10px_30px_rgba(15,23,42,0.12)] transition-opacity duration-150 ease-out ${tooltip.open ? 'opacity-100' : 'opacity-0'}`}
+          ref={tooltip.tooltipRef}
+          style={{
+            position: 'fixed',
+            top: tooltip.pos.top,
+            left: tooltip.pos.left,
+            transform: `translate(-50%, ${tooltip.open ? '0' : '4px'}) scale(${tooltip.open ? 1 : 0.97})`,
+            transformOrigin: tooltip.placement === 'above' ? 'bottom center' : 'top center',
+          }}
+          className={`pointer-events-none z-[9999] w-[440px] max-w-[90vw] rounded-2xl border border-[#E5E7EB] bg-white p-6 text-left shadow-[0_10px_30px_rgba(15,23,42,0.12)] transition-[opacity,transform] duration-200 ease-out ${tooltip.open ? 'opacity-100' : 'opacity-0'}`}
         >
-          <div className="flex items-center gap-1.5 text-[13px] font-semibold text-[#334155]">
-            <MessageSquare size={14} className="shrink-0" /> Remark
+          <div className="flex items-center gap-2">
+            <span className="text-[16px] leading-none">📝</span>
+            <h3 className="text-[18px] font-semibold text-[#0F172A]">Remarks</h3>
           </div>
-          <div className="mt-1.5 whitespace-pre-line break-words text-[13px] font-normal leading-relaxed text-[#334155]">
-            {remark}
-          </div>
-          {/* Per explicit instruction, kept combined in one block (Admin
-              name + date stacked together under a single "Updated by"
-              line) rather than split into separate "Last Edited By"/"Last
-              Updated" sections — scoped to the hover tooltip only, the
-              editor popover's own "Last Edited" metadata is untouched. */}
-          {updatedBy && (
-            <div className="mt-3 border-t border-[#E5E7EB] pt-3">
-              <div className="flex items-center gap-1.5 text-[11px] font-semibold text-[#64748B]">
-                <User size={12} className="shrink-0" /> Updated by: {updatedBy}
+
+          <p className="mt-4 line-clamp-4 whitespace-pre-line break-words text-[13px] font-normal leading-[1.6] text-[#334155]">
+            {hasRemark ? remark : '—'}
+          </p>
+
+          {hasOperationalInfo && (
+            <>
+              <div className="my-5 border-t border-[#E5E7EB]" />
+              <div className="space-y-3.5">
+                {hasMainReason && (
+                  <div className="flex items-center justify-between gap-3">
+                    <span className="text-[13px] font-medium text-[#334155]">Main Reason</span>
+                    <span className="inline-flex items-center gap-1.5">
+                      <span className={`h-2 w-2 shrink-0 rounded-full ${MAIN_REASON_DOT_STYLES[mainReason]}`} />
+                      <span className={`inline-flex items-center rounded-full px-2.5 py-1 text-[12px] font-medium ${MAIN_REASON_BADGE_STYLES[mainReason]}`}>
+                        {mainReason}
+                      </span>
+                    </span>
+                  </div>
+                )}
+                {hasClosureType && (
+                  <div className="flex items-center justify-between gap-3">
+                    <span className="text-[13px] font-medium text-[#334155]">Closure Type</span>
+                    <span className={`inline-flex items-center rounded-full px-2.5 py-1 text-[12px] font-medium ${CLOSURE_TYPE_BADGE_STYLES[closureType]}`}>
+                      {closureType === 'Temporary Close' ? 'Temporary' : 'Permanent'}
+                    </span>
+                  </div>
+                )}
+                <div className="flex items-center justify-between gap-3">
+                  <span className="text-[13px] font-medium text-[#334155]">DP</span>
+                  <span className={`inline-flex items-center gap-1.5 text-[12px] font-medium ${depositClosed ? 'text-rose-600 dark:text-rose-400' : 'text-emerald-600 dark:text-emerald-400'}`}>
+                    {depositClosed ? <X size={14} /> : <Check size={14} />}
+                    {depositClosed ? 'Closed' : 'Open'}
+                  </span>
+                </div>
+                <div className="flex items-center justify-between gap-3">
+                  <span className="text-[13px] font-medium text-[#334155]">WD</span>
+                  <span className={`inline-flex items-center gap-1.5 text-[12px] font-medium ${withdrawalClosed ? 'text-rose-600 dark:text-rose-400' : 'text-emerald-600 dark:text-emerald-400'}`}>
+                    {withdrawalClosed ? <X size={14} /> : <Check size={14} />}
+                    {withdrawalClosed ? 'Closed' : 'Open'}
+                  </span>
+                </div>
               </div>
-              {updatedAt && (
-                <div className="mt-0.5 text-[12px] font-medium text-[#334155]">{formatRemarkTimestamp(updatedAt)}</div>
-              )}
-            </div>
+            </>
           )}
-          <span className="absolute left-1/2 top-0 h-2 w-2 -translate-x-1/2 -translate-y-1/2 rotate-45 border-l border-t border-[#E5E7EB] bg-white" />
+
+          {(updatedBy || updatedAt) && (
+            <>
+              <div className="my-5 border-t border-[#E5E7EB]" />
+              <div className="grid grid-cols-2">
+                <div>
+                  <p className="flex items-center gap-1.5 text-[11px] font-medium text-[#94A3B8]">
+                    <span className="leading-none">📅</span> Last Updated
+                  </p>
+                  <p className="mt-1 text-[13px] font-semibold text-[#0F172A]">{updatedAt ? formatRemarkTimestamp(updatedAt) : '—'}</p>
+                </div>
+                <div className="border-l border-[#E5E7EB] pl-4">
+                  <p className="flex items-center gap-1.5 text-[11px] font-medium text-[#94A3B8]">
+                    <span className="leading-none">👤</span> Edited By
+                  </p>
+                  <p className="mt-1 text-[13px] font-semibold text-[#0F172A]">{updatedBy || '—'}</p>
+                </div>
+              </div>
+            </>
+          )}
+          <span
+            style={{ left: `${tooltip.arrowOffsetPercent}%` }}
+            className={`absolute h-2 w-2 -translate-x-1/2 rotate-45 border-[#E5E7EB] bg-white ${
+              tooltip.placement === 'above' ? 'bottom-0 translate-y-1/2 border-b border-r' : 'top-0 -translate-y-1/2 border-l border-t'
+            }`}
+          />
         </div>,
         document.body
       )}
-    </button>
+    </span>
   );
 }
 
-// "None" is a display-only state, never a selectable option or a stored
-// value — the real Priority (Low/Normal/High) stays intact underneath so
-// it reappears if the wallet becomes active again. Kept separate from
-// `Priority` itself so PRIORITY_OPTIONS/the sheet's normalizePriority
-// never have to account for a 4th value that was never actually settable.
-type PriorityDisplay = Priority | 'None';
-
-const PRIORITY_BADGE_TINTS: Record<PriorityDisplay, string> = {
-  High: 'bg-rose-50 text-rose-700 border-rose-200 dark:bg-rose-500/10 dark:text-rose-400 dark:border-rose-900/50',
-  Normal: 'bg-slate-100 text-slate-600 border-slate-200 dark:bg-slate-500/10 dark:text-slate-400 dark:border-slate-700',
-  Low: 'bg-emerald-50 text-emerald-700 border-emerald-200 dark:bg-emerald-500/10 dark:text-emerald-400 dark:border-emerald-900/50',
-  None: 'bg-slate-50 text-slate-400 border-slate-200 dark:bg-slate-500/5 dark:text-slate-500 dark:border-slate-800',
-};
-
-// An inactive wallet has no meaningful priority to work — read-only rest
-// state shows "None" regardless of whatever Priority was last saved for
-// it. Editing (StatusSelect in edit mode) still operates on the real
-// saved value, so staff can pre-set a priority ahead of it going active
-// again without that edit being visible while it's inactive.
-function priorityDisplay(row: WalletStatusRow): PriorityDisplay {
-  return row.walletStatus === 'Inactive' ? 'None' : row.priority;
-}
-
-// Native <select> kept intentionally plain (no custom dropdown/portal) —
-// this is a live, persisted edit per cell, not a filter; a plain select is
-// the simplest control that can't be mistaken for a filter trigger. Only
-// used for Priority now — Deposit/Withdrawal/Wallet Status are computed and
-// render as plain badges directly in renderCell, never through this
-// component.
-//
-// Read-only (disabled) until the row's own Edit icon is clicked — changing
-// it only stages a draft, never saves directly; the row's Action column
-// Save/Cancel commits or discards it.
-// Read-only rest state renders a plain, fully-opaque badge — no <select>,
-// no chevron, no dimmed "disabled" look. Per explicit instruction: a
-// dropdown chevron before Edit is clicked reads as "this is clickable"
-// when it isn't yet, and a faded/opacity-reduced look reads as broken —
-// the value at rest should just be clearly legible text. Only once
-// `editing` is true (this row's Edit icon was clicked) does it become a
-// real interactive <select>.
-function StatusSelect<T extends string>({
-  value,
-  options,
-  onChange,
-  editing,
-  saving,
-  className,
-}: {
-  value: T;
-  options: T[];
-  onChange: (next: T) => void;
-  editing: boolean;
-  saving: boolean;
-  className: string;
-}) {
-  if (!editing) {
-    return (
-      <span className={`inline-flex h-7 items-center rounded-md border px-2 text-[12px] font-medium ${className}`}>
-        {value}
-      </span>
-    );
-  }
-  return (
-    <select
-      value={value}
-      disabled={saving}
-      onChange={(event) => onChange(event.target.value as T)}
-      className={`h-7 rounded-md border px-1.5 text-[12px] font-medium outline-none transition-opacity disabled:opacity-60 ${className}`}
-    >
-      {options.map((opt) => (
-        <option key={opt} value={opt}>{opt}</option>
-      ))}
-    </select>
-  );
-}
-
-// Deposit/Withdrawal/Wallet Status are computed (see deriveWalletFlags) —
-// Priority is the only field a staff member can actually edit and persist.
-type RowDraft = { priority: Priority };
-
-function rowHasChanges(row: WalletStatusRow, draft: RowDraft | null): boolean {
-  if (!draft) return false;
-  return draft.priority !== row.priority;
-}
+// Deposit/Withdrawal/Wallet Status are computed (see deriveWalletFlags).
+// Priority/Remarks/Main Reason/Closure Type/Services/Balance Limit/
+// Schedule are all edited together via the unified Edit Wallet Settings
+// modal (WalletSettingsModal) opened from the row's own Pencil icon — no
+// more per-cell inline editing or independent Remarks popover.
 
 export default function SendMoneyWalletStatus() {
   const [rows, setRows] = useState<WalletStatusRow[]>([]);
@@ -969,8 +1074,8 @@ export default function SendMoneyWalletStatus() {
   const [error, setError] = useState<ClassifiedError | null>(null);
   const [spinning, setSpinning] = useState(false);
   const [searchTerm, setSearchTerm] = useState('');
-  const [sortColumn, setSortColumn] = useState<ColumnKey>('companyBalance');
-  const [sortDirection, setSortDirection] = useState<'asc' | 'desc'>('desc');
+  const [sortColumn, setSortColumn] = useState<ColumnKey>('shopName');
+  const [sortDirection, setSortDirection] = useState<'asc' | 'desc'>('asc');
   const [columnDefs, setColumnDefs] = useState<ColumnDef[]>(DEFAULT_COLUMNS);
   const [columnsMenuOpen, setColumnsMenuOpen] = useState(false);
   const [mounted, setMounted] = useState(false);
@@ -1010,35 +1115,35 @@ export default function SendMoneyWalletStatus() {
   const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set());
   const [selectionBarRendered, setSelectionBarRendered] = useState(false);
   const [bulkEditOpen, setBulkEditOpen] = useState(false);
-  const [bulkSaving, setBulkSaving] = useState(false);
   useEffect(() => {
     setSelectionBarRendered(selectedIds.size > 0);
   }, [selectedIds.size]);
 
-  // One row editable at a time — Priority is the only field this stages.
-  // editingRowKey being a single value (not a Set/per-field map) is what
-  // makes "starting to edit another row auto-cancels the previous one"
-  // free — the old row's cell just stops matching and reverts to showing
-  // its saved value with no extra cleanup needed.
-  const [editingRowKey, setEditingRowKey] = useState<string | null>(null);
-  const [editDraft, setEditDraft] = useState<RowDraft | null>(null);
-  const [rowSaving, setRowSaving] = useState(false);
-
-  // Remarks' own independent edit state — deliberately separate from
-  // editingRowKey/editDraft above (Priority's row-wide edit mode). A remark
-  // popover and a Priority edit can be open at the same time; they don't
-  // gate each other.
-  const [editingRemarkKey, setEditingRemarkKey] = useState<string | null>(null);
-  const [remarkDraft, setRemarkDraft] = useState('');
-  const [remarkSaving, setRemarkSaving] = useState(false);
-  const [remarkAnchor, setRemarkAnchor] = useState<HTMLElement | null>(null);
-  const [remarkPopoverPos, setRemarkPopoverPos] = useState({ top: 0, left: 0 });
-  const remarkPopoverRef = useRef<HTMLDivElement>(null);
+  // Unified Edit Wallet Settings modal — single mode when editModalOpen is
+  // true (one wallet, opened from its own row's Pencil icon), bulk mode
+  // when bulkEditOpen is true (the toolbar's Bulk Edit action). Only one
+  // can realistically be open at a time. editModalRow is kept separate
+  // from editModalOpen (and never cleared on close, only overwritten on
+  // the next open) so the modal component stays mounted — with real
+  // shopName/initialValues to render — through its own closing fade/scale
+  // animation instead of unmounting mid-transition the instant the row
+  // goes away. Mirrors Cashout's own Wallet Status page exactly.
+  const [editModalRow, setEditModalRow] = useState<WalletStatusRow | null>(null);
+  const [editModalOpen, setEditModalOpen] = useState(false);
+  const [modalSaving, setModalSaving] = useState(false);
+  const [modalError, setModalError] = useState<string | null>(null);
 
   const [isScrolled, setIsScrolled] = useState(false);
   const tableScrollRef = useRef<HTMLDivElement>(null);
   const [atScrollStart, setAtScrollStart] = useState(true);
   const [atScrollEnd, setAtScrollEnd] = useState(true);
+  // The scroll container's own live content-box width — tracked so columns
+  // can be scaled up in JS to exactly fill it on every resize (browser
+  // window, zoom, sidebar toggle). table-layout:auto's own space
+  // redistribution isn't reliably consistent enough across browsers/zoom
+  // levels to trust on its own, per explicit report of a real gap on a
+  // production window resize.
+  const [containerWidth, setContainerWidth] = useState(0);
 
   useEffect(() => {
     const el = tableScrollRef.current;
@@ -1048,9 +1153,13 @@ export default function SendMoneyWalletStatus() {
       setAtScrollStart(el.scrollLeft <= 1);
       setAtScrollEnd(el.scrollLeft >= el.scrollWidth - el.offsetWidth - 1);
     };
-    handleScroll();
+    const handleResize = () => {
+      handleScroll();
+      setContainerWidth(el.clientWidth);
+    };
+    handleResize();
     el.addEventListener('scroll', handleScroll, { passive: true });
-    const resizeObserver = new ResizeObserver(handleScroll);
+    const resizeObserver = new ResizeObserver(handleResize);
     resizeObserver.observe(el);
     return () => {
       el.removeEventListener('scroll', handleScroll);
@@ -1064,21 +1173,17 @@ export default function SendMoneyWalletStatus() {
       setLoading(true);
       setError(null);
 
-      const [openingRes, balRes, stlmRes, statusRes] = await Promise.all([
+      const [openingRes, balRes, statusRes] = await Promise.all([
         fetch(`/api/opening?t=${Date.now()}`),
         fetch(`/api/sendmoney/balances?t=${Date.now()}`),
-        fetch(`/api/sendmoney/stlmtopup?t=${Date.now()}`),
         fetch(`/api/sendmoney/wallet-status?t=${Date.now()}`),
       ]);
 
-      await assertAllOk([openingRes, balRes, stlmRes, statusRes]);
+      await assertAllOk([openingRes, balRes, statusRes]);
 
       const openingText = await openingRes.text();
       const balData: string[][] = await balRes.json();
-      const stlmText = await stlmRes.text();
       const statusData: Record<string, PriorityEntry> = await statusRes.json();
-
-      const reportCutoffDate = getBusinessToday();
 
       // Send Money's own roster lives in cols L-O (indices 11-14) of the
       // same "Opening AG" sheet Cashout uses for cols A-D.
@@ -1087,7 +1192,6 @@ export default function SendMoneyWalletStatus() {
         .filter((row) => row.some((cell) => cell.trim() !== ''))
         .map((row) => ({
           agentName: rawVal(row[11]),
-          openingBal: rawVal(row[12]),
           sdp: rawVal(row[13]),
           leader: rawVal(row[14]),
         }))
@@ -1103,21 +1207,18 @@ export default function SendMoneyWalletStatus() {
         .map((row) => ({
           walletName: rawVal(row[0]),
           totalDP: rawVal(row[11]),
-          totalWD: rawVal(row[13]),
           group: rawVal(row[6]),
           accountStatus: rawVal(row[1]),
         }))
         .filter((row) => row.walletName && row.walletName !== '-');
 
       const balWalletNames = new Set(balRows.map((bal) => bal.walletName));
-      const balanceTotals = new Map<string, { dp: number; wd: number }>();
+      const dpTotals = new Map<string, number>();
       const brandGroups = new Map<string, string[]>();
       const walletStatusValues = new Map<string, string[]>();
       balRows.forEach((bal) => {
         const dp = parseFloat(bal.totalDP.replace(/,/g, '')) || 0;
-        const wd = parseFloat(bal.totalWD.replace(/,/g, '')) || 0;
-        const existing = balanceTotals.get(bal.walletName) ?? { dp: 0, wd: 0 };
-        balanceTotals.set(bal.walletName, { dp: existing.dp + dp, wd: existing.wd + wd });
+        dpTotals.set(bal.walletName, (dpTotals.get(bal.walletName) ?? 0) + dp);
 
         if (bal.group && bal.group !== '-') {
           const groups = brandGroups.get(bal.walletName) ?? [];
@@ -1132,66 +1233,52 @@ export default function SendMoneyWalletStatus() {
         }
       });
 
-      const topUpTotals = new Map<string, number>();
-      const stlmTotals = new Map<string, number>();
-      parseCsvLines(stlmText)
-        .slice(1)
-        .filter((row) => row.some((cell) => cell.trim() !== ''))
-        .forEach((row) => {
-          const topUpAgent = normalizeAgentKey(rawVal(row[1]));
-          const topUpAmount = rawVal(row[2]);
-          const topUpDate = parseSheetDate(rawVal(row[3]));
-          if (topUpAgent && topUpAgent !== '-' && topUpAmount && topUpAmount !== '-' && topUpDate && topUpDate >= reportCutoffDate) {
-            const amount = Math.abs(parseFloat(topUpAmount.replace(/,/g, '')) || 0);
-            topUpTotals.set(topUpAgent, (topUpTotals.get(topUpAgent) ?? 0) + amount);
-          }
-          const stlmAgent = normalizeAgentKey(rawVal(row[7]));
-          const stlmAmount = rawVal(row[8]);
-          const stlmDate = parseSheetDate(rawVal(row[9]));
-          if (stlmAgent && stlmAgent !== '-' && stlmAmount && stlmAmount !== '-' && stlmDate && stlmDate >= reportCutoffDate) {
-            const amount = Math.abs(parseFloat(stlmAmount.replace(/,/g, '')) || 0);
-            stlmTotals.set(stlmAgent, (stlmTotals.get(stlmAgent) ?? 0) + amount);
-          }
-        });
-
       const merged: WalletStatusRow[] = openingRows.map((opening, index) => {
-        const totals = balanceTotals.get(opening.agentName) ?? { dp: 0, wd: 0 };
-        const totalTopUp = topUpTotals.get(normalizeAgentKey(opening.agentName)) ?? 0;
-        const totalStlm = stlmTotals.get(normalizeAgentKey(opening.agentName)) ?? 0;
-        const companyBalance = computeCompanyBalance(parseNumber(opening.openingBal), totals.dp, totalTopUp, totals.wd, totalStlm);
-        const sdpNum = parseNumber(opening.sdp);
-        const baseLimit = computeBaseLimit(sdpNum);
-        const sdpTrimmed = opening.sdp.trim().toUpperCase();
-        const sdpDisplay = sdpTrimmed === 'NO SDP' || !opening.sdp || opening.sdp === '-' ? '−' : displayNum(sdpNum);
+        const totalDP = dpTotals.get(opening.agentName) ?? 0;
+        const sdpRaw = opening.sdp;
+        const sdpNum = parseNumber(sdpRaw);
+        const sdpTrimmed = sdpRaw.trim().toUpperCase();
+        const sdpDisplay = sdpTrimmed === 'NO SDP' || !sdpRaw || sdpRaw === '-' ? '−' : displayNum(sdpNum);
         const computedStatus = balWalletNames.has(opening.agentName)
           ? computeWalletStatus(walletStatusValues.get(opening.agentName) ?? [])
           : 'No Record';
         const flags = deriveWalletFlags(computedStatus);
         const priorityEntry = statusData[opening.agentName.toUpperCase()] ?? DEFAULT_PRIORITY_ENTRY;
-        // An inactive wallet can't receive DP at all, so its receiving
-        // capacity is definitionally 0 — overridden here (not just at
-        // display time) so sorting/export/color all agree with what's
-        // shown, per explicit instruction.
-        const availableLimit = flags.walletStatus === 'Inactive' ? 0 : computeAvailableLimit(baseLimit, companyBalance, totals.dp);
+        // Every wallet carries its own limit, never pooled with the shop's
+        // other wallets — Company Balance/SDP no longer factor in at all,
+        // per explicit instruction (same rule as Cashout's own Wallet
+        // Status). A staff-set Daily Limit override (via Edit Wallet
+        // Settings) replaces the type-based (Solo/Bundle) default; either
+        // way only THIS wallet's own today's Total Deposit gets subtracted
+        // from it to produce Available Limit. An Inactive wallet
+        // unconditionally shows 0 for both Daily Limit and Available
+        // Limit, regardless of any configured override (the override
+        // itself is untouched in the sheet — it just isn't reflected here
+        // while Inactive).
+        const dailyLimit = flags.walletStatus === 'Inactive' ? 0 : (priorityEntry.balanceLimitOverride ?? defaultBaseLimitFor(opening.agentName));
+        const availableLimit = Math.max(dailyLimit - totalDP, 0);
         return {
           _id: index,
           key: opening.agentName,
           shopName: opening.agentName,
           brand: resolveBrand(brandGroups.get(opening.agentName) ?? [], opening.agentName, { brandPriority: BRAND_PRIORITY, brandCodes: BRAND_CODES, validateComputedBrand: true }),
           leader: opening.leader,
-          companyBalance,
-          baseLimit,
+          dailyLimit,
           availableLimit,
-          frozenAmount: computeFrozenAmount(companyBalance, baseLimit),
           sdpDisplay,
           deposit: flags.deposit,
           withdrawal: flags.withdrawal,
-          priority: priorityEntry.priority,
-          schedule: resolveSchedule(opening.leader),
+          schedule: priorityEntry.scheduleOverride || resolveSchedule(opening.leader),
           walletStatus: flags.walletStatus,
           remark: priorityEntry.remark,
           remarkUpdatedBy: priorityEntry.updatedBy,
           remarkUpdatedAt: priorityEntry.updatedAt,
+          mainReason: priorityEntry.mainReason,
+          closureType: priorityEntry.closureType,
+          affectedServices: priorityEntry.affectedServices,
+          minimumAmountCanTake: priorityEntry.minimumAmountCanTake,
+          balanceLimitOverride: priorityEntry.balanceLimitOverride,
+          scheduleOverride: priorityEntry.scheduleOverride,
         };
       });
 
@@ -1230,142 +1317,116 @@ export default function SendMoneyWalletStatus() {
     setPreference(COLUMN_VISIBILITY_STORAGE_KEY, visibility);
   }, [columnDefs, mounted]);
 
-  // Click Edit -> stage a draft (seeded from the row's current saved
-  // Priority) and enter edit mode. Nothing saves until Save is clicked;
-  // Cancel just discards the draft. editingRowKey being a single value
-  // means starting to edit a different row automatically ends the previous
-  // edit — its cells just stop matching and fall back to showing their
-  // saved value.
-  const startEdit = useCallback((row: WalletStatusRow) => {
-    setEditingRowKey(row.key);
-    setEditDraft({ priority: row.priority });
+  // Opens the unified modal for one wallet — Cancel/closing the modal just
+  // discards nothing-yet-typed state (the modal owns its own draft
+  // internally), no row-level draft to clean up here anymore.
+  const openEditModal = useCallback((row: WalletStatusRow) => {
+    setModalError(null);
+    setEditModalRow(row);
+    setEditModalOpen(true);
   }, []);
 
-  const cancelEdit = useCallback(() => {
-    setEditingRowKey(null);
-    setEditDraft(null);
+  const closeEditModal = useCallback(() => {
+    setEditModalOpen(false);
+    setModalError(null);
   }, []);
 
-  const updateDraftField = useCallback((value: Priority) => {
-    setEditDraft((current) => (current ? { ...current, priority: value } : current));
-  }, []);
+  // Single-wallet save — one POST for all fields (Remarks, Main Reason,
+  // Closure Type, Affected Services, Minimum Amount Can Take, Balance
+  // Limit, Schedule; Priority is NOT part of this modal), replacing the
+  // old separate Priority-edit + Remarks-popover requests. Kept open with
+  // an inline error on failure rather than closing and refetching, since
+  // the draft now lives entirely inside the modal and is worth letting
+  // the admin retry without re-entering everything. Refetches on success
+  // rather than patching the row in place — Available Limit depends on
+  // today's total DP (not stored on WalletStatusRow, only used
+  // transiently while building rows), so a correct post-save Available
+  // Limit/Schedule can only come from a real refetch.
+  const handleModalSave = useCallback((values: WalletSettingsValues) => {
+    if (!editModalRow) return;
+    const row = editModalRow;
+    setModalSaving(true);
+    setModalError(null);
 
-  // The single point where a row's staged Priority edit actually persists,
-  // to the "Wallet Status" sheet tab (see app/lib/walletStatus.ts). On
-  // failure, refetches from the server instead of assuming the write
-  // didn't land.
-  const saveRow = useCallback((row: WalletStatusRow) => {
-    if (!editDraft || !rowHasChanges(row, editDraft)) return;
-    const value = editDraft.priority;
+    const balanceLimitOverride = values.balanceLimitOverride.trim() === '' ? null : Number(values.balanceLimitOverride);
+    const minimumAmountCanTake = values.minimumAmountCanTake.trim() === '' ? null : Number(values.minimumAmountCanTake);
 
-    setRowSaving(true);
-    setSaveError(null);
-
-    fetch('/api/sendmoney/wallet-status/update', {
+    fetch('/api/sendmoney/wallet-status/update-settings', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ shopName: row.shopName, field: 'priority', value }),
+      body: JSON.stringify({
+        shopName: row.shopName,
+        remark: values.remark,
+        mainReason: values.mainReason,
+        closureType: values.closureType,
+        affectedServices: values.affectedServices,
+        minimumAmountCanTake,
+        balanceLimitOverride,
+        scheduleOverride: values.scheduleOverride,
+      }),
     })
       .then((res) => {
-        if (!res.ok) throw new Error('Save failed for priority');
-        setRows((current) => current.map((r) => (r.key === row.key ? { ...r, priority: value } : r)));
-        cancelEdit();
+        if (!res.ok) throw new Error('Save failed');
+      })
+      .then(async () => {
+        closeEditModal();
         setToast('Changes Saved');
+        await fetchData();
       })
       .catch(() => {
-        setSaveError(`Failed to save ${row.shopName} — reloading to confirm what actually saved.`);
-        setTimeout(() => setSaveError(null), 5000);
-        cancelEdit();
-        fetchData();
+        setModalError('Failed to save — please try again.');
       })
       .finally(() => {
-        setRowSaving(false);
+        setModalSaving(false);
       });
-  }, [editDraft, cancelEdit, fetchData]);
+  }, [editModalRow, closeEditModal, fetchData]);
 
-  // Opens the shared Remarks popover, anchored to whichever cell/mobile
-  // trigger was clicked. A single editingRemarkKey means starting to edit a
-  // different shop's remark auto-closes the previous popover, same
-  // "one at a time" convention as Priority's editingRowKey — but this state
-  // is entirely separate from it, so a Priority edit and a Remarks edit can
-  // be open simultaneously without conflict.
-  const openRemarkEditor = useCallback((row: WalletStatusRow, anchor: HTMLElement) => {
-    const rect = anchor.getBoundingClientRect();
-    setRemarkPopoverPos({ top: rect.bottom + 6, left: rect.left });
-    setRemarkAnchor(anchor);
-    setEditingRemarkKey(row.key);
-    setRemarkDraft(row.remark);
-  }, []);
+  // Bulk save — sends only the enabled fields for every selected wallet in
+  // one request, same shared endpoint/batching /api/sendmoney/wallet-status/
+  // bulk-update already used for Priority/Remark. A full refetch afterward
+  // (rather than patching rows in place) since Balance Limit/Schedule
+  // overrides interact with computed fields (Available Limit, effective
+  // Schedule) in ways that are simplest to just re-derive from a fresh
+  // fetch rather than replicate client-side per row.
+  const handleModalSaveBulk = useCallback((updates: Partial<WalletSettingsValues>) => {
+    const selectedRows = rows.filter((row) => selectedIds.has(row._id));
+    if (selectedRows.length === 0) return;
 
-  const cancelRemarkEdit = useCallback(() => {
-    setEditingRemarkKey(null);
-    setRemarkDraft('');
-    setRemarkAnchor(null);
-  }, []);
+    const payload = selectedRows.map((row) => ({
+      shopName: row.shopName,
+      ...(updates.remark !== undefined ? { remark: updates.remark } : {}),
+      ...(updates.mainReason !== undefined ? { mainReason: updates.mainReason } : {}),
+      ...(updates.closureType !== undefined ? { closureType: updates.closureType } : {}),
+      ...(updates.affectedServices !== undefined ? { affectedServices: updates.affectedServices } : {}),
+      ...(updates.minimumAmountCanTake !== undefined ? { minimumAmountCanTake: updates.minimumAmountCanTake.trim() === '' ? null : Number(updates.minimumAmountCanTake) } : {}),
+      ...(updates.balanceLimitOverride !== undefined ? { balanceLimitOverride: updates.balanceLimitOverride.trim() === '' ? null : Number(updates.balanceLimitOverride) } : {}),
+      ...(updates.scheduleOverride !== undefined ? { scheduleOverride: updates.scheduleOverride } : {}),
+    }));
 
-  const saveRemark = useCallback((row: WalletStatusRow) => {
-    setRemarkSaving(true);
-    setSaveError(null);
+    setModalSaving(true);
+    setModalError(null);
 
-    fetch('/api/sendmoney/wallet-status/update-remark', {
+    fetch('/api/sendmoney/wallet-status/bulk-update', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ shopName: row.shopName, remark: remarkDraft }),
+      body: JSON.stringify({ updates: payload }),
     })
-      .then(async (res) => {
-        if (!res.ok) throw new Error('Save failed for remark');
-        const data: { updatedBy: string; updatedAt: string } = await res.json();
-        setRows((current) => current.map((r) => (r.key === row.key
-          ? { ...r, remark: remarkDraft, remarkUpdatedBy: data.updatedBy, remarkUpdatedAt: data.updatedAt }
-          : r)));
-        cancelRemarkEdit();
-        setToast('Changes Saved');
+      .then((res) => {
+        if (!res.ok) throw new Error('Bulk save failed');
+      })
+      .then(async () => {
+        setBulkEditOpen(false);
+        setSelectedIds(new Set());
+        setToast(`${selectedRows.length} Shop${selectedRows.length === 1 ? '' : 's'} Updated`);
+        await fetchData();
       })
       .catch(() => {
-        setSaveError(`Failed to save remark for ${row.shopName} — reloading to confirm what actually saved.`);
-        setTimeout(() => setSaveError(null), 5000);
-        cancelRemarkEdit();
-        fetchData();
+        setModalError('Bulk save failed — please try again.');
       })
       .finally(() => {
-        setRemarkSaving(false);
+        setModalSaving(false);
       });
-  }, [remarkDraft, cancelRemarkEdit, fetchData]);
-
-  // Click-outside-to-cancel — same convention as this page's other
-  // dropdowns/menus. Ignores clicks on the popover itself or its anchor
-  // trigger (the anchor's own onClick already handles re-opening/toggling).
-  useEffect(() => {
-    if (!editingRemarkKey) return;
-    function handlePointerDown(e: MouseEvent) {
-      const target = e.target as Node;
-      if (remarkPopoverRef.current?.contains(target)) return;
-      if (remarkAnchor?.contains(target)) return;
-      cancelRemarkEdit();
-    }
-    document.addEventListener('mousedown', handlePointerDown);
-    return () => document.removeEventListener('mousedown', handlePointerDown);
-  }, [editingRemarkKey, remarkAnchor, cancelRemarkEdit]);
-
-  // Keeps the popover pinned to its anchor cell if the table scrolls or the
-  // window resizes while it's open (it's a fixed-position portal, so it
-  // wouldn't otherwise move with the row it belongs to).
-  useEffect(() => {
-    if (!editingRemarkKey || !remarkAnchor) return;
-    function reposition() {
-      const rect = remarkAnchor!.getBoundingClientRect();
-      setRemarkPopoverPos({ top: rect.bottom + 6, left: rect.left });
-    }
-    const scrollEl = tableScrollRef.current;
-    scrollEl?.addEventListener('scroll', reposition, { passive: true });
-    window.addEventListener('resize', reposition);
-    return () => {
-      scrollEl?.removeEventListener('scroll', reposition);
-      window.removeEventListener('resize', reposition);
-    };
-  }, [editingRemarkKey, remarkAnchor]);
-
-  const editingRemarkRow = useMemo(() => rows.find((r) => r.key === editingRemarkKey) ?? null, [rows, editingRemarkKey]);
+  }, [rows, selectedIds, fetchData]);
 
   const searchedRows = useMemo(() => {
     const query = searchTerm.toLowerCase();
@@ -1382,7 +1443,10 @@ export default function SendMoneyWalletStatus() {
   const depositOptions = DEPOSIT_WITHDRAWAL_OPTIONS;
   const withdrawalOptions = DEPOSIT_WITHDRAWAL_OPTIONS;
   const scheduleOptions = SCHEDULE_SORT_ORDER;
-  const walletStatusOptions = WALLET_STATUS_FILTER_OPTIONS;
+  const walletStatusOptions = useMemo(
+    () => WALLET_STATUS_FILTER_OPTIONS.filter((status) => rows.some((r) => r.walletStatus === status)),
+    [rows]
+  );
 
   const isLeaderChecked = (name: string) => leaderFilter[name] !== false;
   const isDepositChecked = (name: string) => depositFilter[name] !== false;
@@ -1503,16 +1567,14 @@ export default function SendMoneyWalletStatus() {
           case 'brand': return row.brand.toLowerCase();
           case 'shopName': return row.shopName.toLowerCase();
           case 'leader': return row.leader.toLowerCase();
-          case 'companyBalance': return row.companyBalance;
+          case 'balanceLimit': return row.dailyLimit;
           case 'availableLimit': return row.availableLimit;
-          case 'frozenAmount': return row.frozenAmount;
           case 'sdp': return row.sdpDisplay === '−' ? -Infinity : parseNumber(row.sdpDisplay);
           case 'deposit': return row.deposit;
           case 'withdrawal': return row.withdrawal;
-          case 'priority': return PRIORITY_RANK[row.priority];
           case 'schedule': return SCHEDULE_RANK[row.schedule];
           case 'walletStatus': return row.walletStatus;
-          default: return row.companyBalance;
+          default: return row.availableLimit;
         }
       };
       const valueA = getValue(a, sortColumn);
@@ -1562,29 +1624,66 @@ export default function SendMoneyWalletStatus() {
 
   const visibleColumns = useMemo(() => (mounted ? columnDefs : []).filter((col) => col.visible), [columnDefs, mounted]);
 
+  // Checkbox column is a fixed 44px outside colWidthsPx (its own hardcoded
+  // `w-[44px]` th below); Remarks/Action are pinned per spec (never grow
+  // with content or with extra space) — only the remaining "normal"
+  // columns' natural (measured-minimum) widths get scaled UP to consume
+  // whatever's left of the container, so the table always fills it exactly
+  // rather than leaving a gap when the viewport is wider than the content
+  // actually needs.
+  const CHECKBOX_COLUMN_WIDTH_PX = 44;
+  const scaledColWidthsPx = useMemo(() => {
+    const pinned = new Set<ColumnKey>(['remarks', 'walletStatusAction']);
+    const flexibleCols = visibleColumns.filter((col) => !pinned.has(col.key));
+    const flexibleNaturalTotal = flexibleCols.reduce((sum, col) => sum + (colWidthsPx[col.key] ?? 0), 0);
+    const pinnedTotal = visibleColumns.reduce((sum, col) => {
+      if (col.key === 'remarks') return sum + REMARKS_COLUMN_WIDTH_PX;
+      if (col.key === 'walletStatusAction') return sum + WALLET_STATUS_ACTION_WIDTH_PX;
+      return sum;
+    }, 0);
+    const available = containerWidth - CHECKBOX_COLUMN_WIDTH_PX - pinnedTotal;
+    if (flexibleNaturalTotal <= 0 || available <= flexibleNaturalTotal) return colWidthsPx;
+    const factor = available / flexibleNaturalTotal;
+    const scaled: Partial<Record<ColumnKey, number>> = { ...colWidthsPx };
+    flexibleCols.forEach((col) => {
+      const natural = colWidthsPx[col.key];
+      if (natural) scaled[col.key] = Math.floor(natural * factor);
+    });
+    return scaled;
+  }, [colWidthsPx, visibleColumns, containerWidth]);
+
   const handleExport = useCallback((rowsOverride?: WalletStatusRow[]) => {
     const getExportValue = (row: WalletStatusRow, key: ColumnKey) => {
       switch (key) {
         case 'brand': return row.brand;
         case 'shopName': return row.shopName;
         case 'leader': return toProperCase(row.leader);
-        case 'companyBalance': return row.companyBalance;
+        case 'balanceLimit': return row.dailyLimit;
         case 'availableLimit': return row.availableLimit;
-        case 'frozenAmount': return row.frozenAmount > 0 ? row.frozenAmount : undefined;
         case 'sdp': return row.sdpDisplay;
         case 'deposit': return row.deposit;
         case 'withdrawal': return row.withdrawal;
-        case 'priority': return priorityDisplay(row);
         case 'schedule': return row.schedule || undefined;
         case 'walletStatus': return row.walletStatus;
         case 'remarks': return row.remark || '—';
       }
     };
-    // The Edit/Save/Cancel action column has no exportable value — excluded
-    // from the sheet rather than producing an empty, unlabeled column.
+    // The Edit action column has no exportable value — excluded from the
+    // sheet rather than producing an empty, unlabeled column.
     const exportColumns = visibleColumns.filter((col) => col.key !== 'walletStatusAction');
-    const headers = exportColumns.map((col) => col.label);
-    const data = (rowsOverride ?? sortedRows).map((row) => exportColumns.map((col) => getExportValue(row, col.key)));
+    // Main Reason/Closure Type/Affected Services/Minimum Amount Can Take
+    // are never their own visible table columns (per explicit instruction
+    // — Main Reason etc. only surface in the Remarks tooltip/here) —
+    // always appended to the export regardless of column-visibility
+    // toggles. Mirrors Cashout's own Wallet Status page exactly.
+    const headers = [...exportColumns.map((col) => col.label), 'Main Reason', 'Closure Type', 'Affected Services', 'Minimum Amount Can Take'];
+    const data = (rowsOverride ?? sortedRows).map((row) => [
+      ...exportColumns.map((col) => getExportValue(row, col.key)),
+      row.mainReason || undefined,
+      row.closureType || undefined,
+      row.affectedServices.length > 0 ? row.affectedServices.join(', ') : undefined,
+      row.minimumAmountCanTake ?? undefined,
+    ]);
     const worksheet = XLSX.utils.aoa_to_sheet([headers, ...data]);
     worksheet['!cols'] = headers.map(() => ({ wch: 18 }));
     const workbook = XLSX.utils.book_new();
@@ -1599,59 +1698,9 @@ export default function SendMoneyWalletStatus() {
     handleExport(sortedRows.filter((row) => selectedIds.has(row._id)));
   }, [handleExport, sortedRows, selectedIds]);
 
-  // Bulk Edit's real persistence path — batched server-side (see
-  // /api/sendmoney/wallet-status/bulk-update + updateSendMoneyWalletStatus
-  // Bulk) instead of one request per selected shop per field. On success,
-  // patches every selected row's local state directly from the response;
-  // on failure, refetches to confirm what actually landed.
-  const handleBulkEditApply = useCallback((updates: BulkEditUpdates) => {
-    if (bulkSaving) return;
-    const selectedRows = rows.filter((row) => selectedIds.has(row._id));
-    if (selectedRows.length === 0) return;
-
-    const priority = updates.priority as Priority | undefined;
-    const remark = updates.remarks;
-
-    const payload = selectedRows.map((row) => ({
-      shopName: row.shopName,
-      ...(priority !== undefined ? { priority } : {}),
-      ...(remark !== undefined ? { remark } : {}),
-    }));
-
-    setBulkSaving(true);
-    setSaveError(null);
-
-    fetch('/api/sendmoney/wallet-status/bulk-update', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ updates: payload }),
-    })
-      .then(async (res) => {
-        if (!res.ok) throw new Error('Bulk save failed');
-        return (await res.json()) as { updatedBy: string; updatedAt: string };
-      })
-      .then((result) => {
-        setRows((current) => current.map((r) => (selectedIds.has(r._id) ? {
-          ...r,
-          priority: priority !== undefined ? priority : r.priority,
-          remark: remark !== undefined ? remark : r.remark,
-          remarkUpdatedBy: remark !== undefined ? result.updatedBy : r.remarkUpdatedBy,
-          remarkUpdatedAt: remark !== undefined ? result.updatedAt : r.remarkUpdatedAt,
-        } : r)));
-        setBulkEditOpen(false);
-        setSelectedIds(new Set());
-        setToast(`${selectedRows.length} Shop${selectedRows.length === 1 ? '' : 's'} Updated`);
-      })
-      .catch(() => {
-        setSaveError('Bulk save failed — reloading to confirm what actually saved.');
-        setTimeout(() => setSaveError(null), 5000);
-        setBulkEditOpen(false);
-        fetchData();
-      })
-      .finally(() => {
-        setBulkSaving(false);
-      });
-  }, [rows, selectedIds, fetchData, bulkSaving]);
+  // Bulk Edit's real persistence path — see handleModalSaveBulk above,
+  // which now handles this via the same unified WalletSettingsModal (bulk
+  // mode), same as Cashout's own Wallet Status page.
 
   useEffect(() => {
     if (page !== currentPage) setPage(currentPage);
@@ -1667,7 +1716,6 @@ export default function SendMoneyWalletStatus() {
   function renderCell(row: WalletStatusRow, key: ColumnKey, colWidthsPx?: Partial<Record<ColumnKey, number>>) {
     const base = 'whitespace-nowrap overflow-hidden text-ellipsis text-[13px] font-normal text-center px-4 py-[14px] align-top';
     const shopBase = 'whitespace-nowrap overflow-hidden text-ellipsis text-[13px] font-normal text-left px-4 py-[14px] align-top';
-    const isEditingThisRow = editingRowKey === row.key;
     const width = colWidthsPx?.[key];
     const cellStyle = width ? { width, minWidth: width } : undefined;
     switch (key) {
@@ -1677,26 +1725,18 @@ export default function SendMoneyWalletStatus() {
         return <td key={key} style={cellStyle} className={`${shopBase} text-foreground`}>{toProperCase(row.leader)}</td>;
       case 'shopName':
         return <td key={key} style={cellStyle} className={`${shopBase} text-foreground`}>{row.shopName}</td>;
-      case 'companyBalance':
+      case 'balanceLimit':
         return (
           <td key={key} style={cellStyle} className={`${base} tabular-nums text-foreground`}>
-            {displayNum(row.companyBalance)}
+            {displayAvailableLimit(row.dailyLimit)}
           </td>
         );
       case 'availableLimit':
         return (
-          <td key={key} style={cellStyle} className={`${base} tabular-nums ${availableLimitColorClass(row.availableLimit)}`}>
+          <td key={key} style={cellStyle} className={`${base} tabular-nums text-foreground`}>
             {displayAvailableLimit(row.availableLimit)}
           </td>
         );
-      case 'frozenAmount': {
-        const formatted = displayNum(row.frozenAmount);
-        return (
-          <td key={key} style={cellStyle} className={`${base} tabular-nums ${formatted === '−' ? 'text-muted-foreground' : 'text-[#EF4444]'}`}>
-            {formatted}
-          </td>
-        );
-      }
       case 'sdp':
         return <td key={key} style={cellStyle} className={`${base} tabular-nums text-foreground`}>{row.sdpDisplay}</td>;
       case 'deposit':
@@ -1719,33 +1759,8 @@ export default function SendMoneyWalletStatus() {
             </span>
           </td>
         );
-      case 'priority': {
-        if (!isEditingThisRow) {
-          const displayValue = priorityDisplay(row);
-          return (
-            <td key={key} style={cellStyle} className={base}>
-              <span className={`inline-flex h-7 items-center rounded-md border px-2 text-[12px] font-medium ${PRIORITY_BADGE_TINTS[displayValue]}`}>
-                {displayValue}
-              </span>
-            </td>
-          );
-        }
-        const value = editDraft ? editDraft.priority : row.priority;
-        return (
-          <td key={key} style={cellStyle} className={base}>
-            <StatusSelect
-              value={value}
-              options={PRIORITY_OPTIONS}
-              editing
-              saving={rowSaving}
-              onChange={(next) => updateDraftField(next)}
-              className={PRIORITY_BADGE_TINTS[value]}
-            />
-          </td>
-        );
-      }
       case 'schedule':
-        return <td key={key} style={cellStyle} className={`${shopBase} text-foreground`}>{row.schedule}</td>;
+        return <td key={key} style={cellStyle} className={`${base} text-foreground`}>{row.schedule}</td>;
       case 'walletStatus':
         return (
           <td key={key} style={cellStyle} className={shopBase}>
@@ -1769,52 +1784,28 @@ export default function SendMoneyWalletStatus() {
               remark={row.remark}
               updatedBy={row.remarkUpdatedBy}
               updatedAt={row.remarkUpdatedAt}
-              isEditing={editingRemarkKey === row.key}
-              onOpen={(anchor) => openRemarkEditor(row, anchor)}
+              mainReason={row.mainReason}
+              closureType={row.closureType}
+              affectedServices={row.affectedServices}
             />
           </td>
         );
       case 'walletStatusAction': {
-        if (!isEditingThisRow) {
-          return (
-            <td key={key} style={cellStyle} className={base}>
-              <button
-                type="button"
-                onClick={() => startEdit(row)}
-                aria-label="Edit"
-                title="Edit"
-                className="flex h-8 w-8 items-center justify-center rounded-md text-muted-foreground transition-colors duration-150 ease-out hover:bg-muted hover:text-foreground"
-              >
-                <SquarePen size={15} />
-              </button>
-            </td>
-          );
-        }
-        const canSave = rowHasChanges(row, editDraft);
+        // Sticky to the right edge, matching Cashout's own Wallet Status page.
+        const stickyBg = selectedIds.has(row._id)
+          ? 'bg-[#EFF6FF] dark:bg-[#1e2a3d]'
+          : 'bg-white dark:bg-[#1c1c1e]';
         return (
-          <td key={key} style={cellStyle} className={base}>
-            <span className="inline-flex items-center gap-1.5">
-              <button
-                type="button"
-                onClick={() => saveRow(row)}
-                disabled={!canSave || rowSaving}
-                aria-label="Save Changes"
-                title="Save Changes"
-                className="flex h-10 w-10 items-center justify-center rounded-[10px] bg-[#5B5CEB] text-white transition-[transform,opacity] duration-150 ease-out hover:-translate-y-px disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:translate-y-0"
-              >
-                {rowSaving ? <Loader2 size={16} className="animate-spin" /> : <Check size={16} />}
-              </button>
-              <button
-                type="button"
-                onClick={cancelEdit}
-                disabled={rowSaving}
-                aria-label="Cancel"
-                title="Cancel"
-                className="flex h-10 w-10 items-center justify-center rounded-[10px] border border-[#E5E7EB] bg-white text-slate-500 transition-colors duration-150 ease-out hover:border-rose-300 hover:bg-rose-50 hover:text-rose-600 disabled:opacity-50 dark:border-[#3a3a3d] dark:bg-[#2a2a2d] dark:text-[#9CA3AF] dark:hover:border-rose-900/60 dark:hover:bg-rose-500/10 dark:hover:text-rose-400"
-              >
-                <X size={16} />
-              </button>
-            </span>
+          <td key={key} style={cellStyle} className={`${base} sticky right-0 z-[40] ${stickyBg}`}>
+            <button
+              type="button"
+              onClick={() => openEditModal(row)}
+              aria-label="Edit"
+              title="Edit"
+              className="inline-flex h-8 w-8 items-center justify-center rounded-md text-muted-foreground transition-colors duration-150 ease-out hover:bg-muted hover:text-foreground"
+            >
+              <SquarePen size={15} />
+            </button>
           </td>
         );
       }
@@ -1828,56 +1819,6 @@ export default function SendMoneyWalletStatus() {
           <Check size={15} className="shrink-0 text-emerald-500" />
           {toast}
         </div>
-      )}
-      {editingRemarkRow && typeof document !== 'undefined' && createPortal(
-        <div
-          ref={remarkPopoverRef}
-          style={{ position: 'fixed', top: remarkPopoverPos.top, left: remarkPopoverPos.left }}
-          className="z-[200] w-[300px] rounded-[12px] border border-border bg-white p-3 shadow-lg dark:border-[#3a3a3d] dark:bg-[#2a2a2d]"
-        >
-          <p className="mb-1.5 text-[11px] font-semibold text-muted-foreground">Remark</p>
-          <textarea
-            autoFocus
-            maxLength={500}
-            rows={4}
-            value={remarkDraft}
-            onChange={(e) => setRemarkDraft(e.target.value)}
-            placeholder="Add a remark…"
-            className="w-full resize-none rounded-md border border-border bg-transparent px-2 py-1.5 text-[12px] text-foreground outline-none focus:border-[#2563EB] dark:border-[#3a3a3d]"
-          />
-          {/* Current (saved) metadata only — Cancel discards remarkDraft
-              without touching this, Save replaces it only after the
-              request succeeds (see saveRemark), so it never shows an
-              unsaved/optimistic value. */}
-          {editingRemarkRow.remarkUpdatedBy && (
-            <div className="mt-2.5 border-t border-border pt-2.5">
-              <p className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">Last Edited</p>
-              <p className="mt-0.5 text-[12px] font-medium text-foreground">{editingRemarkRow.remarkUpdatedBy}</p>
-              {editingRemarkRow.remarkUpdatedAt && (
-                <p className="text-[11px] text-muted-foreground">{formatRemarkTimestamp(editingRemarkRow.remarkUpdatedAt)}</p>
-              )}
-            </div>
-          )}
-          <div className="mt-2.5 flex items-center justify-end gap-1.5 border-t border-border pt-2.5">
-            <button
-              type="button"
-              onClick={cancelRemarkEdit}
-              disabled={remarkSaving}
-              className="flex h-8 items-center gap-1 rounded-[8px] border border-[#E5E7EB] bg-white px-2.5 text-[12px] font-medium text-slate-500 transition-colors duration-150 ease-out hover:border-rose-300 hover:bg-rose-50 hover:text-rose-600 disabled:opacity-50 dark:border-[#3a3a3d] dark:bg-[#2a2a2d] dark:text-[#9CA3AF] dark:hover:border-rose-900/60 dark:hover:bg-rose-500/10 dark:hover:text-rose-400"
-            >
-              <X size={13} /> Cancel
-            </button>
-            <button
-              type="button"
-              onClick={() => saveRemark(editingRemarkRow)}
-              disabled={remarkSaving}
-              className="flex h-8 items-center gap-1 rounded-[8px] bg-[#5B5CEB] px-2.5 text-[12px] font-semibold text-white transition-opacity duration-150 ease-out disabled:cursor-not-allowed disabled:opacity-40"
-            >
-              {remarkSaving ? <Loader2 size={13} className="animate-spin" /> : <Check size={13} />} Save
-            </button>
-          </div>
-        </div>,
-        document.body
       )}
       <SettlementHeader icon={Flag} title="Wallet Status" isRefreshing={spinning} onRefresh={fetchData} />
 
@@ -2106,8 +2047,8 @@ export default function SendMoneyWalletStatus() {
                           key={col.key}
                           style={col.key === 'remarks'
                             ? { width: REMARKS_COLUMN_WIDTH_PX, minWidth: REMARKS_COLUMN_WIDTH_PX, maxWidth: REMARKS_COLUMN_WIDTH_PX }
-                            : colWidthsPx[col.key] ? { width: colWidthsPx[col.key], minWidth: colWidthsPx[col.key] } : undefined}
-                          className={headerCellClasses(col.align)}
+                            : scaledColWidthsPx[col.key] ? { width: scaledColWidthsPx[col.key], minWidth: scaledColWidthsPx[col.key] } : undefined}
+                          className={`${headerCellClasses(col.align)} ${col.key === 'walletStatusAction' ? 'sticky right-0 z-[51] bg-[#FAFAFB] dark:bg-[#252528]' : ''}`}
                         >
                           {loading ? (
                             <div className={`h-3 w-3/5 max-w-[72px] dt-skeleton rounded-md ${col.align === 'right' ? 'ml-auto' : col.align === 'center' ? 'mx-auto' : ''}`} />
@@ -2130,7 +2071,7 @@ export default function SendMoneyWalletStatus() {
                                   <SortIcon active={sortColumn === col.key} direction={sortDirection} />
                                 </span>
                               )}
-                              <span className={`min-w-0 truncate ${col.align === 'center' ? 'flex-1' : ''}`}>{col.label}</span>
+                              <span className={`min-w-0 truncate ${col.align === 'center' && col.key !== 'remarks' ? 'flex-1' : ''}`}>{col.label}</span>
                               <span className="flex items-center gap-1.5">
                                 {COLUMN_INFO_TEXT[col.key] && (
                                   <span onClick={(e) => e.stopPropagation()}>
@@ -2155,12 +2096,12 @@ export default function SendMoneyWalletStatus() {
                           {visibleColumns.map((col) => {
                             const widths = rowSkeletonWidths[col.key];
                             const width = widths[rowIndex % widths.length];
-                            const colWidth = colWidthsPx[col.key];
+                            const colWidth = scaledColWidthsPx[col.key];
                             return (
                               <td
                                 key={col.key}
                                 style={colWidth ? { width: colWidth, minWidth: colWidth } : undefined}
-                                className="px-4 py-[14px]"
+                                className={`px-4 py-[14px] ${col.key === 'walletStatusAction' ? 'sticky right-0 z-[40] bg-white dark:bg-[#1c1c1e]' : ''}`}
                               >
                                 <div className={`dt-skeleton h-2.5 rounded-md ${width}`} />
                               </td>
@@ -2172,11 +2113,9 @@ export default function SendMoneyWalletStatus() {
                       <tr
                         key={row.key}
                         className={`border-b last:border-0 transition-[background-color,border-color] duration-150 ease-out hover:bg-muted/10 ${
-                          editingRowKey === row.key
-                            ? 'border-b-border border-l-[3px] border-l-[#5B5CEB] bg-[#F8F9FF] dark:bg-[#5B5CEB]/[0.08]'
-                            : selectedIds.has(row._id)
-                              ? 'border-border bg-[#EFF6FF] dark:bg-[#1e2a3d]'
-                              : `border-border ${i % 2 === 1 ? 'bg-muted/5' : ''}`
+                          selectedIds.has(row._id)
+                            ? 'border-border bg-[#EFF6FF] dark:bg-[#1e2a3d]'
+                            : `border-border ${i % 2 === 1 ? 'bg-muted/5' : ''}`
                         }`}
                       >
                         <td className="px-4 py-[14px] text-center align-top" onClick={(event) => event.stopPropagation()}>
@@ -2188,7 +2127,7 @@ export default function SendMoneyWalletStatus() {
                             className="h-3.5 w-3.5 cursor-pointer"
                           />
                         </td>
-                        {visibleColumns.map((col) => renderCell(row, col.key, colWidthsPx))}
+                        {visibleColumns.map((col) => renderCell(row, col.key, scaledColWidthsPx))}
                       </tr>
                     )) : (
                       <tr>
@@ -2223,29 +2162,22 @@ export default function SendMoneyWalletStatus() {
                     const showShop = visibleColumns.some((c) => c.key === 'shopName');
                     const showBrand = visibleColumns.some((c) => c.key === 'brand');
                     const showLeader = visibleColumns.some((c) => c.key === 'leader');
-                    const showBalance = visibleColumns.some((c) => c.key === 'companyBalance');
+                    const showBalanceLimit = visibleColumns.some((c) => c.key === 'balanceLimit');
                     const showAvailableLimit = visibleColumns.some((c) => c.key === 'availableLimit');
-                    const showFrozenAmount = visibleColumns.some((c) => c.key === 'frozenAmount');
                     const showSdp = visibleColumns.some((c) => c.key === 'sdp');
                     const showDeposit = visibleColumns.some((c) => c.key === 'deposit');
                     const showWithdrawal = visibleColumns.some((c) => c.key === 'withdrawal');
-                    const showPriority = visibleColumns.some((c) => c.key === 'priority');
                     const showSchedule = visibleColumns.some((c) => c.key === 'schedule');
                     const showWalletStatus = visibleColumns.some((c) => c.key === 'walletStatus');
                     const showRemarks = visibleColumns.some((c) => c.key === 'remarks');
-                    const isEditingThisRow = editingRowKey === row.key;
-                    const priorityValue = isEditingThisRow && editDraft ? editDraft.priority : row.priority;
-                    const canSave = rowHasChanges(row, editDraft);
                     const isSelected = selectedIds.has(row._id);
                     return (
                       <div
                         key={row.key}
                         className={`relative rounded-xl border p-3.5 pr-9 transition-[background-color,border-color] duration-150 ease-out dark:bg-[#2a2a2d] ${
-                          isEditingThisRow
-                            ? 'border-[#5B5CEB] bg-[#F8F9FF] dark:bg-[#5B5CEB]/[0.08]'
-                            : isSelected
-                              ? 'border-[#2563EB]/40 bg-[#EFF6FF] dark:bg-[#1e2a3d]'
-                              : 'border-border bg-white'
+                          isSelected
+                            ? 'border-[#2563EB]/40 bg-[#EFF6FF] dark:bg-[#1e2a3d]'
+                            : 'border-border bg-white'
                         }`}
                       >
                         <input
@@ -2264,24 +2196,18 @@ export default function SendMoneyWalletStatus() {
                             {showBrand && <span className="shrink-0 text-[11px] font-medium text-muted-foreground">{row.brand}</span>}
                           </div>
                         )}
-                        {(showBalance || showAvailableLimit || showFrozenAmount || showSdp) && (
+                        {(showBalanceLimit || showAvailableLimit || showSdp) && (
                           <div className={`grid grid-cols-2 gap-2 ${(showShop || showBrand || showLeader) ? 'mt-2.5 border-t border-border pt-2.5' : ''}`}>
-                            {showBalance && (
+                            {showBalanceLimit && (
                               <div>
-                                <p className="text-[9px] font-medium text-muted-foreground">Company Balance</p>
-                                <p className="text-[13px] font-bold tabular-nums text-foreground">{displayNum(row.companyBalance)}</p>
+                                <p className="text-[9px] font-medium text-muted-foreground">Daily Limit</p>
+                                <p className="text-[13px] font-bold tabular-nums text-foreground">{displayAvailableLimit(row.dailyLimit)}</p>
                               </div>
                             )}
                             {showAvailableLimit && (
                               <div>
                                 <p className="text-[9px] font-medium text-muted-foreground">Available Limit</p>
-                                <p className={`text-[13px] font-semibold tabular-nums ${availableLimitColorClass(row.availableLimit)}`}>{displayAvailableLimit(row.availableLimit)}</p>
-                              </div>
-                            )}
-                            {showFrozenAmount && (
-                              <div>
-                                <p className="text-[9px] font-medium text-muted-foreground">Frozen Amount</p>
-                                <p className={`text-[13px] font-semibold tabular-nums ${displayNum(row.frozenAmount) === '−' ? 'text-muted-foreground' : 'text-[#EF4444]'}`}>{displayNum(row.frozenAmount)}</p>
+                                <p className="text-[13px] font-semibold tabular-nums text-foreground">{displayAvailableLimit(row.availableLimit)}</p>
                               </div>
                             )}
                             {showSdp && (
@@ -2292,8 +2218,8 @@ export default function SendMoneyWalletStatus() {
                             )}
                           </div>
                         )}
-                        {(showDeposit || showWithdrawal || showPriority || showSchedule) && (
-                          <div className={`flex flex-wrap items-center gap-2 ${(showShop || showBrand || showLeader || showBalance || showAvailableLimit || showFrozenAmount || showSdp) ? 'mt-2.5 border-t border-border pt-2.5' : ''}`}>
+                        {(showDeposit || showWithdrawal || showSchedule) && (
+                          <div className={`flex flex-wrap items-center gap-2 ${(showShop || showBrand || showLeader || showBalanceLimit || showAvailableLimit || showSdp) ? 'mt-2.5 border-t border-border pt-2.5' : ''}`}>
                             {showDeposit && (
                               <div>
                                 <p className="mb-1 text-[9px] font-medium text-muted-foreground">Deposit</p>
@@ -2314,25 +2240,6 @@ export default function SendMoneyWalletStatus() {
                                 </span>
                               </div>
                             )}
-                            {showPriority && (
-                              <div>
-                                <p className="mb-1 text-[9px] font-medium text-muted-foreground">Priority</p>
-                                {isEditingThisRow ? (
-                                  <StatusSelect
-                                    value={priorityValue}
-                                    options={PRIORITY_OPTIONS}
-                                    editing
-                                    saving={rowSaving}
-                                    onChange={(next) => updateDraftField(next)}
-                                    className={PRIORITY_BADGE_TINTS[priorityValue]}
-                                  />
-                                ) : (
-                                  <span className={`inline-flex h-7 items-center rounded-md border px-2 text-[12px] font-medium ${PRIORITY_BADGE_TINTS[priorityDisplay(row)]}`}>
-                                    {priorityDisplay(row)}
-                                  </span>
-                                )}
-                              </div>
-                            )}
                             {showSchedule && (
                               <div>
                                 <p className="mb-1 text-[9px] font-medium text-muted-foreground">Schedule</p>
@@ -2342,7 +2249,7 @@ export default function SendMoneyWalletStatus() {
                           </div>
                         )}
                         {showWalletStatus && (
-                          <div className={`flex items-center gap-1.5 ${(showShop || showBrand || showLeader || showBalance || showAvailableLimit || showFrozenAmount || showSdp || showDeposit || showWithdrawal || showPriority || showSchedule) ? 'mt-2.5 border-t border-border pt-2.5' : ''}`}>
+                          <div className={`flex items-center gap-1.5 ${(showShop || showBrand || showLeader || showBalanceLimit || showAvailableLimit || showSdp || showDeposit || showWithdrawal || showSchedule) ? 'mt-2.5 border-t border-border pt-2.5' : ''}`}>
                             <p className="text-[9px] font-medium text-muted-foreground">Wallet Status</p>
                             <span className="inline-flex items-center gap-1.5 text-[12px] font-medium text-foreground">
                               <span className={`h-2 w-2 shrink-0 rounded-full ${WALLET_STATUS_DOT[row.walletStatus]}`} />
@@ -2357,40 +2264,20 @@ export default function SendMoneyWalletStatus() {
                               remark={row.remark}
                               updatedBy={row.remarkUpdatedBy}
                               updatedAt={row.remarkUpdatedAt}
-                              isEditing={editingRemarkKey === row.key}
-                              onOpen={(anchor) => openRemarkEditor(row, anchor)}
+                              mainReason={row.mainReason}
+                              closureType={row.closureType}
+                              affectedServices={row.affectedServices}
                             />
                           </div>
                         )}
                         <div className="mt-2.5 flex items-center gap-1.5 border-t border-border pt-2.5">
-                          {isEditingThisRow ? (
-                            <>
-                              <button
-                                type="button"
-                                onClick={() => saveRow(row)}
-                                disabled={!canSave || rowSaving}
-                                className="flex h-8 flex-1 items-center justify-center gap-1 rounded-[10px] bg-[#5B5CEB] text-[12px] font-semibold text-white transition-opacity duration-150 ease-out disabled:cursor-not-allowed disabled:opacity-40"
-                              >
-                                {rowSaving ? <Loader2 size={14} className="animate-spin" /> : <Check size={14} />} Save
-                              </button>
-                              <button
-                                type="button"
-                                onClick={cancelEdit}
-                                disabled={rowSaving}
-                                className="flex h-8 flex-1 items-center justify-center gap-1 rounded-[10px] border border-[#E5E7EB] bg-white text-[12px] font-semibold text-slate-500 transition-colors duration-150 ease-out hover:border-rose-300 hover:bg-rose-50 hover:text-rose-600 disabled:opacity-50 dark:border-[#3a3a3d] dark:bg-[#2a2a2d] dark:text-[#9CA3AF] dark:hover:border-rose-900/60 dark:hover:bg-rose-500/10 dark:hover:text-rose-400"
-                              >
-                                <X size={14} /> Cancel
-                              </button>
-                            </>
-                          ) : (
-                            <button
-                              type="button"
-                              onClick={() => startEdit(row)}
-                              className="flex h-8 flex-1 items-center justify-center gap-1 rounded-md text-[12px] font-semibold text-muted-foreground transition-colors duration-150 ease-out hover:bg-muted hover:text-foreground"
-                            >
-                              <SquarePen size={14} /> Edit
-                            </button>
-                          )}
+                          <button
+                            type="button"
+                            onClick={() => openEditModal(row)}
+                            className="flex h-8 flex-1 items-center justify-center gap-1 rounded-md text-[12px] font-semibold text-muted-foreground transition-colors duration-150 ease-out hover:bg-muted hover:text-foreground"
+                          >
+                            <SquarePen size={14} /> Edit
+                          </button>
                         </div>
                       </div>
                     );
@@ -2422,15 +2309,37 @@ export default function SendMoneyWalletStatus() {
         )}
       </main>
 
-      <BulkEditModal
+      {editModalRow && (
+        <WalletSettingsModal
+          mode="single"
+          isOpen={editModalOpen}
+          onClose={closeEditModal}
+          saving={modalSaving}
+          errorMessage={modalError}
+          shopName={editModalRow.shopName}
+          lastUpdatedAt={editModalRow.remarkUpdatedAt}
+          lastUpdatedBy={editModalRow.remarkUpdatedBy}
+          initialValues={{
+            mainReason: editModalRow.mainReason,
+            closureType: editModalRow.closureType,
+            affectedServices: editModalRow.affectedServices,
+            remark: editModalRow.remark,
+            minimumAmountCanTake: editModalRow.minimumAmountCanTake === null ? '' : String(editModalRow.minimumAmountCanTake),
+            balanceLimitOverride: editModalRow.balanceLimitOverride === null ? '' : String(editModalRow.balanceLimitOverride),
+            scheduleOverride: editModalRow.scheduleOverride,
+          }}
+          onSave={handleModalSave}
+        />
+      )}
+
+      <WalletSettingsModal
+        mode="bulk"
         isOpen={bulkEditOpen}
         onClose={() => setBulkEditOpen(false)}
-        onApply={handleBulkEditApply}
+        saving={modalSaving}
+        errorMessage={modalError}
         selectedCount={selectedIds.size}
-        priorityOptions={PRIORITY_OPTIONS}
-        remarksSuggestions={[]}
-        showDateField={false}
-        primaryButtonClassName="bg-indigo-600 hover:bg-indigo-700"
+        onSaveBulk={handleModalSaveBulk}
       />
     </div>
   );

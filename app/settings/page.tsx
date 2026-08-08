@@ -399,7 +399,7 @@ function BundleSectionCard({
           const isToggle = f.field === 'Bundle Enabled' || f.field === 'Auto Grouping';
           const savedField = saved[i];
           return (
-            <div key={f.field} className="rounded-lg border border-border p-3">
+            <div key={i} className="rounded-lg border border-border p-3">
               <div className="flex items-center justify-between gap-3">
                 <span className="text-[12px] font-medium text-foreground">{f.field}</span>
                 {isToggle ? (

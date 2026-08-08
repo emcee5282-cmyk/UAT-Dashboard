@@ -91,8 +91,7 @@ export default function FilterDropdown({
 
   const filteredOptions = useMemo(() => {
     const query = searchQuery.trim().toLowerCase();
-    if (!query) return options;
-    return options.filter((opt) => opt.label.toLowerCase().includes(query));
+    return options.filter((opt) => opt.count > 0 && (!query || opt.label.toLowerCase().includes(query)));
   }, [options, searchQuery]);
 
   useEffect(() => {

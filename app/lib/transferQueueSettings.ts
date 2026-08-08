@@ -689,10 +689,15 @@ export async function readBundleConfig(): Promise<BundleField[]> {
 
   if (rows.length === 0) return DEFAULT_BUNDLE.map((b) => ({ ...b, updatedBy: '', updatedAt: '' }));
 
+  // Field identity is fixed by row position (see updateBundleField, which
+  // always writes DEFAULT_BUNDLE[index].field back into column K) — never
+  // trusted from the sheet cell itself. A stray manual edit to column K
+  // (observed once: "true" leaking in from the adjacent value column)
+  // would otherwise render as the field's own label.
   return rows.map((row, i) => {
     const fallback = DEFAULT_BUNDLE[i];
     return {
-      field: (row[0]?.trim() as BundleFieldName) || fallback.field,
+      field: fallback.field,
       value: (row[1] ?? '').trim() || fallback.value,
       updatedBy: (row[2] ?? '').trim(),
       updatedAt: (row[3] ?? '').trim(),
