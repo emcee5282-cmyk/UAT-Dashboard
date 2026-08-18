@@ -17,13 +17,12 @@ import TableFooter from '@/app/components/TableFooter';
 import EmptyState from '@/app/components/EmptyState';
 import WalletSettingsModal, { type WalletSettingsValues } from '@/app/components/WalletSettingsModal';
 import { classifyFetchError, type ClassifiedError, assertAllOk } from '@/app/lib/errors';
-import { rawVal } from '@/app/lib/format';
-import { parseCsvLines } from '@/app/lib/csv';
 import { getPreference, setPreference } from '@/app/lib/preferences';
 import {
   resolveBrand,
   computeWalletStatus,
 } from '@/app/lib/balanceEngine';
+import type { BalanceLimitWalletRow } from '@/app/lib/db/read/balanceLimit';
 import { BRAND_CODES as CASHOUT_BRAND_CODES } from '@/app/lib/transferQueueCount';
 
 // Mirrors app/lib/walletStatus.ts's own types — not imported directly since
@@ -1174,71 +1173,65 @@ export default function SendMoneyWalletStatus() {
       setError(null);
 
       const [openingRes, balRes, statusRes] = await Promise.all([
-        fetch(`/api/opening?t=${Date.now()}`),
-        fetch(`/api/sendmoney/balances?t=${Date.now()}`),
+        // Leader/SDP now read PostgreSQL (/api/v2/sendmoney/opening) — the
+        // same live source app/sendmoney/opening itself already reads, not
+        // the older Sheets mirror (/api/opening) this page used to fall
+        // back to. securityDeposit stays null when genuinely unset (Send
+        // Money Opening's own established convention — see
+        // openingPageService.ts's own comment), so the null-vs-set
+        // distinction the old "NO SDP"/blank Sheets check relied on is
+        // preserved directly, not approximated.
+        fetch(`/api/v2/sendmoney/opening?t=${Date.now()}`),
+        // Phase 9 — live wallet status/financial fields now read PostgreSQL
+        // (same Phase 8B endpoint the Balance Tab uses), not Google Sheets.
+        // Priority/Remarks/Wallet Settings below stay on the "Wallet Status"
+        // sheet tab, unchanged — Send Money's own key already equals
+        // agentCode (no re-key needed, unlike Cashout's per-wallet key).
+        fetch(`/api/v2/balance-limit?product=sendmoney&t=${Date.now()}`),
         fetch(`/api/sendmoney/wallet-status?t=${Date.now()}`),
       ]);
 
       await assertAllOk([openingRes, balRes, statusRes]);
 
-      const openingText = await openingRes.text();
-      const balData: string[][] = await balRes.json();
+      const openingJson: { agentCode: string; leader: string; securityDeposit: number | null }[] = await openingRes.json();
+      const balJson: { rows: BalanceLimitWalletRow[] } = await balRes.json();
       const statusData: Record<string, PriorityEntry> = await statusRes.json();
 
-      // Send Money's own roster lives in cols L-O (indices 11-14) of the
-      // same "Opening AG" sheet Cashout uses for cols A-D.
-      const openingRows = parseCsvLines(openingText)
-        .slice(1)
-        .filter((row) => row.some((cell) => cell.trim() !== ''))
-        .map((row) => ({
-          agentName: rawVal(row[11]),
-          sdp: rawVal(row[13]),
-          leader: rawVal(row[14]),
-        }))
-        .filter((row) => row.agentName && row.agentName !== '-' && row.agentName !== 'OLD');
+      const openingRows = openingJson.map((row) => ({
+        agentName: row.agentCode,
+        leader: row.leader,
+        securityDeposit: row.securityDeposit,
+      }));
 
-      // "SSP PS BalanceLimit" lines up column-for-column with Cashout's own
-      // sheet from index 4 onward — no leading "Reference" column, so
-      // Wallet Name/Account Status shift down by 1 (same as
-      // app/sendmoney/balances/page.tsx).
-      const balRows = balData
-        .slice(1)
-        .filter((row) => row.some((cell) => cell.trim() !== ''))
-        .map((row) => ({
-          walletName: rawVal(row[0]),
-          totalDP: rawVal(row[11]),
-          group: rawVal(row[6]),
-          accountStatus: rawVal(row[1]),
-        }))
-        .filter((row) => row.walletName && row.walletName !== '-');
+      // Already clean, typed JSON objects (one row per agent/wallet-type) —
+      // no CSV header row to skip, no blank-row filtering needed.
+      const balRows = balJson.rows.filter((row) => row.agentCode && row.agentCode !== '-');
 
-      const balWalletNames = new Set(balRows.map((bal) => bal.walletName));
+      const balWalletNames = new Set(balRows.map((bal) => bal.agentCode));
       const dpTotals = new Map<string, number>();
       const brandGroups = new Map<string, string[]>();
       const walletStatusValues = new Map<string, string[]>();
       balRows.forEach((bal) => {
-        const dp = parseFloat(bal.totalDP.replace(/,/g, '')) || 0;
-        dpTotals.set(bal.walletName, (dpTotals.get(bal.walletName) ?? 0) + dp);
+        dpTotals.set(bal.agentCode, (dpTotals.get(bal.agentCode) ?? 0) + bal.totalDP);
 
         if (bal.group && bal.group !== '-') {
-          const groups = brandGroups.get(bal.walletName) ?? [];
+          const groups = brandGroups.get(bal.agentCode) ?? [];
           groups.push(bal.group);
-          brandGroups.set(bal.walletName, groups);
+          brandGroups.set(bal.agentCode, groups);
         }
 
         if (bal.accountStatus && bal.accountStatus !== '-') {
-          const statuses = walletStatusValues.get(bal.walletName) ?? [];
-          statuses.push(bal.accountStatus);
-          walletStatusValues.set(bal.walletName, statuses);
+          const statuses = walletStatusValues.get(bal.agentCode) ?? [];
+          // A wallet that isn't logged in reads as Disconnected regardless
+          // of what its Group would otherwise resolve to.
+          statuses.push(bal.isLoggedIn ? bal.accountStatus : 'Disconnected');
+          walletStatusValues.set(bal.agentCode, statuses);
         }
       });
 
       const merged: WalletStatusRow[] = openingRows.map((opening, index) => {
         const totalDP = dpTotals.get(opening.agentName) ?? 0;
-        const sdpRaw = opening.sdp;
-        const sdpNum = parseNumber(sdpRaw);
-        const sdpTrimmed = sdpRaw.trim().toUpperCase();
-        const sdpDisplay = sdpTrimmed === 'NO SDP' || !sdpRaw || sdpRaw === '-' ? '−' : displayNum(sdpNum);
+        const sdpDisplay = opening.securityDeposit === null ? '−' : displayNum(opening.securityDeposit);
         const computedStatus = balWalletNames.has(opening.agentName)
           ? computeWalletStatus(walletStatusValues.get(opening.agentName) ?? [])
           : 'No Record';

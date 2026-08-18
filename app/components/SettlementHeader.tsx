@@ -3,7 +3,8 @@
 import type { LucideIcon } from 'lucide-react';
 import { RefreshCw } from 'lucide-react';
 import ProductSwitchTabs from './ProductSwitchTabs';
-import ThemeToggle from './ThemeToggle';
+import AccountMenu from './AccountMenu';
+import HeaderFadeEdge from './HeaderFadeEdge';
 
 type SettlementHeaderProps = {
   icon: LucideIcon;
@@ -23,6 +24,10 @@ type SettlementHeaderProps = {
 // directly below) owns the header REGION's true bottom edge, so title +
 // switcher + KPI read as one continuous block instead of two stacked boxes
 // with a seam between them.
+//
+// AccountMenu (theme toggle lives inside its dropdown) sits inline as the
+// last item in this same right-side cluster — no separate floating header
+// band for it anymore.
 export default function SettlementHeader({ icon: Icon, title, isRefreshing, onRefresh }: SettlementHeaderProps) {
   return (
     <div className="sticky top-0 z-[60] w-full bg-white dark:bg-[#1c1c1e]">
@@ -66,9 +71,10 @@ export default function SettlementHeader({ icon: Icon, title, isRefreshing, onRe
           >
             <RefreshCw size={14} strokeWidth={1.75} className={isRefreshing ? 'animate-spin' : ''} />
           </button>
-          <ThemeToggle />
+          <AccountMenu />
         </div>
       </div>
+      <HeaderFadeEdge bgClassName="from-white dark:from-[#1c1c1e]" />
     </div>
   );
 }

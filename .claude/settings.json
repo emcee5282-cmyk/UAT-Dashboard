@@ -99,7 +99,9 @@
       "Bash(curl -s http://localhost:3000/api/wallet-status -o /dev/null -w \"api/wallet-status: %{http_code}\\\\n\")",
       "Bash(curl -s http://localhost:3000/wallet-status -o /dev/null -w \"trigger compile: %{http_code}\\\\n\")",
       "Bash(curl -s http://localhost:3000/wallet-status -o \"C:\\\\Users\\\\ejboy\\\\AppData\\\\Local\\\\Temp\\\\claude\\\\c--Users-ejboy-Desktop-dashbaord-project\\\\7b2f94bd-a3d4-449f-97ac-b23e63c8b1fd\\\\scratchpad\\\\ws_check.html\")",
-      "Bash(curl -s -X POST http://localhost:3000/api/wallet-status/update-settings -H 'Content-Type: application/json' -d '{\"shopName\":\"ZTEST_WALLETSETTINGS_TMP\",\"remark\":\"Server maintenance due to unstable statement updates.\",\"mainReason\":\"System Maintenance\",\"closureType\":\"Temporary Close\",\"affectedServices\":[\"Deposit\",\"Withdrawal\"],\"minimumAmountCanTake\":20000,\"balanceLimitOverride\":500000,\"scheduleOverride\":\"Extended\"}')"
+      "Bash(curl -s -X POST http://localhost:3000/api/wallet-status/update-settings -H 'Content-Type: application/json' -d '{\"shopName\":\"ZTEST_WALLETSETTINGS_TMP\",\"remark\":\"Server maintenance due to unstable statement updates.\",\"mainReason\":\"System Maintenance\",\"closureType\":\"Temporary Close\",\"affectedServices\":[\"Deposit\",\"Withdrawal\"],\"minimumAmountCanTake\":20000,\"balanceLimitOverride\":500000,\"scheduleOverride\":\"Extended\"}')",
+      "Bash(tasklist //FI \"IMAGENAME eq node.exe\")",
+      "Bash(wmic process *)"
     ]
   }
 }

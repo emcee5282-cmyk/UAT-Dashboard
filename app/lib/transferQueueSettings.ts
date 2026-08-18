@@ -138,7 +138,7 @@ export type RuleHistoryEntry = {
 // full. cashout_extended and cashout_247 share the same real shape/values
 // today (M1's own "Day" reuses the generic 4-rule 24/7 template) but are
 // independently editable from here on.
-const DEFAULT_RULES: Omit<RuleRow, 'updatedBy' | 'updatedAt'>[] = [
+export const DEFAULT_RULES: Omit<RuleRow, 'updatedBy' | 'updatedAt'>[] = [
   { section: 'cashout_day', metric: 'Company Balance', operator: 'Less Than', value1: 90000, value2: null, queueResult: 'Day DP + WD', enabled: true },
   { section: 'cashout_day', metric: 'SDP VS Balance', operator: 'Greater Than', value1: 30000, value2: null, queueResult: 'Day WD Only', enabled: true },
   { section: 'cashout_day', metric: 'Discrepancy', operator: 'Greater Than', value1: 20000, value2: null, queueResult: 'Day WD Only', enabled: true },
@@ -220,7 +220,7 @@ const DEFAULT_RULES: Omit<RuleRow, 'updatedBy' | 'updatedAt'>[] = [
 
 // Forward-looking — no direct current-code equivalent beyond "SH never
 // queued"; the other two fields have no live behavior to mirror yet.
-const DEFAULT_BUNDLE: Omit<BundleField, 'updatedBy' | 'updatedAt'>[] = [
+export const DEFAULT_BUNDLE: Omit<BundleField, 'updatedBy' | 'updatedAt'>[] = [
   { field: 'Excluded Brands', value: 'SH' },
   { field: 'Bundle Enabled', value: 'true' },
   { field: 'Auto Grouping', value: 'true' },
@@ -689,12 +689,29 @@ export async function readBundleConfig(): Promise<BundleField[]> {
 
   if (rows.length === 0) return DEFAULT_BUNDLE.map((b) => ({ ...b, updatedBy: '', updatedAt: '' }));
 
+  // Google's Sheets API drops leading columns from every returned row when
+  // they're blank across the WHOLE fetched range, not just per-row —
+  // confirmed live (2026-08-17): column K (Field) has gone blank on the
+  // real sheet, so every row here currently arrives 1 short (Value/Updated
+  // By/Updated At only), which the field-identity-by-position read below
+  // would otherwise silently misread one column left (Updated By's real
+  // text landing in `value`, Updated At's in `updatedBy`, etc.) — exactly
+  // the live bug this restores against. Field itself is never trusted from
+  // the cell anyway (see the comment below), and updateBundleField() always
+  // writes a real (non-blank) Updated By/At on every save, so a row
+  // genuinely short by exactly 1 can only mean K went blank, never a
+  // legitimately-blank trailing cell — left-padding is safe here.
+  const EXPECTED_WIDTH = 4; // Field, Value, Updated By, Updated At
+  const normalizedRows = rows.map((row) =>
+    row.length >= EXPECTED_WIDTH ? row : [...Array(EXPECTED_WIDTH - row.length).fill(''), ...row]
+  );
+
   // Field identity is fixed by row position (see updateBundleField, which
   // always writes DEFAULT_BUNDLE[index].field back into column K) — never
   // trusted from the sheet cell itself. A stray manual edit to column K
   // (observed once: "true" leaking in from the adjacent value column)
   // would otherwise render as the field's own label.
-  return rows.map((row, i) => {
+  return normalizedRows.map((row, i) => {
     const fallback = DEFAULT_BUNDLE[i];
     return {
       field: fallback.field,

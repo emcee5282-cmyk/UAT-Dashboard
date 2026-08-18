@@ -1,15 +1,10 @@
 import { NextResponse } from 'next/server';
-import { readCashoutEstimatedOpening, readImportLog } from '@/app/lib/estimatedOpening';
+import { readEstimatedOpeningDisplayPg } from '@/app/lib/db/read/estimatedOpening';
 
+// LOCALHOST PHASE 3: reads directly from PostgreSQL — no Google Sheets call.
 export async function GET() {
   try {
-    const [{ balances, balancesWithFallback, walletTotals, uploadedAt }, importLog] = await Promise.all([
-      readCashoutEstimatedOpening(),
-      readImportLog(),
-    ]);
-    // Import Log is appended oldest-first, so the last entry is the most
-    // recent upload — the only one the modal's "Last Import" section needs.
-    const lastImport = importLog.length > 0 ? importLog[importLog.length - 1] : null;
+    const { balances, balancesWithFallback, walletTotals, uploadedAt, lastImport } = await readEstimatedOpeningDisplayPg('cashout');
     return NextResponse.json(
       {
         balances: Object.fromEntries(balances),

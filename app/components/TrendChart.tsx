@@ -17,6 +17,10 @@ type TrendChartProps = {
   seriesDefs: TrendSeriesDef[]; // stacking order = ramp order, index 0 = fullest opacity
   weekData: TrendPoint[]; // 7 points: 7 full days of history (today excluded — partial/in-progress)
   monthData: TrendPoint[]; // 30 points: 30 full days of history
+  // Plot area height in px. Optional, defaults to 280 (the original,
+  // unchanged value) — pages that want a more compact chart pass a smaller
+  // number rather than this component picking a size for everyone.
+  chartHeight?: number;
 };
 
 type PlotPoint = TrendPoint & { visibleTotal: number };
@@ -72,7 +76,7 @@ function TrendTooltip({ active, payload, seriesDefs }: { active?: boolean; paylo
   );
 }
 
-export default function TrendChart({ title, seriesDefs, weekData, monthData }: TrendChartProps) {
+export default function TrendChart({ title, seriesDefs, weekData, monthData, chartHeight = 280 }: TrendChartProps) {
   const [period, setPeriod] = useState<'week' | 'month'>('week');
   const [visibleSeries, setVisibleSeries] = useState<Record<string, boolean>>(
     () => Object.fromEntries(seriesDefs.map((s) => [s.key, true]))
@@ -219,7 +223,7 @@ export default function TrendChart({ title, seriesDefs, weekData, monthData }: T
 
       {/* Chart — 7D: no Y-axis, every bar labeled. 30D: minimal 3-tick Y-axis,
           only the peak day labeled, dashed 30-day average line. */}
-      <div className="h-[280px] select-none px-3 py-4 pt-6">
+      <div className="select-none px-3 py-4 pt-6" style={{ height: chartHeight }}>
         <ResponsiveContainer width="100%" height="100%">
           <BarChart data={chartData} margin={{ top: 20, right: 0, left: 0, bottom: 0 }}>
             <CartesianGrid vertical={false} stroke="var(--border)" strokeDasharray="4 4" />

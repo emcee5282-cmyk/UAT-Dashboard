@@ -1,0 +1,1 @@
+ALTER TYPE "public"."import_type" ADD VALUE 'balancelimit';

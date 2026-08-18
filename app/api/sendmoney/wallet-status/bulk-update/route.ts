@@ -1,5 +1,12 @@
 import { NextResponse } from 'next/server';
 import { updateSendMoneyWalletStatusBulk, type Priority, type MainReason, type ClosureType, type AffectedService, type ScheduleOverride, type WalletStatusBulkUpdate } from '@/app/lib/walletStatus';
+import { bulkUpdateWalletSettingsPg } from '@/app/lib/services/walletStatusConfigService';
+
+// Send Money-only flag — see app/api/sendmoney/wallet-status/route.ts's
+// own comment.
+function isPostgresSourceEnabled(): boolean {
+  return process.env.NEXT_PUBLIC_WALLET_STATUS_SOURCE_SENDMONEY === 'postgres';
+}
 
 const VALID_PRIORITIES: Priority[] = ['Low', 'Normal', 'High'];
 const VALID_MAIN_REASONS: MainReason[] = ['', 'Closed by Operations', 'High Running Balance', 'Reduce as per Leader', 'Wallet Issue', 'Blocked by Wallet Office', 'Others'];
@@ -57,6 +64,11 @@ export async function POST(request: Request) {
 
     if (updates.length === 0) {
       return NextResponse.json({ error: 'No valid updates provided.' }, { status: 400 });
+    }
+
+    if (isPostgresSourceEnabled()) {
+      await bulkUpdateWalletSettingsPg('sendmoney', updates.map((u) => ({ ...u, shopKey: u.shopName })));
+      return NextResponse.json({ ok: true }, { headers: { 'Cache-Control': 'no-store' } });
     }
 
     const result = await updateSendMoneyWalletStatusBulk(updates);

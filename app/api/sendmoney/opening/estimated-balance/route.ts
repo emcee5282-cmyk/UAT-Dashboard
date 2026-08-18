@@ -1,13 +1,10 @@
 import { NextResponse } from 'next/server';
-import { readSendMoneyEstimatedOpening, readSendMoneyImportLog } from '@/app/lib/estimatedOpening';
+import { readEstimatedOpeningDisplayPg } from '@/app/lib/db/read/estimatedOpening';
 
+// LOCALHOST PHASE 3: reads directly from PostgreSQL — no Google Sheets call.
 export async function GET() {
   try {
-    const [{ balances, balancesWithFallback, walletTotals, uploadedAt }, importLog] = await Promise.all([
-      readSendMoneyEstimatedOpening(),
-      readSendMoneyImportLog(),
-    ]);
-    const lastImport = importLog.length > 0 ? importLog[importLog.length - 1] : null;
+    const { balances, balancesWithFallback, walletTotals, uploadedAt, lastImport } = await readEstimatedOpeningDisplayPg('sendmoney');
     return NextResponse.json(
       {
         balances: Object.fromEntries(balances),

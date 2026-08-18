@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import {
-  ChevronDown, Columns3, Download, RefreshCw, Search, Wallet,
+  ChevronDown, Columns3, Download, RefreshCw, Search, Upload, Wallet,
   TrendingUp, ArrowDownToLine, ArrowUpFromLine, Shield, ArrowUpDown,
   Tag, User, FilterX,
 } from 'lucide-react';
@@ -15,6 +15,7 @@ import TableFooter from '@/app/components/TableFooter';
 import EmptyState from '@/app/components/EmptyState';
 import FilterDropdown from '@/app/components/FilterDropdown';
 import ColumnsDropdown from '@/app/components/ColumnsDropdown';
+import BalanceLimitUploadModal from '@/app/components/BalanceLimitUploadModal';
 import { classifyFetchError, type ClassifiedError, assertAllOk } from '@/app/lib/errors';
 import { rawVal, fmt, fmtAbbrev } from '@/app/lib/format';
 import { parseCsvLines } from '@/app/lib/csv';
@@ -23,13 +24,27 @@ import { getBusinessToday, toBusinessDate, parseCardCutoffDate } from '@/app/lib
 import {
   computeWalletStatus,
   WALLET_STATUS_OPTIONS,
-  isLoggedIn,
   computeCompanyBalance,
   computeAgentWithdrawal,
   computeSdpVsBalance,
   resolveBrand,
 } from '@/app/lib/balanceEngine';
 import { getPreference, setPreference } from '@/app/lib/preferences';
+import type { BalanceLimitWalletRow } from '@/app/lib/db/read/balanceLimit';
+import type { AgentBalanceRow as PgAgentBalanceRow } from '@/app/lib/services/balanceService';
+
+// LOCALHOST-ONLY, page-scoped data-source override — deliberately isolated
+// from app/lib/dataSource.ts's global DATA_SOURCE (that switch is not wired
+// into anything yet and stays that way; this is separate and affects only
+// this page). Explicit opt-in only: any value other than the literal
+// 'postgres' keeps this page on Google Sheets, its always-safe default. Not
+// a secret — just a mode flag, so NEXT_PUBLIC_ exposure is fine — the
+// browser still only ever calls this existing server-side API route
+// (/api/v2/sendmoney/balances), never Postgres directly, and never sees
+// SYNC_SECRET or a database connection string.
+function isPostgresSourceEnabled(): boolean {
+  return process.env.NEXT_PUBLIC_SENDMONEY_BALANCES_SOURCE === 'postgres';
+}
 
 // "Opening AG" sheet col I — Send Money's own "UPDATED TIME" card (Cashout's
 // equivalent card lives in col G instead — the two products' cards sit
@@ -93,15 +108,6 @@ function parseNumber(val: string): number {
   if (cleaned === '-' || cleaned === '') return 0;
   const num = parseFloat(cleaned);
   return isNaN(num) ? 0 : num;
-}
-
-// Stlm Top Up sheet dates are formatted "M/D/YYYY".
-function parseSheetDate(dateStr: string): Date | null {
-  const parts = (dateStr ?? '').trim().split('/');
-  if (parts.length !== 3) return null;
-  const [m, d, y] = parts.map(Number);
-  if (!m || !d || !y) return null;
-  return new Date(y, m - 1, d);
 }
 
 // Type comes straight from the wallet name's own suffix, not the Balance
@@ -455,12 +461,46 @@ function ResetFiltersButton({ anyFilterActive, onClick }: { anyFilterActive: boo
   );
 }
 
+// Send Money's own "BD" shop-naming convention — the shop code's 2nd
+// dash-segment is <letter><digit>BD (e.g. "M1BD", "B5BD"), always in that
+// exact position — confirmed against all 472 real BD-coded shops in the
+// live roster, zero exceptions. Payment's own raw Group text for these
+// shops already spells out "Bundle" whenever the wallet is actually
+// DP/WD-capable (e.g. "SH- Day Bundle DP Only") — confirmed 1:1 correlated
+// with BD-coded shops in real data (241/241 "Bundle" Group rows are on a
+// BD-coded shop, and 0 non-BD-coded shops ever have "Bundle" in Group).
+// This only ever RELABELS an already-correctly-computed DP Only/WD Only
+// result — normalizeWalletStatus already resolves "...Bundle DP Only"/
+// "...Bundle WD Only" Group text to plain 'DP Only'/'WD Only' via its
+// existing substring checks, no changes needed there. A BD-coded shop with
+// any other computed status (Wallet With Issue, Disconnected, etc.)
+// displays that status normally, unlabeled — confirmed against real data
+// this is exactly what Payment's own Group text already does (BD-coded
+// shops with a Wallet-with-Issue/DC-Account Group never say "Bundle"
+// either, so there's nothing to relabel for those).
+const SENDMONEY_BD_SHOP_PATTERN = /^[A-Za-z]-[A-Za-z]\d+BD-/;
+
+function applyBundleAccLabel(agentCode: string, status: string): string {
+  if (!SENDMONEY_BD_SHOP_PATTERN.test(agentCode)) return status;
+  if (status === 'DP Only') return 'DP Bundle Acc.';
+  if (status === 'WD Only') return 'WD Bundle Acc.';
+  return status;
+}
+
+// Extends the shared, cross-product WALLET_STATUS_OPTIONS (balanceEngine.ts)
+// with the two Bundle Acc. labels — kept local to this page rather than
+// added to the shared constant, since the BD convention is Send Money-only
+// and Cashout never produces these values.
+const SENDMONEY_WALLET_STATUS_OPTIONS = [...WALLET_STATUS_OPTIONS, 'DP Bundle Acc.', 'WD Bundle Acc.'];
+
 function walletStatusBadgeClasses(status: string): string {
   switch (status) {
     case 'DP + WD':
     case 'DP Only':
+    case 'DP Bundle Acc.':
       return 'bg-emerald-50 text-emerald-700 border-emerald-200 dark:bg-emerald-500/10 dark:text-emerald-400 dark:border-emerald-900/50';
     case 'WD Only':
+    case 'WD Bundle Acc.':
       return 'bg-amber-50 text-amber-700 border-amber-200 dark:bg-amber-500/10 dark:text-amber-400 dark:border-amber-900/50';
     case 'Top Up Acc.':
       return 'bg-indigo-50 text-indigo-700 border-indigo-200 dark:bg-indigo-500/10 dark:text-indigo-400 dark:border-indigo-900/50';
@@ -660,12 +700,18 @@ export default function SendMoneyAgentBalance() {
   const columnsButtonRef = useRef<HTMLButtonElement>(null);
   const refreshButtonRef = useRef<HTMLButtonElement>(null);
   const exportButtonRef = useRef<HTMLButtonElement>(null);
+  const uploadButtonRef = useRef<HTMLButtonElement>(null);
   const refreshTooltip = useTooltip(refreshButtonRef);
   const exportTooltip = useTooltip(exportButtonRef);
   const columnsTooltip = useTooltip(columnsButtonRef);
+  const uploadTooltip = useTooltip(uploadButtonRef);
+  // Phase 8b — same Balance Limit upload wizard as Cashout's own /agentbal,
+  // product='sendmoney' here. rows' agentName is row.agentCode (see below),
+  // the same roster agents.agent_code was seeded from for this product.
+  const [balanceLimitModalOpen, setBalanceLimitModalOpen] = useState(false);
 
   const [walletStatusFilter, setWalletStatusFilter] = useState<Record<string, boolean>>(
-    () => Object.fromEntries(WALLET_STATUS_OPTIONS.map((status) => [status, true]))
+    () => Object.fromEntries(SENDMONEY_WALLET_STATUS_OPTIONS.map((status) => [status, true]))
   );
   const [page, setPage] = useState(1);
   const [rowsPerPage, setRowsPerPage] = useState(50);
@@ -737,25 +783,85 @@ export default function SendMoneyAgentBalance() {
       setLoading(true);
       setError(null);
 
-      // Reuses Cashout's own /api/opening (fetches the whole "Opening AG"
-      // sheet) as-is for the roster, plus two Send Money-specific routes:
-      // /api/sendmoney/balances ("SSP PS BalanceLimit") and
-      // /api/sendmoney/stlmtopup ("PS BD STLM + TOPUP", Send Money's own
-      // dedicated Settlement + Top Up sheet) — plus the Send Money Estimated
-      // Opening upload, same Assumed Balance substitution
-      // app/agentbal/page.tsx already does for Cashout.
+      let merged: MergedRow[];
+
+      if (isPostgresSourceEnabled()) {
+        // Postgres path — /api/v2/sendmoney/balances already computes every
+        // financial field server-side (balanceService.ts, same balanceEngine.ts
+        // formulas the Sheets path below calls directly), so this only maps
+        // field names onto MergedRow — no calculation is duplicated here.
+        // walletType is the one exception: a trivial suffix parse off the
+        // wallet's own code string (same computeWalletType() helper this file
+        // already uses for the Sheets path), not a financial calculation.
+        //
+        // Known, documented differences from Sheets mode (not bugs, not
+        // fixed here — out of scope for this localhost data-source test):
+        // (1) no Estimated Opening override — Postgres mode always uses the
+        // raw synced Opening Balance; (2) Total Top Up/Settlement here are
+        // strictly "today" (no cutoff-widening for a stale Opening card);
+        // (3) an agent with zero wallet rows reads as "Disconnected" here
+        // instead of Sheets mode's "No Record" (the API doesn't expose
+        // wallet count to distinguish the two cases).
+        const res = await fetch(`/api/v2/sendmoney/balances?t=${Date.now()}`);
+        await assertAllOk([res]);
+        const pgRows: PgAgentBalanceRow[] = await res.json();
+        merged = pgRows.map((row) => ({
+          agentName: row.agentCode,
+          openingBal: String(row.openingBalance),
+          sdp: String(row.sdp),
+          leader: row.leader,
+          agentTotalDP: row.totalDp,
+          agentTotalWD: row.totalWd,
+          totalTopUp: row.totalTopUp,
+          totalStlm: row.totalSettlement,
+          balanceInside: row.balanceInside,
+          runningBalance: row.companyBalance,
+          agentWithdrawal: row.agentWithdrawal,
+          sdpVsBalance: row.sdpVsBalance,
+          walletStatus: row.walletStatus,
+          brand: row.brand,
+          walletType: computeWalletType(row.agentCode),
+        }));
+
+        setRows(merged);
+        setTimeout(() => {
+          requestAnimationFrame(() => {
+            requestAnimationFrame(() => {
+              window.scrollTo({ top: scrollRef.current, behavior: 'instant' });
+            });
+          });
+        }, 50);
+        return;
+      }
+
+      // Sheets path (default, unchanged) — reuses Cashout's own /api/opening (fetches the whole "Opening AG"
+      // sheet) as-is for the roster, plus /api/sendmoney/balances
+      // ("SSP PS BalanceLimit") — plus the Send Money Estimated Opening
+      // upload, same Assumed Balance substitution app/agentbal/page.tsx
+      // already does for Cashout.
       const [openingRes, balRes, stlmRes, estimatedRes] = await Promise.all([
         fetch(`/api/opening?t=${Date.now()}`),
-        fetch(`/api/sendmoney/balances?t=${Date.now()}`),
-        fetch(`/api/sendmoney/stlmtopup?t=${Date.now()}`),
+        // Phase 8B — Balance Limit's own display now reads PostgreSQL
+        // (written by the validated Phase 8/8A upload pipeline), not
+        // Google Sheets. Opening/Estimated Opening below are unrelated to
+        // Balance Limit and stay on Sheets, unchanged.
+        fetch(`/api/v2/balance-limit?product=sendmoney&t=${Date.now()}`),
+        // Settlement/Top Up migration — reads PostgreSQL (wallet_transactions,
+        // via the Settlement/Top Up bulk-import wizards) instead of the raw
+        // "PS BD STLM + TOPUP" sheet. Server-side already applies the same
+        // topUpSettlementCutoff widening this file computes below for the
+        // Assumed Balance check, so no client-side date filtering is needed
+        // here anymore — see app/lib/services/balanceService.ts's
+        // getTopUpSettlementTotals().
+        fetch(`/api/v2/stlmtopup?product=sendmoney&t=${Date.now()}`),
         fetch(`/api/sendmoney/opening/estimated-balance?t=${Date.now()}`),
       ]);
 
       await assertAllOk([openingRes, balRes, stlmRes, estimatedRes]);
 
       const openingText = await openingRes.text();
-      const balData: string[][] = await balRes.json();
-      const stlmText = await stlmRes.text();
+      const balJson: { rows: BalanceLimitWalletRow[] } = await balRes.json();
+      const stlmJson: { totals: Record<string, { totalTopUp: number; totalSettlement: number }> } = await stlmRes.json();
       const estimatedData: { balances: Record<string, number>; uploadedAt: string | null } = await estimatedRes.json();
 
       const openingRawRows = parseCsvLines(openingText);
@@ -780,27 +886,10 @@ export default function SendMoneyAgentBalance() {
         toBusinessDate(estimatedUploadedAt).getTime() === getBusinessToday().getTime();
       const estimatedBalances = new Map(Object.entries(estimatedData.balances ?? {}));
 
-      // Top Up/Settlement totals (feeding Company Balance) reset at the 2AM
-      // business-day rollover (see app/lib/businessDate.ts) — clock-based
-      // ("today"), UNLESS no valid Estimated Balance covers today yet, then
-      // this widens so Settlement/Top Up posted "yesterday" doesn't
-      // disappear once the calendar rolls over. Once a valid Estimated
-      // Balance exists it already bakes that stale day in, so this goes
-      // back to today-only to avoid counting it twice.
-      //
-      // Widen target: Opening's own "UPDATED TIME" card date IF it's
-      // genuinely stale (older than today) AND no valid Estimated Balance
-      // covers today yet. Per explicit instruction, this now matches
-      // Cashout's own cashoutLiveCutoff formula exactly (app/page.tsx /
-      // app/agentbal/page.tsx) — no "already ticked to today but
-      // unconfirmed" fallback (the oneBusinessDayBack widen this page had is
-      // dropped for consistency with Cashout), so this page's Company
-      // Balance and the Dashboard's own Top Up/Settlement never disagree
-      // (same figures whether read here or exported from this page).
-      const businessToday = getBusinessToday();
-      const topUpSettlementCutoff = (reportCutoffDate !== null && reportCutoffDate.getTime() < businessToday.getTime() && !estimatedOpeningValid)
-        ? reportCutoffDate
-        : businessToday;
+      // Top Up/Settlement's own date-window widening (matching this exact
+      // rule) now happens server-side in getTopUpSettlementTotals() — see
+      // the /api/v2/stlmtopup fetch above. No client-side cutoff needed here
+      // anymore.
 
       // Send Money's own roster lives in cols L-O (indices 11-14) of the same
       // "Opening AG" sheet Cashout uses for cols A-D — a separate ~9,983-row
@@ -825,33 +914,22 @@ export default function SendMoneyAgentBalance() {
       // "SSP AG BalanceLimit" from index 4 onward; it just lacks Cashout's
       // leading "Reference" column, so Wallet Name/Account Status shift down
       // by 1 (confirmed by sampling both sheets directly, not assumed).
-      const balRows = balData
-        .slice(1)
-        .filter((row) => row.some((cell) => cell.trim() !== ''))
-        .map((row) => ({
-          walletName: rawVal(row[0]),
-          totalDP: rawVal(row[11]),
-          totalWD: rawVal(row[13]),
-          balance: rawVal(row[8]),
-          login: rawVal(row[15]),
-          accountStatus: rawVal(row[1]),
-          group: rawVal(row[6]),
-        }))
-        .filter((row) => row.walletName && row.walletName !== '-');
+      // Already clean, typed JSON objects (one row per agent/wallet-type,
+      // same shape the sheet-based parsing above used to build by hand) —
+      // no CSV header row to skip, no blank-row filtering needed.
+      const balRows = balJson.rows.filter((row) => row.agentCode && row.agentCode !== '-');
 
-      const balWalletNames = new Set(balRows.map((bal) => bal.walletName));
+      const balWalletNames = new Set(balRows.map((bal) => bal.agentCode));
       const balanceTotals = new Map<string, { dp: number; wd: number }>();
       const balanceInsideTotals = new Map<string, number>();
       const walletStatusValues = new Map<string, string[]>();
       const brandGroups = new Map<string, string[]>();
       balRows.forEach((bal) => {
-        const name = bal.walletName;
-        const dp = parseFloat(bal.totalDP.replace(/,/g, '')) || 0;
-        const wd = parseFloat(bal.totalWD.replace(/,/g, '')) || 0;
+        const name = bal.agentCode;
         const existing = balanceTotals.get(name) ?? { dp: 0, wd: 0 };
         balanceTotals.set(name, {
-          dp: existing.dp + dp,
-          wd: existing.wd + wd,
+          dp: existing.dp + bal.totalDP,
+          wd: existing.wd + bal.totalWD,
         });
 
         if (bal.group && bal.group !== '-') {
@@ -862,68 +940,40 @@ export default function SendMoneyAgentBalance() {
 
         if (bal.accountStatus && bal.accountStatus !== '-') {
           const statuses = walletStatusValues.get(name) ?? [];
-          statuses.push(bal.accountStatus);
+          // A wallet that isn't logged in reads as Disconnected regardless
+          // of what its Group would otherwise resolve to.
+          statuses.push(bal.isLoggedIn ? bal.accountStatus : 'Disconnected');
           walletStatusValues.set(name, statuses);
         }
 
-        if (isLoggedIn(bal.login)) {
-          const balance = parseFloat(bal.balance.replace(/,/g, '')) || 0;
-          balanceInsideTotals.set(name, (balanceInsideTotals.get(name) ?? 0) + balance);
+        if (bal.isLoggedIn) {
+          balanceInsideTotals.set(name, (balanceInsideTotals.get(name) ?? 0) + bal.balance);
         }
       });
 
-      // "PS BD STLM + TOPUP" is Send Money's own dedicated sheet. Top Up
-      // lives in cols B-F (indices 1-5): To Agent/Amount/Date/Wallet/TYPE,
-      // amounts stored positive. Settlement lives in cols H-L (indices
-      // 7-11), same field order, amounts stored negative (money leaving) so
-      // they're abs()'d before accumulating. Cols Q-AA are a last-month
-      // archive and are not read.
       // Top Up/Settlement keys are normalized (uppercased, all whitespace
-      // stripped) before every set/get on these two maps — same fix applied
-      // to app/agentbal/page.tsx: the sheet's own "To Agent" values aren't
-      // always cased/spaced the same as the roster's agent names, which
-      // would otherwise silently drop that agent's Top Up/Settlement from
-      // its sum since the Map key never matched.
+      // stripped) before every set/get on this map — /api/v2/stlmtopup keys
+      // by agents.agent_code exactly, but the roster's own agentName text
+      // isn't always cased/spaced the same, which previously (Sheets-sourced)
+      // silently dropped that agent's Top Up/Settlement from its sum since
+      // the Map key never matched — same fix applied to app/agentbal/page.tsx.
       const normalizeAgentKey = (name: string): string => name.toUpperCase().replace(/\s+/g, '');
 
-      const topUpTotals = new Map<string, number>();
-      const stlmTotals = new Map<string, number>();
-      parseCsvLines(stlmText)
-        .slice(1)
-        .filter((row) => row.some((cell) => cell.trim() !== ''))
-        .forEach((row) => {
-          const topUpAgent = normalizeAgentKey(rawVal(row[1]));
-          const topUpAmount = rawVal(row[2]);
-          const topUpDate = parseSheetDate(rawVal(row[3]));
-          if (
-            topUpAgent && topUpAgent !== '-' && topUpAmount && topUpAmount !== '-' &&
-            topUpDate && topUpDate >= topUpSettlementCutoff
-          ) {
-            const amount = Math.abs(parseFloat(topUpAmount.replace(/,/g, '')) || 0);
-            topUpTotals.set(topUpAgent, (topUpTotals.get(topUpAgent) ?? 0) + amount);
-          }
+      const stlmTopUpTotals = new Map<string, { totalTopUp: number; totalSettlement: number }>();
+      for (const [agentCode, totals] of Object.entries(stlmJson.totals ?? {})) {
+        stlmTopUpTotals.set(normalizeAgentKey(agentCode), totals);
+      }
 
-          const stlmAgent = normalizeAgentKey(rawVal(row[7]));
-          const stlmAmount = rawVal(row[8]);
-          const stlmDate = parseSheetDate(rawVal(row[9]));
-          if (
-            stlmAgent && stlmAgent !== '-' && stlmAmount && stlmAmount !== '-' &&
-            stlmDate && stlmDate >= topUpSettlementCutoff
-          ) {
-            const amount = Math.abs(parseFloat(stlmAmount.replace(/,/g, '')) || 0);
-            stlmTotals.set(stlmAgent, (stlmTotals.get(stlmAgent) ?? 0) + amount);
-          }
-        });
-
-      const merged: MergedRow[] = openingRows.map((opening) => {
+      merged = openingRows.map((opening) => {
         const totals = balanceTotals.get(opening.agentName) ?? { dp: 0, wd: 0 };
-        const totalTopUp = topUpTotals.get(normalizeAgentKey(opening.agentName)) ?? 0;
-        const totalStlm = stlmTotals.get(normalizeAgentKey(opening.agentName)) ?? 0;
+        const stlmTopUp = stlmTopUpTotals.get(normalizeAgentKey(opening.agentName));
+        const totalTopUp = stlmTopUp?.totalTopUp ?? 0;
+        const totalStlm = stlmTopUp?.totalSettlement ?? 0;
         const balanceInside = balanceInsideTotals.get(opening.agentName) ?? 0;
         const runningBalance = computeCompanyBalance(parseNumber(opening.openingBal), totals.dp, totalTopUp, totals.wd, totalStlm);
         const sdpNum = parseNumber(opening.sdp);
         const walletStatus = balWalletNames.has(opening.agentName)
-          ? computeWalletStatus(walletStatusValues.get(opening.agentName) ?? [])
+          ? applyBundleAccLabel(opening.agentName, computeWalletStatus(walletStatusValues.get(opening.agentName) ?? []))
           : 'No Record';
         return {
           ...opening,
@@ -991,7 +1041,7 @@ export default function SendMoneyAgentBalance() {
 
   const walletStatusOptions = useMemo(() => {
     const present = new Set(rows.map((row) => row.walletStatus));
-    return WALLET_STATUS_OPTIONS.filter((status) => present.has(status));
+    return SENDMONEY_WALLET_STATUS_OPTIONS.filter((status) => present.has(status));
   }, [rows]);
 
   const anyWalletStatusUnchecked = walletStatusOptions.some((status) => !walletStatusFilter[status]);
@@ -1507,11 +1557,19 @@ export default function SendMoneyAgentBalance() {
               {loading ? (
                 <div className="ml-3 flex shrink-0 items-center gap-3">
                   <div className="h-10 w-10 shrink-0 dt-skeleton rounded-[12px] xl:w-[88px]" />
+                  <div className="h-10 w-10 shrink-0 dt-skeleton rounded-[12px] xl:w-[88px]" />
                   <div className="h-10 w-10 shrink-0 dt-skeleton rounded-[12px]" />
                   <div className="h-10 w-10 shrink-0 dt-skeleton rounded-[12px]" />
                 </div>
               ) : (
                 <div className="ml-3 flex shrink-0 items-center gap-3">
+                  <div className="relative">
+                    <button type="button" ref={uploadButtonRef} onClick={() => setBalanceLimitModalOpen(true)} aria-label="Upload Balance Limit" {...uploadTooltip.handlers} className={ICON_BUTTON}>
+                      <Upload size={16} />
+                      <span className="hidden xl:inline">Upload</span>
+                    </button>
+                    {uploadTooltip.rendered && <Tooltip label="Upload Balance Limit" open={uploadTooltip.open} pos={uploadTooltip.pos} onlyWhenCompact />}
+                  </div>
                   <div className="relative">
                     <button type="button" ref={exportButtonRef} onClick={handleExport} aria-label="Export to Excel" {...exportTooltip.handlers} className={ICON_BUTTON}>
                       <Download size={16} />
@@ -1791,6 +1849,16 @@ export default function SendMoneyAgentBalance() {
           </DataTable>
         )}
       </main>
+
+      <BalanceLimitUploadModal
+        isOpen={balanceLimitModalOpen}
+        onClose={() => setBalanceLimitModalOpen(false)}
+        product="sendmoney"
+        dataProduct="sendmoney"
+        agentRoster={rows.map((row) => row.agentName)}
+        accentButtonClassName="bg-[color:var(--product-accent)] hover:opacity-90"
+        onImported={fetchData}
+      />
     </div>
   );
 }

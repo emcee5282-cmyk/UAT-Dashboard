@@ -3,7 +3,7 @@
 import type { ReactNode } from 'react';
 import { usePathname, useRouter, useSearchParams } from 'next/navigation';
 import { RefreshCw, type LucideIcon } from 'lucide-react';
-import ThemeToggle from './ThemeToggle';
+import AccountMenu from './AccountMenu';
 import { getActiveProduct, getCounterpartPath, isProductSwitchRoute } from '../lib/productRoutes';
 import { FLOATING_HEADER_SHELL_CLASS } from '../design-system/shadows';
 
@@ -13,7 +13,7 @@ type FloatingHeaderProps = {
   onRefresh: () => void;
   refreshing: boolean;
   // Page-specific buttons (Send-to-Telegram, collapse-cards toggle, etc.),
-  // rendered before ThemeToggle/Refresh — every page has different extras.
+  // rendered before Refresh/AccountMenu — every page has different extras.
   actions?: ReactNode;
 };
 
@@ -83,7 +83,6 @@ export default function FloatingHeader({ title, icon: Icon, onRefresh, refreshin
 
           <div className="flex shrink-0 items-center justify-end gap-2">
             {actions}
-            <ThemeToggle />
             <button
               onClick={onRefresh}
               disabled={refreshing}
@@ -93,6 +92,7 @@ export default function FloatingHeader({ title, icon: Icon, onRefresh, refreshin
             >
               <RefreshCw size={13} className={refreshing ? 'animate-spin' : ''} />
             </button>
+            <AccountMenu />
           </div>
         </div>
 

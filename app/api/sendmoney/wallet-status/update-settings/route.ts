@@ -1,5 +1,12 @@
 import { NextResponse } from 'next/server';
 import { updateSendMoneyWalletSettings, type MainReason, type ClosureType, type AffectedService, type ScheduleOverride } from '@/app/lib/walletStatus';
+import { updateWalletSettingsPg } from '@/app/lib/services/walletStatusConfigService';
+
+// Send Money-only flag — see app/api/sendmoney/wallet-status/route.ts's
+// own comment.
+function isPostgresSourceEnabled(): boolean {
+  return process.env.NEXT_PUBLIC_WALLET_STATUS_SOURCE_SENDMONEY === 'postgres';
+}
 
 const MAX_REMARK_LENGTH = 500;
 const VALID_MAIN_REASONS: MainReason[] = ['', 'Closed by Operations', 'High Running Balance', 'Reduce as per Leader', 'Wallet Issue', 'Blocked by Wallet Office', 'Others'];
@@ -42,9 +49,10 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: 'Invalid minimumAmountCanTake/balanceLimitOverride.' }, { status: 400 });
     }
 
-    const { updatedBy, updatedAt } = await updateSendMoneyWalletSettings(shopName, {
-      remark, mainReason, closureType, affectedServices, minimumAmountCanTake, balanceLimitOverride, scheduleOverride,
-    });
+    const update = { remark, mainReason, closureType, affectedServices, minimumAmountCanTake, balanceLimitOverride, scheduleOverride };
+    const { updatedBy, updatedAt } = isPostgresSourceEnabled()
+      ? await updateWalletSettingsPg('sendmoney', shopName, update)
+      : await updateSendMoneyWalletSettings(shopName, update);
     return NextResponse.json({ ok: true, updatedBy, updatedAt }, { headers: { 'Cache-Control': 'no-store' } });
   } catch (err) {
     const message = err instanceof Error ? err.message : 'Error updating wallet settings';

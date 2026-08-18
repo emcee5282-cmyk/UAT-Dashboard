@@ -10,6 +10,15 @@ import {
 } from '@/app/lib/transferQueueRules';
 import { computeCashoutCompanyBalanceByAgent } from '@/app/lib/cashoutAgentBalance';
 
+// Same flag as the 2 Transfer Queue pages and admin Settings routes — kept
+// as one switch across all 4 consumers per the "hold branch deletion until
+// freshness resolved" decision, so they move to Postgres together, not
+// piecemeal. Explicit opt-in only: any value other than the literal
+// 'postgres' keeps this on Google Sheets, its always-safe default.
+function isPostgresSourceEnabled(): boolean {
+  return process.env.NEXT_PUBLIC_TRANSFER_QUEUE_SOURCE === 'postgres';
+}
+
 async function fetchEffectiveTransferQueueRules(): Promise<RuleRow[]> {
   const res = await fetch(`/api/configurations/transfer-queue-settings/effective?t=${Date.now()}`);
   if (!res.ok) throw new Error('Failed to fetch Transfer Queue configuration');
@@ -95,6 +104,18 @@ function stripBrandSuffix(name: string): string {
 }
 
 export async function fetchTransferQueueCount(): Promise<number> {
+  if (isPostgresSourceEnabled()) {
+    // Postgres path — /api/v2/transfer-queue already applies the exact same
+    // ruleset (transferQueueService.ts, reusing balanceService.ts's
+    // getAgentBalances() for Company Balance/Balance Inside/Discrepancy/SDP
+    // VS Balance/Wallet Status, including the Login-override fix this
+    // Sheets-mode copy below never had). The count is just the row count.
+    const res = await fetch(`/api/v2/transfer-queue?product=cashout&t=${Date.now()}`);
+    if (!res.ok) throw new Error('Failed to fetch Transfer Queue count');
+    const data: { rows: unknown[] } = await res.json();
+    return data.rows.length;
+  }
+
   const [openingRes, balRes, stlmRes, rules] = await Promise.all([
     fetch(`/api/opening?t=${Date.now()}`),
     fetch(`/api/agentbal?t=${Date.now()}`),
@@ -279,6 +300,15 @@ function resolveSendMoneyBrand(groups: string[], agentName: string): string {
 }
 
 export async function fetchSendMoneyTransferQueueCount(): Promise<number> {
+  if (isPostgresSourceEnabled()) {
+    // Postgres path — see fetchTransferQueueCount's own comment above; same
+    // reasoning, just the Send Money side of transferQueueService.ts.
+    const res = await fetch(`/api/v2/transfer-queue?product=sendmoney&t=${Date.now()}`);
+    if (!res.ok) throw new Error('Failed to fetch Send Money Transfer Queue count');
+    const data: { rows: unknown[] } = await res.json();
+    return data.rows.length;
+  }
+
   const [openingRes, balRes, stlmRes, agentBalRes, agstlmRes, linkedAccountsRes, rules] = await Promise.all([
     fetch(`/api/opening?t=${Date.now()}`),
     fetch(`/api/sendmoney/balances?t=${Date.now()}`),

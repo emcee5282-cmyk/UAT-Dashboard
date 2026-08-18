@@ -17,13 +17,14 @@ import TableFooter from '../components/TableFooter';
 import EmptyState from '../components/EmptyState';
 import WalletSettingsModal, { type WalletSettingsValues } from '../components/WalletSettingsModal';
 import { classifyFetchError, type ClassifiedError, assertAllOk } from '../lib/errors';
-import { rawVal } from '@/app/lib/format';
-import { parseCsvLines } from '../lib/csv';
 import { getPreference, setPreference } from '../lib/preferences';
 import {
   resolveBrand,
   computeWalletStatus,
+  allocateSdpAcrossWallets,
+  type SdpAllocationWallet,
 } from '../lib/balanceEngine';
+import type { BalanceLimitWalletRow } from '../lib/db/read/balanceLimit';
 
 // Mirrors app/lib/walletStatus.ts's own types — not imported directly since
 // that file pulls in `googleapis` (Node-only, breaks the client bundle);
@@ -356,14 +357,6 @@ function BulkActionsMenu({
   );
 }
 
-// Whole numbers only (no decimals) — per explicit instruction, SDP/Daily
-// Limit/Available Limit show "200,000" not "200,000.00".
-function displayNum(num: number): string {
-  if (Math.abs(num) < 0.5) return '−';
-  const formatted = Math.round(Math.abs(num)).toLocaleString('en-PH');
-  return num < 0 ? `-${formatted}` : formatted;
-}
-
 // Unlike displayNum, Daily Limit/Available Limit always show a real
 // number — 0 is a meaningful, distinct state (limit fully used, or the
 // wallet is Inactive) from "no data", so it's never collapsed into the
@@ -373,15 +366,24 @@ function displayAvailableLimit(num: number): string {
   return num < 0 ? `-${formatted}` : formatted;
 }
 
-function parseNumber(val: string): number {
-  const cleaned = (val ?? '').replace(/"/g, '').replace(/,/g, '').trim();
-  if (cleaned === '-' || cleaned === '') return 0;
-  const num = parseFloat(cleaned);
-  return isNaN(num) ? 0 : num;
+// The SDP column's own headline value — this wallet's own allocated share
+// (per explicit instruction, not the shop-level total, which stays
+// available only via the tooltip's own breakdown). null (shop has no real
+// SDP at all) shows as '−'; a real 0 (wallet is inactive) shows as a
+// literal "0", same "0 is meaningful, never collapsed to a dash"
+// convention displayAvailableLimit already uses for Daily/Available Limit.
+function sdpAllocationDisplay(row: WalletStatusRow): string {
+  return row.sdpAllocation === null ? '−' : displayAvailableLimit(row.sdpAllocation);
 }
 
 const BRAND_PRIORITY = ['M1', 'M2', 'B1', 'B2', 'B3', 'B4', 'B5', 'K1', 'J1', 'T1'];
 const BRAND_CODES = ['M1', 'M2', 'B1', 'B2', 'B3', 'B4', 'B5', 'K1', 'J1', 'T1'];
+
+// Same abbreviations the old raw Account-derived walletCode always ended
+// in ("-BK"/"-NG"/"-RK"/"-UP") — used to rebuild an equivalent key
+// (agentCode-suffix) from Postgres's own wallet_types.code, matching the
+// Phase 9 re-keyed "Wallet Status" sheet tab format exactly.
+const WALLET_TYPE_ABBREVIATIONS: Record<string, string> = { BKASH: 'BK', NAGAD: 'NG', ROCKET: 'RK', UPAY: 'UP' };
 
 // Every wallet's own default receiving ceiling before a staff-set Balance
 // Limit override (Edit Wallet Settings) replaces it — flat per wallet, not
@@ -460,7 +462,12 @@ type WalletStatusRow = {
   // when the wallet is Inactive (see the Daily Limit column rules).
   dailyLimit: number;
   availableLimit: number;
-  sdpDisplay: string;
+  // This wallet's own share of the shop's total SDP — live-computed via
+  // allocateSdpAcrossWallets() (balanceEngine.ts), never persisted; this is
+  // the SDP column's own headline value now (see sdpAllocationDisplay,
+  // COLUMN_INFO_TEXT.sdp for the rule explanation). null when the shop has
+  // no real SDP at all.
+  sdpAllocation: number | null;
   deposit: DepositWithdrawal;
   withdrawal: DepositWithdrawal;
   schedule: Schedule;
@@ -594,7 +601,7 @@ const REMARKS_COLUMN_WIDTH_PX = 250;
 // quick pass-over the cell doesn't flash it, per spec.
 const REMARKS_TOOLTIP_HOVER_DELAY_MS = 275;
 
-const COLUMNS_WITH_INFO_ICON: ColumnKey[] = ['balanceLimit', 'availableLimit', 'schedule'];
+const COLUMNS_WITH_INFO_ICON: ColumnKey[] = ['balanceLimit', 'availableLimit', 'schedule', 'sdp'];
 const PILL_BADGE_COLUMNS: ColumnKey[] = ['deposit', 'withdrawal'];
 
 // Exact display string per column — mirrors renderCell's own per-column
@@ -606,7 +613,7 @@ function getColumnDisplayText(row: WalletStatusRow, key: ColumnKey): string {
     case 'leader': return toProperCase(row.leader);
     case 'balanceLimit': return displayAvailableLimit(row.dailyLimit);
     case 'availableLimit': return displayAvailableLimit(row.availableLimit);
-    case 'sdp': return row.sdpDisplay;
+    case 'sdp': return sdpAllocationDisplay(row);
     case 'deposit': return row.deposit;
     case 'withdrawal': return row.withdrawal;
     case 'schedule': return row.schedule;
@@ -816,6 +823,7 @@ const COLUMN_INFO_TEXT: Partial<Record<ColumnKey, string>> = {
   balanceLimit: 'This wallet\'s own configured daily limit, set in Edit Wallet Settings.\n\nNever pooled with the shop\'s other wallets — each wallet keeps its own limit. Leave blank there to use the default (200,000). Shows 0 while the wallet is Inactive.',
   availableLimit: "Remaining receiving capacity for today, for this wallet alone.\n\nFormula:\nDaily Limit − This Wallet's Today's Total Deposit\n\nDoes not factor in Company Balance or SDP. Resets every day at 2:00 AM.",
   schedule: 'Shop operating schedule.\n\nDay\n7:00 AM – 10:00 PM\n\nExtended\n7:00 AM – 11:00 PM\n\nEarly Ext.\n6:00 AM – 12:00 AM\n\n24/7\nOpen 24 Hours\n\nAutomatically determined\nby the assigned Leader.',
+  sdp: "This wallet's own share of the shop's total SDP, split across the shop's active wallets.\n\n80% of SDP splits across active BK/Nagad wallets (50/50 if both active, or all to whichever one is active). 20% splits equally across every other active wallet. Inactive wallets always get 0.",
 };
 
 function HeaderInfoIcon({ text }: { text: string }) {
@@ -1179,68 +1187,85 @@ export default function WalletStatus() {
       setError(null);
 
       const [openingRes, balRes, statusRes] = await Promise.all([
-        fetch(`/api/opening?t=${Date.now()}`),
-        fetch(`/api/agentbal?t=${Date.now()}`),
+        // Leader/SDP now read PostgreSQL (/api/v2/opening) — the same live
+        // source app/summary itself already reads, not the older Sheets
+        // mirror (/api/opening) this page used to fall back to. agents.sdp
+        // coerces blank/null to 0 (Cashout Opening's own established
+        // convention — see openingPageService.ts's own comment); the old
+        // Sheets-era "NO SDP" text sentinel has no Postgres equivalent, so
+        // sdpNum === 0 is the only signal left for "no real SDP" (same
+        // resolution transferQueueService.ts's computeSdpVsBalanceRaw
+        // already uses for this exact gap).
+        fetch(`/api/v2/opening?t=${Date.now()}`),
+        // Phase 9 — live wallet status/financial fields now read PostgreSQL
+        // (same Phase 8B endpoint the Balance Tab uses), not Google Sheets.
+        // Priority/Remarks/Wallet Settings below stay on the "Wallet Status"
+        // sheet tab, unchanged — only its per-wallet KEY format was migrated
+        // (Phase 9's own one-time re-key) from a raw Account-derived string
+        // to agentCode-walletTypeSuffix, so it now matches what's derivable
+        // from Postgres without needing a Sheets call for key derivation.
+        fetch(`/api/v2/balance-limit?product=cashout&t=${Date.now()}`),
         fetch(`/api/wallet-status?t=${Date.now()}`),
       ]);
 
       await assertAllOk([openingRes, balRes, statusRes]);
 
-      const openingText = await openingRes.text();
-      const balText = await balRes.text();
+      const openingRows: { agentCode: string; leader: string; sdp: number }[] = await openingRes.json();
+      const balJson: { rows: BalanceLimitWalletRow[] } = await balRes.json();
       const statusData: Record<string, PriorityEntry> = await statusRes.json();
 
-      const openingRows = parseCsvLines(openingText)
-        .slice(1)
-        .filter((row) => row.some((cell) => cell.trim() !== ''))
-        .map((row) => ({
-          agentName: rawVal(row[0]),
-          sdp: rawVal(row[2]),
-          leader: rawVal(row[3]),
-        }))
-        .filter((row) => row.agentName && row.agentName !== '-' && row.agentName !== 'OLD');
-
-      // Leader/SDP are shop-level (Opening AG has one row per shop) —
-      // looked up per wallet below by the shop's own bare code, same value
-      // repeated across however many wallets that shop has.
+      // Leader/SDP are shop-level (one row per shop) — looked up per wallet
+      // below by the shop's own bare code, same value repeated across
+      // however many wallets that shop has.
       const leaderByShop = new Map<string, string>();
-      const sdpByShop = new Map<string, string>();
+      const sdpByShop = new Map<string, number>();
       openingRows.forEach((row) => {
-        leaderByShop.set(row.agentName, row.leader);
-        sdpByShop.set(row.agentName, row.sdp);
+        leaderByShop.set(row.agentCode, row.leader);
+        sdpByShop.set(row.agentCode, row.sdp);
       });
 
-      // "SSP AG BalanceLimit" has one row per WALLET (Bkash/Nagad/Rocket/
-      // UPay), not per shop — col H ("Account") is "<phone> - <code>"
-      // (e.g. "01818938877 - D-M1AG-M1-JETT003-BK"); the code half becomes
-      // this page's own row identity (Shop Name + the key persisted
-      // Priority/Remarks/Wallet Settings save under) per explicit
-      // instruction — a shop's several wallets must never be pooled into
-      // one row again, each keeps its own balance/limit/status.
-      const balRows = parseCsvLines(balText)
-        .slice(1)
-        .filter((row) => row.some((cell) => cell.trim() !== ''))
+      // agent_wallets already has one row per WALLET (Bkash/Nagad/Rocket/
+      // UPay), not per shop — same granularity the raw "Account" column
+      // used to provide. walletCode ("JETT003-BK") is this page's own row
+      // identity (Shop Name + the key persisted Priority/Remarks/Wallet
+      // Settings save under) — a shop's several wallets must never be
+      // pooled into one row, each keeps its own balance/limit/status.
+      const balRows = balJson.rows
+        .filter((row) => row.agentCode && row.agentCode !== '-')
         .map((row) => {
-          const account = rawVal(row[7]);
-          const separator = account.indexOf(' - ');
-          const walletCode = separator === -1 ? account : account.slice(separator + 3).trim();
+          const suffix = WALLET_TYPE_ABBREVIATIONS[row.walletType] ?? '';
           return {
-            bareShopName: rawVal(row[1]),
-            walletCode,
-            totalDP: rawVal(row[11]),
-            group: rawVal(row[6]),
-            accountStatus: rawVal(row[2]),
+            bareShopName: row.agentCode,
+            walletCode: suffix ? `${row.agentCode}-${suffix}` : row.agentCode,
+            walletType: row.walletType,
+            totalDP: row.totalDP,
+            group: row.group,
+            accountStatus: row.accountStatus,
+            isLoggedIn: row.isLoggedIn,
           };
-        })
-        .filter((row) => row.bareShopName && row.bareShopName !== '-' && row.bareShopName !== 'OLD' && row.walletCode && row.walletCode !== '-');
+        });
+
+      // Every wallet of a shop needs to be seen together to compute SDP
+      // allocation (allocateSdpAcrossWallets needs the shop's FULL active
+      // set, not just one row) — built once here, keyed by bareShopName,
+      // before the per-row merge below looks up each row's own share.
+      const walletsForSdpByShop = new Map<string, SdpAllocationWallet[]>();
+      balRows.forEach((bal, index) => {
+        const computedStatus = computeWalletStatus([bal.isLoggedIn ? bal.accountStatus : 'Disconnected']);
+        const isActive = deriveWalletFlags(computedStatus).walletStatus === 'Active';
+        const list = walletsForSdpByShop.get(bal.bareShopName) ?? [];
+        list.push({ id: index, walletType: bal.walletType, isActive });
+        walletsForSdpByShop.set(bal.bareShopName, list);
+      });
 
       const merged: WalletStatusRow[] = balRows.map((bal, index) => {
-        const totalDP = parseFloat(bal.totalDP.replace(/,/g, '')) || 0;
-        const sdpRaw = sdpByShop.get(bal.bareShopName) ?? '';
-        const sdpNum = parseNumber(sdpRaw);
-        const sdpTrimmed = sdpRaw.trim().toUpperCase();
-        const sdpDisplay = sdpTrimmed === 'NO SDP' || !sdpRaw || sdpRaw === '-' ? '−' : displayNum(sdpNum);
-        const computedStatus = computeWalletStatus([bal.accountStatus]);
+        const totalDP = bal.totalDP;
+        const sdpNum = sdpByShop.get(bal.bareShopName) ?? 0;
+        const sdpAllocation = sdpNum === 0 ? null
+          : (allocateSdpAcrossWallets(sdpNum, walletsForSdpByShop.get(bal.bareShopName) ?? []).perWallet.find((r) => r.id === index)?.allocation ?? 0);
+        // A wallet that isn't logged in reads as Disconnected regardless of
+        // what its Group would otherwise resolve to.
+        const computedStatus = computeWalletStatus([bal.isLoggedIn ? bal.accountStatus : 'Disconnected']);
         const flags = deriveWalletFlags(computedStatus);
         const priorityEntry = statusData[bal.walletCode.toUpperCase()] ?? DEFAULT_PRIORITY_ENTRY;
         // Every wallet carries its own limit, never pooled with the shop's
@@ -1262,7 +1287,7 @@ export default function WalletStatus() {
           leader: leaderByShop.get(bal.bareShopName) ?? '−',
           dailyLimit,
           availableLimit,
-          sdpDisplay,
+          sdpAllocation,
           deposit: flags.deposit,
           withdrawal: flags.withdrawal,
           schedule: priorityEntry.scheduleOverride || resolveSchedule(leaderByShop.get(bal.bareShopName) ?? ''),
@@ -1571,7 +1596,7 @@ export default function WalletStatus() {
           case 'leader': return row.leader.toLowerCase();
           case 'balanceLimit': return row.dailyLimit;
           case 'availableLimit': return row.availableLimit;
-          case 'sdp': return row.sdpDisplay === '−' ? -Infinity : parseNumber(row.sdpDisplay);
+          case 'sdp': return row.sdpAllocation ?? -Infinity;
           case 'deposit': return row.deposit;
           case 'withdrawal': return row.withdrawal;
           case 'schedule': return SCHEDULE_RANK[row.schedule];
@@ -1663,7 +1688,7 @@ export default function WalletStatus() {
         case 'leader': return toProperCase(row.leader);
         case 'balanceLimit': return row.dailyLimit;
         case 'availableLimit': return row.availableLimit;
-        case 'sdp': return row.sdpDisplay;
+        case 'sdp': return row.sdpAllocation ?? undefined;
         case 'deposit': return row.deposit;
         case 'withdrawal': return row.withdrawal;
         case 'schedule': return row.schedule || undefined;
@@ -1743,7 +1768,7 @@ export default function WalletStatus() {
           </td>
         );
       case 'sdp':
-        return <td key={key} style={cellStyle} className={`${base} tabular-nums text-foreground`}>{row.sdpDisplay}</td>;
+        return <td key={key} style={cellStyle} className={`${base} tabular-nums text-foreground`}>{sdpAllocationDisplay(row)}</td>;
       case 'deposit':
         return (
           <td key={key} style={cellStyle} className={base}>
@@ -2220,7 +2245,7 @@ export default function WalletStatus() {
                             {showSdp && (
                               <div>
                                 <p className="text-[9px] font-medium text-muted-foreground">SDP</p>
-                                <p className="text-[13px] font-semibold tabular-nums text-foreground">{row.sdpDisplay}</p>
+                                <p className="text-[13px] font-semibold tabular-nums text-foreground">{sdpAllocationDisplay(row)}</p>
                               </div>
                             )}
                           </div>

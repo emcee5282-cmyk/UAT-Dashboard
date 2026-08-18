@@ -18,12 +18,18 @@ import EmptyState from '../components/EmptyState';
 import RecordFormModal, { type RecordFormField } from '../components/RecordFormModal';
 import BulkImportModal from '../components/BulkImportModal';
 import BulkEditModal, { type BulkEditUpdates } from '../components/BulkEditModal';
+import ConfirmDeleteModal from '../components/ConfirmDeleteModal';
 import { classifyFetchError, type ClassifiedError, assertAllOk } from '../lib/errors';
 import { extractRealShopName } from '../lib/realShopName';
 import { isLoggedIn } from '../lib/balanceEngine';
 import { getPreference, setPreference } from '../lib/preferences';
 import { SETTLEMENT_BRAND_OPTIONS } from '../lib/topupOptions';
 import { fmtAbbrev } from '@/app/lib/format';
+import type { CashoutOpeningRow } from '@/app/lib/services/openingPageService';
+
+// Phase 6 — Today's Opening is PostgreSQL-only at runtime (no opt-in flag,
+// no Sheets fallback). See app/sendmoney/opening/page.tsx for the same
+// cutover on the Send Money product.
 
 // Responsive action buttons (Upload/Export) — icon+text when the viewport
 // has room, collapsing to icon-only (40x40, no padding) once space gets
@@ -355,6 +361,9 @@ type Row = {
   leader: string;
   brand: string;
   _id: number;
+  // Opening's daily-upload Missing Shops review (Phase 3) — store + visible
+  // badge only this pass, no other page logic reads this.
+  isActive: boolean;
 };
 
 // Unchanged data logic — blank/'-' coerces to 0 on this page (Cashout's own
@@ -404,10 +413,11 @@ function resolveBrand(groups: string[], agentName: string): string {
 
 function fmt(num: number): string {
   if (num === 0) return '—';
-  return Math.abs(num).toLocaleString('en-PH', {
+  const formatted = Math.abs(num).toLocaleString('en-PH', {
     minimumFractionDigits: 2,
     maximumFractionDigits: 2,
   });
+  return num < 0 ? `-${formatted}` : formatted;
 }
 
 // Wallet Type ("BK | NG | RK | UP") — copied verbatim from Balance
@@ -603,7 +613,7 @@ function FadeValue({ value, className }: { value: string; className: string }) {
 // Row actions menu (⋮) — copied from Settlement/Top Up. Edit opens the
 // (UI-only, prototype) RecordFormModal; View Details/Delete stay disabled
 // placeholders, matching every other module's current state.
-function RowActionsCell({ row, onEdit }: { row: Row; onEdit: (row: Row) => void }) {
+function RowActionsCell({ row, onEdit, onDelete }: { row: Row; onEdit: (row: Row) => void; onDelete: (row: Row) => void }) {
   const [open, setOpen] = useState(false);
   const [pos, setPos] = useState({ top: 0, left: 0 });
   const btnRef = useRef<HTMLButtonElement>(null);
@@ -688,9 +698,8 @@ function RowActionsCell({ row, onEdit }: { row: Row; onEdit: (row: Row) => void 
           </button>
           <button
             type="button"
-            disabled
-            title="Coming soon"
-            className="flex w-full cursor-not-allowed items-center gap-2 rounded-lg px-2.5 py-1.5 text-left text-[12px] font-normal text-[#b3b8c2] dark:text-[#5a5f66]"
+            onClick={() => { setOpen(false); onDelete(row); }}
+            className="flex w-full items-center gap-2 rounded-lg px-2.5 py-1.5 text-left text-[12px] font-normal text-rose-600 transition-colors hover:bg-rose-50 dark:text-rose-400 dark:hover:bg-rose-950/30"
           >
             <Trash2 size={13} />
             Delete
@@ -716,7 +725,7 @@ function SortIcon({ active, direction }: { active: boolean; direction: 'asc' | '
   );
 }
 
-function renderCell(row: Row, key: ColumnKey, onEdit: (row: Row) => void, searchTerm: string) {
+function renderCell(row: Row, key: ColumnKey, onEdit: (row: Row) => void, onDelete: (row: Row) => void, searchTerm: string) {
   const cellCls = `whitespace-nowrap overflow-hidden text-ellipsis px-4 text-${
     DEFAULT_COLUMNS.find((c) => c.key === key)?.align ?? 'left'
   } text-[13px] leading-[20px] font-normal text-[#111827] dark:text-[#E5E7EB]`;
@@ -727,7 +736,14 @@ function renderCell(row: Row, key: ColumnKey, onEdit: (row: Row) => void, search
     case 'leader':
       return <td key={key} title={toProperCase(row.leader)} className={base}>{highlightMatch(toProperCase(row.leader), searchTerm)}</td>;
     case 'agentName':
-      return <td key={key} title={row.agentName} className={base}>{highlightMatch(row.agentName, searchTerm)}</td>;
+      return (
+        <td key={key} title={row.agentName} className={base}>
+          {highlightMatch(row.agentName, searchTerm)}
+          {!row.isActive && (
+            <span className="ml-1.5 rounded px-1.5 py-0.5 text-[9px] font-medium bg-muted text-muted-foreground align-middle">Inactive</span>
+          )}
+        </td>
+      );
     case 'walletType':
       return <td key={key} title={row.walletType} className={base}><WalletTypeBadge walletType={row.walletType} /></td>;
     // Extra right padding (pr-9 instead of the shared px-4's pr-4) shifts the
@@ -735,11 +751,11 @@ function renderCell(row: Row, key: ColumnKey, onEdit: (row: Row) => void, search
     // the header's sort icon (14px + 6px gap) sits further right than the
     // text itself, and the number should follow the TEXT, not the icon.
     case 'openingBal':
-      return <td key={key} className={`${base} !pr-9 !text-[12px] font-semibold tabular-nums`}>{highlightMatch(fmt(row.openingBal), searchTerm)}</td>;
+      return <td key={key} className={`${base} !pr-9 !text-[12px] font-semibold tabular-nums ${row.openingBal < 0 ? 'text-rose-600 dark:text-rose-400' : ''}`}>{highlightMatch(fmt(row.openingBal), searchTerm)}</td>;
     case 'sdp':
-      return <td key={key} className={`${base} !pr-9 !text-[12px] font-semibold tabular-nums`}>{highlightMatch(fmt(row.sdp), searchTerm)}</td>;
+      return <td key={key} className={`${base} !pr-9 !text-[12px] font-semibold tabular-nums ${row.sdp < 0 ? 'text-rose-600 dark:text-rose-400' : ''}`}>{highlightMatch(fmt(row.sdp), searchTerm)}</td>;
     case 'actions':
-      return <td key={key} className={`${cellCls} py-2.5`}><span className="flex items-center justify-center"><RowActionsCell row={row} onEdit={onEdit} /></span></td>;
+      return <td key={key} className={`${cellCls} py-2.5`}><span className="flex items-center justify-center"><RowActionsCell row={row} onEdit={onEdit} onDelete={onDelete} /></span></td>;
     default:
       return null;
   }
@@ -790,6 +806,7 @@ export default function Summary() {
   const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set());
   const [bulkEditOpen, setBulkEditOpen] = useState(false);
   const [selectionBarRendered, setSelectionBarRendered] = useState(false);
+  const [deletingRow, setDeletingRow] = useState<Row | null>(null);
 
   const [isScrolled, setIsScrolled] = useState(false);
   const tableScrollRef = useRef<HTMLDivElement>(null);
@@ -823,58 +840,27 @@ export default function Summary() {
       setLoading(true);
       setError(null);
       setRows([]);
-      const [res, balRes] = await Promise.all([
-        fetch(`/api/opening?t=${Date.now()}`),
-        fetch(`/api/agentbal?t=${Date.now()}`),
-      ]);
-      await assertAllOk([res, balRes]);
-      const text = await res.text();
-      const balText = await balRes.text();
 
-      const brandGroups = new Map<string, string[]>();
-      // Wallet Type values, isLoggedIn-gated — same aggregation as Balance's
-      // own walletTypeValues (app/agentbal/page.tsx), cols 4 (Wallet Type)
-      // and 15 (Login) off the same "SSP AG BalanceLimit" data.
-      const walletTypeValues = new Map<string, string[]>();
-      balText
-        .trim()
-        .split('\n')
-        .slice(1)
-        .filter((line) => line.trim() !== '')
-        .forEach((line) => {
-          const cols = line.split(',');
-          const walletName = cols[1]?.replace(/"/g, '').trim();
-          const group = cols[6]?.replace(/"/g, '').trim();
-          const walletType = cols[4]?.replace(/"/g, '').trim();
-          const login = cols[15]?.replace(/"/g, '').trim() ?? '';
-          if (!walletName || walletName === '-') return;
-          const groups = brandGroups.get(walletName) ?? [];
-          groups.push(group);
-          brandGroups.set(walletName, groups);
-
-          if (walletType && walletType !== '-' && isLoggedIn(login)) {
-            const types = walletTypeValues.get(walletName) ?? [];
-            types.push(walletType);
-            walletTypeValues.set(walletName, types);
-          }
-        });
-
-      const lines = text.trim().split('\n').slice(1);
-      const parsed: Row[] = lines
-        .filter((line) => line.trim() !== '')
-        .map((line, index) => {
-          const cols = line.split(',');
-          const agentName = cols[0]?.replace(/"/g, '').trim();
-          return {
-            agentName,
-            walletType: computeWalletType(walletTypeValues.get(agentName) ?? []),
-            openingBal: clean(cols[1]),
-            sdp: clean(cols[2]),
-            leader: cols[3]?.replace(/"/g, '').trim(),
-            brand: resolveBrand(brandGroups.get(agentName) ?? [], agentName),
-            _id: index,
-          };
-        })
+      // Today's Opening — PostgreSQL runtime source (Phase 6). /api/v2/opening
+      // returns the final per-agent fields (Opening Bal./SDP already coerced
+      // to 0 for blank, matching this page's own established convention;
+      // brand already resolved server-side); only walletType still needs the
+      // page's own existing computeWalletType(), fed the raw isLoggedIn-gated
+      // type codes instead of re-deriving anything from Sheets.
+      const res = await fetch(`/api/v2/opening?t=${Date.now()}`);
+      await assertAllOk([res]);
+      const pgRows: CashoutOpeningRow[] = await res.json();
+      const parsed: Row[] = pgRows
+        .map((r, index) => ({
+          agentName: r.agentCode,
+          walletType: computeWalletType(r.walletTypes),
+          openingBal: r.openingBal,
+          sdp: r.sdp,
+          leader: r.leader,
+          brand: r.brand,
+          _id: index,
+          isActive: r.isActive,
+        }))
         .filter((row) => row.agentName && row.agentName !== '-' && row.agentName !== 'OLD');
       setRows(parsed);
       setSelectedIds(new Set());
@@ -914,10 +900,19 @@ export default function Summary() {
     [columnDefs, mounted]
   );
 
-  const filteredRows = rows.filter((row) => {
+  // Memoized — this fed facetFilteredRows' own useMemo (below) a fresh
+  // array reference on every render (including purely-cosmetic ones, e.g.
+  // toolbar tooltip hover state), which made that useMemo's dependency
+  // check always see a "change" and always recompute the full filter/sort
+  // pipeline over every row. Invisible on smaller datasets; on Opening's
+  // ~3,730 rows it cost 300-490ms per hover on New/Upload/Export/Refresh/
+  // Columns (whose tooltip state lives on this same page component) vs
+  // ~2-3ms on Brand/Leader/Wallet Type/Reset (which isolate their tooltip
+  // state in their own child components) — confirmed via live measurement.
+  const filteredRows = useMemo(() => rows.filter((row) => {
     const haystack = `${row.leader} ${row.agentName} ${row.walletType} ${fmt(row.openingBal)} ${fmt(row.sdp)} ${row.brand}`.toLowerCase();
     return haystack.includes(searchTerm.toLowerCase());
-  });
+  }), [rows, searchTerm]);
 
   // Toolbar filters — Brand/Leader/Wallet Type, same shape/behavior as
   // Balance (app/agentbal/page.tsx): options are the full universe of
@@ -1103,19 +1098,76 @@ export default function Summary() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [allOnPageSelected, pageRowIds.join(',')]);
 
-  const handleBulkEditApply = useCallback((updates: BulkEditUpdates) => {
-    setRows((current) => current.map((row) => {
-      if (!selectedIds.has(row._id)) return row;
-      return {
-        ...row,
-        ...(updates.leader !== undefined ? { leader: updates.leader } : {}),
-        ...(updates.openingBalance !== undefined ? { openingBal: clean(updates.openingBalance) } : {}),
-        ...(updates.sdp !== undefined ? { sdp: clean(updates.sdp) } : {}),
-      };
-    }));
+  // Single Edit and Bulk Edit both write through this: agentCode is the
+  // stable PostgreSQL lookup key (agents.agent_code), never the edited
+  // "Agent Name" field text — renaming an agent isn't supported by this
+  // Action, per explicit scoping (see final report). Any edit to that field
+  // is not sent and reverts to the real value on the refetch below.
+  const patchOpeningAgents = useCallback(async (agentCodes: string[], updates: { leader?: string; brand?: string; openingBalance?: string; sdp?: string }) => {
+    const res = await fetch('/api/v2/opening', {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ agentCodes, updates }),
+    });
+    if (!res.ok) {
+      const body = await res.json().catch(() => ({}));
+      throw new Error(body.error || `Request failed with status ${res.status}`);
+    }
+    await fetchData();
+  }, [fetchData]);
+
+  const handleEditSave = useCallback(async (agentCode: string, values: Record<string, string>) => {
+    await patchOpeningAgents([agentCode], {
+      leader: values.leader,
+      brand: values.brand,
+      openingBalance: values.openingBalance,
+      sdp: values.sdp,
+    });
+  }, [patchOpeningAgents]);
+
+  const handleBulkEditApply = useCallback(async (updates: BulkEditUpdates) => {
+    const agentCodes = rows.filter((row) => selectedIds.has(row._id)).map((row) => row.agentName);
+    await patchOpeningAgents(agentCodes, {
+      ...(updates.leader !== undefined ? { leader: updates.leader } : {}),
+      ...(updates.openingBalance !== undefined ? { openingBalance: updates.openingBalance } : {}),
+      ...(updates.sdp !== undefined ? { sdp: updates.sdp } : {}),
+    });
     setBulkEditOpen(false);
     setSelectedIds(new Set());
-  }, [selectedIds]);
+  }, [rows, selectedIds, patchOpeningAgents]);
+
+  const handleConfirmDelete = useCallback(async (agentCode: string) => {
+    const res = await fetch('/api/v2/opening', {
+      method: 'DELETE',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ agentCode }),
+    });
+    if (!res.ok) {
+      const body = await res.json().catch(() => ({}));
+      throw new Error(body.error || `Request failed with status ${res.status}`);
+    }
+    setSelectedIds(new Set());
+    await fetchData();
+  }, [fetchData]);
+
+  const handleCreateSave = useCallback(async (values: Record<string, string>) => {
+    const res = await fetch('/api/v2/opening', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        agentCode: values.agentName,
+        leader: values.leader,
+        brand: values.brand,
+        openingBalance: values.openingBalance,
+        sdp: values.sdp,
+      }),
+    });
+    if (!res.ok) {
+      const body = await res.json().catch(() => ({}));
+      throw new Error(body.error || `Request failed with status ${res.status}`);
+    }
+    await fetchData();
+  }, [fetchData]);
 
   useEffect(() => {
     if (page !== currentPage) {
@@ -1579,7 +1631,7 @@ export default function Summary() {
                             />
                           </div>
                         </td>
-                        {visibleColumns.map((col) => renderCell(row, col.key, setEditingRow, searchTerm))}
+                        {visibleColumns.map((col) => renderCell(row, col.key, setEditingRow, setDeletingRow, searchTerm))}
                       </tr>
                     );
                   }) : !loading && (
@@ -1615,7 +1667,12 @@ export default function Summary() {
                     <div key={row.agentName || i} className="rounded-xl border border-border bg-white p-3.5 dark:bg-[#2a2a2d]">
                       <div className="flex items-start justify-between gap-2">
                         <div className="min-w-0">
-                          <p className="truncate text-sm font-bold text-foreground">{row.agentName}</p>
+                          <p className="truncate text-sm font-bold text-foreground">
+                            {row.agentName}
+                            {!row.isActive && (
+                              <span className="ml-1.5 rounded px-1.5 py-0.5 text-[9px] font-medium bg-muted text-muted-foreground align-middle">Inactive</span>
+                            )}
+                          </p>
                           <p className="truncate text-[12px] font-normal text-muted-foreground">{toProperCase(row.leader)}{row.brand !== '−' ? ` · ${row.brand}` : ''}{row.walletType !== '−' ? ` · ${row.walletType}` : ''}</p>
                         </div>
                       </div>
@@ -1623,11 +1680,11 @@ export default function Summary() {
                       <div className="mt-2.5 grid grid-cols-2 gap-2 border-t border-border pt-2.5">
                         <div>
                           <p className="text-[11px] font-medium text-muted-foreground">Opening Balance</p>
-                          <p className="text-sm font-bold tabular-nums text-foreground">{fmt(row.openingBal)}</p>
+                          <p className={`text-sm font-bold tabular-nums ${row.openingBal < 0 ? 'text-rose-600 dark:text-rose-400' : 'text-foreground'}`}>{fmt(row.openingBal)}</p>
                         </div>
                         <div>
                           <p className="text-[11px] font-medium text-muted-foreground">Security Deposit</p>
-                          <p className="text-sm font-bold tabular-nums text-foreground">{fmt(row.sdp)}</p>
+                          <p className={`text-sm font-bold tabular-nums ${row.sdp < 0 ? 'text-rose-600 dark:text-rose-400' : 'text-foreground'}`}>{fmt(row.sdp)}</p>
                         </div>
                       </div>
                     </div>
@@ -1663,6 +1720,7 @@ export default function Summary() {
         isOpen={editingRow !== null}
         onClose={() => setEditingRow(null)}
         title="Edit Account"
+        subtitle="Update this wallet's account details"
         fields={openingRecordFields}
         initialValues={editingRow ? {
           brand: editingRow.brand,
@@ -1671,15 +1729,27 @@ export default function Summary() {
           openingBalance: editingRow.openingBal ? String(editingRow.openingBal) : '',
           sdp: editingRow.sdp ? String(editingRow.sdp) : '',
         } : {}}
+        onSave={editingRow ? (values) => handleEditSave(editingRow.agentName, values) : undefined}
         primaryButtonClassName="bg-indigo-600 hover:bg-indigo-700"
+      />
+
+      <ConfirmDeleteModal
+        isOpen={deletingRow !== null}
+        onClose={() => setDeletingRow(null)}
+        onConfirm={() => handleConfirmDelete(deletingRow!.agentName)}
+        title="Delete Wallet?"
+        subject={deletingRow?.agentName ?? ''}
+        primaryButtonClassName="bg-rose-600 hover:bg-rose-700"
       />
 
       <RecordFormModal
         isOpen={newRecordOpen}
         onClose={() => setNewRecordOpen(false)}
         title="New Account"
+        subtitle="Add a wallet under an existing brand"
         fields={openingRecordFields}
         initialValues={{}}
+        onSave={handleCreateSave}
         primaryButtonClassName="bg-indigo-600 hover:bg-indigo-700"
       />
 

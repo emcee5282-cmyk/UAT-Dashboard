@@ -1,0 +1,1 @@
+CREATE UNIQUE INDEX "sync_runs_one_running_per_group_uq" ON "sync_runs" USING btree ("sync_group") WHERE "sync_runs"."status" = 'running';

@@ -85,7 +85,7 @@ function getSpreadsheetId(): string {
 // Written in Manila wall-clock time (see app/lib/businessDate.ts) — NOT the
 // server runtime's own local time (Vercel defaults to UTC), otherwise an
 // upload made at, say, 2 AM Manila gets logged as "6 PM the previous day."
-function formatUploadTimestamp(date: Date): string {
+export function formatUploadTimestamp(date: Date): string {
   const manila = toManilaWallClock(date);
   const mm = String(manila.getUTCMonth() + 1).padStart(2, '0');
   const dd = String(manila.getUTCDate()).padStart(2, '0');
@@ -151,7 +151,7 @@ type LiveShopFigures = {
 // `balancesWithFallback` below (the sum), never `balances` itself (still
 // used as-is by app/agentbal/page.tsx and app/sendmoney/balances/page.tsx,
 // which show every shop regardless of leader).
-const ESTIMATED_OPENING_EXCLUDED_LEADERS = ['ONEMEN'];
+export const ESTIMATED_OPENING_EXCLUDED_LEADERS = ['ONEMEN'];
 
 function isExcludedFromEstimatedOpening(leader: string | undefined): boolean {
   return ESTIMATED_OPENING_EXCLUDED_LEADERS.includes((leader ?? '').trim().toUpperCase());
@@ -252,7 +252,7 @@ type ShopTotals = { shopName: string; totalDP: number; totalWD: number };
 // Send Money's upload uses its own, completely different formula
 // (extractSendMoneyShopName) — the two products' Account/Wallet Name columns
 // don't share a naming convention.
-function aggregateByShop(
+export function aggregateByShop(
   headerRow: (string | number)[],
   dataRows: (string | number)[][],
   extractShopName: (raw: string | number | undefined | null) => string = extractRealShopName
@@ -288,7 +288,7 @@ type WalletTypeTotals = { wallet: string; totalDP: number; totalWD: number };
 // by the upload's own "Bank" column (NAGAD/BKASH/ROCKET/UPAY per row)
 // instead of by shop — feeds the Wallet Breakdown's per-wallet Assumed
 // Running Balance on Balance Overview.
-function aggregateByWalletType(headerRow: (string | number)[], dataRows: (string | number)[][]): WalletTypeTotals[] {
+export function aggregateByWalletType(headerRow: (string | number)[], dataRows: (string | number)[][]): WalletTypeTotals[] {
   const bankCol = findColumn(headerRow, 'Bank');
   const dpCol = findColumn(headerRow, 'Total DP');
   const wdCol = findColumn(headerRow, 'Total WD');

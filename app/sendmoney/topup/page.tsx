@@ -12,11 +12,11 @@ import TableFooter from '@/app/components/TableFooter';
 import EmptyState from '@/app/components/EmptyState';
 import ConnectionErrorState from '@/app/components/ConnectionErrorState';
 import RecordFormModal, { type RecordFormField } from '@/app/components/RecordFormModal';
+import ConfirmDeleteModal from '@/app/components/ConfirmDeleteModal';
 import BulkImportModal from '@/app/components/BulkImportModal';
 import BulkEditModal, { type BulkEditUpdates } from '@/app/components/BulkEditModal';
 import { classifyFetchError, type ClassifiedError } from '@/app/lib/errors';
-import { rawVal, displayNum, parseAmount, fmtAbbrev, fmt } from '@/app/lib/format';
-import { BRAND_CODES as CASHOUT_BRAND_CODES } from '@/app/lib/transferQueueCount';
+import { displayNum, parseAmount, fmtAbbrev, fmt } from '@/app/lib/format';
 import { isToday, isYesterday } from '@/app/lib/businessDate';
 import { getPreference, setPreference } from '@/app/lib/preferences';
 import { SETTLEMENT_BRAND_OPTIONS, SENDMONEY_WALLET_OPTIONS, TOPUP_TYPE_OPTIONS } from '@/app/lib/topupOptions';
@@ -333,44 +333,13 @@ function highlightMatch(text: string, query: string): React.ReactNode {
   );
 }
 
-// Brand comes from the wallet name itself. Names now carry an extra
-// trailing brand tag beyond the older format (e.g. "N-B2PS3-NAVY054-NG-B3"
-// — the rightmost "B3", not "B2PS3"'s "B2", is the real brand), matching
-// the same fix applied to /sendmoney/settlement — so the rightmost segment
-// is checked first; older names without that trailing tag (or ones whose
-// trailing segment is something else entirely, e.g. "-SS") fall back to the
-// segment right after the first hyphen.
-const BRAND_CODES = [...CASHOUT_BRAND_CODES, 'SH'];
+// Phase 7 — brand/agent-name resolution (parsing the wallet-name segments)
+// moved server-side: transactionPageService.ts now returns each row's brand
+// pre-resolved via agents.brand_id and agentName already in its bare
+// (suffix-stripped) form, straight off agents.agent_code. displayBrand is
+// still needed for the resolved code's own display label (e.g.
+// 'SH' -> 'Sharing').
 const BRAND_DISPLAY_LABELS: Record<string, string> = { SH: 'Sharing' };
-
-function resolveBrandFromWalletName(walletName: string): string {
-  const segments = walletName.split('-');
-  const last = (segments[segments.length - 1] ?? '').toUpperCase();
-  const trailing = BRAND_CODES.find((c) => c === last);
-  if (trailing) return trailing;
-  const afterFirst = (segments[1] ?? '').toUpperCase();
-  const code = BRAND_CODES.find((c) => afterFirst.startsWith(c));
-  return code ?? '−';
-}
-
-// Agent Name should read as just the shop name — strip a recognized
-// trailing "-<brand code>" tag only (e.g. "N-B2PS3-NAVY054-NG-B3" ->
-// "N-B2PS3-NAVY054-NG"). The NG/RK/UP/BK network suffix is NOT stripped:
-// it's part of the shop's real identity (the "Opening AG" roster's own
-// agentName keys — used for the Leader lookup below — always keep it, e.g.
-// "N-B2PS1-KYAR001-RK"), not a redundant tag like the brand code is. The
-// brand code itself is never lost either way — Brand still resolves from
-// the untouched raw walletName via resolveBrandFromWalletName above.
-const AGENT_NAME_TRAILING_CODES = [...BRAND_CODES];
-
-function stripAgentNameSuffix(walletName: string): string {
-  const parts = walletName.split('-');
-  const last = parts[parts.length - 1]?.toUpperCase();
-  if (parts.length >= 2 && AGENT_NAME_TRAILING_CODES.includes(last)) {
-    return parts.slice(0, -1).join('-');
-  }
-  return walletName;
-}
 
 function displayBrand(code: string): string {
   return BRAND_DISPLAY_LABELS[code] ?? code;
@@ -616,9 +585,10 @@ function WalletBadge({ children, wallet }: { children: React.ReactNode; wallet: 
 }
 
 // Row actions menu (⋮) — copied from Settlement (app/stlm/page.tsx /
-// app/sendmoney/settlement/page.tsx). Edit opens the (UI-only, prototype)
-// RecordFormModal; View Details/Delete stay disabled placeholders.
-function RowActionsCell({ row, onEdit }: { row: TopUpRow; onEdit: (row: TopUpRow) => void }) {
+// app/sendmoney/settlement/page.tsx). Edit and Delete are both real
+// PostgreSQL mutations as of Phase 7; View Details stays a disabled
+// placeholder (no detail view exists yet).
+function RowActionsCell({ row, onEdit, onDelete }: { row: TopUpRow; onEdit: (row: TopUpRow) => void; onDelete: (row: TopUpRow) => void }) {
   const [open, setOpen] = useState(false);
   const [pos, setPos] = useState({ top: 0, left: 0 });
   const btnRef = useRef<HTMLButtonElement>(null);
@@ -718,9 +688,8 @@ function RowActionsCell({ row, onEdit }: { row: TopUpRow; onEdit: (row: TopUpRow
           </button>
           <button
             type="button"
-            disabled
-            title="Coming soon"
-            className="flex w-full cursor-not-allowed items-center gap-2 rounded-lg px-2.5 py-1.5 text-left text-[12px] font-normal text-[#b3b8c2] dark:text-[#5a5f66]"
+            onClick={() => { setOpen(false); onDelete(row); }}
+            className="flex w-full items-center gap-2 rounded-lg px-2.5 py-1.5 text-left text-[12px] font-normal text-rose-600 transition-colors hover:bg-rose-50 dark:text-rose-400 dark:hover:bg-rose-500/10"
           >
             <Trash2 size={13} />
             Delete
@@ -815,7 +784,7 @@ function renderSkeletonCell(col: ColumnDef, rowIndex: number) {
   }
 }
 
-function renderCell(row: TopUpRow, key: ColumnKey, onEdit: (row: TopUpRow) => void, searchTerm: string) {
+function renderCell(row: TopUpRow, key: ColumnKey, onEdit: (row: TopUpRow) => void, onDelete: (row: TopUpRow) => void, searchTerm: string) {
   const truncates = key === COLUMN_IDS.AGENT_NAME;
   const cellCls = `whitespace-nowrap ${truncates ? 'overflow-hidden text-ellipsis' : ''} px-4 text-${COLUMN_ALIGN[key]} text-[13px] leading-[20px] font-normal text-[#111827] dark:text-[#E5E7EB]`;
   const base = `${cellCls} py-[14px]`;
@@ -839,7 +808,7 @@ function renderCell(row: TopUpRow, key: ColumnKey, onEdit: (row: TopUpRow) => vo
     case 'date':
       return <td key={key} className={base}>{highlightMatch(formatDateDisplay(row.date), searchTerm)}</td>;
     case 'actions':
-      return <td key={key} className={`${cellCls} py-2.5`}><span className="flex items-center justify-center"><RowActionsCell row={row} onEdit={onEdit} /></span></td>;
+      return <td key={key} className={`${cellCls} py-2.5`}><span className="flex items-center justify-center"><RowActionsCell row={row} onEdit={onEdit} onDelete={onDelete} /></span></td>;
     default:
       return null;
   }
@@ -891,6 +860,8 @@ export default function SendMoneyTopUpPage() {
   const newTooltip = useTooltip(newButtonRef);
 
   const [editingRow, setEditingRow] = useState<TopUpRow | null>(null);
+  // Phase 7 — Row Actions -> Delete, second-confirmation dialog.
+  const [deletingRow, setDeletingRow] = useState<TopUpRow | null>(null);
   const [newRecordOpen, setNewRecordOpen] = useState(false);
   const [bulkImportOpen, setBulkImportOpen] = useState(false);
   const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set());
@@ -933,77 +904,49 @@ export default function SendMoneyTopUpPage() {
     };
   }, []);
 
+  // Phase 7 — PostgreSQL is now the unconditional runtime source. Brand and
+  // Leader arrive already resolved (agents.brand_id/leader_id) — no more
+  // wallet-name-segment brand parsing needed client-side. agentName is
+  // already the bare (suffix-stripped) agents.agent_code form. Type
+  // ("INTERNAL TRANSFER") is a fixed literal per product, derived
+  // server-side — see transactionPageService.ts's TOPUP_TYPE_LABEL.
   const fetchData = useCallback(async () => {
     try {
       setSpinning(true);
       setLoading(true);
       setError(null);
 
-      const [res, agentRes] = await Promise.all([
-        fetch(`/api/sendmoney/stlmtopup?t=${Date.now()}`),
-        fetch(`/api/opening?t=${Date.now()}`),
+      const [res, openingRes] = await Promise.all([
+        fetch(`/api/v2/sendmoney/topup?t=${Date.now()}`),
+        fetch(`/api/v2/sendmoney/opening?t=${Date.now()}`),
       ]);
-      if (!res.ok) throw new Error((await res.text().catch(() => '')) || `Request failed with status ${res.status}`);
-      const text = await res.text();
-      const agentText = agentRes.ok ? await agentRes.text() : '';
-
-      // Send Money's own roster/leader lookup lives in cols L-O (indices
-      // 11-14) of "Opening AG" — same shift used on /sendmoney/balances.
-      // Keys are normalized (uppercase + all whitespace stripped), not just
-      // uppercased — same fix already applied to app/agentbal/page.tsx's Top
-      // Up/Settlement sums: the sheets' own agent-name columns aren't always
-      // cased/spaced the same as each other, which silently dropped that
-      // agent's Leader lookup since the plain-uppercase key never matched.
-      const normalizeAgentKey = (name: string): string => name.toUpperCase().replace(/\s+/g, '');
-      const leaderMap: Record<string, string> = {};
-      const openingNames = new Set<string>();
-      if (agentText) {
-        agentText.trim().split('\n').slice(1).forEach(line => {
-          const cols = line.split(',');
-          const name = rawVal(cols[11]);
-          const leader = rawVal(cols[14]);
-          // Uppercased before adding — the real table always displays Agent
-          // Name via .toUpperCase(), so the roster feeding Add/Edit's
-          // combobox and Bulk Import's validation should match that same
-          // canonical casing regardless of how the sheet itself has it stored.
-          if (name && name !== '-' && name !== 'OLD') openingNames.add(name.toUpperCase());
-          if (name && leader) leaderMap[normalizeAgentKey(name)] = leader;
-        });
+      if (!res.ok) {
+        const body = await res.json().catch(() => null);
+        throw new Error(body?.error || `Request failed with status ${res.status}`);
       }
-      setOpeningAgentNames(Array.from(openingNames).sort((a, b) => a.localeCompare(b)));
+      const topUp: TopUpRow[] = (await res.json()).map((r: { id: number; agentName: string; wallet: string; amount: string; date: string; type: string; leader: string; brand: string }) => ({
+        agentName: r.agentName,
+        wallet: r.wallet,
+        amount: r.amount,
+        date: r.date,
+        type: r.type,
+        leader: r.leader,
+        brand: r.brand,
+        _id: r.id,
+      }));
 
-      // "PS BD STLM + TOPUP" is Send Money's own dedicated sheet — Top Up
-      // lives in cols B-F (indices 1-5): To Agent/Amount/Date/Wallet/TYPE,
-      // amounts stored positive. Cols H-L are a separate Settlement block
-      // (see /sendmoney/settlement) and cols Q-AA are a last-month archive —
-      // neither belongs here.
-      const lines = text.trim().split('\n').slice(1);
-      const topUp: TopUpRow[] = [];
-
-      lines
-        .filter(line => line.trim() !== '')
-        .forEach((line, index) => {
-          const cols = line.split(',');
-          const walletName = rawVal(cols[1]);
-          if (walletName && walletName !== '-') {
-            const bareAgentName = stripAgentNameSuffix(walletName);
-            topUp.push({
-              agentName: bareAgentName,
-              wallet: rawVal(cols[4]),
-              amount: rawVal(cols[2]),
-              date: rawVal(cols[3]),
-              type: rawVal(cols[5]),
-              leader: leaderMap[normalizeAgentKey(bareAgentName)] || '−',
-              brand: resolveBrandFromWalletName(walletName),
-              _id: index,
-            });
-          }
-        });
+      // Roster for Add/Edit's Agent Name combobox and Bulk Import's
+      // validation — /api/v2/sendmoney/opening is Today's Opening's own
+      // already-migrated Postgres read (consumed here read-only).
+      if (openingRes.ok) {
+        const openingRows: { agentCode: string }[] = await openingRes.json();
+        const names = Array.from(new Set(openingRows.map((r) => r.agentCode.toUpperCase()))).sort((a, b) => a.localeCompare(b));
+        setOpeningAgentNames(names);
+      }
 
       // Split out so both the table's "today only" rows and the KPI row's
-      // "today vs yesterday" comparison can be computed from one pass over
-      // the full (unfiltered-by-date) sheet — same pattern as
-      // app/sendmoney/settlement/page.tsx.
+      // "today vs yesterday" comparison can be computed from one pass —
+      // same pattern as app/sendmoney/settlement/page.tsx.
       const todayTopUp = topUp.filter(row => isToday(row.date));
       const yesterdayTopUp = topUp.filter(row => isYesterday(row.date));
 
@@ -1026,6 +969,17 @@ export default function SendMoneyTopUpPage() {
   useEffect(() => {
     fetchData();
   }, [fetchData]);
+
+  // Phase 10 — real brands table, replacing the old hardcoded
+  // SETTLEMENT_BRAND_OPTIONS+'SH' array for the Bulk Import modal's own
+  // Brand validation.
+  const [uploadBrandOptions, setUploadBrandOptions] = useState<string[]>([]);
+  useEffect(() => {
+    fetch('/api/v2/brands?product=sendmoney')
+      .then((res) => (res.ok ? res.json() : []))
+      .then((brands: { code: string }[]) => setUploadBrandOptions(brands.map((b) => b.code)))
+      .catch(() => {});
+  }, []);
 
   useEffect(() => {
     setPage(1);
@@ -1231,18 +1185,76 @@ export default function SendMoneyTopUpPage() {
     return `${parsed.getMonth() + 1}/${parsed.getDate()}/${parsed.getFullYear()}`;
   };
 
-  const handleBulkEditApply = useCallback((updates: BulkEditUpdates) => {
-    setTopUpRows((current) => current.map((row) => {
-      if (!selectedIds.has(row._id)) return row;
-      return {
-        ...row,
-        ...(updates.wallet !== undefined ? { wallet: updates.wallet } : {}),
-        ...(updates.date !== undefined ? { date: parseDisplayDateToStorage(updates.date) } : {}),
-      };
-    }));
+  // Phase 7 — shared by Single Edit and Bulk Edit, same one-endpoint,
+  // one-transaction, all-or-nothing pattern as Today's Opening's
+  // updateOpeningAgents.
+  const patchTopUpRows = useCallback(async (ids: number[], updates: Record<string, string>) => {
+    const res = await fetch('/api/v2/sendmoney/topup', {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ ids, updates }),
+    });
+    const body = await res.json().catch(() => null);
+    if (!res.ok) throw new Error(body?.error || 'Update failed.');
+    await fetchData();
+  }, [fetchData]);
+
+  // Brand stays display-only (follows the agent, never stored per-
+  // transaction). Type used to be display-only too (a fixed literal per
+  // product) but is now a real stored field — see
+  // transactionActionsService.ts's header comment — so it's sent as
+  // `remarks`, the same wire field Settlement's own Edit/Create already use.
+  const handleEditSave = useCallback(async (values: Record<string, string>) => {
+    if (!editingRow) return;
+    await patchTopUpRows([editingRow._id], {
+      agentName: values.agentName,
+      wallet: values.wallet,
+      amount: values.amount,
+      date: parseDisplayDateToStorage(values.date),
+      remarks: values.type,
+    });
+    setEditingRow(null);
+  }, [editingRow, patchTopUpRows]);
+
+  const handleCreateSave = useCallback(async (values: Record<string, string>) => {
+    const res = await fetch('/api/v2/sendmoney/topup', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        agentName: values.agentName,
+        wallet: values.wallet,
+        amount: values.amount,
+        date: parseDisplayDateToStorage(values.date),
+        remarks: values.type,
+      }),
+    });
+    const body = await res.json().catch(() => null);
+    if (!res.ok) throw new Error(body?.error || 'Create failed.');
+    await fetchData();
+    setNewRecordOpen(false);
+  }, [fetchData]);
+
+  const handleConfirmDelete = useCallback(async () => {
+    if (!deletingRow) return;
+    const res = await fetch('/api/v2/sendmoney/topup', {
+      method: 'DELETE',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ id: deletingRow._id }),
+    });
+    const body = await res.json().catch(() => null);
+    if (!res.ok) throw new Error(body?.error || 'Delete failed.');
+    await fetchData();
+    setDeletingRow(null);
+  }, [deletingRow, fetchData]);
+
+  const handleBulkEditApply = useCallback(async (updates: BulkEditUpdates) => {
+    const payload: Record<string, string> = {};
+    if (updates.wallet !== undefined) payload.wallet = updates.wallet;
+    if (updates.date !== undefined) payload.date = parseDisplayDateToStorage(updates.date);
+    await patchTopUpRows(Array.from(selectedIds), payload);
     setBulkEditOpen(false);
     setSelectedIds(new Set());
-  }, [selectedIds]);
+  }, [selectedIds, patchTopUpRows]);
 
   useEffect(() => {
     if (page !== currentPage) {
@@ -1254,7 +1266,10 @@ export default function SendMoneyTopUpPage() {
   // closed, single-option combobox (no allowCustom), matching how the row
   // is always actually populated.
   const topupRecordFields: RecordFormField[] = useMemo(() => [
-    { key: 'brand', label: 'Brand', kind: 'combobox', options: SETTLEMENT_BRAND_OPTIONS, required: true },
+    // 'SH' appended locally — see app/stlm/page.tsx's identical fix for the
+    // full rationale (Brand is never submitted, so this only prevents a
+    // valid real value from wrongly blocking Save).
+    { key: 'brand', label: 'Brand', kind: 'combobox', options: [...SETTLEMENT_BRAND_OPTIONS, 'SH'], required: true },
     { key: 'agentName', label: 'Agent Name', kind: 'combobox', options: openingAgentNames, required: true },
     { key: 'wallet', label: 'Wallet', kind: 'combobox', options: SENDMONEY_WALLET_OPTIONS, required: true },
     { key: 'amount', label: 'Amount', kind: 'amount', required: true },
@@ -1713,7 +1728,7 @@ export default function SendMoneyTopUpPage() {
                             />
                           </div>
                         </td>
-                        {visibleColumns.map((col) => renderCell(row, col.key, setEditingRow, searchTerm))}
+                        {visibleColumns.map((col) => renderCell(row, col.key, setEditingRow, setDeletingRow, searchTerm))}
                       </tr>
                     );
                   }) : !loading && (
@@ -1791,7 +1806,9 @@ export default function SendMoneyTopUpPage() {
       <RecordFormModal
         isOpen={editingRow !== null}
         onClose={() => setEditingRow(null)}
+        onSave={handleEditSave}
         title="Edit Top Up Record"
+        subtitle="Brand follows the agent automatically and can't be changed here."
         fields={topupRecordFields}
         initialValues={editingRow ? {
           brand: matchOptionCaseInsensitive(editingRow.brand, SETTLEMENT_BRAND_OPTIONS),
@@ -1810,6 +1827,7 @@ export default function SendMoneyTopUpPage() {
       <RecordFormModal
         isOpen={newRecordOpen}
         onClose={() => setNewRecordOpen(false)}
+        onSave={handleCreateSave}
         title="New Top Up Record"
         fields={topupRecordFields}
         initialValues={{}}
@@ -1820,12 +1838,15 @@ export default function SendMoneyTopUpPage() {
       <BulkImportModal
         isOpen={bulkImportOpen}
         onClose={() => setBulkImportOpen(false)}
+        onImported={fetchData}
+        importApiBasePath="/api/v2/import/topup"
+        product="sendmoney"
         moduleLabel="Top Up Records"
         templateModule="topup"
         moduleKind="topup"
         accentButtonClassName="bg-[color:var(--product-accent)] hover:opacity-90"
         dataProduct="sendmoney"
-        brandOptions={SETTLEMENT_BRAND_OPTIONS}
+        brandOptions={uploadBrandOptions}
         walletOptions={SENDMONEY_WALLET_OPTIONS}
         agentRoster={openingAgentNames}
         typeOptions={TOPUP_TYPE_OPTIONS}
@@ -1838,6 +1859,16 @@ export default function SendMoneyTopUpPage() {
         selectedCount={selectedIds.size}
         walletOptions={SENDMONEY_WALLET_OPTIONS}
         primaryButtonClassName="bg-[color:var(--product-accent)] hover:opacity-90"
+        dataProduct="sendmoney"
+      />
+
+      <ConfirmDeleteModal
+        isOpen={deletingRow !== null}
+        onClose={() => setDeletingRow(null)}
+        onConfirm={handleConfirmDelete}
+        title="Delete Top Up Record"
+        subject={deletingRow ? `${deletingRow.agentName.toUpperCase()}'s ${displayNum(deletingRow.amount)} top up on ${formatDateDisplay(deletingRow.date)}` : ''}
+        primaryButtonClassName="bg-rose-600 hover:bg-rose-700"
         dataProduct="sendmoney"
       />
     </div>

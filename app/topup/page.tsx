@@ -37,11 +37,12 @@ import ColumnsDropdown from '../components/ColumnsDropdown';
 import EmptyState from '../components/EmptyState';
 import DataTable from '../components/DataTable';
 import RecordFormModal, { type RecordFormField } from '../components/RecordFormModal';
+import ConfirmDeleteModal from '../components/ConfirmDeleteModal';
 import { SETTLEMENT_BRAND_OPTIONS, CASHOUT_WALLET_OPTIONS, TOPUP_TYPE_OPTIONS } from '../lib/topupOptions';
 import BulkImportModal from '../components/BulkImportModal';
 import BulkEditModal, { type BulkEditUpdates } from '../components/BulkEditModal';
 import { classifyFetchError, type ClassifiedError } from '../lib/errors';
-import { rawVal, displayNum, parseAmount, fmt, fmtAbbrev } from '@/app/lib/format';
+import { displayNum, parseAmount, fmt, fmtAbbrev } from '@/app/lib/format';
 import { isToday, isYesterday } from '../lib/businessDate';
 import { getPreference, setPreference } from '../lib/preferences';
 import { calculateColumnLayout, type ColumnLayout } from '../lib/columnLayout';
@@ -368,74 +369,13 @@ type TopUpRow = {
   _id: number;
 };
 
-// "AG BD STLM + TOPUP" no longer carries a brand/gateway column (removed from
-// the sheet). Brand now comes first from the "-<brand>" suffix already
-// displayed on the shop/agent name itself (e.g. "KONAN001-M1" → M1) when
-// present; only when a row's shop name has no suffix (e.g. "YUJI024") does
-// it fall back to cross-referencing the bare agent code against "SSP AG
-// BalanceLimit" (same Group data and priority logic Cashout's own Agent
-// Balance page already uses). Unchanged from before this rewrite — data
-// logic, not presentation.
-const BRAND_PRIORITY = ['M1', 'M2', 'B1', 'B2', 'B3', 'B4', 'B5', 'K1', 'J1', 'T1'];
-const SKIP_GROUPS = ['wallet with issue', 'disconnected', 'dc account'];
-
-function computeBrand(groups: string[]): string {
-  const counts = new Map<string, number>();
-  groups.forEach((group) => {
-    const trimmed = (group ?? '').trim();
-    if (!trimmed || trimmed === '-') return;
-    if (SKIP_GROUPS.some((skip) => trimmed.toLowerCase().includes(skip))) return;
-    const code = trimmed.slice(0, 2).toUpperCase();
-    counts.set(code, (counts.get(code) ?? 0) + 1);
-  });
-
-  if (counts.size === 0) return '−';
-
-  const maxCount = Math.max(...counts.values());
-  const tied = Array.from(counts.keys()).filter((code) => counts.get(code) === maxCount);
-  const priorityTied = tied.filter((code) => BRAND_PRIORITY.includes(code));
-
-  if (priorityTied.length > 0) {
-    priorityTied.sort((a, b) => BRAND_PRIORITY.indexOf(a) - BRAND_PRIORITY.indexOf(b));
-    return priorityTied[0];
-  }
-
-  tied.sort((a, b) => a.localeCompare(b));
-  return tied[0];
-}
-
-const BRAND_CODES = ['M1', 'M2', 'B1', 'B2', 'B3', 'B4', 'B5', 'K1', 'J1', 'T1'];
-
-function resolveBrand(groups: string[], agentName: string): string {
-  const brand = computeBrand(groups);
-  if (brand !== '−') return brand;
-  return BRAND_CODES.find((code) => agentName.toUpperCase().includes(code)) ?? '−';
-}
-
-// "To Agent" values sometimes carry a trailing "-<brand>" suffix (e.g.
-// "KONAN001-M1"), sometimes not (e.g. "YUJI024") — strip it so the bare
-// code matches "SSP AG BalanceLimit"'s own (always-bare) wallet names. Some
-// rows now carry the suffix twice (e.g. "KONAN001-M1-M1", "SUPER001-M2-B4")
-// so this strips every recognized trailing segment in a loop, not just one.
-function stripBrandSuffix(name: string): string {
-  let result = name;
-  let parts = result.split('-');
-  while (parts.length >= 2 && BRAND_CODES.includes(parts[parts.length - 1].toUpperCase())) {
-    result = parts.slice(0, -1).join('-');
-    parts = result.split('-');
-  }
-  return result;
-}
-
-// Same suffix this strips off for the lookup key — but here it's the brand
-// source itself, read directly off the shop name as displayed. Returns null
-// when the shop name carries no suffix, so the caller can fall back to the
-// cross-reference lookup.
-function extractBrandSuffix(name: string): string | null {
-  const parts = name.split('-');
-  const last = parts[parts.length - 1]?.toUpperCase();
-  return parts.length >= 2 && BRAND_CODES.includes(last) ? last : null;
-}
+// Phase 7 — brand resolution (cross-referencing "SSP AG BalanceLimit" +
+// per-row suffix override) moved server-side: transactionPageService.ts now
+// returns each row's brand pre-resolved via agents.brand_id, the same
+// canonical join Today's Opening/Agent Balance already use. The client-side
+// computeBrand/resolveBrand/extractBrandSuffix/stripBrandSuffix logic that
+// used to run here on every fetch is gone — nothing in this file needs it
+// anymore.
 
 const MONTH_ABBR = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 
@@ -643,9 +583,9 @@ function FadeValue({ value, className }: { value: string; className: string }) {
 }
 
 // Row actions menu (⋮) — copied verbatim from Settlement's RowActionsCell.
-// Edit opens the (UI-only, prototype) RecordFormModal; View Details/Delete
-// stay disabled placeholders, matching Settlement's own current state.
-function RowActionsCell({ row, onEdit }: { row: TopUpRow; onEdit: (row: TopUpRow) => void }) {
+// Edit and Delete are both real PostgreSQL mutations as of Phase 7; View
+// Details stays a disabled placeholder (no detail view exists yet).
+function RowActionsCell({ row, onEdit, onDelete }: { row: TopUpRow; onEdit: (row: TopUpRow) => void; onDelete: (row: TopUpRow) => void }) {
   const [open, setOpen] = useState(false);
   const [pos, setPos] = useState({ top: 0, left: 0 });
   const btnRef = useRef<HTMLButtonElement>(null);
@@ -745,9 +685,8 @@ function RowActionsCell({ row, onEdit }: { row: TopUpRow; onEdit: (row: TopUpRow
           </button>
           <button
             type="button"
-            disabled
-            title="Coming soon"
-            className="flex w-full cursor-not-allowed items-center gap-2 rounded-lg px-2.5 py-1.5 text-left text-[12px] font-normal text-[#b3b8c2] dark:text-[#5a5f66]"
+            onClick={() => { setOpen(false); onDelete(row); }}
+            className="flex w-full items-center gap-2 rounded-lg px-2.5 py-1.5 text-left text-[12px] font-normal text-rose-600 transition-colors hover:bg-rose-50 dark:text-rose-400 dark:hover:bg-rose-500/10"
           >
             <Trash2 size={13} />
             Delete
@@ -830,7 +769,7 @@ function renderSkeletonCell(col: ColumnDef, rowIndex: number, style: CSSProperti
   }
 }
 
-function renderCell(row: TopUpRow, col: ColumnDef, style: CSSProperties, onEdit: (row: TopUpRow) => void, searchTerm: string) {
+function renderCell(row: TopUpRow, col: ColumnDef, style: CSSProperties, onEdit: (row: TopUpRow) => void, onDelete: (row: TopUpRow) => void, searchTerm: string) {
   const key = col.id;
   const base = `whitespace-nowrap overflow-hidden text-ellipsis px-4 py-[14px] text-${COLUMN_ALIGN[key]} text-[13px] leading-[20px] font-normal text-[#111827] dark:text-[#E5E7EB]`;
   switch (key) {
@@ -859,7 +798,7 @@ function renderCell(row: TopUpRow, col: ColumnDef, style: CSSProperties, onEdit:
       return <div key={key} role="cell" style={style} className={base}>{highlightMatch(dateText, searchTerm)}</div>;
     }
     case COLUMN_IDS.ACTIONS:
-      return <div key={key} role="cell" style={style} className={`${base} flex items-center justify-center`}><RowActionsCell row={row} onEdit={onEdit} /></div>;
+      return <div key={key} role="cell" style={style} className={`${base} flex items-center justify-center`}><RowActionsCell row={row} onEdit={onEdit} onDelete={onDelete} /></div>;
     default:
       return null;
   }
@@ -884,6 +823,8 @@ export default function TopUpPage() {
   const [sortColumn, setSortColumn] = useState<SortColumn>('');
   const [sortDirection, setSortDirection] = useState<'asc' | 'desc'>('asc');
   const [editingRow, setEditingRow] = useState<TopUpRow | null>(null);
+  // Phase 7 — Row Actions -> Delete, second-confirmation dialog.
+  const [deletingRow, setDeletingRow] = useState<TopUpRow | null>(null);
   const [newRecordOpen, setNewRecordOpen] = useState(false);
   const [bulkImportOpen, setBulkImportOpen] = useState(false);
   const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set());
@@ -959,121 +900,62 @@ export default function TopUpPage() {
     return () => clearTimeout(timer);
   }, [loading]);
 
+  // Phase 7 — PostgreSQL is now the unconditional runtime source. Brand and
+  // Leader arrive already resolved (agents.brand_id/leader_id, the same
+  // canonical join Today's Opening/Agent Balance use) — no more SSP AG
+  // BalanceLimit cross-reference or per-row suffix-override scanning
+  // needed client-side. Type ("BUNDLE TRANSFER") is a fixed literal per
+  // product, derived server-side same as before — see
+  // transactionPageService.ts's TOPUP_TYPE_LABEL.
   const fetchData = useCallback(async () => {
     try {
       setSpinning(true);
       setLoading(true);
       setError(null);
 
-      const [res, agentRes, balRes] = await Promise.all([
-        fetch(`/api/agstlmtopup?t=${Date.now()}`),
-        fetch(`/api/opening?t=${Date.now()}`),
-        fetch(`/api/agentbal?t=${Date.now()}`),
+      const [res, openingRes] = await Promise.all([
+        fetch(`/api/v2/topup?t=${Date.now()}`),
+        fetch(`/api/v2/opening?t=${Date.now()}`),
       ]);
-      if (!res.ok) throw new Error((await res.text().catch(() => '')) || `Request failed with status ${res.status}`);
-      const text = await res.text();
-      const agentText = agentRes.ok ? await agentRes.text() : '';
-      const balText = balRes.ok ? await balRes.text() : '';
-
-      // Keys into leaderMap/brandGroups/agentBrandOverride below are
-      // normalized (uppercase + all whitespace stripped), not just
-      // uppercased — same fix already applied to app/agentbal/page.tsx's
-      // Top Up/Settlement sums: the sheets' own agent-name columns aren't
-      // always cased/spaced the same as each other (e.g. "Konan001 " vs
-      // "KONAN001"), which silently dropped that agent's Leader/Brand
-      // lookup since the plain-uppercase key never matched.
-      const normalizeAgentKey = (name: string): string => name.toUpperCase().replace(/\s+/g, '');
-
-      // build agentName → leader lookup from opening sheet
-      const leaderMap: Record<string, string> = {};
-      const openingNames = new Set<string>();
-      if (agentText) {
-        agentText.trim().split('\n').slice(1).forEach(line => {
-          const cols = line.split(',');
-          const name = rawVal(cols[0]);
-          const leader = rawVal(cols[3]);
-          // Uppercased before adding — the real table always displays Agent
-          // Name via .toUpperCase(), so the roster feeding Add/Edit's
-          // combobox and Bulk Import's validation should match that same
-          // canonical casing regardless of how the sheet itself has it stored.
-          if (name && name !== '-' && name !== 'OLD') openingNames.add(name.toUpperCase());
-          if (name && leader) leaderMap[normalizeAgentKey(name)] = leader;
-        });
+      if (!res.ok) {
+        const body = await res.json().catch(() => null);
+        throw new Error(body?.error || `Request failed with status ${res.status}`);
       }
-      setOpeningAgentNames(Array.from(openingNames).sort((a, b) => a.localeCompare(b)));
+      const topUp: TopUpRow[] = (await res.json()).map((r: { id: number; agentName: string; wallet: string; amount: string; date: string; type: string; leader: string; brand: string }) => ({
+        agentName: r.agentName,
+        wallet: r.wallet,
+        amount: r.amount,
+        date: r.date,
+        type: r.type,
+        leader: r.leader,
+        brand: r.brand,
+        _id: r.id,
+      }));
 
-      // Brand cross-reference: "SSP AG BalanceLimit" col G (index 6) is the
-      // Group text; same computeBrand/resolveBrand priority logic as
-      // Cashout's own Agent Balance page, keyed by the bare wallet name.
-      const brandGroups: Record<string, string[]> = {};
-      if (balText) {
-        balText.trim().split('\n').slice(1).forEach(line => {
-          const cols = line.split(',');
-          const name = rawVal(cols[1]);
-          const group = rawVal(cols[6]);
-          if (name && group && group !== '-') {
-            (brandGroups[normalizeAgentKey(name)] ??= []).push(group);
-          }
+      // Roster for Add/Edit's Agent Name combobox and Bulk Import's
+      // validation — the full Balance Shop master list, not just agents who
+      // already have a transaction today. /api/v2/opening is Today's
+      // Opening's own already-migrated Postgres read (consumed here
+      // read-only, not modified).
+      if (openingRes.ok) {
+        const openingRows: { agentCode: string }[] = await openingRes.json();
+        const names = new Set<string>();
+        openingRows.forEach((r) => {
+          if (r.agentCode && r.agentCode !== '-' && r.agentCode !== 'OLD') names.add(r.agentCode.toUpperCase());
         });
+        setOpeningAgentNames(Array.from(names).sort((a, b) => a.localeCompare(b)));
       }
-
-      // "AG BD STLM + TOPUP" is Cashout's own dedicated Settlement + Top Up
-      // sheet — Top Up lives in cols B-F (indices 1-5): To Agent/Amount/
-      // Date/Wallet/Type (the sheet's own header row mislabels cols D/E as
-      // "Wallet"/"Date" — the actual data order matches this, confirmed by
-      // sampling), amounts stored positive. Cols H-L are a separate
-      // Settlement block (see app/stlm/page.tsx) and cols Q-AA are a
-      // last-month archive — neither belongs here.
-      const lines = text.trim().split('\n').slice(1);
-      const topUp: TopUpRow[] = [];
-
-      // One canonical brand per shop, not per row — see app/stlm/page.tsx's
-      // identical rationale (agentBrandOverride). Unchanged data logic.
-      const agentBrandOverride: Record<string, string> = {};
-      lines
-        .filter(line => line.trim() !== '')
-        .forEach(line => {
-          const cols = line.split(',');
-          const toAgent = rawVal(cols[1]);
-          if (!toAgent || toAgent === '-') return;
-          const suffixBrand = extractBrandSuffix(toAgent);
-          if (suffixBrand) {
-            agentBrandOverride[normalizeAgentKey(stripBrandSuffix(toAgent))] = suffixBrand;
-          }
-        });
-
-      lines
-        .filter(line => line.trim() !== '')
-        .forEach((line, index) => {
-          const cols = line.split(',');
-          const toAgent = rawVal(cols[1]);
-          if (toAgent && toAgent !== '-') {
-            const bareAgent = stripBrandSuffix(toAgent);
-            const bareAgentKey = normalizeAgentKey(bareAgent);
-            topUp.push({
-              agentName: bareAgent,
-              wallet: rawVal(cols[4]),
-              amount: rawVal(cols[2]),
-              date: rawVal(cols[3]),
-              type: rawVal(cols[5]),
-              leader: leaderMap[bareAgentKey] || '−',
-              brand: agentBrandOverride[bareAgentKey] ?? resolveBrand(brandGroups[bareAgentKey] ?? [], toAgent),
-              _id: index,
-            });
-          }
-        });
 
       // Split out so both the table's "today only" rows and the KPI row's
-      // "today vs yesterday" comparison can be computed from one pass over
-      // the full (unfiltered-by-date) sheet, instead of the table's own
-      // isToday() filter discarding yesterday's rows before the KPI row
-      // ever gets a chance to see them. Same pattern as app/stlm/page.tsx.
+      // "today vs yesterday" comparison can be computed from one pass,
+      // instead of the table's own isToday() filter discarding yesterday's
+      // rows before the KPI row ever gets a chance to see them.
       const todayTopUp = topUp.filter(row => isToday(row.date));
       const yesterdayTopUp = topUp.filter(row => isYesterday(row.date));
 
       setTopUpRows(todayTopUp);
-      // A fresh fetch means brand-new row objects (and _ids reset) — any
-      // previous selection no longer refers to anything real.
+      // A fresh fetch means brand-new row objects — any previous selection
+      // may point at ids no longer present (e.g. after a Delete).
       setSelectedIds(new Set());
       setKpiStats({
         todayCount: todayTopUp.length,
@@ -1092,6 +974,17 @@ export default function TopUpPage() {
   useEffect(() => {
     fetchData();
   }, [fetchData]);
+
+  // Phase 10 — real brands table, replacing the old hardcoded
+  // SETTLEMENT_BRAND_OPTIONS+'SH' array for the Bulk Import modal's own
+  // Brand validation.
+  const [uploadBrandOptions, setUploadBrandOptions] = useState<string[]>([]);
+  useEffect(() => {
+    fetch('/api/v2/brands?product=cashout')
+      .then((res) => (res.ok ? res.json() : []))
+      .then((brands: { code: string }[]) => setUploadBrandOptions(brands.map((b) => b.code)))
+      .catch(() => {});
+  }, []);
 
   useEffect(() => {
     setPage(1);
@@ -1280,18 +1173,76 @@ export default function TopUpPage() {
     return `${parsed.getMonth() + 1}/${parsed.getDate()}/${parsed.getFullYear()}`;
   };
 
-  const handleBulkEditApply = useCallback((updates: BulkEditUpdates) => {
-    setTopUpRows((current) => current.map((row) => {
-      if (!selectedIds.has(row._id)) return row;
-      return {
-        ...row,
-        ...(updates.wallet !== undefined ? { wallet: updates.wallet } : {}),
-        ...(updates.date !== undefined ? { date: parseDisplayDateToStorage(updates.date) } : {}),
-      };
-    }));
+  // Phase 7 — shared by Single Edit and Bulk Edit, same one-endpoint,
+  // one-transaction, all-or-nothing pattern as Today's Opening's
+  // updateOpeningAgents.
+  const patchTopUpRows = useCallback(async (ids: number[], updates: Record<string, string>) => {
+    const res = await fetch('/api/v2/topup', {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ ids, updates }),
+    });
+    const body = await res.json().catch(() => null);
+    if (!res.ok) throw new Error(body?.error || 'Update failed.');
+    await fetchData();
+  }, [fetchData]);
+
+  // Brand stays display-only (follows the agent, never stored per-
+  // transaction). Type used to be display-only too (a fixed literal per
+  // product) but is now a real stored field — see
+  // transactionActionsService.ts's header comment — so it's sent as
+  // `remarks`, the same wire field Settlement's own Edit/Create already use.
+  const handleEditSave = useCallback(async (values: Record<string, string>) => {
+    if (!editingRow) return;
+    await patchTopUpRows([editingRow._id], {
+      agentName: values.agentName,
+      wallet: values.wallet,
+      amount: values.amount,
+      date: parseDisplayDateToStorage(values.date),
+      remarks: values.type,
+    });
+    setEditingRow(null);
+  }, [editingRow, patchTopUpRows]);
+
+  const handleCreateSave = useCallback(async (values: Record<string, string>) => {
+    const res = await fetch('/api/v2/topup', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        agentName: values.agentName,
+        wallet: values.wallet,
+        amount: values.amount,
+        date: parseDisplayDateToStorage(values.date),
+        remarks: values.type,
+      }),
+    });
+    const body = await res.json().catch(() => null);
+    if (!res.ok) throw new Error(body?.error || 'Create failed.');
+    await fetchData();
+    setNewRecordOpen(false);
+  }, [fetchData]);
+
+  const handleConfirmDelete = useCallback(async () => {
+    if (!deletingRow) return;
+    const res = await fetch('/api/v2/topup', {
+      method: 'DELETE',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ id: deletingRow._id }),
+    });
+    const body = await res.json().catch(() => null);
+    if (!res.ok) throw new Error(body?.error || 'Delete failed.');
+    await fetchData();
+    setDeletingRow(null);
+  }, [deletingRow, fetchData]);
+
+  const handleBulkEditApply = useCallback(async (updates: BulkEditUpdates) => {
+    const payload: Record<string, string> = {};
+    if (updates.wallet !== undefined) payload.wallet = updates.wallet;
+    if (updates.date !== undefined) payload.date = parseDisplayDateToStorage(updates.date);
+    await patchTopUpRows(Array.from(selectedIds), payload);
     setBulkEditOpen(false);
     setSelectedIds(new Set());
-  }, [selectedIds]);
+  }, [selectedIds, patchTopUpRows]);
 
   useEffect(() => {
     if (page !== currentPage) {
@@ -1304,7 +1255,11 @@ export default function TopUpPage() {
   // closed, single-option combobox (no allowCustom) rather than a free
   // dropdown, matching how the row is always actually populated.
   const topupRecordFields: RecordFormField[] = useMemo(() => [
-    { key: 'brand', label: 'Brand', kind: 'combobox', options: SETTLEMENT_BRAND_OPTIONS, required: true },
+    // 'SH' appended locally — see app/stlm/page.tsx's identical fix for the
+    // full rationale (real Cashout data includes SH-brand agents; Brand is
+    // never submitted, so this only prevents a valid value from wrongly
+    // blocking Save).
+    { key: 'brand', label: 'Brand', kind: 'combobox', options: [...SETTLEMENT_BRAND_OPTIONS, 'SH'], required: true },
     { key: 'agentName', label: 'Agent Name', kind: 'combobox', options: openingAgentNames, required: true },
     { key: 'wallet', label: 'Wallet', kind: 'combobox', options: CASHOUT_WALLET_OPTIONS, required: true },
     { key: 'amount', label: 'Amount', kind: 'amount', required: true },
@@ -1766,7 +1721,7 @@ export default function TopUpPage() {
                             className="h-3.5 w-3.5 cursor-pointer"
                           />
                         </div>
-                        {visibleColumns.map((col) => renderCell(row, col, flexStyleById[col.id], setEditingRow, searchTerm))}
+                        {visibleColumns.map((col) => renderCell(row, col, flexStyleById[col.id], setEditingRow, setDeletingRow, searchTerm))}
                       </div>
                     );
                   }) : rowsPhase === 'table' && (
@@ -1838,7 +1793,9 @@ export default function TopUpPage() {
       <RecordFormModal
         isOpen={editingRow !== null}
         onClose={() => setEditingRow(null)}
+        onSave={handleEditSave}
         title="Edit Top Up Record"
+        subtitle="Brand follows the agent automatically and can't be changed here."
         fields={topupRecordFields}
         initialValues={editingRow ? {
           brand: editingRow.brand,
@@ -1857,6 +1814,7 @@ export default function TopUpPage() {
       <RecordFormModal
         isOpen={newRecordOpen}
         onClose={() => setNewRecordOpen(false)}
+        onSave={handleCreateSave}
         title="New Top Up Record"
         fields={topupRecordFields}
         initialValues={{}}
@@ -1866,11 +1824,14 @@ export default function TopUpPage() {
       <BulkImportModal
         isOpen={bulkImportOpen}
         onClose={() => setBulkImportOpen(false)}
+        onImported={fetchData}
+        importApiBasePath="/api/v2/import/topup"
+        product="cashout"
         moduleLabel="Top Up Records"
         templateModule="topup"
         moduleKind="topup"
         accentButtonClassName="bg-indigo-600 hover:bg-indigo-700"
-        brandOptions={SETTLEMENT_BRAND_OPTIONS}
+        brandOptions={uploadBrandOptions}
         walletOptions={CASHOUT_WALLET_OPTIONS}
         agentRoster={openingAgentNames}
         typeOptions={TOPUP_TYPE_OPTIONS}
@@ -1883,6 +1844,15 @@ export default function TopUpPage() {
         selectedCount={selectedIds.size}
         walletOptions={CASHOUT_WALLET_OPTIONS}
         primaryButtonClassName="bg-indigo-600 hover:bg-indigo-700"
+      />
+
+      <ConfirmDeleteModal
+        isOpen={deletingRow !== null}
+        onClose={() => setDeletingRow(null)}
+        onConfirm={handleConfirmDelete}
+        title="Delete Top Up Record"
+        subject={deletingRow ? `${deletingRow.agentName.toUpperCase()}'s ${displayNum(deletingRow.amount)} top up on ${formatDateDisplay(deletingRow.date)}` : ''}
+        primaryButtonClassName="bg-rose-600 hover:bg-rose-700"
       />
     </div>
   );

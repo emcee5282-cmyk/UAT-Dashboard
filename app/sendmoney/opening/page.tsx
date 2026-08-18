@@ -18,12 +18,18 @@ import ConnectionErrorState from '@/app/components/ConnectionErrorState';
 import RecordFormModal, { type RecordFormField } from '@/app/components/RecordFormModal';
 import BulkImportModal from '@/app/components/BulkImportModal';
 import BulkEditModal, { type BulkEditUpdates } from '@/app/components/BulkEditModal';
+import ConfirmDeleteModal from '@/app/components/ConfirmDeleteModal';
 import { classifyFetchError, type ClassifiedError } from '@/app/lib/errors';
 import { parseSendMoneyOpeningCsv, parseNullableNumber, type SendMoneyOpeningRow } from '@/app/lib/sendMoneyOpening';
 import { extractSendMoneyShopName } from '@/app/lib/realShopName';
 import { getPreference, setPreference } from '@/app/lib/preferences';
 import { SETTLEMENT_BRAND_OPTIONS } from '@/app/lib/topupOptions';
 import { fmtAbbrev } from '@/app/lib/format';
+import type { SendMoneyOpeningPgRow } from '@/app/lib/services/openingPageService';
+
+// Phase 6 — Today's Opening is PostgreSQL-only at runtime (no opt-in flag,
+// no Sheets fallback). See app/summary/page.tsx for the same cutover on the
+// Cashout product.
 
 // Responsive action buttons (Upload/Export) — icon+text when the viewport
 // has room, collapsing to icon-only (40x40, no padding) once space gets
@@ -395,10 +401,11 @@ function toProperCase(str: string): string {
 // tell "no opening balance" apart from "opening balance of exactly 0".
 function fmt(value: number | null): string {
   if (value === null || value === 0) return '—';
-  return Math.abs(value).toLocaleString('en-PH', {
+  const formatted = Math.abs(value).toLocaleString('en-PH', {
     minimumFractionDigits: 2,
     maximumFractionDigits: 2,
   });
+  return value < 0 ? `-${formatted}` : formatted;
 }
 
 // Re-triggers a short opacity+translateY fade whenever `value` changes,
@@ -424,7 +431,12 @@ function FadeValue({ value, className }: { value: string; className: string }) {
   );
 }
 
-type Row = SendMoneyOpeningRow & { _id: number; walletType: string };
+// isActive is Postgres-only (Opening's daily-upload Missing Shops review,
+// Phase 3) — added here rather than on the shared SendMoneyOpeningRow type
+// since that type is also the legacy CSV-parse shape (parseSendMoneyOpeningCsv,
+// unused on this page's own PG-backed fetchData, kept only as an import for
+// its type), which has no equivalent concept.
+type Row = SendMoneyOpeningRow & { _id: number; walletType: string; isActive: boolean };
 
 const COLUMN_IDS = {
   BRAND: 'brand',
@@ -513,7 +525,7 @@ function BrandBadge({ children, brand }: { children: React.ReactNode; brand: str
 }
 
 // Row actions menu (⋮) — copied from Settlement/Top Up/Cashout Opening.
-function RowActionsCell({ row, onEdit }: { row: Row; onEdit: (row: Row) => void }) {
+function RowActionsCell({ row, onEdit, onDelete }: { row: Row; onEdit: (row: Row) => void; onDelete: (row: Row) => void }) {
   const [open, setOpen] = useState(false);
   const [pos, setPos] = useState({ top: 0, left: 0 });
   const btnRef = useRef<HTMLButtonElement>(null);
@@ -598,9 +610,8 @@ function RowActionsCell({ row, onEdit }: { row: Row; onEdit: (row: Row) => void 
           </button>
           <button
             type="button"
-            disabled
-            title="Coming soon"
-            className="flex w-full cursor-not-allowed items-center gap-2 rounded-lg px-2.5 py-1.5 text-left text-[12px] font-normal text-[#b3b8c2] dark:text-[#5a5f66]"
+            onClick={() => { setOpen(false); onDelete(row); }}
+            className="flex w-full items-center gap-2 rounded-lg px-2.5 py-1.5 text-left text-[12px] font-normal text-rose-600 transition-colors hover:bg-rose-50 dark:text-rose-400 dark:hover:bg-rose-950/30"
           >
             <Trash2 size={13} />
             Delete
@@ -626,7 +637,7 @@ function SortIcon({ active, direction }: { active: boolean; direction: 'asc' | '
   );
 }
 
-function renderCell(row: Row, key: ColumnKey, onEdit: (row: Row) => void, searchTerm: string) {
+function renderCell(row: Row, key: ColumnKey, onEdit: (row: Row) => void, onDelete: (row: Row) => void, searchTerm: string) {
   const cellCls = `whitespace-nowrap overflow-hidden text-ellipsis px-4 text-${
     DEFAULT_COLUMNS.find((c) => c.key === key)?.align ?? 'left'
   } text-[13px] leading-[20px] font-normal text-[#111827] dark:text-[#E5E7EB]`;
@@ -637,7 +648,14 @@ function renderCell(row: Row, key: ColumnKey, onEdit: (row: Row) => void, search
     case 'leader':
       return <td key={key} title={toProperCase(row.leader)} className={base}>{highlightMatch(toProperCase(row.leader), searchTerm)}</td>;
     case 'agentName':
-      return <td key={key} title={row.agentName} className={base}>{highlightMatch(row.agentName, searchTerm)}</td>;
+      return (
+        <td key={key} title={row.agentName} className={base}>
+          {highlightMatch(row.agentName, searchTerm)}
+          {!row.isActive && (
+            <span className="ml-1.5 rounded px-1.5 py-0.5 text-[9px] font-medium bg-muted text-muted-foreground align-middle">Inactive</span>
+          )}
+        </td>
+      );
     case 'walletType':
       return <td key={key} title={row.walletType} className={base}><WalletTypeBadge walletType={row.walletType} /></td>;
     // Extra right padding (pr-9 instead of the shared px-4's pr-4) shifts the
@@ -645,11 +663,11 @@ function renderCell(row: Row, key: ColumnKey, onEdit: (row: Row) => void, search
     // the header's sort icon (14px + 6px gap) sits further right than the
     // text itself, and the number should follow the TEXT, not the icon.
     case 'openingBalance':
-      return <td key={key} className={`${base} !pr-9 !text-[12px] font-semibold tabular-nums`}>{highlightMatch(fmt(row.openingBalance), searchTerm)}</td>;
+      return <td key={key} className={`${base} !pr-9 !text-[12px] font-semibold tabular-nums ${(row.openingBalance ?? 0) < 0 ? 'text-rose-600 dark:text-rose-400' : ''}`}>{highlightMatch(fmt(row.openingBalance), searchTerm)}</td>;
     case 'securityDeposit':
-      return <td key={key} className={`${base} !pr-9 !text-[12px] font-semibold tabular-nums`}>{highlightMatch(fmt(row.securityDeposit), searchTerm)}</td>;
+      return <td key={key} className={`${base} !pr-9 !text-[12px] font-semibold tabular-nums ${(row.securityDeposit ?? 0) < 0 ? 'text-rose-600 dark:text-rose-400' : ''}`}>{highlightMatch(fmt(row.securityDeposit), searchTerm)}</td>;
     case 'actions':
-      return <td key={key} className={`${cellCls} py-2.5`}><span className="flex items-center justify-center"><RowActionsCell row={row} onEdit={onEdit} /></span></td>;
+      return <td key={key} className={`${cellCls} py-2.5`}><span className="flex items-center justify-center"><RowActionsCell row={row} onEdit={onEdit} onDelete={onDelete} /></span></td>;
     default:
       return null;
   }
@@ -705,6 +723,7 @@ export default function SendMoneyOpeningPage() {
   const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set());
   const [bulkEditOpen, setBulkEditOpen] = useState(false);
   const [selectionBarRendered, setSelectionBarRendered] = useState(false);
+  const [deletingRow, setDeletingRow] = useState<Row | null>(null);
 
   const [isScrolled, setIsScrolled] = useState(false);
   const [atScrollStart, setAtScrollStart] = useState(true);
@@ -737,10 +756,28 @@ export default function SendMoneyOpeningPage() {
       setLoading(true);
       setError(null);
       setRows([]);
-      const res = await fetch(`/api/sendmoney/opening?t=${Date.now()}`);
+
+      // Today's Opening — PostgreSQL runtime source (Phase 6).
+      // /api/v2/sendmoney/opening preserves the null-vs-zero distinction this
+      // page's data model requires (see openingPageService.ts's own comment);
+      // brand already resolved server-side. walletType stays the page's own
+      // existing name-suffix computation, unchanged, just fed agentCode
+      // instead of the Sheets-derived agentName.
+      const res = await fetch(`/api/v2/sendmoney/opening?t=${Date.now()}`);
       if (!res.ok) throw new Error((await res.text().catch(() => '')) || `Request failed with status ${res.status}`);
-      const text = await res.text();
-      setRows(parseSendMoneyOpeningCsv(text).map((row, index) => ({ ...row, _id: index, walletType: computeWalletType(row.agentName) })));
+      const pgRows: SendMoneyOpeningPgRow[] = await res.json();
+      setRows(
+        pgRows.map((r, index) => ({
+          agentName: r.agentCode,
+          leader: r.leader,
+          brand: r.brand,
+          openingBalance: r.openingBalance,
+          securityDeposit: r.securityDeposit,
+          _id: index,
+          walletType: computeWalletType(r.agentCode),
+          isActive: r.isActive,
+        }))
+      );
       setSelectedIds(new Set());
     } catch (err) {
       setError(classifyFetchError(err instanceof Error ? err.message : String(err)));
@@ -780,10 +817,16 @@ export default function SendMoneyOpeningPage() {
     [columnDefs, mounted]
   );
 
-  const filteredRows = rows.filter((row) => {
+  // Memoized — same fix as app/summary/page.tsx's filteredRows (Cashout
+  // Opening's own toolbar-hover-tanks-the-table bug): an unmemoized filter
+  // here fed downstream useMemo blocks a fresh array reference on every
+  // render, defeating their memoization and re-running the full filter/sort
+  // pipeline on every toolbar tooltip hover. Invisible at small row counts,
+  // real at this page's ~12,700-row scale.
+  const filteredRows = useMemo(() => rows.filter((row) => {
     const haystack = `${row.leader} ${row.agentName} ${row.walletType} ${fmt(row.openingBalance)} ${fmt(row.securityDeposit)} ${row.brand ?? ''}`.toLowerCase();
     return haystack.includes(searchTerm.toLowerCase());
-  });
+  }), [rows, searchTerm]);
 
   // Toolbar filters — Brand/Leader/Wallet Type, same style/arrangement as
   // Balance (app/agentbal/page.tsx). Wallet Type here is single-value per
@@ -949,19 +992,76 @@ export default function SendMoneyOpeningPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [allOnPageSelected, pageRowIds.join(',')]);
 
-  const handleBulkEditApply = useCallback((updates: BulkEditUpdates) => {
-    setRows((current) => current.map((row) => {
-      if (!selectedIds.has(row._id)) return row;
-      return {
-        ...row,
-        ...(updates.leader !== undefined ? { leader: updates.leader } : {}),
-        ...(updates.openingBalance !== undefined ? { openingBalance: parseNullableNumber(updates.openingBalance) } : {}),
-        ...(updates.sdp !== undefined ? { securityDeposit: parseNullableNumber(updates.sdp) } : {}),
-      };
-    }));
+  // Single Edit and Bulk Edit both write through this: agentCode is the
+  // stable PostgreSQL lookup key (agents.agent_code), never the edited
+  // "Agent Name" field text — renaming an agent isn't supported by this
+  // Action, per explicit scoping (see final report). Any edit to that field
+  // is not sent and reverts to the real value on the refetch below.
+  const patchOpeningAgents = useCallback(async (agentCodes: string[], updates: { leader?: string; brand?: string; openingBalance?: string; sdp?: string }) => {
+    const res = await fetch('/api/v2/sendmoney/opening', {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ agentCodes, updates }),
+    });
+    if (!res.ok) {
+      const body = await res.json().catch(() => ({}));
+      throw new Error(body.error || `Request failed with status ${res.status}`);
+    }
+    await fetchData();
+  }, [fetchData]);
+
+  const handleEditSave = useCallback(async (agentCode: string, values: Record<string, string>) => {
+    await patchOpeningAgents([agentCode], {
+      leader: values.leader,
+      brand: values.brand,
+      openingBalance: values.openingBalance,
+      sdp: values.sdp,
+    });
+  }, [patchOpeningAgents]);
+
+  const handleBulkEditApply = useCallback(async (updates: BulkEditUpdates) => {
+    const agentCodes = rows.filter((row) => selectedIds.has(row._id)).map((row) => row.agentName);
+    await patchOpeningAgents(agentCodes, {
+      ...(updates.leader !== undefined ? { leader: updates.leader } : {}),
+      ...(updates.openingBalance !== undefined ? { openingBalance: updates.openingBalance } : {}),
+      ...(updates.sdp !== undefined ? { sdp: updates.sdp } : {}),
+    });
     setBulkEditOpen(false);
     setSelectedIds(new Set());
-  }, [selectedIds]);
+  }, [rows, selectedIds, patchOpeningAgents]);
+
+  const handleConfirmDelete = useCallback(async (agentCode: string) => {
+    const res = await fetch('/api/v2/sendmoney/opening', {
+      method: 'DELETE',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ agentCode }),
+    });
+    if (!res.ok) {
+      const body = await res.json().catch(() => ({}));
+      throw new Error(body.error || `Request failed with status ${res.status}`);
+    }
+    setSelectedIds(new Set());
+    await fetchData();
+  }, [fetchData]);
+
+  const handleCreateSave = useCallback(async (values: Record<string, string>) => {
+    const res = await fetch('/api/v2/sendmoney/opening', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        agentCode: values.agentName,
+        leader: values.leader,
+        brand: values.brand,
+        openingBalance: values.openingBalance,
+        sdp: values.sdp,
+      }),
+    });
+    if (!res.ok) {
+      const body = await res.json().catch(() => ({}));
+      throw new Error(body.error || `Request failed with status ${res.status}`);
+    }
+    await fetchData();
+  }, [fetchData]);
 
   useEffect(() => {
     if (page !== currentPage) {
@@ -1421,7 +1521,7 @@ export default function SendMoneyOpeningPage() {
                             />
                           </div>
                         </td>
-                        {visibleColumns.map((col) => renderCell(row, col.key, setEditingRow, searchTerm))}
+                        {visibleColumns.map((col) => renderCell(row, col.key, setEditingRow, setDeletingRow, searchTerm))}
                       </tr>
                     );
                   }) : !loading && (
@@ -1457,7 +1557,12 @@ export default function SendMoneyOpeningPage() {
                     <div key={row.agentName || i} className="rounded-xl border border-border bg-white p-3.5 dark:bg-[#2a2a2d]">
                       <div className="flex items-start justify-between gap-2">
                         <div className="min-w-0">
-                          <p className="truncate text-sm font-bold text-foreground">{row.agentName}</p>
+                          <p className="truncate text-sm font-bold text-foreground">
+                            {row.agentName}
+                            {!row.isActive && (
+                              <span className="ml-1.5 rounded px-1.5 py-0.5 text-[9px] font-medium bg-muted text-muted-foreground align-middle">Inactive</span>
+                            )}
+                          </p>
                           <p className="truncate text-[12px] font-normal text-muted-foreground">{toProperCase(row.leader)}{row.brand ? ` · ${row.brand}` : ''}{row.walletType !== '−' ? ` · ${row.walletType}` : ''}</p>
                         </div>
                       </div>
@@ -1465,11 +1570,11 @@ export default function SendMoneyOpeningPage() {
                       <div className="mt-2.5 grid grid-cols-2 gap-2 border-t border-border pt-2.5">
                         <div>
                           <p className="text-[11px] font-medium text-muted-foreground">Opening Balance</p>
-                          <p className="text-sm font-bold tabular-nums text-foreground">{fmt(row.openingBalance)}</p>
+                          <p className={`text-sm font-bold tabular-nums ${(row.openingBalance ?? 0) < 0 ? 'text-rose-600 dark:text-rose-400' : 'text-foreground'}`}>{fmt(row.openingBalance)}</p>
                         </div>
                         <div>
                           <p className="text-[11px] font-medium text-muted-foreground">Security Deposit</p>
-                          <p className="text-sm font-bold tabular-nums text-foreground">{fmt(row.securityDeposit)}</p>
+                          <p className={`text-sm font-bold tabular-nums ${(row.securityDeposit ?? 0) < 0 ? 'text-rose-600 dark:text-rose-400' : 'text-foreground'}`}>{fmt(row.securityDeposit)}</p>
                         </div>
                       </div>
                     </div>
@@ -1505,6 +1610,7 @@ export default function SendMoneyOpeningPage() {
         isOpen={editingRow !== null}
         onClose={() => setEditingRow(null)}
         title="Edit Account"
+        subtitle="Update this wallet's account details"
         fields={openingRecordFields}
         initialValues={editingRow ? {
           brand: editingRow.brand ?? '',
@@ -1513,7 +1619,18 @@ export default function SendMoneyOpeningPage() {
           openingBalance: editingRow.openingBalance !== null ? String(editingRow.openingBalance) : '',
           sdp: editingRow.securityDeposit !== null ? String(editingRow.securityDeposit) : '',
         } : {}}
+        onSave={editingRow ? (values) => handleEditSave(editingRow.agentName, values) : undefined}
         primaryButtonClassName="bg-[color:var(--product-accent)] hover:opacity-90"
+        dataProduct="sendmoney"
+      />
+
+      <ConfirmDeleteModal
+        isOpen={deletingRow !== null}
+        onClose={() => setDeletingRow(null)}
+        onConfirm={() => handleConfirmDelete(deletingRow!.agentName)}
+        title="Delete Wallet?"
+        subject={deletingRow?.agentName ?? ''}
+        primaryButtonClassName="bg-rose-600 hover:bg-rose-700"
         dataProduct="sendmoney"
       />
 
@@ -1521,8 +1638,10 @@ export default function SendMoneyOpeningPage() {
         isOpen={newRecordOpen}
         onClose={() => setNewRecordOpen(false)}
         title="New Account"
+        subtitle="Add a wallet under an existing brand"
         fields={openingRecordFields}
         initialValues={{}}
+        onSave={handleCreateSave}
         primaryButtonClassName="bg-[color:var(--product-accent)] hover:opacity-90"
         dataProduct="sendmoney"
       />

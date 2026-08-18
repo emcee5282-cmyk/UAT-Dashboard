@@ -12,15 +12,14 @@ import TableFooter from '@/app/components/TableFooter';
 import EmptyState from '@/app/components/EmptyState';
 import ConnectionErrorState from '@/app/components/ConnectionErrorState';
 import RecordFormModal, { type RecordFormField } from '@/app/components/RecordFormModal';
+import ConfirmDeleteModal from '@/app/components/ConfirmDeleteModal';
 import BulkImportModal from '@/app/components/BulkImportModal';
 import BulkEditModal, { type BulkEditUpdates } from '@/app/components/BulkEditModal';
 import { classifyFetchError, type ClassifiedError } from '@/app/lib/errors';
-import { rawVal, displayNum, parseAmount, fmtAbbrev, fmt } from '@/app/lib/format';
-import { BRAND_CODES as CASHOUT_BRAND_CODES } from '@/app/lib/transferQueueCount';
+import { displayNum, parseAmount, fmtAbbrev, fmt } from '@/app/lib/format';
 import { isToday, isYesterday } from '@/app/lib/businessDate';
 import { getPreference, setPreference } from '@/app/lib/preferences';
 import { SETTLEMENT_BRAND_OPTIONS, SENDMONEY_WALLET_OPTIONS, SETTLEMENT_REMARKS_SUGGESTIONS } from '@/app/lib/settlementOptions';
-import { parseSendMoneyOpeningCsv } from '@/app/lib/sendMoneyOpening';
 
 function matchOptionCaseInsensitive(value: string, options: string[]): string {
   return options.find((option) => option.toLowerCase() === value.toLowerCase()) ?? value;
@@ -362,46 +361,15 @@ type StlmRow = {
   _id: number;
 };
 
-// Col M's gateway label ("MCW SSP GATEWAY" etc.) identifies which system
-// processed the settlement, not the wallet's own brand — so unlike Cashout's
-// mapBrand(), brand here is derived straight from the wallet name itself.
-// Names now carry an extra trailing brand tag beyond the older 4-segment
-// format (e.g. "D-B1BD-DELTA065-NG-M2" — the rightmost "M2", not "B1BD"'s
-// "B1", is the real brand per explicit confirmation), so the rightmost
-// segment is checked first; older names without that trailing tag (e.g.
-// "D-B2BD-DELTA073-NG") fall back to the segment right after the first
-// hyphen, same pattern as app/lib/sendMoneyOpening.ts.
-const BRAND_CODES = [...CASHOUT_BRAND_CODES, 'SH'];
+// Phase 7 — brand/agent-name resolution (parsing the wallet-name segments)
+// moved server-side: transactionPageService.ts now returns each row's brand
+// pre-resolved via agents.brand_id and agentName already in its bare
+// (suffix-stripped) form, straight off agents.agent_code — the same
+// canonical values scripts/migrate-data.ts already computes for the roster.
+// resolveBrandFromWalletName/stripAgentNameSuffix that used to run here on
+// every fetch are gone; displayBrand (below) is still needed for the
+// resolved code's own display label (e.g. 'SH' -> 'Sharing').
 const BRAND_DISPLAY_LABELS: Record<string, string> = { SH: 'Sharing' };
-
-function resolveBrandFromWalletName(walletName: string): string {
-  const segments = walletName.split('-');
-  const last = (segments[segments.length - 1] ?? '').toUpperCase();
-  const trailing = BRAND_CODES.find((c) => c === last);
-  if (trailing) return trailing;
-  const afterFirst = (segments[1] ?? '').toUpperCase();
-  const code = BRAND_CODES.find((c) => afterFirst.startsWith(c));
-  return code ?? '−';
-}
-
-// Display-only: strips a recognized trailing "-<brand code>" tag (e.g.
-// "D-B2BD-DELTA073-NG-B4" -> "D-B2BD-DELTA073-NG") so Agent Name doesn't
-// duplicate what Brand already shows — same treatment as /sendmoney/topup.
-// The NG/RK/UP/BK network suffix is NOT stripped: it's part of the shop's
-// real identity (the "Opening AG" roster's own agentName keys — used for
-// the Leader lookup below — always keep it), not a redundant tag. Brand
-// itself still resolves from the untouched raw walletName above.
-const AGENT_NAME_TRAILING_CODES = [...BRAND_CODES];
-
-function stripAgentNameSuffix(walletName: string): string {
-  let result = walletName;
-  let parts = result.split('-');
-  while (parts.length >= 2 && AGENT_NAME_TRAILING_CODES.includes(parts[parts.length - 1].toUpperCase())) {
-    result = parts.slice(0, -1).join('-');
-    parts = result.split('-');
-  }
-  return result;
-}
 
 function displayBrand(code: string): string {
   return BRAND_DISPLAY_LABELS[code] ?? code;
@@ -656,13 +624,10 @@ function toProperCase(str: string): string {
     .join('');
 }
 
-// Row actions menu (⋮) — copied from Cashout Settlement (app/stlm/page.tsx),
-// adapted to this page's own data (no formatDateDisplay here — this page's
-// date values are already used raw elsewhere). Edit opens the (UI-only,
-// prototype) RecordFormModal via the onEdit callback lifted to the page;
-// View Details/Delete are disabled placeholders for a future CRUD flow, per
-// spec — not wired to anything yet.
-function RowActionsCell({ row, onEdit }: { row: StlmRow; onEdit: (row: StlmRow) => void }) {
+// Row actions menu (⋮) — copied from Cashout Settlement (app/stlm/page.tsx).
+// Edit and Delete are both real PostgreSQL mutations as of Phase 7; View
+// Details stays a disabled placeholder (no detail view exists yet).
+function RowActionsCell({ row, onEdit, onDelete }: { row: StlmRow; onEdit: (row: StlmRow) => void; onDelete: (row: StlmRow) => void }) {
   const [open, setOpen] = useState(false);
   const [pos, setPos] = useState({ top: 0, left: 0 });
   const btnRef = useRef<HTMLButtonElement>(null);
@@ -762,9 +727,8 @@ function RowActionsCell({ row, onEdit }: { row: StlmRow; onEdit: (row: StlmRow) 
           </button>
           <button
             type="button"
-            disabled
-            title="Coming soon"
-            className="flex w-full cursor-not-allowed items-center gap-2 rounded-lg px-2.5 py-1.5 text-left text-[12px] font-normal text-[#b3b8c2] dark:text-[#5a5f66]"
+            onClick={() => { setOpen(false); onDelete(row); }}
+            className="flex w-full items-center gap-2 rounded-lg px-2.5 py-1.5 text-left text-[12px] font-normal text-rose-600 transition-colors hover:bg-rose-50 dark:text-rose-400 dark:hover:bg-rose-500/10"
           >
             <Trash2 size={13} />
             Delete
@@ -799,7 +763,7 @@ function SortIcon({ active, direction }: { active: boolean; direction: 'asc' | '
 // its own smaller-bold !text-[12px] font-semibold. Brand/Wallet keep this
 // page's own data functions (displayBrand, raw wallet) but now render
 // inside Cashout's exact badge components instead of plain text.
-function renderCell(row: StlmRow, key: ColumnKey, onEdit: (row: StlmRow) => void, searchTerm: string) {
+function renderCell(row: StlmRow, key: ColumnKey, onEdit: (row: StlmRow) => void, onDelete: (row: StlmRow) => void, searchTerm: string) {
   const truncates = key === COLUMN_IDS.AGENT_NAME || key === COLUMN_IDS.REMARKS;
   // Body content centers on the column's true geometric center, full stop —
   // the header's trailing sort icon is NOT factored in here. Amount is now
@@ -835,7 +799,7 @@ function renderCell(row: StlmRow, key: ColumnKey, onEdit: (row: StlmRow) => void
       // height is a floor, not a cap, so the 32px action button + full
       // padding would grow the row past 52px; py-2.5 (10px) lands it
       // exactly there (32 + 10 + 10 = 52).
-      return <td key={key} className={`${cellCls} py-2.5`}><span className="flex items-center justify-center"><RowActionsCell row={row} onEdit={onEdit} /></span></td>;
+      return <td key={key} className={`${cellCls} py-2.5`}><span className="flex items-center justify-center"><RowActionsCell row={row} onEdit={onEdit} onDelete={onDelete} /></span></td>;
     default:
       return null;
   }
@@ -981,12 +945,12 @@ export default function SendMoneySettlementPage() {
   const uploadTooltip = useTooltip(uploadButtonRef);
   const newTooltip = useTooltip(newButtonRef);
 
-  // Row Actions -> Edit (UI-only prototype, no persistence — see
-  // RecordFormModal). Holds the row being edited; null means the modal is
-  // closed.
+  // Row Actions -> Edit. Holds the row being edited; null means the modal
+  // is closed.
   const [editingRow, setEditingRow] = useState<StlmRow | null>(null);
-  // "+ Add" dropdown -> New Record / Bulk Import (both UI-only prototypes,
-  // same precedent as Edit above — see RecordFormModal/BulkImportModal).
+  // Phase 7 — Row Actions -> Delete, second-confirmation dialog.
+  const [deletingRow, setDeletingRow] = useState<StlmRow | null>(null);
+  // "+ Add" dropdown -> New Record / Bulk Import.
   const [newRecordOpen, setNewRecordOpen] = useState(false);
   const [bulkImportOpen, setBulkImportOpen] = useState(false);
   // Checkbox row selection (keyed by StlmRow._id, see its own comment) —
@@ -1038,6 +1002,15 @@ export default function SendMoneySettlementPage() {
     };
   }, []);
 
+  // Phase 7 — PostgreSQL is now the unconditional runtime source. Brand and
+  // Leader arrive already resolved (agents.brand_id/leader_id, the same
+  // canonical join Today's Opening/Agent Balance use) — no more
+  // wallet-name-segment brand parsing needed client-side;
+  // transactionPageService.ts already did that server-side (same resolution
+  // scripts/migrate-data.ts uses to populate agents.brand_id).
+  // agents.agent_code for Send Money is already the bare (suffix-stripped)
+  // name — the same form stripAgentNameSuffix used to produce — since that's
+  // the exact key importWalletTransactions() matched rows against.
   const fetchData = useCallback(async () => {
     try {
       setSpinning(true);
@@ -1045,81 +1018,45 @@ export default function SendMoneySettlementPage() {
       setError(null);
 
       const [res, openingRes] = await Promise.all([
-        fetch(`/api/sendmoney/stlmtopup?t=${Date.now()}`),
-        fetch(`/api/sendmoney/opening?t=${Date.now()}`),
+        fetch(`/api/v2/sendmoney/settlement?t=${Date.now()}`),
+        fetch(`/api/v2/sendmoney/opening?t=${Date.now()}`),
       ]);
-      if (!res.ok) throw new Error((await res.text().catch(() => '')) || `Request failed with status ${res.status}`);
-      const text = await res.text();
-      const lines = text.trim().split('\n').slice(1);
-
-      // Agent Name roster — same "Opening AG" L:O range /sendmoney/opening
-      // reads, the real Balance Shop master list rather than a today-only
-      // stand-in. Leader comes from the same parsed rows. Keys are
-      // normalized (uppercase + all whitespace stripped), not just
-      // uppercased — same fix already applied to app/agentbal/page.tsx's Top
-      // Up/Settlement sums: the sheets' own agent-name columns aren't always
-      // cased/spaced the same as each other, which silently dropped that
-      // agent's Leader lookup since the plain-uppercase key never matched.
-      const normalizeAgentKey = (name: string): string => name.toUpperCase().replace(/\s+/g, '');
-      const leaderMap: Record<string, string> = {};
-      if (openingRes.ok) {
-        const openingText = await openingRes.text();
-        const openingRows = parseSendMoneyOpeningCsv(openingText);
-        // Uppercased before dedup — the real table always displays Agent
-        // Name via .toUpperCase(), so the roster feeding Add/Edit's
-        // combobox and Bulk Import's validation should match that same
-        // canonical casing regardless of how the sheet itself has it stored.
-        const openingNames = Array.from(new Set(openingRows.map((row) => row.agentName.toUpperCase()))).sort((a, b) => a.localeCompare(b));
-        setOpeningAgentNames(openingNames);
-        openingRows.forEach((row) => {
-          if (row.agentName && row.leader) leaderMap[normalizeAgentKey(row.agentName)] = row.leader;
-        });
+      if (!res.ok) {
+        const body = await res.json().catch(() => null);
+        throw new Error(body?.error || `Request failed with status ${res.status}`);
       }
+      const stlm: StlmRow[] = (await res.json()).map((r: { id: number; agentName: string; amount: string; remarks: string; date: string; wallet: string; brand: string; leader: string }) => ({
+        agentName: r.agentName,
+        amount: r.amount,
+        remarks: r.remarks,
+        date: r.date,
+        wallet: r.wallet,
+        brand: r.brand,
+        leader: r.leader,
+        _id: r.id,
+      }));
 
-      const stlm: StlmRow[] = [];
-
-      // "PS BD STLM + TOPUP" is Send Money's own dedicated sheet (replaces
-      // the old shared "Stlm Top Up" cols A-G source). Settlement lives in
-      // cols H-L (indices 7-11): To Agent/Amount/Date/Wallet/TYPE. To Agent
-      // (col H) is the actual Send Money wallet name (e.g.
-      // "D-B2BD-DELTA073-NG"); Amount (col I) is stored negative (money
-      // leaving), so it's abs()'d for display; TYPE (col L, e.g. "BUNDLE
-      // TRANSFER") stands in for Remarks, same as before. Cols B-F on this
-      // same sheet are a separate TopUp block (see /sendmoney/topup) and
-      // cols Q-AA are a last-month archive — neither belongs here.
-      lines
-        .filter(line => line.trim() !== '')
-        .forEach(line => {
-          const cols = line.split(',');
-          const walletName = rawVal(cols[7]);
-          if (walletName && walletName !== '-' && walletName !== '0') {
-            const bareAgentName = stripAgentNameSuffix(walletName);
-            stlm.push({
-              agentName: bareAgentName,
-              amount: String(Math.abs(parseAmount(rawVal(cols[8])))),
-              remarks: rawVal(cols[11]),
-              date: rawVal(cols[9]),
-              wallet: rawVal(cols[10]),
-              brand: resolveBrandFromWalletName(walletName),
-              leader: leaderMap[normalizeAgentKey(bareAgentName)] || '−',
-              _id: stlm.length,
-            });
-          }
-        });
+      // Roster for Add/Edit's Agent Name combobox and Bulk Import's
+      // validation — /api/v2/sendmoney/opening is Today's Opening's own
+      // already-migrated Postgres read (consumed here read-only).
+      if (openingRes.ok) {
+        const openingRows: { agentCode: string }[] = await openingRes.json();
+        const names = Array.from(new Set(openingRows.map((r) => r.agentCode.toUpperCase()))).sort((a, b) => a.localeCompare(b));
+        setOpeningAgentNames(names);
+      }
 
       // Same validity filter as before, split out so both the table's
       // "today only" rows and the KPI row's "today vs yesterday" comparison
-      // can be computed from one pass over the full (unfiltered-by-date)
-      // sheet, instead of the table's own isToday() filter discarding
-      // yesterday's rows before the KPI row ever gets a chance to see them.
+      // can be computed from one pass, instead of the table's own isToday()
+      // filter discarding yesterday's rows before the KPI row ever gets a
+      // chance to see them.
       const validStlm = stlm.filter(row => row.agentName && row.agentName !== '-' && row.agentName !== '0');
       const todayStlm = validStlm.filter(row => isToday(row.date));
       const yesterdayStlm = validStlm.filter(row => isYesterday(row.date));
 
       setStlmRows(todayStlm);
-      // A fresh fetch means brand-new row objects (and _ids reset to 0..N)
-      // — any previous selection no longer refers to anything real, so it
-      // clears here rather than silently pointing at the wrong rows.
+      // A fresh fetch means brand-new row objects — any previous selection
+      // may point at ids no longer present (e.g. after a Delete).
       setSelectedIds(new Set());
       setKpiStats({
         todayCount: todayStlm.length,
@@ -1138,6 +1075,17 @@ export default function SendMoneySettlementPage() {
   useEffect(() => {
     fetchData();
   }, [fetchData]);
+
+  // Phase 10 — real brands table, replacing the old hardcoded
+  // SETTLEMENT_BRAND_OPTIONS+'SH' array for the Bulk Import modal's own
+  // Brand validation.
+  const [uploadBrandOptions, setUploadBrandOptions] = useState<string[]>([]);
+  useEffect(() => {
+    fetch('/api/v2/brands?product=sendmoney')
+      .then((res) => (res.ok ? res.json() : []))
+      .then((brands: { code: string }[]) => setUploadBrandOptions(brands.map((b) => b.code)))
+      .catch(() => {});
+  }, []);
 
   useEffect(() => {
     setPage(1);
@@ -1362,19 +1310,72 @@ export default function SendMoneySettlementPage() {
     return `${parsed.getMonth() + 1}/${parsed.getDate()}/${parsed.getFullYear()}`;
   };
 
-  const handleBulkEditApply = useCallback((updates: BulkEditUpdates) => {
-    setStlmRows((current) => current.map((row) => {
-      if (!selectedIds.has(row._id)) return row;
-      return {
-        ...row,
-        ...(updates.wallet !== undefined ? { wallet: updates.wallet } : {}),
-        ...(updates.remarks !== undefined ? { remarks: updates.remarks } : {}),
-        ...(updates.date !== undefined ? { date: parseDisplayDateToStorage(updates.date) } : {}),
-      };
-    }));
+  // Phase 7 — shared by Single Edit and Bulk Edit, same one-endpoint,
+  // one-transaction, all-or-nothing pattern as Today's Opening's
+  // updateOpeningAgents.
+  const patchSettlementRows = useCallback(async (ids: number[], updates: Record<string, string>) => {
+    const res = await fetch('/api/v2/sendmoney/settlement', {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ ids, updates }),
+    });
+    const body = await res.json().catch(() => null);
+    if (!res.ok) throw new Error(body?.error || 'Update failed.');
+    await fetchData();
+  }, [fetchData]);
+
+  const handleEditSave = useCallback(async (values: Record<string, string>) => {
+    if (!editingRow) return;
+    await patchSettlementRows([editingRow._id], {
+      agentName: values.agentName,
+      wallet: values.wallet,
+      amount: values.amount,
+      remarks: values.remarks ?? '',
+      date: parseDisplayDateToStorage(values.date),
+    });
+    setEditingRow(null);
+  }, [editingRow, patchSettlementRows]);
+
+  const handleCreateSave = useCallback(async (values: Record<string, string>) => {
+    const res = await fetch('/api/v2/sendmoney/settlement', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        agentName: values.agentName,
+        wallet: values.wallet,
+        amount: values.amount,
+        remarks: values.remarks ?? '',
+        date: parseDisplayDateToStorage(values.date),
+      }),
+    });
+    const body = await res.json().catch(() => null);
+    if (!res.ok) throw new Error(body?.error || 'Create failed.');
+    await fetchData();
+    setNewRecordOpen(false);
+  }, [fetchData]);
+
+  const handleConfirmDelete = useCallback(async () => {
+    if (!deletingRow) return;
+    const res = await fetch('/api/v2/sendmoney/settlement', {
+      method: 'DELETE',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ id: deletingRow._id }),
+    });
+    const body = await res.json().catch(() => null);
+    if (!res.ok) throw new Error(body?.error || 'Delete failed.');
+    await fetchData();
+    setDeletingRow(null);
+  }, [deletingRow, fetchData]);
+
+  const handleBulkEditApply = useCallback(async (updates: BulkEditUpdates) => {
+    const payload: Record<string, string> = {};
+    if (updates.wallet !== undefined) payload.wallet = updates.wallet;
+    if (updates.remarks !== undefined) payload.remarks = updates.remarks;
+    if (updates.date !== undefined) payload.date = parseDisplayDateToStorage(updates.date);
+    await patchSettlementRows(Array.from(selectedIds), payload);
     setBulkEditOpen(false);
     setSelectedIds(new Set());
-  }, [selectedIds]);
+  }, [selectedIds, patchSettlementRows]);
 
   useEffect(() => {
     if (page !== currentPage) {
@@ -1383,7 +1384,10 @@ export default function SendMoneySettlementPage() {
   }, [page, currentPage]);
 
   const settlementRecordFields: RecordFormField[] = useMemo(() => [
-    { key: 'brand', label: 'Brand', kind: 'combobox', options: SETTLEMENT_BRAND_OPTIONS, required: true },
+    // 'SH' appended locally — see app/stlm/page.tsx's identical fix for the
+    // full rationale (Brand is never submitted, so this only prevents a
+    // valid real value from wrongly blocking Save).
+    { key: 'brand', label: 'Brand', kind: 'combobox', options: [...SETTLEMENT_BRAND_OPTIONS, 'SH'], required: true },
     { key: 'agentName', label: 'Agent Name', kind: 'combobox', options: openingAgentNames, required: true },
     { key: 'wallet', label: 'Wallet', kind: 'combobox', options: SENDMONEY_WALLET_OPTIONS, required: true },
     { key: 'amount', label: 'Amount', kind: 'amount', required: true },
@@ -1862,7 +1866,7 @@ export default function SendMoneySettlementPage() {
                             />
                           </div>
                         </td>
-                        {visibleColumns.map((col) => renderCell(row, col.key, setEditingRow, searchTerm))}
+                        {visibleColumns.map((col) => renderCell(row, col.key, setEditingRow, setDeletingRow, searchTerm))}
                       </tr>
                     );
                   }) : !loading && (
@@ -1940,7 +1944,9 @@ export default function SendMoneySettlementPage() {
       <RecordFormModal
         isOpen={editingRow !== null}
         onClose={() => setEditingRow(null)}
+        onSave={handleEditSave}
         title="Edit Settlement Record"
+        subtitle="Brand follows the agent automatically and can't be changed here."
         fields={settlementRecordFields}
         initialValues={editingRow ? {
           brand: matchOptionCaseInsensitive(editingRow.brand, SETTLEMENT_BRAND_OPTIONS),
@@ -1959,6 +1965,7 @@ export default function SendMoneySettlementPage() {
       <RecordFormModal
         isOpen={newRecordOpen}
         onClose={() => setNewRecordOpen(false)}
+        onSave={handleCreateSave}
         title="New Settlement Record"
         fields={settlementRecordFields}
         initialValues={{}}
@@ -1969,11 +1976,14 @@ export default function SendMoneySettlementPage() {
       <BulkImportModal
         isOpen={bulkImportOpen}
         onClose={() => setBulkImportOpen(false)}
+        onImported={fetchData}
+        importApiBasePath="/api/v2/import/settlement"
+        product="sendmoney"
         moduleLabel="Settlement Records"
         templateModule="settlement"
         accentButtonClassName="bg-[color:var(--product-accent)] hover:opacity-90"
         dataProduct="sendmoney"
-        brandOptions={SETTLEMENT_BRAND_OPTIONS}
+        brandOptions={uploadBrandOptions}
         walletOptions={SENDMONEY_WALLET_OPTIONS}
         agentRoster={openingAgentNames}
         remarksSuggestions={SETTLEMENT_REMARKS_SUGGESTIONS}
@@ -1987,6 +1997,16 @@ export default function SendMoneySettlementPage() {
         walletOptions={SENDMONEY_WALLET_OPTIONS}
         remarksSuggestions={SETTLEMENT_REMARKS_SUGGESTIONS}
         primaryButtonClassName="bg-[color:var(--product-accent)] hover:opacity-90"
+        dataProduct="sendmoney"
+      />
+
+      <ConfirmDeleteModal
+        isOpen={deletingRow !== null}
+        onClose={() => setDeletingRow(null)}
+        onConfirm={handleConfirmDelete}
+        title="Delete Settlement Record"
+        subject={deletingRow ? `${deletingRow.agentName.toUpperCase()}'s ${displayNum(deletingRow.amount)} settlement on ${formatDateDisplay(deletingRow.date)}` : ''}
+        primaryButtonClassName="bg-rose-600 hover:bg-rose-700"
         dataProduct="sendmoney"
       />
     </div>

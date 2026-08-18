@@ -2,10 +2,20 @@
 
 import { useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { X, AlertTriangle } from 'lucide-react';
+import { X, AlertTriangle, Plus, Pencil, Check } from 'lucide-react';
 import SearchableCombobox from './SearchableCombobox';
 import AmountInput from './AmountInput';
 import DateInput from './DateInput';
+import {
+  MODAL_OVERLAY_CLASS,
+  MODAL_CARD_CLASS,
+  MODAL_GLYPH_CLASS,
+  MODAL_GLYPH_STYLE,
+  MODAL_GHOST_BUTTON_CLASS,
+  MODAL_PRIMARY_BUTTON_SHAPE_CLASS,
+  MODAL_ESC_HINT_CLASS,
+  MODAL_ESC_KBD_CLASS,
+} from './modalTheme';
 
 // Discriminated by `kind` so RecordFormModal can render the right control
 // per field without the caller needing to know anything about
@@ -29,15 +39,25 @@ type RecordFormModalProps = {
   isOpen: boolean;
   onClose: () => void;
   title: string;
+  // Optional short line under the title (e.g. "Add a wallet under an
+  // existing brand") — omitted entirely for callers that don't need it
+  // (Settlement/Top Up's New/Edit Record keep their plain header).
+  subtitle?: string;
   fields: RecordFormField[];
   initialValues: Record<string, string>;
   primaryButtonClassName: string;
   // Optional — callers that only need the UI-only prototype behavior (New/
   // Edit Record on the Settlement pages today) omit this and Save just
   // closes, per spec. A caller that actually needs the edited values back
-  // (Bulk Import's per-row "fix it here" edit) passes this to receive them
-  // before the modal closes.
-  onSave?: (values: Record<string, string>) => void;
+  // (Bulk Import's per-row "fix it here" edit; Today's Opening's real
+  // PostgreSQL-backed Edit) passes this to receive them. May return a
+  // Promise — if it does, Save awaits it, stays open with a disabled/
+  // "Saving..." button until it settles, and only closes on success. A
+  // thrown/rejected error is caught and shown inline instead of closing, so
+  // a real server failure can never be silently treated as a success.
+  // Synchronous callers (Bulk Import's own per-row edit) are unaffected —
+  // awaiting a non-Promise return resolves immediately, same as before.
+  onSave?: (values: Record<string, string>) => void | Promise<void>;
   // Optional — a caller with its own business-rule engine (Bulk Import's
   // "Agent not found in Balance Shop" / "Wallet not supported" / etc.)
   // supplies this to show the REAL reason a field is invalid, immediately
@@ -59,6 +79,7 @@ export default function RecordFormModal({
   isOpen,
   onClose,
   title,
+  subtitle,
   fields,
   initialValues,
   primaryButtonClassName,
@@ -66,6 +87,12 @@ export default function RecordFormModal({
   getFieldHint,
   dataProduct,
 }: RecordFormModalProps) {
+  // Purely cosmetic: a "New ..." title gets the + glyph, everything else
+  // (Edit, or any other module's own title) gets the pencil — inferred from
+  // the title text already every caller supplies, rather than a new prop
+  // every one of RecordFormModal's call sites would have to start passing.
+  const isCreateMode = /^new\b/i.test(title.trim());
+  const GlyphIcon = isCreateMode ? Plus : Pencil;
   // Own local, disposable copy of the field values — typing here never
   // touches the caller's real row/table data, and it's discarded (not
   // persisted) on every close, per the "no local state mutation" spec.
@@ -74,6 +101,10 @@ export default function RecordFormModal({
   // reports "required" after the user has interacted with (blurred) it, or
   // after a Save attempt, never on first render of an empty New Record form.
   const [touched, setTouched] = useState<Record<string, boolean>>({});
+  // Real async-save state (see onSave's own comment above) — both stay at
+  // their default for every caller that doesn't pass an async onSave.
+  const [saving, setSaving] = useState(false);
+  const [saveError, setSaveError] = useState<string | null>(null);
   // Lags `isOpen` by the exit-animation duration so the closing card/overlay
   // fade+scale actually gets to play instead of the component unmounting
   // mid-transition — same pattern as this app's own dt-fade-in/dt-fade-out.
@@ -85,6 +116,8 @@ export default function RecordFormModal({
     if (isOpen) {
       setValues(initialValues);
       setTouched({});
+      setSaving(false);
+      setSaveError(null);
       setRendered(true);
       setClosing(false);
     } else if (rendered) {
@@ -194,19 +227,45 @@ export default function RecordFormModal({
 
   const markTouched = (key: string) => setTouched((current) => ({ ...current, [key]: true }));
 
-  const handleSaveClick = () => {
+  // Matches the reference layout: two adjacent 'amount' fields (Opening
+  // Balance + SDP on the Opening pages) render side by side in their own
+  // row, with a divider above marking the start of that pair — everything
+  // else (Settlement's own single Amount field included) stays one full-
+  // width row per field, unchanged. Pairing is structural (adjacency in the
+  // fields array), not a new per-field prop every caller would need to set.
+  const fieldRows: RecordFormField[][] = [];
+  for (let i = 0; i < fields.length; i++) {
+    const field = fields[i];
+    const next = fields[i + 1];
+    if (field.kind === 'amount' && next?.kind === 'amount') {
+      fieldRows.push([field, next]);
+      i++;
+    } else {
+      fieldRows.push([field]);
+    }
+  }
+
+  const handleSaveClick = async () => {
     if (!isFormValid) {
       setTouched(Object.fromEntries(fields.map((field) => [field.key, true])));
       return;
     }
-    onSave?.(values);
-    onClose();
+    try {
+      setSaving(true);
+      setSaveError(null);
+      await onSave?.(values);
+      onClose();
+    } catch (err) {
+      setSaveError(err instanceof Error ? err.message : 'Failed to save. Please try again.');
+    } finally {
+      setSaving(false);
+    }
   };
 
   return createPortal(
     <div
       data-product={dataProduct}
-      className={`fixed inset-0 z-[9999] flex items-center justify-center bg-black/40 px-4 ${closing ? 'dt-modal-overlay-out' : 'dt-modal-overlay-in'}`}
+      className={MODAL_OVERLAY_CLASS(closing)}
       onClick={onClose}
     >
       <div
@@ -215,10 +274,18 @@ export default function RecordFormModal({
         aria-modal="true"
         aria-label={title}
         onClick={(event) => event.stopPropagation()}
-        className={`w-full max-w-2xl rounded-xl border border-border bg-white p-6 shadow-xl dark:bg-[#2a2a2d] ${closing ? 'dt-modal-card-out' : 'dt-modal-card-in'}`}
+        className={MODAL_CARD_CLASS(closing)}
       >
         <div className="flex items-start justify-between gap-3">
-          <h2 className="text-[16px] font-bold text-foreground">{title}</h2>
+          <div className="flex items-center gap-2.5">
+            <span className={MODAL_GLYPH_CLASS} style={MODAL_GLYPH_STYLE}>
+              <GlyphIcon size={16} />
+            </span>
+            <div>
+              <h2 className="text-[16px] font-bold text-foreground">{title}</h2>
+              {subtitle && <p className="mt-0.5 text-[12px] text-muted-foreground">{subtitle}</p>}
+            </div>
+          </div>
           <button
             type="button"
             onClick={onClose}
@@ -229,23 +296,32 @@ export default function RecordFormModal({
           </button>
         </div>
 
-        <div className="mt-5 space-y-5">
-          {fields.map((field) => {
-            const fieldId = `record-field-${field.key}`;
-            // A business-rule hint shows immediately (not gated behind
-            // touched) — that's the whole point of "guide the user to
-            // every validation issue the instant the dialog opens."
-            const hint = getFieldHint?.(field.key, values[field.key] ?? '') ?? null;
-            const errorMessage = hint ? hint.message : touched[field.key] ? getFieldError(field) : null;
-            const error = errorMessage !== null;
-            return (
-              <div key={field.key}>
-                <label htmlFor={fieldId} className="mb-1.5 block text-[12px] font-medium text-muted-foreground">
-                  {field.label}
-                  {field.required && <span className="ml-0.5 text-rose-500">*</span>}
-                </label>
+        <div className="mt-5 flex flex-col gap-4">
+          {fieldRows.map((row, rowIndex) => {
+            // The reference layout puts a thin divider right above the
+            // paired-amount row (Opening Balance + SDP) — the visual
+            // separator between "identity" fields above and "balance"
+            // fields below. Only fires for a real pair, never for
+            // Settlement's own lone Amount field.
+            const isPairedAmountRow = row.length === 2;
+            const rowContent = row.map((field) => {
+              const fieldId = `record-field-${field.key}`;
+              // A business-rule hint shows immediately (not gated behind
+              // touched) — that's the whole point of "guide the user to
+              // every validation issue the instant the dialog opens."
+              const hint = getFieldHint?.(field.key, values[field.key] ?? '') ?? null;
+              const errorMessage = hint ? hint.message : touched[field.key] ? getFieldError(field) : null;
+              const error = errorMessage !== null;
+              return (
+                <div key={field.key}>
+                  <label htmlFor={fieldId} className="mb-[7px] flex items-center gap-1.5 text-[12px] font-medium text-muted-foreground">
+                    {field.label}
+                    {field.required
+                      ? <span className="text-rose-500">*</span>
+                      : <span className="rounded-full bg-muted px-1.5 py-px text-[10.5px] font-medium tracking-wide text-muted-foreground">Optional</span>}
+                  </label>
 
-                {field.kind === 'combobox' && (
+                  {field.kind === 'combobox' && (
                   <SearchableCombobox
                     id={fieldId}
                     value={values[field.key] ?? ''}
@@ -290,7 +366,7 @@ export default function RecordFormModal({
                     onChange={(event) => setValues((current) => ({ ...current, [field.key]: event.target.value }))}
                     onBlur={() => markTouched(field.key)}
                     placeholder={field.placeholder}
-                    className={`h-10 w-full rounded-lg border bg-white px-3 text-[13px] text-foreground outline-none transition-colors focus:border-[#2563EB] focus:ring-2 focus:ring-[#2563EB]/20 dark:bg-[#1c1c1e] ${
+                    className={`h-10 w-full rounded-[10px] border bg-white px-3.5 text-[13px] text-foreground outline-none transition-colors focus:border-[color:var(--product-accent)] focus:ring-2 focus:ring-[color:var(--product-accent-soft)] dark:bg-[#1c1c1e] ${
                       error ? 'border-rose-400' : 'border-border'
                     }`}
                   />
@@ -313,27 +389,46 @@ export default function RecordFormModal({
                     {hint.details.map((option) => <p key={option}>• {option}</p>)}
                   </div>
                 )}
+                </div>
+              );
+            });
+
+            return (
+              <div key={rowIndex}>
+                {isPairedAmountRow && <hr className="mb-4 border-t border-border/60" />}
+                {isPairedAmountRow
+                  ? <div className="grid grid-cols-2 gap-3">{rowContent}</div>
+                  : rowContent}
               </div>
             );
           })}
         </div>
 
+        {saveError && (
+          <p className="mt-4 flex items-start gap-1.5 rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-[12px] text-rose-600 dark:border-rose-900/50 dark:bg-rose-950/30 dark:text-rose-400">
+            <AlertTriangle size={13} className="mt-0.5 shrink-0" />
+            <span>{saveError}</span>
+          </p>
+        )}
+
         <div className="mt-6 flex items-center justify-between border-t border-border pt-4">
-          <button
-            type="button"
-            onClick={onClose}
-            className="rounded-lg border border-border px-4 py-2 text-[12px] font-medium text-foreground transition-colors hover:bg-muted"
-          >
-            Cancel
-          </button>
-          <button
-            type="button"
-            onClick={handleSaveClick}
-            disabled={!isFormValid}
-            className={`rounded-lg px-4 py-2 text-[12px] font-semibold text-white transition-colors disabled:cursor-not-allowed disabled:opacity-50 ${primaryButtonClassName}`}
-          >
-            Save Changes
-          </button>
+          <span className={MODAL_ESC_HINT_CLASS}>
+            <kbd className={MODAL_ESC_KBD_CLASS}>Esc</kbd> to cancel
+          </span>
+          <div className="flex items-center gap-2">
+            <button type="button" onClick={onClose} className={MODAL_GHOST_BUTTON_CLASS}>
+              Cancel
+            </button>
+            <button
+              type="button"
+              onClick={handleSaveClick}
+              disabled={!isFormValid || saving}
+              className={`${MODAL_PRIMARY_BUTTON_SHAPE_CLASS} ${primaryButtonClassName}`}
+            >
+              {!saving && <Check size={13} />}
+              {saving ? 'Saving...' : 'Save Changes'}
+            </button>
+          </div>
         </div>
       </div>
     </div>,

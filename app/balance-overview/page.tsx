@@ -2,10 +2,10 @@
 
 import { useEffect, useState, useCallback, useMemo } from 'react';
 import * as XLSX from 'xlsx';
-import { TrendingUp, TrendingDown, Wallet, Activity, Home, RefreshCw, Download, ChevronUp, ChevronDown } from 'lucide-react';
+import { TrendingUp, TrendingDown, Wallet, Activity, RefreshCw, Download, ChevronUp, ChevronDown } from 'lucide-react';
 import PageHeader from '../components/PageHeader';
 import ProductSwitchTabs from '../components/ProductSwitchTabs';
-import ThemeToggle from '../components/ThemeToggle';
+import AccountMenu from '../components/AccountMenu';
 import EmptyState from '../components/EmptyState';
 import ConnectionErrorState from '../components/ConnectionErrorState';
 import TrendChart, { type TrendPoint, type TrendSeriesDef } from '../components/TrendChart';
@@ -961,12 +961,16 @@ export default function Dashboard() {
   return (
     <div className="min-h-screen bg-[#f5f5f7] text-[#1a1a1a] transition-colors duration-300 dark:bg-[#1c1c1e] dark:text-white">
       <PageHeader
-        icon={Home}
         title="Dashboard: SSP Line 1"
-        centerSlot={<ProductSwitchTabs />}
+        description="Smart Solution Cashout Operations Overview"
+        containerless
+        centerSlot={
+          <div className="inline-flex items-center gap-7 rounded-lg border border-border/70 bg-muted px-4 py-1.5">
+            <ProductSwitchTabs />
+          </div>
+        }
         actions={
           <>
-            <ThemeToggle />
             <button
               onClick={fetchData}
               disabled={spinning}
@@ -976,15 +980,16 @@ export default function Dashboard() {
             >
               <RefreshCw size={13} className={spinning ? 'animate-spin' : ''} />
             </button>
+            <AccountMenu />
           </>
         }
       />
 
-      <main className="space-y-6 px-4 py-6 md:px-8 md:py-8">
+      <main className="space-y-4 px-3 pt-4 pb-5 md:px-6 md:pt-5 md:pb-6">
         {loading && (
           <>
             <div className="relative flex flex-col gap-4 lg:flex-row">
-              <div className="flex flex-1 flex-col gap-4 lg:w-[calc(100%-326px)] lg:flex-none">
+              <div className="flex flex-1 flex-col gap-4 lg:w-[calc(100%-356px)] lg:flex-none">
 
                 {/* KPI cards skeleton — mirrors: accent bar + icon badge + label + big value + sub */}
                 <section className="grid grid-cols-2 gap-3 sm:grid-cols-4">
@@ -1001,7 +1006,9 @@ export default function Dashboard() {
                 </section>
 
                 {/* CashGo Trend skeleton — mirrors the real TrendChart: single bordered
-                    header (title+period-toggle row, then legend row), 280px chart */}
+                    header (title+period-toggle row, then legend row), 200px chart
+                    (chartHeight override — this page runs more compact than the
+                    default 280px used elsewhere TrendChart is rendered) */}
                 <section className="overflow-hidden rounded-2xl border border-border bg-white shadow-sm dark:bg-[#2a2a2d]">
                   <div className="border-b border-border px-4 py-3">
                     <div className="flex flex-wrap items-center justify-between gap-2">
@@ -1013,7 +1020,7 @@ export default function Dashboard() {
                       <div className="h-3 w-12 animate-pulse rounded-md bg-slate-200 dark:bg-slate-700" />
                     </div>
                   </div>
-                  <div className="h-[280px] px-3 py-4 pt-6">
+                  <div className="h-[200px] px-3 py-4 pt-6">
                     <div className="h-full w-full animate-pulse rounded-xl bg-slate-100 dark:bg-slate-800" />
                   </div>
                 </section>
@@ -1056,7 +1063,7 @@ export default function Dashboard() {
                 <SspLine1Skeleton />
               </div>
 
-              <aside className="flex flex-col gap-4 lg:absolute lg:inset-y-0 lg:right-0 lg:w-[310px]">
+              <aside className="flex flex-col gap-5 lg:absolute lg:inset-y-0 lg:right-0 lg:w-[340px]">
 
                 {/* Top Performer Wallet skeleton — mirrors: header+label / circle badge + name/sub + value */}
                 <section className="overflow-hidden rounded-2xl border border-border bg-white shadow-sm dark:bg-[#2a2a2d]">
@@ -1066,7 +1073,7 @@ export default function Dashboard() {
                   </div>
                   <div>
                     {Array.from({ length: 4 }).map((_, i) => (
-                      <div key={i} className="flex items-center gap-3 border-b border-border px-4 py-2.5 last:border-0">
+                      <div key={i} className="flex items-center gap-3 border-b border-border px-4 py-3.5 last:border-0">
                         <div className="h-6 w-6 shrink-0 animate-pulse rounded-full bg-slate-200 dark:bg-slate-700" />
                         <div className="min-w-0 flex-1 space-y-1.5">
                           <div className="h-3 w-20 animate-pulse rounded-md bg-slate-200 dark:bg-slate-700" />
@@ -1086,7 +1093,7 @@ export default function Dashboard() {
                   </div>
                   <div className="min-h-0 flex-1 overflow-y-auto">
                     {Array.from({ length: 10 }).map((_, i) => (
-                      <div key={i} className={`flex items-center gap-3 border-b border-border px-4 py-2.5 last:border-0 ${i < 3 ? 'bg-muted/20' : ''}`}>
+                      <div key={i} className={`flex items-center gap-3 border-b border-border px-4 py-3.5 last:border-0 ${i < 3 ? 'bg-muted/20' : ''}`}>
                         <div className="h-6 w-6 shrink-0 animate-pulse rounded-full bg-slate-200 dark:bg-slate-700" />
                         <div className="min-w-0 flex-1 space-y-1.5">
                           <div className="h-3 w-20 animate-pulse rounded-md bg-slate-200 dark:bg-slate-700" />
@@ -1110,7 +1117,7 @@ export default function Dashboard() {
         {!loading && !error && (
           <>
             <div className="relative flex flex-col gap-4 lg:flex-row">
-              <div className="flex flex-1 flex-col gap-4 lg:w-[calc(100%-326px)] lg:flex-none">
+              <div className="flex flex-1 flex-col gap-4 lg:w-[calc(100%-356px)] lg:flex-none">
                 <section className="grid grid-cols-2 gap-3 sm:grid-cols-4">
                   {summaryCards.map((card, i) => {
                     const themes = [
@@ -1141,7 +1148,7 @@ export default function Dashboard() {
                   })}
                 </section>
 
-                <TrendChart title="CashGo Trend" seriesDefs={CASHGO_SERIES_DEFS} weekData={cashGoWeekData} monthData={cashGoMonthData} />
+                <TrendChart title="CashGo Trend" seriesDefs={CASHGO_SERIES_DEFS} weekData={cashGoWeekData} monthData={cashGoMonthData} chartHeight={200} />
 
                 <section className="overflow-hidden rounded-2xl border border-border bg-white shadow-sm dark:bg-[#2a2a2d]">
                   <div className="border-b border-border px-4 py-3">
@@ -1150,9 +1157,9 @@ export default function Dashboard() {
                   <div className="hidden overflow-x-auto sm:block">
                     <table className="w-full min-w-[700px]">
                       <thead>
-                        <tr className="border-b border-border bg-muted/30">
+                        <tr className="h-[48px] border-b border-border bg-muted/30">
                           {walletColumns.map((col) => (
-                            <th key={col.key} className="whitespace-nowrap px-4 py-2.5 text-right text-[10px] font-semibold uppercase tracking-[0.06em] text-muted-foreground first:text-left">
+                            <th key={col.key} className="whitespace-nowrap px-4 text-right text-[13px] font-semibold text-[#475569] first:text-left dark:text-[#9CA3AF]">
                               {col.label}
                             </th>
                           ))}
@@ -1162,21 +1169,21 @@ export default function Dashboard() {
                         {filteredRows.length > 0 ? filteredRows.map((row, i) => (
                           <tr key={row.wallet} className={`border-b border-border last:border-0 hover:bg-muted/30 ${i % 2 === 1 ? 'bg-muted/10' : ''}`}>
                             <td className="whitespace-nowrap px-4 py-3 text-left">
-                              <span className="text-[12px] font-bold text-foreground">{row.wallet}</span>
+                              <span className="text-xs font-bold text-foreground">{row.wallet}</span>
                             </td>
-                            <td className="whitespace-nowrap px-4 py-3 text-right tabular-nums text-[11px] font-medium text-emerald-600 dark:text-emerald-400">
+                            <td className="whitespace-nowrap px-4 py-3 text-right tabular-nums text-xs font-medium text-emerald-600 dark:text-emerald-400">
                               {fmtCell(row.totalDP)}
                             </td>
-                            <td className="whitespace-nowrap px-4 py-3 text-right tabular-nums text-[11px] font-medium text-rose-600 dark:text-rose-400">
+                            <td className="whitespace-nowrap px-4 py-3 text-right tabular-nums text-xs font-medium text-rose-600 dark:text-rose-400">
                               {fmtCell(row.totalWD, true)}
                             </td>
-                            <td className="whitespace-nowrap px-4 py-3 text-right tabular-nums text-[11px] text-foreground">
+                            <td className="whitespace-nowrap px-4 py-3 text-right tabular-nums text-xs text-foreground">
                               {fmtCell(row.bdTransferIn)}
                             </td>
-                            <td className="whitespace-nowrap px-4 py-3 text-right tabular-nums text-[11px] text-foreground">
+                            <td className="whitespace-nowrap px-4 py-3 text-right tabular-nums text-xs text-foreground">
                               {fmtCell(row.stlm, true)}
                             </td>
-                            <td className="whitespace-nowrap px-4 py-3 text-right tabular-nums text-[11px] font-medium text-foreground">
+                            <td className="whitespace-nowrap px-4 py-3 text-right tabular-nums text-xs font-medium text-foreground">
                               {fmtCell(row.actualBal)}
                             </td>
                             <td className="whitespace-nowrap px-4 py-3 text-right">
@@ -1187,7 +1194,7 @@ export default function Dashboard() {
                                   block down by the measured offset so the black figure lines up
                                   with Actual Balance, without touching Actual Balance itself. */}
                               <div style={{ transform: 'translateY(8.25px)' }}>
-                                <div className={`tabular-nums text-[11px] font-bold ${row.runningBal < 0 ? 'text-rose-600 dark:text-rose-400' : 'text-foreground'}`}>
+                                <div className={`tabular-nums text-xs font-bold ${row.runningBal < 0 ? 'text-rose-600 dark:text-rose-400' : 'text-foreground'}`}>
                                   {fmtCell(row.runningBal, true)}
                                 </div>
                                 <div className={`mt-0.5 tabular-nums text-[10px] font-medium ${row.runningBal >= row.opening ? 'text-emerald-600 dark:text-emerald-400' : 'text-rose-500 dark:text-rose-400'}`}>
@@ -1211,26 +1218,26 @@ export default function Dashboard() {
                         <tfoot>
                           <tr className="border-t-2 border-border bg-muted/20">
                             <td className="whitespace-nowrap px-4 py-3 text-left">
-                              <span className="text-[12px] font-bold text-foreground">Total</span>
+                              <span className="text-xs font-bold text-foreground">Total</span>
                             </td>
-                            <td className="whitespace-nowrap px-4 py-3 text-right tabular-nums text-[11px] font-bold text-foreground">
+                            <td className="whitespace-nowrap px-4 py-3 text-right tabular-nums text-xs font-bold text-foreground">
                               {fmtCell(totalDPSum)}
                             </td>
-                            <td className="whitespace-nowrap px-4 py-3 text-right tabular-nums text-[11px] font-bold text-foreground">
+                            <td className="whitespace-nowrap px-4 py-3 text-right tabular-nums text-xs font-bold text-foreground">
                               {fmtCell(totalWDSignedSum, true)}
                             </td>
-                            <td className="whitespace-nowrap px-4 py-3 text-right tabular-nums text-[11px] font-bold text-foreground">
+                            <td className="whitespace-nowrap px-4 py-3 text-right tabular-nums text-xs font-bold text-foreground">
                               {fmtCell(bdTransferInSum)}
                             </td>
-                            <td className="whitespace-nowrap px-4 py-3 text-right tabular-nums text-[11px] font-bold text-foreground">
+                            <td className="whitespace-nowrap px-4 py-3 text-right tabular-nums text-xs font-bold text-foreground">
                               {fmtCell(stlmSum, true)}
                             </td>
-                            <td className="whitespace-nowrap px-4 py-3 text-right tabular-nums text-[11px] font-bold text-foreground">
+                            <td className="whitespace-nowrap px-4 py-3 text-right tabular-nums text-xs font-bold text-foreground">
                               {fmtCell(actualBalTotal)}
                             </td>
                             <td className="whitespace-nowrap px-4 py-3 text-right">
                               <div style={{ transform: 'translateY(8.25px)' }}>
-                                <div className="tabular-nums text-[11px] font-bold text-foreground">
+                                <div className="tabular-nums text-xs font-bold text-foreground">
                                   {fmtCell(runningBalTotal, true)}
                                 </div>
                                 <div className={`mt-0.5 tabular-nums text-[10px] font-medium ${runningBalTotal >= openingTotal ? 'text-emerald-600 dark:text-emerald-400' : 'text-rose-500 dark:text-rose-400'}`}>
@@ -1328,25 +1335,9 @@ export default function Dashboard() {
                     )}
                   </div>
                 </section>
-
-                <SspLine1Section
-                  rows={sspLine1CashoutRows}
-                  title="SSP Line 1: Cashout"
-                  subtitle="Smart Solution Running Balance by Brand"
-                  exportFileName="SSP_LINE1_AGENT_CASHOUT"
-                  exportSheetName="SSP Line 1 Cashout"
-                />
-
-                <SspLine1Section
-                  rows={sspLine1SendMoneyRows}
-                  title="SSP Line 2: Send Money"
-                  subtitle="Smart Solution Running Balance by Brand"
-                  exportFileName="SSP_LINE1_SENDMONEY"
-                  exportSheetName="SSP Line 1 Send Money"
-                />
               </div>
 
-              <aside className="flex flex-col gap-4 lg:absolute lg:inset-y-0 lg:right-0 lg:w-[310px]">
+              <aside className="flex flex-col gap-5 lg:absolute lg:inset-y-0 lg:right-0 lg:w-[340px]">
                 <section className="overflow-hidden rounded-2xl border border-[#e5e5e7] bg-white shadow-sm dark:border-[#3a3a3d] dark:bg-[#2a2a2d]">
                   <div className="flex items-center justify-between border-b border-[#e5e5e7] px-4 py-3 dark:border-[#3a3a3d]">
                     <h2 className="text-[13px] font-semibold text-slate-900 dark:text-white">Top Performer Wallet</h2>
@@ -1363,7 +1354,7 @@ export default function Dashboard() {
                       return (
                         <div
                           key={item.wallet}
-                          className={`flex items-center gap-3 border-b border-[#e5e5e7] px-4 py-2.5 last:border-0 dark:border-[#3a3a3d] ${
+                          className={`flex items-center gap-3 border-b border-[#e5e5e7] px-4 py-3.5 last:border-0 dark:border-[#3a3a3d] ${
                             index === 0 ? 'bg-rose-50/70 dark:bg-rose-500/5' : ''
                           }`}
                         >
@@ -1404,7 +1395,7 @@ export default function Dashboard() {
                       return (
                         <div
                           key={agent.agentName}
-                          className={`flex items-center gap-3 border-b border-border px-4 py-2.5 last:border-0 hover:bg-muted/40 ${index < 3 ? 'bg-muted/20' : ''}`}
+                          className={`flex items-center gap-3 border-b border-border px-4 py-3.5 last:border-0 hover:bg-muted/40 ${index < 3 ? 'bg-muted/20' : ''}`}
                         >
                           <div className={`flex h-6 w-6 shrink-0 items-center justify-center rounded-full text-[9px] font-bold ${rankBadge ?? 'text-[10px] font-semibold text-muted-foreground'}`}>
                             {index + 1}

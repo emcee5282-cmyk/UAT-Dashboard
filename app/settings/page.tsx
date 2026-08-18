@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { SlidersHorizontal, Check, X, Loader2 } from 'lucide-react';
 import PageHeader from '../components/PageHeader';
+import AccountMenu from '../components/AccountMenu';
 import ConnectionErrorState from '../components/ConnectionErrorState';
 import { classifyFetchError, type ClassifiedError, assertAllOk } from '../lib/errors';
 
@@ -14,15 +15,20 @@ import { classifyFetchError, type ClassifiedError, assertAllOk } from '../lib/er
 // Plain-word form, not symbols — per explicit instruction, so staff reading
 // either the dropdown or the raw sheet cell understand it immediately.
 type Operator = 'Greater Than' | 'Greater Than or Equal' | 'Less Than' | 'Less Than or Equal' | 'Between' | 'Equal';
-// cashout_day/cashout_extended/cashout_247 and sendmoney_247/sendmoney_bd
-// are the REAL, LIVE sections (app/lib/transferQueueRules.ts reads these
-// to assign real shops to real queue groups) — kept in the union for type
-// accuracy but deliberately never rendered below anymore (see "Do not
-// display them anymore" in the SH-restructure spec). cashout_sh_* and
-// sendmoney_sh_* are the new SH-based, schedule-driven admin config —
-// draft only, not yet wired to the live Transfer Queue (Send Money's
-// Bundle rows additionally need a "linked Cashout account" lookup that
-// doesn't exist anywhere yet).
+// cashout_sh_* and sendmoney_sh_* are the REAL, LIVE sections today —
+// app/lib/transferQueueRules.ts's resolvers treat SH-prefixed Current Group
+// labels as the primary path (confirmed live: 5,173 of 5,174 real Cashout
+// Balance Limit rows are SH-prefixed), with the legacy per-brand sections
+// below as a fallback only reached by the last non-SH holdout. This was the
+// other way around when originally written — the SH sections started as
+// admin-only draft, and cashout_day/cashout_extended/cashout_247 +
+// sendmoney_247/sendmoney_bd were the real ones — but the resolver cutover
+// happened without this file's own comments or SECTION_META descriptions
+// (below) being updated to match. Fixed here: descriptions no longer claim
+// "draft only, not yet applied." Legacy sections are kept in the union for
+// type accuracy and are still real fallback logic, but deliberately never
+// rendered below (nothing to configure there day-to-day; SH is what an
+// admin actually needs to edit).
 type RuleSection =
   | 'cashout_day' | 'cashout_extended' | 'cashout_247'
   | 'cashout_sh_day' | 'cashout_sh_early_extended' | 'cashout_sh_extended' | 'cashout_sh_247'
@@ -54,45 +60,47 @@ type MetaConfig = { mode: TransferQueueMode; version: number; updatedBy: string;
 const OPERATORS: Operator[] = ['Greater Than', 'Greater Than or Equal', 'Less Than', 'Less Than or Equal', 'Between', 'Equal'];
 
 const SECTION_META: Record<RuleSection, { emoji: string; title: string; description: string }> = {
-  // Real, live sections — no longer rendered (see RuleSectionCard usage
+  // Legacy per-brand sections — never rendered (see RuleSectionCard usage
   // below), kept here only so SECTION_META still satisfies
-  // Record<RuleSection, ...> for every value in the type.
+  // Record<RuleSection, ...> for every value in the type. Still real
+  // fallback logic (the last non-SH holdout shop), just not something an
+  // admin edits day-to-day.
   cashout_day: { emoji: '☀️', title: 'Day Configuration', description: '' },
   cashout_extended: { emoji: '🌇', title: 'Extended Configuration', description: '' },
   cashout_247: { emoji: '🌙', title: '24/7 Configuration', description: '' },
   cashout_sh_day: {
     emoji: '☀️',
     title: 'Day Configuration',
-    description: 'SH — one shared configuration applied to every Cashout shop on the Day schedule. Draft only — not yet applied to the live Transfer Queue.',
+    description: 'SH — one shared configuration applied to every Cashout shop on the Day schedule. This is the live configuration used by the real Transfer Queue today.',
   },
   cashout_sh_early_extended: {
     emoji: '🌅',
     title: 'Early Extended Configuration',
-    description: 'SH — one shared configuration applied to every Cashout shop on the Early Extended schedule. Draft only — not yet applied to the live Transfer Queue.',
+    description: 'SH — one shared configuration applied to every Cashout shop on the Early Extended schedule. This is the live configuration used by the real Transfer Queue today.',
   },
   cashout_sh_extended: {
     emoji: '🌇',
     title: 'Extended Configuration',
-    description: 'SH — one shared configuration applied to every Cashout shop on the Extended schedule. Draft only — not yet applied to the live Transfer Queue.',
+    description: 'SH — one shared configuration applied to every Cashout shop on the Extended schedule. This is the live configuration used by the real Transfer Queue today.',
   },
   cashout_sh_247: {
     emoji: '🌙',
     title: '24/7 Configuration',
-    description: 'SH — one shared configuration applied to every Cashout shop on the 24/7 schedule. Draft only — not yet applied to the live Transfer Queue.',
+    description: 'SH — one shared configuration applied to every Cashout shop on the 24/7 schedule. This is the live configuration used by the real Transfer Queue today.',
   },
-  // Real, live sections — no longer rendered, kept only for type
+  // Legacy per-brand sections — never rendered, kept only for type
   // completeness (same reasoning as the Cashout ones above).
   sendmoney_247: { emoji: '🌙', title: '24/7 Configuration', description: '' },
   sendmoney_bd: { emoji: '🏷️', title: 'BD Limit', description: '' },
   sendmoney_sh_247: {
     emoji: '🌙',
     title: '24/7',
-    description: 'SH — one shared configuration applied to every SH Send Money account on the 24/7 schedule. Bundle rows use the linked Cashout account\'s balance. Draft only — not yet applied to the live Transfer Queue.',
+    description: 'SH — one shared configuration applied to every SH Send Money account on the 24/7 schedule. Bundle rows use the linked Cashout account\'s balance. This is the live configuration used by the real Transfer Queue today.',
   },
   sendmoney_sh_day: {
     emoji: '☀️',
     title: 'Day',
-    description: 'SH — one shared configuration applied to every SH Send Money account on the Day schedule. Bundle rows use the linked Cashout account\'s balance. Draft only — not yet applied to the live Transfer Queue.',
+    description: 'SH — one shared configuration applied to every SH Send Money account on the Day schedule. Bundle rows use the linked Cashout account\'s balance. This is the live configuration used by the real Transfer Queue today.',
   },
 };
 
@@ -738,6 +746,7 @@ export default function SettingsPage() {
         icon={SlidersHorizontal}
         title="Transfer Queue Settings"
         description="Configure the threshold that determines when a shop becomes eligible for Transfer Queue. Changes take effect on the live Transfer Queue."
+        actions={<AccountMenu />}
       />
 
       <main className="mx-auto max-w-4xl px-4 pb-10 pt-24 md:px-8">

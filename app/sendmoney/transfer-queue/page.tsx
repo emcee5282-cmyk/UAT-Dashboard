@@ -27,6 +27,31 @@ async function fetchEffectiveTransferQueueRules(): Promise<RuleRow[]> {
   return data.rules;
 }
 
+// LOCALHOST-ONLY, page-scoped data-source override — same shared flag as
+// app/transfer-queue/page.tsx (Phase 2 wires both products behind it
+// together). Explicit opt-in only: any value other than the literal
+// 'postgres' keeps this page on Google Sheets, its always-safe default.
+function isPostgresSourceEnabled(): boolean {
+  return process.env.NEXT_PUBLIC_TRANSFER_QUEUE_SOURCE === 'postgres';
+}
+
+// Matches app/lib/services/transferQueueService.ts's TransferQueueRow shape.
+type PgTransferQueueRow = {
+  agentId: number;
+  walletId: number;
+  agentCode: string;
+  account: string;
+  brand: string;
+  currentGroup: string;
+  correctGroup: string;
+  companyBalance: number;
+  discrepancy: number;
+  sdpVsBalance: number;
+  balanceInside: number;
+  remarks: string;
+  walletStatus: string;
+};
+
 // Ghost button — copied verbatim from Settlement/Top Up's own toolbar button
 // style, replacing this page's old smaller compact buttons.
 const GHOST_BUTTON =
@@ -527,6 +552,34 @@ export default function SendMoneyTransferQueue() {
       setSpinning(true);
       setLoading(true);
       setError(null);
+
+      if (isPostgresSourceEnabled()) {
+        // Postgres path — /api/v2/transfer-queue already computes every
+        // field server-side (transferQueueService.ts, reusing
+        // balanceService.ts's getAgentBalances() for Company Balance/
+        // Balance Inside/Discrepancy — the exact same figures the Balance
+        // page shows — and the unchanged transferQueueRules.ts resolvers
+        // for Correct Group/Remarks), so this only maps field names onto
+        // QueueRow — no calculation is duplicated here.
+        const res = await fetch(`/api/v2/transfer-queue?product=sendmoney&t=${Date.now()}`);
+        await assertAllOk([res]);
+        const data: { rows: PgTransferQueueRow[] } = await res.json();
+        const queue: QueueRow[] = data.rows.map((row) => ({
+          key: `${row.agentCode}-${row.walletId}`,
+          shopName: row.agentCode,
+          account: row.account,
+          brand: row.brand,
+          currentGroup: row.currentGroup,
+          correctGroup: row.correctGroup,
+          companyBalance: row.companyBalance,
+          discrepancy: row.discrepancy,
+          sdpVsBalance: row.sdpVsBalance,
+          balanceInside: row.balanceInside,
+          remarks: row.remarks,
+        }));
+        setQueueRows(queue);
+        return;
+      }
 
       // Reuses Cashout's own /api/opening as-is for the roster, plus two
       // Send Money-specific routes: /api/sendmoney/balances ("SSP PS

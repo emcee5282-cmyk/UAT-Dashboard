@@ -1,4 +1,5 @@
 import * as XLSX from 'xlsx';
+import { normalizeOpeningAgentName } from './realShopName';
 
 // Thin, reusable wrapper around the `xlsx` library — every bulk-import
 // flow (Settlement today; other modules later) needs the exact same
@@ -163,6 +164,19 @@ export function mapTopUpRows(parsed: ParsedWorkbook): TopUpImportRow[] {
     }));
 }
 
+// Confirmed against both real templates (opening-cashout-template.xlsx,
+// opening-sendmoney-template.xlsx): the SDP header cell is plain "SDP",
+// nothing exotic. Real uploaded files still occasionally fail this match
+// (see mapOpeningRows' "Could not find an SDP column" report) — plain
+// .trim() handles ordinary spaces (and even NBSP, part of the ECMAScript
+// WhiteSpace set) but NOT zero-width space (U+200B) or a leading BOM
+// (U+FEFF), both known artifacts of copy/pasting a sheet from a browser or
+// re-saving out of Google Sheets. Stripped here so a header cell that LOOKS
+// like plain "SDP" but carries an invisible character still matches.
+function normalizeHeaderCell(cell: string | number | undefined): string {
+  return String(cell ?? '').replace(/[​﻿]/g, '').trim().toLowerCase();
+}
+
 // Opening Balance's own column contract — a static roster snapshot, not a
 // per-transaction record, so neither official template
 // (public/templates/opening-cashout-template.xlsx: Agent name/Opening
@@ -175,7 +189,7 @@ export function mapTopUpRows(parsed: ParsedWorkbook): TopUpImportRow[] {
 // model includes them.
 function findOpeningHeaderRowIndex(allRows: (string | number)[][]): number {
   return allRows.findIndex((row) =>
-    row.some((cell) => String(cell ?? '').trim().toLowerCase() === 'sdp')
+    row.some((cell) => normalizeHeaderCell(cell) === 'sdp')
   );
 }
 
@@ -187,14 +201,22 @@ export type OpeningImportRow = {
   sdp: string;
 };
 
-export function mapOpeningRows(parsed: ParsedWorkbook): OpeningImportRow[] {
+// Normalizes exactly once, here, at parse time — so every downstream
+// consumer (the client-side upload wizard's own preview, AND
+// importOpeningFile()'s roster-match lookup AND its new-shop insert) reads
+// the SAME already-normalized agentName, instead of two call sites each
+// needing to remember to normalize consistently. Cashout-only: Send
+// Money's own Opening rows never had this bug (unrelated naming
+// convention, its own extractSendMoneyShopName formula, out of scope —
+// this fix is scoped to the confirmed Cashout-specific problem only).
+export function mapOpeningRows(parsed: ParsedWorkbook, product?: 'cashout' | 'sendmoney'): OpeningImportRow[] {
   const headerRowIndex = findOpeningHeaderRowIndex(parsed.allRows);
   if (headerRowIndex === -1) {
     throw new Error('Could not find an "SDP" column — this doesn\'t look like the Opening Balance template.');
   }
   const headerRow = parsed.allRows[headerRowIndex];
   const dataRows = parsed.allRows.slice(headerRowIndex + 1);
-  const normalizedHeader = headerRow.map((h) => String(h ?? '').trim().toLowerCase());
+  const normalizedHeader = headerRow.map((h) => normalizeHeaderCell(h));
   const colIndex = (...names: string[]) => {
     for (const name of names) {
       const found = normalizedHeader.indexOf(name);
@@ -213,7 +235,22 @@ export function mapOpeningRows(parsed: ParsedWorkbook): OpeningImportRow[] {
     .filter((cols) => cols.some((cell) => String(cell ?? '').trim() !== ''))
     .map((cols, i) => ({
       row: headerRowIndex + i + 2,
-      agentName: String(cols[indices.agentName] ?? '').trim(),
+      // Strips ALL whitespace, not just leading/trailing (.trim() alone
+      // misses an internal stray space, e.g. "N- M2PS1-BROOK072-NG" instead
+      // of "N-M2PS1-BROOK072-NG" — a real, recurring typo in the live
+      // roster, confirmed against 28 real agent_code rows). None of the
+      // accepted Agent Name formats (openingValidation.ts) ever contain a
+      // legitimate space, so this is safe for every row — it only ever
+      // "rescues" a name whose sole defect was stray whitespace; a name
+      // with any other structural problem still fails validation
+      // afterward exactly as before. This is the single shared parse this
+      // codebase uses both for the upload wizard's preview AND the actual
+      // server-side import (importOpeningFile re-parses the raw file
+      // itself rather than trusting client state), so the cleaned value is
+      // what ultimately reaches the database either way.
+      agentName: product === 'cashout'
+        ? normalizeOpeningAgentName(String(cols[indices.agentName] ?? '').replace(/\s+/g, ''))
+        : String(cols[indices.agentName] ?? '').replace(/\s+/g, ''),
       leader: String(cols[indices.leader] ?? '').trim(),
       openingBalance: String(cols[indices.openingBalance] ?? '').trim(),
       sdp: String(cols[indices.sdp] ?? '').trim(),

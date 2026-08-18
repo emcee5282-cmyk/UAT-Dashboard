@@ -41,7 +41,7 @@ export default function AmountInput({ id, value, onChange, onBlur, error, placeh
       onChange={(event) => onChange(stripToRawAmount(event.target.value))}
       onBlur={onBlur}
       placeholder={placeholder}
-      className={`h-10 w-full rounded-lg border bg-white px-3 text-[13px] text-foreground outline-none transition-colors focus:border-[#2563EB] focus:ring-2 focus:ring-[#2563EB]/20 dark:bg-[#1c1c1e] ${
+      className={`h-10 w-full rounded-[10px] border bg-white px-3.5 text-[13px] text-foreground outline-none transition-colors focus:border-[color:var(--product-accent)] focus:ring-2 focus:ring-[color:var(--product-accent-soft)] dark:bg-[#1c1c1e] ${
         error ? 'border-rose-400' : 'border-border'
       }`}
     />

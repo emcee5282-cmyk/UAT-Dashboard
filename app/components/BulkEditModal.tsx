@@ -2,10 +2,20 @@
 
 import { useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { X } from 'lucide-react';
+import { X, AlertTriangle, ListChecks, Check } from 'lucide-react';
 import SearchableCombobox from './SearchableCombobox';
 import DateInput from './DateInput';
 import AmountInput from './AmountInput';
+import {
+  MODAL_OVERLAY_CLASS,
+  MODAL_CARD_CLASS,
+  MODAL_GLYPH_CLASS,
+  MODAL_GLYPH_STYLE,
+  MODAL_GHOST_BUTTON_CLASS,
+  MODAL_PRIMARY_BUTTON_SHAPE_CLASS,
+  MODAL_ESC_HINT_CLASS,
+  MODAL_ESC_KBD_CLASS,
+} from './modalTheme';
 
 // Applies ONE new value to a chosen field across every selected row at
 // once. Settlement/Top Up: Wallet/Remarks/Date only, per explicit spec —
@@ -36,7 +46,12 @@ export type BulkEditUpdates = {
 type BulkEditModalProps = {
   isOpen: boolean;
   onClose: () => void;
-  onApply: (updates: BulkEditUpdates) => void;
+  // May return a Promise — if it does, Apply awaits it, stays open with a
+  // disabled/"Applying..." button until it settles, and only closes on
+  // success. A thrown/rejected error is caught and shown inline instead of
+  // closing (same pattern as RecordFormModal's own onSave), so a real
+  // server/transaction failure can never be silently treated as a success.
+  onApply: (updates: BulkEditUpdates) => void | Promise<void>;
   selectedCount: number;
   // Omit entirely for modules with no Wallet field (e.g. Opening Balance) —
   // the "Update Wallet" row simply doesn't render.
@@ -95,6 +110,10 @@ export default function BulkEditModal({
   const [openingBalance, setOpeningBalance] = useState('');
   const [sdp, setSdp] = useState('');
   const [priority, setPriority] = useState('');
+  // Real async-apply state (see onApply's own comment above) — both stay at
+  // their default for every caller whose onApply doesn't reject.
+  const [applying, setApplying] = useState(false);
+  const [applyError, setApplyError] = useState<string | null>(null);
   // Same open/close animation-lag pattern as RecordFormModal/
   // BulkImportModal — the closing fade/scale gets to actually play.
   const [rendered, setRendered] = useState(isOpen);
@@ -117,6 +136,8 @@ export default function BulkEditModal({
       setOpeningBalance('');
       setSdp('');
       setPriority(priorityOptions?.[0] ?? '');
+      setApplying(false);
+      setApplyError(null);
       setRendered(true);
       setClosing(false);
     } else if (rendered) {
@@ -155,23 +176,31 @@ export default function BulkEditModal({
     && (!leaderEnabled || leader.trim() !== '')
     && (!priorityEnabled || priority.trim() !== '');
 
-  const handleApplyClick = () => {
+  const handleApplyClick = async () => {
     if (!canApply) return;
-    onApply({
-      ...(walletEnabled ? { wallet } : {}),
-      ...(remarksEnabled ? { remarks } : {}),
-      ...(dateEnabled ? { date } : {}),
-      ...(leaderEnabled ? { leader } : {}),
-      ...(openingBalanceEnabled ? { openingBalance } : {}),
-      ...(sdpEnabled ? { sdp } : {}),
-      ...(priorityEnabled ? { priority } : {}),
-    });
+    try {
+      setApplying(true);
+      setApplyError(null);
+      await onApply({
+        ...(walletEnabled ? { wallet } : {}),
+        ...(remarksEnabled ? { remarks } : {}),
+        ...(dateEnabled ? { date } : {}),
+        ...(leaderEnabled ? { leader } : {}),
+        ...(openingBalanceEnabled ? { openingBalance } : {}),
+        ...(sdpEnabled ? { sdp } : {}),
+        ...(priorityEnabled ? { priority } : {}),
+      });
+    } catch (err) {
+      setApplyError(err instanceof Error ? err.message : 'Failed to apply changes. Please try again.');
+    } finally {
+      setApplying(false);
+    }
   };
 
   return createPortal(
     <div
       data-product={dataProduct}
-      className={`fixed inset-0 z-[9999] flex items-center justify-center bg-black/40 px-4 ${closing ? 'dt-modal-overlay-out' : 'dt-modal-overlay-in'}`}
+      className={MODAL_OVERLAY_CLASS(closing)}
       onClick={onClose}
     >
       <div
@@ -180,14 +209,19 @@ export default function BulkEditModal({
         aria-modal="true"
         aria-label="Bulk Edit Records"
         onClick={(event) => event.stopPropagation()}
-        className={`w-full max-w-md rounded-xl border border-border bg-white p-6 shadow-xl dark:bg-[#2a2a2d] ${closing ? 'dt-modal-card-out' : 'dt-modal-card-in'}`}
+        className={MODAL_CARD_CLASS(closing)}
       >
         <div className="flex items-start justify-between gap-3">
-          <div>
-            <h2 className="text-[16px] font-bold text-foreground">Bulk Edit</h2>
-            <p className="mt-0.5 text-[11px] text-muted-foreground">
-              Applying to {selectedCount} selected record{selectedCount === 1 ? '' : 's'}.
-            </p>
+          <div className="flex items-center gap-2.5">
+            <span className={MODAL_GLYPH_CLASS} style={MODAL_GLYPH_STYLE}>
+              <ListChecks size={16} />
+            </span>
+            <div>
+              <h2 className="text-[16px] font-bold text-foreground">Bulk Edit</h2>
+              <p className="mt-0.5 text-[12px] text-muted-foreground">
+                Applying to {selectedCount} selected record{selectedCount === 1 ? '' : 's'}.
+              </p>
+            </div>
           </div>
           <button
             type="button"
@@ -238,7 +272,7 @@ export default function BulkEditModal({
                   <select
                     value={priority}
                     onChange={(event) => setPriority(event.target.value)}
-                    className="h-10 w-full rounded-lg border border-border bg-white px-3 text-[13px] text-foreground outline-none transition-colors focus:border-[#2563EB] focus:ring-2 focus:ring-[#2563EB]/20 dark:bg-[#1c1c1e]"
+                    className="h-10 w-full rounded-[10px] border border-border bg-white px-3.5 text-[13px] text-foreground outline-none transition-colors focus:border-[color:var(--product-accent)] focus:ring-2 focus:ring-[color:var(--product-accent-soft)] dark:bg-[#1c1c1e]"
                   >
                     {(priorityOptions ?? []).map((opt) => (
                       <option key={opt} value={opt}>{opt}</option>
@@ -266,7 +300,7 @@ export default function BulkEditModal({
                     value={leader}
                     onChange={(event) => setLeader(event.target.value)}
                     placeholder="Leader name"
-                    className="h-10 w-full rounded-lg border border-border bg-white px-3 text-[13px] text-foreground outline-none transition-colors focus:border-[#2563EB] focus:ring-2 focus:ring-[#2563EB]/20 dark:bg-[#1c1c1e]"
+                    className="h-10 w-full rounded-[10px] border border-border bg-white px-3.5 text-[13px] text-foreground outline-none transition-colors focus:border-[color:var(--product-accent)] focus:ring-2 focus:ring-[color:var(--product-accent-soft)] dark:bg-[#1c1c1e]"
                   />
                 </div>
               )}
@@ -356,22 +390,31 @@ export default function BulkEditModal({
           )}
         </div>
 
+        {applyError && (
+          <p className="mt-4 flex items-start gap-1.5 rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-[12px] text-rose-600 dark:border-rose-900/50 dark:bg-rose-950/30 dark:text-rose-400">
+            <AlertTriangle size={13} className="mt-0.5 shrink-0" />
+            <span>{applyError}</span>
+          </p>
+        )}
+
         <div className="mt-6 flex items-center justify-between border-t border-border pt-4">
-          <button
-            type="button"
-            onClick={onClose}
-            className="rounded-lg border border-border px-4 py-2 text-[12px] font-medium text-foreground transition-colors hover:bg-muted"
-          >
-            Cancel
-          </button>
-          <button
-            type="button"
-            onClick={handleApplyClick}
-            disabled={!canApply}
-            className={`rounded-lg px-4 py-2 text-[12px] font-semibold text-white transition-colors disabled:cursor-not-allowed disabled:opacity-50 ${primaryButtonClassName}`}
-          >
-            Apply to {selectedCount} Record{selectedCount === 1 ? '' : 's'}
-          </button>
+          <span className={MODAL_ESC_HINT_CLASS}>
+            <kbd className={MODAL_ESC_KBD_CLASS}>Esc</kbd> to cancel
+          </span>
+          <div className="flex items-center gap-2">
+            <button type="button" onClick={onClose} className={MODAL_GHOST_BUTTON_CLASS}>
+              Cancel
+            </button>
+            <button
+              type="button"
+              onClick={handleApplyClick}
+              disabled={!canApply || applying}
+              className={`${MODAL_PRIMARY_BUTTON_SHAPE_CLASS} ${primaryButtonClassName}`}
+            >
+              {!applying && <Check size={13} />}
+              {applying ? 'Applying...' : `Apply to ${selectedCount} Record${selectedCount === 1 ? '' : 's'}`}
+            </button>
+          </div>
         </div>
       </div>
     </div>,

@@ -24,6 +24,7 @@ import {
 import { Badge } from '@/components/ui/badge';
 import { cn } from '@/lib/utils';
 import { SIDEBAR_SYNC_DURATION_CLASS } from '@/app/design-system/transitions';
+import AccountMenu from './AccountMenu';
 
 const BrandLogo = () => (
   <Image src="/kibo-ui-light.svg" alt="" width={36} height={36} className="h-full w-full rounded-lg object-contain p-1.5" unoptimized />
@@ -347,21 +348,12 @@ export default function Sidebar() {
           )}
         </div>
 
+        {/* Quick-access copy for the drawer itself — pages also render
+            AccountMenu inline in their own header row (which shows on
+            mobile too), this is just a shortcut so it's reachable without
+            leaving the drawer. */}
         <div className="shrink-0 border-t border-border px-3 py-3">
-          <div className="flex items-center gap-3 rounded-lg px-2 py-1.5">
-            <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-slate-100 text-[11px] font-bold text-slate-900 dark:bg-white/10 dark:text-white">
-              OP
-            </div>
-            <div className="min-w-0 overflow-hidden whitespace-nowrap">
-              <p className="truncate text-[12px] font-semibold text-foreground">Operations Admin</p>
-              <p className="truncate text-[10px] text-muted-foreground">Administrator</p>
-              <p className="truncate text-[10px] text-muted-foreground">admin@operations.com</p>
-              <div className="mt-1 flex items-center gap-1">
-                <span className="h-1.5 w-1.5 rounded-full bg-emerald-500" />
-                <span className="text-[9px] font-medium text-emerald-600 dark:text-emerald-400">Online</span>
-              </div>
-            </div>
-          </div>
+          <AccountMenu className="w-full" />
         </div>
       </aside>
 
@@ -473,25 +465,6 @@ export default function Sidebar() {
             active={pathname === '/settings'}
             expanded={panelOpen}
           />
-
-          <div className="relative mt-auto flex items-center gap-2.5 rounded-lg border-t border-border px-2.5 pb-1 pt-3">
-            <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-slate-100 text-[9px] font-bold text-slate-900 dark:bg-white/10 dark:text-white">
-              OP
-            </div>
-            <div
-              className={`min-w-0 transition-all duration-300 ease-in-out ${
-                panelOpen ? 'translate-x-0 opacity-100' : '-translate-x-1 opacity-0'
-              }`}
-            >
-              <p className="truncate text-[10px] font-semibold text-foreground">Operations Admin</p>
-              <p className="truncate text-[8px] text-muted-foreground">Administrator</p>
-              <p className="truncate text-[8px] text-muted-foreground">admin@operations.com</p>
-              <div className="mt-1 flex items-center gap-1">
-                <span className="h-1.5 w-1.5 rounded-full bg-emerald-500" />
-                <span className="text-[8px] font-medium text-emerald-600 dark:text-emerald-400">Online</span>
-              </div>
-            </div>
-          </div>
         </div>
       </div>
 

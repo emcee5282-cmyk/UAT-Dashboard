@@ -1,5 +1,12 @@
 import { NextResponse } from 'next/server';
 import { updateSendMoneyWalletRemark } from '@/app/lib/walletStatus';
+import { updateWalletRemarkPg } from '@/app/lib/services/walletStatusConfigService';
+
+// Send Money-only flag — see app/api/sendmoney/wallet-status/route.ts's
+// own comment.
+function isPostgresSourceEnabled(): boolean {
+  return process.env.NEXT_PUBLIC_WALLET_STATUS_SOURCE_SENDMONEY === 'postgres';
+}
 
 const MAX_REMARK_LENGTH = 500;
 
@@ -13,7 +20,9 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: 'Missing or invalid shopName/remark.' }, { status: 400 });
     }
 
-    const { updatedBy, updatedAt } = await updateSendMoneyWalletRemark(shopName, remark);
+    const { updatedBy, updatedAt } = isPostgresSourceEnabled()
+      ? await updateWalletRemarkPg('sendmoney', shopName, remark)
+      : await updateSendMoneyWalletRemark(shopName, remark);
     return NextResponse.json({ ok: true, updatedBy, updatedAt }, { headers: { 'Cache-Control': 'no-store' } });
   } catch (err) {
     const message = err instanceof Error ? err.message : 'Error updating remark';

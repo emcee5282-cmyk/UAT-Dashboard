@@ -7,36 +7,45 @@ type Theme = 'light' | 'dark';
 type ThemeContextValue = {
   theme: Theme;
   toggleTheme: () => void;
+  setTheme: (theme: Theme) => void;
 };
 
 const ThemeContext = createContext<ThemeContextValue | undefined>(undefined);
 
 export function ThemeProvider({ children }: { children: React.ReactNode }) {
-  const [theme, setTheme] = useState<Theme>('light');
+  const [theme, setThemeState] = useState<Theme>('light');
+
+  // Preserves scroll position across a theme change — shared by toggleTheme
+  // and the direct setTheme (used by the account menu's Light/Dark
+  // segmented control) so neither path jumps the page.
+  const preserveScroll = () => {
+    if (typeof window === 'undefined') return;
+    const { scrollX, scrollY } = window;
+    window.requestAnimationFrame(() => {
+      window.scrollTo({ left: scrollX, top: scrollY, behavior: 'auto' });
+    });
+  };
 
   const toggleTheme = useCallback(() => {
-    setTheme((current) => {
-      const nextTheme = current === 'light' ? 'dark' : 'light';
+    preserveScroll();
+    setThemeState((current) => (current === 'light' ? 'dark' : 'light'));
+  }, []);
 
-      if (typeof window !== 'undefined') {
-        const { scrollX, scrollY } = window;
-        window.requestAnimationFrame(() => {
-          window.scrollTo({ left: scrollX, top: scrollY, behavior: 'auto' });
-        });
-      }
-
-      return nextTheme;
-    });
+  const setTheme = useCallback((nextTheme: Theme) => {
+    preserveScroll();
+    setThemeState(nextTheme);
   }, []);
 
   useEffect(() => {
+    // Direct setThemeState here, not the memoized setTheme above — this is
+    // the initial mount, there's no scroll position worth preserving yet.
     const savedTheme = window.localStorage.getItem('dashboard-theme');
     if (savedTheme === 'dark' || savedTheme === 'light') {
-      setTheme(savedTheme);
+      setThemeState(savedTheme);
       return;
     }
     const prefersDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
-    setTheme(prefersDark ? 'dark' : 'light');
+    setThemeState(prefersDark ? 'dark' : 'light');
   }, []);
 
   useEffect(() => {
@@ -49,8 +58,9 @@ export function ThemeProvider({ children }: { children: React.ReactNode }) {
     () => ({
       theme,
       toggleTheme,
+      setTheme,
     }),
-    [theme, toggleTheme]
+    [theme, toggleTheme, setTheme]
   );
 
   return <ThemeContext.Provider value={value}>{children}</ThemeContext.Provider>;

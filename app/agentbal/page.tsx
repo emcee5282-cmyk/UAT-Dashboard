@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
 import { createPortal } from 'react-dom';
 import {
-  ChevronDown, Columns3, Download, RefreshCw, Search, Wallet,
+  ChevronDown, Columns3, Download, RefreshCw, Search, Upload, Wallet,
   TrendingUp, ArrowDownToLine, ArrowUpFromLine, Shield, ArrowUpDown,
   Tag, User, FilterX,
 } from 'lucide-react';
@@ -15,6 +15,7 @@ import TableFooter from '../components/TableFooter';
 import EmptyState from '../components/EmptyState';
 import FilterDropdown from '../components/FilterDropdown';
 import ColumnsDropdown from '../components/ColumnsDropdown';
+import BalanceLimitUploadModal from '../components/BalanceLimitUploadModal';
 import { classifyFetchError, type ClassifiedError, assertAllOk } from '../lib/errors';
 import { rawVal, fmt, fmtAbbrev } from '@/app/lib/format';
 import { parseCsvLines } from '../lib/csv';
@@ -22,13 +23,13 @@ import { getBusinessToday, toBusinessDate, parseCardCutoffDate } from '../lib/bu
 import {
   computeWalletStatus,
   WALLET_STATUS_OPTIONS,
-  isLoggedIn,
   computeCompanyBalance,
   computeAgentWithdrawal,
   computeSdpVsBalance,
   resolveBrand,
 } from '../lib/balanceEngine';
 import { getPreference, setPreference } from '../lib/preferences';
+import type { BalanceLimitWalletRow } from '../lib/db/read/balanceLimit';
 
 type OpeningRow = {
   agentName: string;
@@ -95,15 +96,6 @@ function parseReportCutoffDate(openingRawRows: string[][]): Date | null {
   return null;
 }
 
-// Stlm Top Up sheet dates are formatted "M/D/YYYY".
-function parseSheetDate(dateStr: string): Date | null {
-  const parts = (dateStr ?? '').trim().split('/');
-  if (parts.length !== 3) return null;
-  const [m, d, y] = parts.map(Number);
-  if (!m || !d || !y) return null;
-  return new Date(y, m - 1, d);
-}
-
 const WALLET_TYPE_ORDER = [
   { match: 'BKASH', abbreviation: 'BK' },
   { match: 'NAGAD', abbreviation: 'NG' },
@@ -138,17 +130,6 @@ const EXCLUDED_SDP_LEADERS = [
 
 const BRAND_PRIORITY = ['M1', 'M2', 'B1', 'B2', 'B3', 'B4', 'B5', 'K1', 'J1', 'T1'];
 const BRAND_CODES = ['M1', 'M2', 'B1', 'B2', 'B3', 'B4', 'B5', 'K1', 'J1', 'T1'];
-
-// "To Agent" values on "AG BD STLM + TOPUP" sometimes carry a trailing
-// "-<brand>" suffix (e.g. "KONAN001-M1"), sometimes not (e.g. "YUJI024") —
-// strip it so the bare code matches Opening AG's own (always-bare) agent names.
-function stripBrandSuffix(name: string): string {
-  const parts = name.split('-');
-  if (parts.length >= 2 && BRAND_CODES.includes(parts[parts.length - 1].toUpperCase())) {
-    return parts.slice(0, -1).join('-');
-  }
-  return name;
-}
 
 // Leader names come from the sheet in ALL CAPS — same helper as
 // Settlement/Top Up's own toProperCase, display-only (sorting/filtering/
@@ -782,9 +763,17 @@ export default function AgentBalance() {
   const columnsButtonRef = useRef<HTMLButtonElement>(null);
   const refreshButtonRef = useRef<HTMLButtonElement>(null);
   const exportButtonRef = useRef<HTMLButtonElement>(null);
+  const uploadButtonRef = useRef<HTMLButtonElement>(null);
   const refreshTooltip = useTooltip(refreshButtonRef);
   const exportTooltip = useTooltip(exportButtonRef);
   const columnsTooltip = useTooltip(columnsButtonRef);
+  const uploadTooltip = useTooltip(uploadButtonRef);
+  // Phase 8b — Balance Limit upload wizard's own open/close state. Sourced
+  // from app/agentbal/page.tsx's already-loaded `rows` (agentName IS the
+  // resolved shop code, same roster agents.agent_code was seeded from), so
+  // the modal's client-side preview can flag an unmatched shop before the
+  // real upload without a second fetch.
+  const [balanceLimitModalOpen, setBalanceLimitModalOpen] = useState(false);
 
   const [walletStatusFilter, setWalletStatusFilter] = useState<Record<string, boolean>>(
     () => Object.fromEntries(WALLET_STATUS_OPTIONS.map((status) => [status, true]))
@@ -865,16 +854,27 @@ export default function AgentBalance() {
 
       const [openingRes, balRes, stlmRes, estimatedRes] = await Promise.all([
         fetch(`/api/opening?t=${Date.now()}`),
-        fetch(`/api/balance-limit?t=${Date.now()}`),
-        fetch(`/api/agstlmtopup?t=${Date.now()}`),
+        // Phase 8B — Balance Limit's own display now reads PostgreSQL
+        // (written by the validated Phase 8/8A upload pipeline), not
+        // Google Sheets. Opening/Estimated Opening below are unrelated to
+        // Balance Limit and stay on Sheets, unchanged.
+        fetch(`/api/v2/balance-limit?product=cashout&t=${Date.now()}`),
+        // Settlement/Top Up migration — reads PostgreSQL (wallet_transactions,
+        // via the Settlement/Top Up bulk-import wizards) instead of the raw
+        // "AG BD STLM + TOPUP" sheet. Server-side already applies the same
+        // topUpSettlementCutoff widening this file computes below for the
+        // Assumed Balance check, so no client-side date filtering is needed
+        // here anymore — see app/lib/services/balanceService.ts's
+        // getTopUpSettlementTotals().
+        fetch(`/api/v2/stlmtopup?product=cashout&t=${Date.now()}`),
         fetch(`/api/opening/estimated-balance?t=${Date.now()}`),
       ]);
 
       await assertAllOk([openingRes, balRes, stlmRes, estimatedRes]);
 
       const openingText = await openingRes.text();
-      const balData: string[][] = await balRes.json();
-      const stlmText = await stlmRes.text();
+      const balJson: { rows: BalanceLimitWalletRow[] } = await balRes.json();
+      const stlmJson: { totals: Record<string, { totalTopUp: number; totalSettlement: number }> } = await stlmRes.json();
       const estimatedData: { balances: Record<string, number>; uploadedAt: string | null } = await estimatedRes.json();
 
       const openingRawRows = parseCsvLines(openingText);
@@ -909,30 +909,10 @@ export default function AgentBalance() {
         toBusinessDate(estimatedUploadedAt).getTime() === getBusinessToday().getTime();
       const estimatedBalances = new Map(Object.entries(estimatedData.balances ?? {}));
 
-      // Top Up/Settlement totals (feeding Company Balance) reset at the 2AM
-      // business-day rollover (see app/lib/businessDate.ts) — clock-based
-      // ("today"), UNLESS no valid Estimated Balance covers today yet, then
-      // this widens so Settlement/Top Up posted "yesterday" doesn't
-      // disappear once the calendar rolls over. Once a valid Estimated
-      // Balance exists it already bakes that stale day in, so this goes
-      // back to today-only to avoid counting it twice.
-      //
-      // Widen target: Opening's own "Updated Time" card date IF it's
-      // genuinely stale (older than today) AND no valid Estimated Balance
-      // covers today yet. Matches Cashout's own cashoutLiveCutoff formula
-      // in app/page.tsx exactly (already reverted there per explicit
-      // instruction) — no "already ticked to today but unconfirmed"
-      // fallback. This file had been left on the older oneBusinessDayBack
-      // fallback, which kept pulling in a full extra day of Settlement
-      // once Opening's card refreshed for today (confirmed live on
-      // 2026-08-03: YUJI026 showed -3,000,000 Settlement — yesterday's
-      // -2,000,000 row plus today's real -1,000,000 — because the
-      // fallback widened the cutoff to yesterday even though Opening's
-      // card was already fresh for today).
-      const businessToday = getBusinessToday();
-      const topUpSettlementCutoff = (reportCutoffDate !== null && reportCutoffDate.getTime() < businessToday.getTime() && !estimatedOpeningValid)
-        ? reportCutoffDate
-        : businessToday;
+      // Top Up/Settlement's own date-window widening (matching this exact
+      // rule) now happens server-side in getTopUpSettlementTotals() — see
+      // the /api/v2/stlmtopup fetch above. No client-side cutoff needed here
+      // anymore.
 
       const openingRows = openingRawRows
         .slice(1)
@@ -950,35 +930,23 @@ export default function AgentBalance() {
           return assumedBalance === undefined ? row : { ...row, openingBal: String(assumedBalance) };
         });
 
-      const balRows = balData
-        .slice(1)
-        .filter((row) => row.some((cell) => cell.trim() !== ''))
-        .map((row) => ({
-          walletName: rawVal(row[1]),
-          walletType: rawVal(row[4]),
-          totalDP: rawVal(row[11]),
-          totalWD: rawVal(row[13]),
-          balance: rawVal(row[8]),
-          login: rawVal(row[15]),
-          accountStatus: rawVal(row[2]),
-          group: rawVal(row[6]),
-        }))
-        .filter((row) => row.walletName && row.walletName !== '-');
+      // Already clean, typed JSON objects (one row per agent/wallet-type,
+      // same shape the sheet-based parsing above used to build by hand) —
+      // no CSV header row to skip, no blank-row filtering needed.
+      const balRows = balJson.rows.filter((row) => row.agentCode && row.agentCode !== '-');
 
-      const balWalletNames = new Set(balRows.map((bal) => bal.walletName));
+      const balWalletNames = new Set(balRows.map((bal) => bal.agentCode));
       const balanceTotals = new Map<string, { dp: number; wd: number }>();
       const balanceInsideTotals = new Map<string, number>();
       const walletStatusValues = new Map<string, string[]>();
       const brandGroups = new Map<string, string[]>();
       const walletTypeValues = new Map<string, string[]>();
       balRows.forEach((bal) => {
-        const name = bal.walletName;
-        const dp = parseFloat(bal.totalDP.replace(/,/g, '')) || 0;
-        const wd = parseFloat(bal.totalWD.replace(/,/g, '')) || 0;
+        const name = bal.agentCode;
         const existing = balanceTotals.get(name) ?? { dp: 0, wd: 0 };
         balanceTotals.set(name, {
-          dp: existing.dp + dp,
-          wd: existing.wd + wd,
+          dp: existing.dp + bal.totalDP,
+          wd: existing.wd + bal.totalWD,
         });
 
         if (bal.group && bal.group !== '-') {
@@ -989,19 +957,20 @@ export default function AgentBalance() {
 
         if (bal.accountStatus && bal.accountStatus !== '-') {
           const statuses = walletStatusValues.get(name) ?? [];
-          statuses.push(bal.accountStatus);
+          // A wallet that isn't logged in reads as Disconnected regardless
+          // of what its Group would otherwise resolve to.
+          statuses.push(bal.isLoggedIn ? bal.accountStatus : 'Disconnected');
           walletStatusValues.set(name, statuses);
         }
 
-        if (bal.walletType && bal.walletType !== '-' && isLoggedIn(bal.login)) {
+        if (bal.walletType && bal.walletType !== '-' && bal.isLoggedIn) {
           const types = walletTypeValues.get(name) ?? [];
           types.push(bal.walletType);
           walletTypeValues.set(name, types);
         }
 
-        if (isLoggedIn(bal.login)) {
-          const balance = parseFloat(bal.balance.replace(/,/g, '')) || 0;
-          balanceInsideTotals.set(name, (balanceInsideTotals.get(name) ?? 0) + balance);
+        if (bal.isLoggedIn) {
+          balanceInsideTotals.set(name, (balanceInsideTotals.get(name) ?? 0) + bal.balance);
         }
       });
 
@@ -1014,48 +983,26 @@ export default function AgentBalance() {
       // field order, amounts stored negative (money leaving) so they're
       // abs()'d. Cols Q-AA are a last-month archive and are not read.
       // Top Up/Settlement keys are normalized (uppercased, all whitespace
-      // stripped) before every set/get on these two maps — the "AG BD STLM +
-      // TOPUP" sheet's own "To Agent" columns aren't always cased/spaced the
-      // same as the Opening roster's agent names (e.g. "Konan001 " vs
-      // "KONAN001"), which silently dropped that agent's Top Up/Settlement
-      // from its sum since the Map key never matched. Scoped to just these
-      // two lookups — opening.agentName itself is left untouched for every
-      // other map below, since those sheets haven't shown this mismatch.
+      // stripped) before every set/get on this map — /api/v2/stlmtopup keys
+      // by agents.agent_code exactly, but the Opening roster's own agentName
+      // text isn't always cased/spaced the same (e.g. "Konan001 " vs
+      // "KONAN001"), which previously (Sheets-sourced) silently dropped that
+      // agent's Top Up/Settlement from its sum since the Map key never
+      // matched. Scoped to just this lookup — opening.agentName itself is
+      // left untouched for every other map below, since those sheets
+      // haven't shown this mismatch.
       const normalizeAgentKey = (name: string): string => name.toUpperCase().replace(/\s+/g, '');
 
-      const topUpTotals = new Map<string, number>();
-      const stlmTotals = new Map<string, number>();
-      parseCsvLines(stlmText)
-        .slice(1)
-        .filter((row) => row.some((cell) => cell.trim() !== ''))
-        .forEach((row) => {
-          const topUpAgent = normalizeAgentKey(stripBrandSuffix(rawVal(row[1])));
-          const topUpAmount = rawVal(row[2]);
-          const topUpDate = parseSheetDate(rawVal(row[3]));
-          if (
-            topUpAgent && topUpAgent !== '-' && topUpAmount && topUpAmount !== '-' &&
-            topUpDate && topUpDate >= topUpSettlementCutoff
-          ) {
-            const amount = Math.abs(parseFloat(topUpAmount.replace(/,/g, '')) || 0);
-            topUpTotals.set(topUpAgent, (topUpTotals.get(topUpAgent) ?? 0) + amount);
-          }
-
-          const stlmAgent = normalizeAgentKey(stripBrandSuffix(rawVal(row[7])));
-          const stlmAmount = rawVal(row[8]);
-          const stlmDate = parseSheetDate(rawVal(row[9]));
-          if (
-            stlmAgent && stlmAgent !== '-' && stlmAmount && stlmAmount !== '-' &&
-            stlmDate && stlmDate >= topUpSettlementCutoff
-          ) {
-            const amount = Math.abs(parseFloat(stlmAmount.replace(/,/g, '')) || 0);
-            stlmTotals.set(stlmAgent, (stlmTotals.get(stlmAgent) ?? 0) + amount);
-          }
-        });
+      const stlmTopUpTotals = new Map<string, { totalTopUp: number; totalSettlement: number }>();
+      for (const [agentCode, totals] of Object.entries(stlmJson.totals ?? {})) {
+        stlmTopUpTotals.set(normalizeAgentKey(agentCode), totals);
+      }
 
       const merged: MergedRow[] = openingRows.map((opening) => {
         const totals = balanceTotals.get(opening.agentName) ?? { dp: 0, wd: 0 };
-        const totalTopUp = topUpTotals.get(normalizeAgentKey(opening.agentName)) ?? 0;
-        const totalStlm = stlmTotals.get(normalizeAgentKey(opening.agentName)) ?? 0;
+        const stlmTopUp = stlmTopUpTotals.get(normalizeAgentKey(opening.agentName));
+        const totalTopUp = stlmTopUp?.totalTopUp ?? 0;
+        const totalStlm = stlmTopUp?.totalSettlement ?? 0;
         const balanceInside = balanceInsideTotals.get(opening.agentName) ?? 0;
         const runningBalance = computeCompanyBalance(parseNumber(opening.openingBal), totals.dp, totalTopUp, totals.wd, totalStlm);
         const sdpNum = parseNumber(opening.sdp);
@@ -1675,11 +1622,19 @@ export default function AgentBalance() {
               {loading ? (
                 <div className="ml-3 flex shrink-0 items-center gap-3">
                   <div className="h-10 w-10 shrink-0 dt-skeleton rounded-[12px] xl:w-[88px]" />
+                  <div className="h-10 w-10 shrink-0 dt-skeleton rounded-[12px] xl:w-[88px]" />
                   <div className="h-10 w-10 shrink-0 dt-skeleton rounded-[12px]" />
                   <div className="h-10 w-10 shrink-0 dt-skeleton rounded-[12px]" />
                 </div>
               ) : (
                 <div className="ml-3 flex shrink-0 items-center gap-3">
+                  <div className="relative">
+                    <button type="button" ref={uploadButtonRef} onClick={() => setBalanceLimitModalOpen(true)} aria-label="Upload Balance Limit" {...uploadTooltip.handlers} className={ICON_BUTTON}>
+                      <Upload size={16} />
+                      <span className="hidden xl:inline">Upload</span>
+                    </button>
+                    {uploadTooltip.rendered && <Tooltip label="Upload Balance Limit" open={uploadTooltip.open} pos={uploadTooltip.pos} onlyWhenCompact />}
+                  </div>
                   <div className="relative">
                     <button type="button" ref={exportButtonRef} onClick={handleExport} aria-label="Export to Excel" {...exportTooltip.handlers} className={ICON_BUTTON}>
                       <Download size={16} />
@@ -1980,6 +1935,15 @@ export default function AgentBalance() {
           </DataTable>
         )}
       </main>
+
+      <BalanceLimitUploadModal
+        isOpen={balanceLimitModalOpen}
+        onClose={() => setBalanceLimitModalOpen(false)}
+        product="cashout"
+        agentRoster={rows.map((row) => row.agentName)}
+        accentButtonClassName="bg-indigo-600 hover:bg-indigo-700"
+        onImported={fetchData}
+      />
     </div>
   );
 }

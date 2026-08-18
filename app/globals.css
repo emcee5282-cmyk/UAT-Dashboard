@@ -22,6 +22,14 @@
   color-scheme: light;
   --background: #f4f6fb;
   --foreground: #0f172a;
+  /* Fallback for anywhere --product-accent is read without a [data-product]
+     ancestor in scope (e.g. a portal-rendered modal whose caller forgot to
+     pass dataProduct) — same value as [data-product="cashout"] below, so
+     this is purely a safety net, never a visible behavior change for
+     already-scoped contexts. */
+  --product-accent: #4f46e5;
+  --product-accent-soft: rgba(79, 70, 229, 0.08);
+  --product-accent-active-bg: rgba(79, 70, 229, 0.1);
   --card: oklch(1 0 0);
   --card-foreground: oklch(0.145 0 0);
   --popover: oklch(1 0 0);
@@ -58,6 +66,8 @@
   --muted: #1e293b;
   --muted-foreground: #94a3b8;
   color-scheme: dark;
+  --product-accent-soft: rgba(129, 140, 248, 0.12);
+  --product-accent-active-bg: rgba(129, 140, 248, 0.15);
   --card: oklch(0.205 0 0);
   --card-foreground: oklch(0.985 0 0);
   --popover: oklch(0.205 0 0);

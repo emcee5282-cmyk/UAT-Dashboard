@@ -3,9 +3,9 @@
 import { useEffect, useState, useCallback, useMemo } from 'react';
 import Image from 'next/image';
 import * as XLSX from 'xlsx';
-import { ArrowLeftRight, Wallet, Banknote, Building2, Download, Send, ChevronUp, ChevronDown, LayoutDashboard, RefreshCw } from 'lucide-react';
+import { ArrowLeftRight, Wallet, Banknote, Building2, Download, Send, ChevronUp, ChevronDown, RefreshCw } from 'lucide-react';
 import PageHeader from './components/PageHeader';
-import ThemeToggle from './components/ThemeToggle';
+import AccountMenu from './components/AccountMenu';
 import ConnectionErrorState from './components/ConnectionErrorState';
 import Toast, { type ToastState } from './components/Toast';
 import { classifyFetchError, type ClassifiedError, assertAllOk } from './lib/errors';
@@ -219,6 +219,16 @@ function parseSlashDate(raw: string): Date | null {
   return manilaMidnight(y, m - 1, d);
 }
 
+// Phase 10 — "YYYY-MM-DD" for the new /api/v2/ssp-line1 route's `cutoff`
+// query param. Reads back via manilaFields() (not .toISOString().slice(0,10),
+// which round-trips through UTC and can shift a Manila-midnight instant
+// back a calendar day) — round-trip safe since cashoutLiveCutoff/
+// sendMoneyLiveCutoff are themselves always built via manilaMidnight().
+function formatCutoffDateKey(date: Date): string {
+  const { year, month, day } = manilaFields(date);
+  return `${year}-${String(month + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+}
+
 // /api/sendmoney/stlmtopup cols H-L (idx 7-11) hold this month's Settlement
 // rows; cols W-AA (idx 22-26) hold last month's archive, same field order
 // shifted +15 — both are unioned same as the Bundle Transfer Trend chart.
@@ -351,70 +361,6 @@ function computeCashoutWalletTopUpStlm(text: string, cutoff: Date | null): Map<s
   return totals;
 }
 
-// Brand for the SSP Line 1 table's live Top Up/Settlement columns — read
-// directly off the shop name as displayed, e.g. "KONAN001-M1" -> "M1"
-// (trailing suffix, the common case), or "T-B5AG-BURMA001-NG" / the 5-part
-// "N-K1AG-J3-AVENT001-BK" -> "K1" (a handful of shops use Send Money's own
-// wallet-naming convention instead, brand right after the FIRST hyphen as
-// exactly "<code>AG" — segment count varies, matched on segment 1 alone,
-// not a fixed length). Deliberately does NOT cross-reference "SSP AG
-// BalanceLimit" for shops with neither pattern — verified against a real
-// pivot table of the underlying sheet: cross-referencing every unmatched
-// row inflated some brands 50%+ and invented figures for brands the pivot
-// shows as having none at all. Resolving per-transaction like this (not a
-// majority-vote cross-reference) also fixed a real, reported bug: the same
-// shop was previously showing up under two different brands across its own
-// separate Top Up rows, whenever only some of those rows carried an
-// explicit suffix and others fell through to the cross-reference.
-const SSP_LINE1_BRAND_PRIORITY = ['M1', 'M2', 'B1', 'B2', 'B3', 'B4', 'B5', 'K1', 'J1', 'T1'];
-
-function extractSspLine1BrandSuffix(name: string): string | null {
-  const parts = name.split('-');
-  const last = parts[parts.length - 1]?.toUpperCase();
-  return parts.length >= 2 && SSP_LINE1_BRAND_PRIORITY.includes(last) ? last : null;
-}
-
-function extractSspLine1BrandAltFormat(name: string): string | null {
-  const segment = (name.split('-')[1] ?? '').toUpperCase();
-  return SSP_LINE1_BRAND_PRIORITY.find((code) => segment === `${code}AG`) ?? null;
-}
-
-function resolveSspLine1Brand(name: string): string | null {
-  return extractSspLine1BrandSuffix(name) ?? extractSspLine1BrandAltFormat(name);
-}
-
-// Same source/cutoff as computeCashoutTopUpStlm, but grouped by resolved
-// Brand (M1/M2/K1/B1-B5/T1/J1) instead of summed into one grand total —
-// feeds the SSP Line 1 table's Top Up/Settlement columns.
-function computeCashoutBrandTopUpStlm(text: string, cutoff: Date | null): Map<string, { topUp: number; stlm: number }> {
-  const totals = new Map<string, { topUp: number; stlm: number }>();
-  const add = (brand: string | null, key: 'topUp' | 'stlm', amount: number) => {
-    if (!brand) return;
-    const existing = totals.get(brand) ?? { topUp: 0, stlm: 0 };
-    existing[key] += amount;
-    totals.set(brand, existing);
-  };
-
-  text.trim().split('\n').slice(1).forEach((line) => {
-    if (!line.trim()) return;
-    const cols = line.split(',');
-    const topUpAgent = (cols[1] ?? '').replace(/"/g, '').trim();
-    const topUpAmount = clean(cols[2]);
-    const topUpDate = cutoff ? parseSlashDate((cols[3] ?? '').replace(/"/g, '').trim()) : null;
-    if (topUpAgent && topUpAgent !== '-' && topUpAmount && (!cutoff || (topUpDate && topUpDate >= cutoff))) {
-      add(resolveSspLine1Brand(topUpAgent), 'topUp', topUpAmount);
-    }
-    const stlmAgent = (cols[7] ?? '').replace(/"/g, '').trim();
-    const stlmAmount = Math.abs(clean(cols[8]));
-    const stlmDate = cutoff ? parseSlashDate((cols[9] ?? '').replace(/"/g, '').trim()) : null;
-    if (stlmAgent && stlmAgent !== '-' && stlmAmount && (!cutoff || (stlmDate && stlmDate >= cutoff))) {
-      add(resolveSspLine1Brand(stlmAgent), 'stlm', stlmAmount);
-    }
-  });
-
-  return totals;
-}
-
 // Mirrors app/sendmoney/page.tsx's own wallet-type patch — Settlement's raw
 // sign is negative in the sheet, so it's abs()'d for magnitude then
 // re-signed negative at the end, same convention as Cashout and Send
@@ -478,67 +424,6 @@ function computeSendMoneyWalletTopUpStlm(text: string, cutoff: Date | null): Map
   return totals;
 }
 
-// Send Money's own brand resolution — unlike Cashout's (which cross-
-// references "SSP AG BalanceLimit"'s Group column), Send Money's brand is
-// embedded directly in the wallet name itself. Names now carry an extra
-// trailing brand tag beyond the older format (e.g. "D-B2BD-DELTA073-NG-B3"
-// — the rightmost "B3", not "B2BD"'s "B2", is the real brand — confirmed:
-// the same physical shop shows up with different trailing tags across
-// different transactions, so it's a per-transaction tag, not a per-shop
-// one), so the rightmost segment is checked first; older names without
-// that trailing tag (or ones whose trailing segment is something else
-// entirely, e.g. "-SS") fall back to the segment right after the first
-// hyphen. Same fix already applied to app/sendmoney/settlement/page.tsx,
-// app/sendmoney/topup/page.tsx, app/balance-overview/page.tsx, and
-// app/shadcn-demo/balance-overview/page.tsx — this table's per-brand Top
-// Up/Settlement totals must resolve brand identically to those tabs.
-// Includes 'SH' (Sharing), a brand Cashout's own roster doesn't have.
-const SSP_LINE1_SENDMONEY_BRAND_CODES = [...SSP_LINE1_BRAND_PRIORITY, 'SH'];
-
-function resolveSendMoneyBrandFromWalletName(walletName: string): string {
-  const segments = walletName.split('-');
-  const last = (segments[segments.length - 1] ?? '').toUpperCase();
-  const trailing = SSP_LINE1_SENDMONEY_BRAND_CODES.find((c) => c === last);
-  if (trailing) return trailing;
-  const afterFirst = (segments[1] ?? '').toUpperCase();
-  const code = SSP_LINE1_SENDMONEY_BRAND_CODES.find((c) => afterFirst.startsWith(c));
-  return code ?? '−';
-}
-
-// Same source/cutoff/column layout as computeSendMoneyTopUpStlm, but grouped
-// by resolved Brand instead of summed into one grand total — feeds Send
-// Money's own SSP Line 1 table's Top Up/Settlement columns. No cross-sheet
-// lookup needed here (unlike Cashout's computeCashoutBrandTopUpStlm) since
-// the wallet name itself carries the brand.
-function computeSendMoneyBrandTopUpStlm(text: string, cutoff: Date | null): Map<string, { topUp: number; stlm: number }> {
-  const totals = new Map<string, { topUp: number; stlm: number }>();
-  const add = (brand: string, key: 'topUp' | 'stlm', amount: number) => {
-    if (brand === '−') return;
-    const existing = totals.get(brand) ?? { topUp: 0, stlm: 0 };
-    existing[key] += amount;
-    totals.set(brand, existing);
-  };
-
-  text.trim().split('\n').slice(1).forEach((line) => {
-    if (!line.trim()) return;
-    const cols = line.split(',');
-    const topUpAgent = (cols[1] ?? '').replace(/"/g, '').trim();
-    const topUpAmount = clean(cols[2]);
-    const topUpDate = cutoff ? parseSlashDate((cols[3] ?? '').replace(/"/g, '').trim()) : null;
-    if (topUpAgent && topUpAgent !== '-' && topUpAmount && (!cutoff || (topUpDate && topUpDate >= cutoff))) {
-      add(resolveSendMoneyBrandFromWalletName(topUpAgent), 'topUp', topUpAmount);
-    }
-    const stlmAgent = (cols[7] ?? '').replace(/"/g, '').trim();
-    const stlmAmount = Math.abs(clean(cols[8]));
-    const stlmDate = cutoff ? parseSlashDate((cols[9] ?? '').replace(/"/g, '').trim()) : null;
-    if (stlmAgent && stlmAgent !== '-' && stlmAmount && (!cutoff || (stlmDate && stlmDate >= cutoff))) {
-      add(resolveSendMoneyBrandFromWalletName(stlmAgent), 'stlm', stlmAmount);
-    }
-  });
-
-  return totals;
-}
-
 type SspLine1Row = {
   brand: string;
   opening: number;
@@ -552,8 +437,10 @@ type SspLine1Row = {
 // "Brand Balance!B3:G13": row 0 is the header (Brand, Opening Balance,
 // Deposit, Withdrawal, Adjustment, Total), rows 1-10 are one row per brand
 // (M1/M2/K1/B1-B5/T1/J1) — no footer row. Column D (Adjustment, index 4) is
-// intentionally not read — replaced by live per-brand Top Up/Settlement
-// (see computeCashoutBrandTopUpStlm below), merged in by the caller.
+// intentionally not read — replaced by live per-brand Top Up/Settlement,
+// now PostgreSQL-backed (see getSspLine1TopUpSettlement), merged in by the
+// caller. Opening/Deposit/Withdrawal/Total still parsed here but render
+// blank (see BLANK_SSP_LINE1_KEYS below).
 function parseSspLine1(text: string): Omit<SspLine1Row, 'topUp' | 'settlement'>[] {
   const toRow = (cols: string[]): Omit<SspLine1Row, 'topUp' | 'settlement'> => ({
     brand: (cols[0] ?? '').replace(/"/g, '').trim(),
@@ -922,6 +809,14 @@ function CihCell({ value, bold }: { value: number; bold?: boolean }) {
   );
 }
 
+function BlankCihCell({ bold }: { bold?: boolean }) {
+  return (
+    <td className={`whitespace-nowrap px-4 py-3 text-center text-[13px] tabular-nums ${bold ? 'font-bold' : 'font-medium'} ${BLANK_CIH_DISPLAY.className}`}>
+      {BLANK_CIH_DISPLAY.text}
+    </td>
+  );
+}
+
 function NotSupportedCell() {
   return (
     <td className="whitespace-nowrap px-4 py-3 text-center text-[13px] font-medium italic text-muted-foreground">
@@ -938,6 +833,16 @@ const SSP_LINE1_COLUMNS: { key: keyof Omit<SspLine1Row, 'brand'>; label: string 
   { key: 'settlement', label: 'Settlement' },
   { key: 'total', label: 'Total' },
 ];
+
+// Phase 10 — Opening/Deposit/Withdrawal/Total have no live upload system yet
+// ("I will create a dedicated tab/upload system for those later"), so their
+// cells render blank here. This is a DISPLAY-only blank: the underlying
+// parseSspLine1(sspLine1Text) values these rows carry (including `total`)
+// are left fully intact, because Brand Cash In Hand further down this page
+// deliberately reuses that same `total` as its own single source of truth.
+// Only Top Up/Settlement (now Postgres-backed, brand-attributed) render live.
+const BLANK_SSP_LINE1_KEYS = new Set<keyof Omit<SspLine1Row, 'brand'>>(['opening', 'deposit', 'withdrawal', 'total']);
+const BLANK_CIH_DISPLAY = { text: '−', className: 'text-muted-foreground' };
 
 // Same container/table/mobile-card format as BrandCashInhandSection below —
 // this section just ships first, per explicit instruction ("mauuna muna to
@@ -1090,9 +995,13 @@ function SspLine1Section({
             {sortedRows.map((row) => (
               <tr key={row.brand} className="border-b border-border last:border-0 transition-colors hover:bg-muted/10">
                 <td className="whitespace-nowrap px-4 py-3 text-left text-[13px] font-bold text-foreground">{row.brand}</td>
-                {SSP_LINE1_COLUMNS.map((col) => (
-                  <CihCell key={col.key} value={row[col.key]} bold={col.key === 'total'} />
-                ))}
+                {SSP_LINE1_COLUMNS.map((col) =>
+                  BLANK_SSP_LINE1_KEYS.has(col.key) ? (
+                    <BlankCihCell key={col.key} bold={col.key === 'total'} />
+                  ) : (
+                    <CihCell key={col.key} value={row[col.key]} bold={col.key === 'total'} />
+                  )
+                )}
               </tr>
             ))}
           </tbody>
@@ -1100,9 +1009,13 @@ function SspLine1Section({
             <tfoot>
               <tr className="border-t-2 border-border bg-muted/20">
                 <td className="whitespace-nowrap px-4 py-3 text-left text-[13px] font-bold text-foreground">Total</td>
-                {SSP_LINE1_COLUMNS.map((col) => (
-                  <CihCell key={col.key} value={totals[col.key]} bold />
-                ))}
+                {SSP_LINE1_COLUMNS.map((col) =>
+                  BLANK_SSP_LINE1_KEYS.has(col.key) ? (
+                    <BlankCihCell key={col.key} bold />
+                  ) : (
+                    <CihCell key={col.key} value={totals[col.key]} bold />
+                  )
+                )}
               </tr>
             </tfoot>
           )}
@@ -1113,7 +1026,7 @@ function SspLine1Section({
           Cash Inhand's own mobile fallback. */}
       <div className="flex flex-col gap-3 p-4 sm:hidden">
         {sortedRows.map((row) => {
-          const totalDisplay = cihValueDisplay(row.total);
+          const totalDisplay = BLANK_CIH_DISPLAY;
           return (
             <div key={row.brand} className="rounded-xl border border-border bg-white p-4 dark:bg-[#2a2a2d]">
               <div className="flex items-start justify-between gap-2">
@@ -1125,7 +1038,7 @@ function SspLine1Section({
               </div>
               <div className="mt-3 grid grid-cols-2 gap-x-2 gap-y-3 border-t border-border pt-3">
                 {SSP_LINE1_COLUMNS.filter((col) => col.key !== 'total').map((col) => {
-                  const display = cihValueDisplay(row[col.key]);
+                  const display = BLANK_SSP_LINE1_KEYS.has(col.key) ? BLANK_CIH_DISPLAY : cihValueDisplay(row[col.key]);
                   return (
                     <div key={col.key} className="min-w-0">
                       <p className="text-[11px] text-muted-foreground">{col.label}</p>
@@ -1138,7 +1051,7 @@ function SspLine1Section({
           );
         })}
         {rows.length > 0 && (() => {
-          const totalDisplay = cihValueDisplay(totals.total);
+          const totalDisplay = BLANK_CIH_DISPLAY;
           return (
             <div className="rounded-xl border-2 border-border bg-muted/20 p-4">
               <div className="flex items-start justify-between gap-2">
@@ -1150,7 +1063,7 @@ function SspLine1Section({
               </div>
               <div className="mt-3 grid grid-cols-2 gap-x-2 gap-y-3 border-t border-border pt-3">
                 {SSP_LINE1_COLUMNS.filter((col) => col.key !== 'total').map((col) => {
-                  const display = cihValueDisplay(totals[col.key]);
+                  const display = BLANK_SSP_LINE1_KEYS.has(col.key) ? BLANK_CIH_DISPLAY : cihValueDisplay(totals[col.key]);
                   return (
                     <div key={col.key} className="min-w-0">
                       <p className="text-[11px] text-muted-foreground">{col.label}</p>
@@ -1769,11 +1682,28 @@ export default function BalanceOverviewPage() {
         { key: 'upay', label: 'UPay', value: todayBundle.upay },
       ], null, sendMoneyTopUpStlm, sendMoneyOpeningOverride, sendMoneyWalletRunningBalOverride));
 
-      // Same widened cutoff as the KPI cards/Today strip above (cashoutLiveCutoff,
-      // not the plain clock-based `cutoff`) — otherwise SSP Line 1's Top Up/
-      // Settlement reset to 0 at the 2AM rollover even while Opening/Estimated
-      // Opening hasn't been confirmed for the new day yet.
-      const sspLine1BrandTopUpStlm = computeCashoutBrandTopUpStlm(agstlmText, cashoutLiveCutoff);
+      // Phase 10 — Top Up/Settlement now come from PostgreSQL, grouped by
+      // each transaction's own stored brand_id (never agents.brand_id,
+      // never the agent-name-parsing formulas this replaces). Fetched here
+      // rather than in the initial Promise.all above because it needs
+      // cashoutLiveCutoff/sendMoneyLiveCutoff, which aren't known until
+      // Opening/Estimated Opening (fetched above) have been resolved — same
+      // widened-cutoff rule as the KPI cards/Today strip, reused unchanged,
+      // not re-derived. Opening Balance/Deposit/Withdrawal/Adjustment/Total
+      // (the "static" fields) are deliberately left reading the existing
+      // "Brand Balance" sheet exactly as before, UNCHANGED — the SSP Line 1
+      // table blanks them at render time only (see SspLine1Section), so
+      // Brand Cash In Hand's own cross-reference onto this same `total`
+      // value further down is not affected by this phase.
+      const [sspTopUpStlmRes, sspTopUpStlmSendMoneyRes] = await Promise.all([
+        fetch(`/api/v2/ssp-line1?product=cashout&cutoff=${formatCutoffDateKey(cashoutLiveCutoff)}`),
+        fetch(`/api/v2/ssp-line1?product=sendmoney&cutoff=${formatCutoffDateKey(sendMoneyLiveCutoff)}`),
+      ]);
+      await assertAllOk([sspTopUpStlmRes, sspTopUpStlmSendMoneyRes]);
+      const sspTopUpStlmRows: { brand: string; topUp: number; settlement: number }[] = await sspTopUpStlmRes.json();
+      const sspTopUpStlmSendMoneyRows: { brand: string; topUp: number; settlement: number }[] = await sspTopUpStlmSendMoneyRes.json();
+      const sspLine1BrandTopUpStlm = new Map(sspTopUpStlmRows.map((r) => [r.brand.toUpperCase(), { topUp: r.topUp, stlm: r.settlement }]));
+      const sspLine1SendMoneyBrandTopUpStlm = new Map(sspTopUpStlmSendMoneyRows.map((r) => [r.brand.toUpperCase(), { topUp: r.topUp, stlm: r.settlement }]));
 
       const sspLine1CashoutComputed = parseSspLine1(sspLine1Text).map((row) => {
         const brandTotals = sspLine1BrandTopUpStlm.get(row.brand.toUpperCase()) ?? { topUp: 0, stlm: 0 };
@@ -1781,13 +1711,9 @@ export default function BalanceOverviewPage() {
       });
       setSspLine1Rows(sspLine1CashoutComputed);
 
-      // Send Money's own SSP Line 1 table — same logic, sourced from "PS BD
-      // STLM + TOPUP" (bundleText) with Send Money's own wallet-name-based
-      // brand resolution (no cross-sheet lookup needed).
-      // Same widened cutoff as above — SSP Line 2's Top Up/Settlement must not
-      // reset to 0 at the 2AM rollover while Send Money's Opening/Estimated
-      // Opening hasn't been confirmed for the new day yet.
-      const sspLine1SendMoneyBrandTopUpStlm = computeSendMoneyBrandTopUpStlm(bundleText, sendMoneyLiveCutoff);
+      // Send Money's own SSP Line 1 table — same PostgreSQL source, grouped
+      // by the same stored brand_id (Send Money's own upload flow resolves
+      // Brand the identical way, no separate logic needed here either).
       const sspLine1SendMoneyComputed = parseSspLine1(sspLine1SendMoneyText).map((row) => {
         const brandTotals = sspLine1SendMoneyBrandTopUpStlm.get(row.brand.toUpperCase()) ?? { topUp: 0, stlm: 0 };
         const settlement = -brandTotals.stlm;
@@ -1873,8 +1799,9 @@ export default function BalanceOverviewPage() {
   return (
     <div className="min-h-screen bg-[#f5f5f7] text-[#1a1a1a] transition-colors duration-300 dark:bg-[#1c1c1e] dark:text-white">
       <PageHeader
-        icon={LayoutDashboard}
         title="Balance Overview"
+        description="Real-time view of balances and transactions"
+        containerless
         actions={
           <>
             <button
@@ -1886,7 +1813,6 @@ export default function BalanceOverviewPage() {
             >
               <Send size={13} className={telegramSending ? 'animate-spin' : ''} />
             </button>
-            <ThemeToggle />
             {/* Refresh stays in the header here — this is an analytics page
                 with no page-level Toolbar to relocate it into (each section
                 below has its own Export-only mini-header, not a search/
@@ -1902,12 +1828,13 @@ export default function BalanceOverviewPage() {
             >
               <RefreshCw size={13} className={spinning ? 'animate-spin' : ''} />
             </button>
+            <AccountMenu />
           </>
         }
       />
       <Toast toast={toast} onDismiss={() => setToast(null)} />
 
-      <main className="space-y-6 px-4 py-6 md:px-8 md:py-8">
+      <main className="space-y-6 px-4 pt-6 pb-6 md:px-8 md:pb-8">
         {loading && (
           <>
             <section className="grid grid-cols-1 gap-4 lg:grid-cols-2">

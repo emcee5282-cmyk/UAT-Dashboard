@@ -9,6 +9,8 @@ export const TEMPLATE_PATHS = {
   topup: '/templates/topup-template.xlsx',
   openingCashout: '/templates/opening-cashout-template.xlsx',
   openingSendMoney: '/templates/opening-sendmoney-template.xlsx',
+  balanceLimitCashout: '/templates/balance-limit-cashout-template.xlsx',
+  balanceLimitSendMoney: '/templates/balance-limit-sendmoney-template.xlsx',
 } as const;
 
 export type TemplateModule = keyof typeof TEMPLATE_PATHS;
