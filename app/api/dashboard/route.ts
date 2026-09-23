@@ -224,53 +224,6 @@ function latestActivityDay<T>(
   return { data: empty, date: cutoff };
 }
 
-// Bundle Transfer's own variant, per explicit instruction — Send Money has
-// no quota concept to misrepresent by combining days (unlike CashGo's
-// per-wallet quota bars above, which stay on latestActivityDay's
-// single-day pick), so instead of reporting just the most recent active
-// day in isolation, this sums EVERY day from that day through today
-// inclusive. That means a same-day update (today) still gets folded into
-// the total rather than being dropped — "from last update up to today, if
-// there's something [today too]," per explicit instruction — while the
-// label still reports the day the range actually started from (or "Today"
-// when today itself was already the most recent activity, i.e. no gap to
-// sum across at all).
-function sumActivitySinceLastUpdate<T extends Record<string, number>>(
-  byDate: Map<string, T>,
-  cutoff: Date,
-  empty: T,
-  maxDaysBack: number,
-  hasActivity: (t: T) => boolean
-): { data: T; date: Date } {
-  const todayEntry = byDate.get(dateKey(cutoff));
-  let startDate = cutoff;
-  if (!todayEntry || !hasActivity(todayEntry)) {
-    let found = false;
-    for (let i = 1; i <= maxDaysBack; i++) {
-      const date = new Date(cutoff.getTime() - i * 24 * 60 * 60 * 1000);
-      const entry = byDate.get(dateKey(date));
-      if (entry && hasActivity(entry)) {
-        startDate = date;
-        found = true;
-        break;
-      }
-    }
-    if (!found) return { data: empty, date: cutoff };
-  }
-
-  const merged = { ...empty };
-  const dayCount = Math.round((cutoff.getTime() - startDate.getTime()) / (24 * 60 * 60 * 1000));
-  for (let i = 0; i <= dayCount; i++) {
-    const date = new Date(startDate.getTime() + i * 24 * 60 * 60 * 1000);
-    const entry = byDate.get(dateKey(date));
-    if (!entry) continue;
-    (Object.keys(empty) as (keyof T)[]).forEach((key) => {
-      merged[key] = ((merged[key] ?? 0) + (entry[key] ?? 0)) as T[keyof T];
-    });
-  }
-  return { data: merged, date: startDate };
-}
-
 type RawBrandBalanceRow = { brand: string; opening: number; deposit: number; withdrawal: number; total: number };
 
 // Per-brand rollup of one Daily Transaction Entry ledger card (Operations
@@ -709,10 +662,16 @@ export async function GET() {
     const bundlePoint = (date: string, t: typeof emptyBundle) => ({ date, nagad: round2(t.NAGAD / M), rocket: round2(t.ROCKET / M), upay: round2(t.UPAY / M) });
     const sendMoneyChart = buildDaySeries(bundleByDate, emptyBundle, 7, yesterday, bundlePoint);
     const sendMoneyChart30 = buildDaySeries(bundleByDate, emptyBundle, 30, yesterday, bundlePoint);
-    const sendMoneyTodayResult = sumActivitySinceLastUpdate(bundleByDate, cutoff, emptyBundle, 32, (t) => t.NAGAD + t.ROCKET + t.UPAY > 0);
-    const sendMoneyTodayBundle = sendMoneyTodayResult.data;
+    // Today's own bucket only, no fallback to the last active day — per
+    // explicit instruction (reversing the earlier "sum since last update"
+    // rule below): once today has no real activity yet, the strip shows
+    // "Today" with 0 rather than silently borrowing yesterday's figure
+    // under a misleading date label. Cashout's own CashGo strip keeps its
+    // separate latestActivityDay fallback untouched — this change is
+    // scoped to Send Money's Bundle Transfer only.
+    const sendMoneyTodayBundle = bundleByDate.get(dateKey(cutoff)) ?? emptyBundle;
     const sendMoneyTodayTotal = sendMoneyTodayBundle.NAGAD + sendMoneyTodayBundle.ROCKET + sendMoneyTodayBundle.UPAY;
-    const sendMoneyProgressLabel = sendMoneyTodayResult.date.getTime() === cutoff.getTime() ? 'Today' : formatShortDateLabel(sendMoneyTodayResult.date);
+    const sendMoneyProgressLabel = 'Today';
 
     const sendMoneyDataRows = sendMoneyWallets.filter((r) => r.wallet.toUpperCase() !== 'TOTAL');
     const sendMoneyTotalDP = sendMoneyDataRows.reduce((s, r) => s + r.totalDP, 0);
