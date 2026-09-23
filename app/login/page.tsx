@@ -63,10 +63,12 @@ export default function LoginPage() {
         setLoading(false);
         return;
       }
+      const data = await response.json().catch(() => ({}));
       // Hard navigation (not next/navigation's router) so middleware
       // re-evaluates the fresh session cookie on a real request rather than
-      // relying on the client router cache.
-      window.location.href = '/';
+      // relying on the client router cache. Leaders land on their ticket
+      // history; everyone else keeps the existing dashboard landing page.
+      window.location.href = data.role === 'leader' ? '/tickets' : '/';
     } catch {
       setFormError('Something went wrong. Please try again.');
       submittingRef.current = false;

@@ -77,6 +77,11 @@ export const users = pgTable('users', {
   passwordHash: text('password_hash').notNull(),
   name: text('name'),
   role: text('role').notNull().default('admin'),
+  // Nullable — only role:'leader' accounts have one. Links a login account
+  // to the leaders row it represents, so ticket creation can scope
+  // "shop replacement" search to that leader's own agents (agents.leaderId)
+  // without any string-matching between users.name and leaders.name.
+  leaderId: integer('leader_id').references(() => leaders.id),
   status: text('status').notNull().default('active'),
   createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
@@ -142,13 +147,58 @@ export const agentWallets = pgTable(
     walletTypeId: integer('wallet_type_id').references(() => walletTypes.id),
     accountStatus: text('account_status'), // populated from the raw "Group" cell (no real "Account Status" input column exists — see balanceLimitParser.ts), feeds live wallet-status derivation
     groupCode: text('group_code'), // raw "Group" column (feeds brand resolution today)
+    // The Balance Limit upload's own raw "Account" cell verbatim (e.g.
+    // "01402636932 - N-M1AG-M1-JETT013-NG") — previously parsed only to
+    // extract shopCode/walletType (see balanceLimitParser.ts) and then
+    // discarded; now persisted so Transfer Queue can display the real
+    // per-wallet identifier instead of falling back to the bare agent code.
+    // Only populated by uploads from this point forward — rows written by
+    // an earlier upload stay null until their next re-upload.
+    rawAccount: text('raw_account'),
     balance: numeric('balance', { precision: 18, scale: 2 }),
     totalDp: numeric('total_dp', { precision: 18, scale: 2 }),
     totalWd: numeric('total_wd', { precision: 18, scale: 2 }),
+    // The Balance Limit upload's own "DP Limit" cell — the real per-wallet
+    // Daily Limit, replacing the old staff-editable balanceLimitOverride/
+    // flat-default fallback on the Wallet Status pages (Daily Limit is no
+    // longer editable at all, per explicit instruction — it's always
+    // exactly what the file says).
+    dpLimit: numeric('dp_limit', { precision: 18, scale: 2 }),
     isLoggedIn: boolean('is_logged_in').notNull().default(false),
     updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
   },
   (t) => [index('agent_wallets_agent_id_idx').on(t.agentId)]
+);
+
+// Opening upload's own per-row ledger — one row per FILE ROW that carried a
+// wallet-type suffix (e.g. "N-K1AG-T1-SANGE002-BK"), independent of
+// agent_wallets entirely. Deliberately NOT stored on agent_wallets: Balance
+// Limit's own import does a full delete-then-reinsert of every agent_wallets
+// row per agent on each upload (see balanceLimitService.ts) — attaching
+// Opening's own data there would get silently wiped by the next unrelated
+// Balance Limit upload, confirmed as the actual cause of shops with no
+// existing Balance Limit wallet link (e.g. "AVENT001RK") never showing a
+// row at all. Fully replaced (delete-then-insert) per shop on each Opening
+// upload, same replace pattern, just scoped to Opening's own table so the
+// two upload flows can never step on each other.
+export const openingWalletLines = pgTable(
+  'opening_wallet_lines',
+  {
+    id: serial('id').primaryKey(),
+    agentId: integer('agent_id').notNull().references(() => agents.id),
+    // Raw Agent Name cell, whitespace-cleaned only — never brand/suffix-
+    // stripped. What the Opening page actually displays, per explicit
+    // instruction ("i display mo din yung name na nakalagay sa file").
+    rawAgentName: text('raw_agent_name').notNull(),
+    openingBalance: numeric('opening_balance', { precision: 18, scale: 2 }).notNull(),
+    // This row's own SDP cell, exactly as the file has it — summed into
+    // agents.sdp at the shop level (same treatment as opening_balance),
+    // never resolved/deduped away. Per explicit instruction: every row's
+    // own figure counts, on its own line.
+    sdp: numeric('sdp', { precision: 18, scale: 2 }).notNull(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [index('opening_wallet_lines_agent_id_idx').on(t.agentId)]
 );
 
 // ---------------------------------------------------------------------------
@@ -531,6 +581,24 @@ export const cashgoDaily = pgTable(
   (t) => [uniqueIndex('cashgo_daily_uq').on(t.product, t.trendDate, t.walletType)]
 );
 
+// Running Balance card's own trend sparkline — one row per product per
+// business day, upserted by importService.ts's importOpeningFile() right
+// after a completed Opening upload with that moment's total Opening Balance
+// across every agent. Starts accumulating from whenever this column first
+// shipped; there is no historical backfill (Opening Balance itself has
+// never been snapshotted day-to-day before this — each upload always just
+// overwrote agents.opening_balance in place, see that column's own comment).
+export const openingBalanceDaily = pgTable(
+  'opening_balance_daily',
+  {
+    id: serial('id').primaryKey(),
+    product: productEnum('product').notNull(),
+    trendDate: date('trend_date').notNull(),
+    totalAmount: numeric('total_amount', { precision: 18, scale: 2 }).notNull(),
+  },
+  (t) => [uniqueIndex('opening_balance_daily_uq').on(t.product, t.trendDate)]
+);
+
 // ---------------------------------------------------------------------------
 // Estimated Balance uploads (current-state, with upload history)
 // ---------------------------------------------------------------------------
@@ -557,6 +625,18 @@ export const estimatedBalanceEntries = pgTable(
     id: bigserial('id', { mode: 'number' }).primaryKey(),
     uploadId: integer('upload_id').notNull().references(() => estimatedBalanceUploads.id),
     agentId: integer('agent_id').notNull().references(() => agents.id),
+    // deposit/withdrawal added so the Estimated Opening (Each Shop) display
+    // can show its own components (Opening Balance/Total Deposit/Total
+    // Withdrawal), not just the final assumedBalance — both already fold in
+    // this cutoff day's Top Up/Settlement alongside the upload's own DP/WD
+    // (deposit = uploaded Total DP + Top Up, withdrawal = uploaded Total WD
+    // + Settlement), per explicit instruction that Top Up/Settlement stays
+    // part of this calculation. assumedBalance is kept in sync as
+    // opening + deposit − withdrawal (openingBalance itself lives on
+    // agents.opening_balance, not duplicated here) — existing consumers
+    // that only need the one number never have to change.
+    deposit: numeric('deposit', { precision: 18, scale: 2 }).notNull(),
+    withdrawal: numeric('withdrawal', { precision: 18, scale: 2 }).notNull(),
     assumedBalance: numeric('assumed_balance', { precision: 18, scale: 2 }).notNull(),
   },
   (t) => [index('estimated_balance_entries_upload_id_idx').on(t.uploadId)]
@@ -580,6 +660,42 @@ export const estimatedBalanceWalletTotals = pgTable(
   (t) => [uniqueIndex('estimated_balance_wallet_totals_uq').on(t.uploadId, t.walletType)]
 );
 
+// Per-wallet Estimated Opening breakdown — one row per WALLET a shop's
+// upload rows actually covered (mirrors opening_wallet_lines' own per-wallet
+// split, same reasoning: aggregateByShop() sums every wallet's own row into
+// one shop-level total for estimatedBalanceEntries.assumedBalance, correct
+// for that figure's own purpose but throwing away which wallet each portion
+// belongs to). Deliberately does NOT store Opening's raw display name (e.g.
+// "N-M2AG-J3-AGATE001-BK") — an earlier version did, and it went stale the
+// moment Opening's own data changed after this upload (a later Opening
+// re-upload fully replaces that agent's opening_wallet_lines rows), showing
+// a name Opening no longer actually has. Opening is the single source of
+// truth for shop/wallet names (see shopIdentityReconciliation.ts's own
+// header comment) — every reader must look that name up LIVE from
+// opening_wallet_lines at display time, keyed by walletType here, never
+// keep its own copy. Scoped per upload (not per agent) since a later
+// upload fully supersedes the prior one's breakdown, same as
+// estimatedBalanceEntries already does.
+export const estimatedBalanceWalletLines = pgTable(
+  'estimated_balance_wallet_lines',
+  {
+    id: serial('id').primaryKey(),
+    uploadId: integer('upload_id').notNull().references(() => estimatedBalanceUploads.id),
+    agentId: integer('agent_id').notNull().references(() => agents.id),
+    walletType: text('wallet_type').notNull(), // 'BKASH' | 'NAGAD' | 'ROCKET' | 'UPAY' — matched live against opening_wallet_lines at read time, never a frozen name copy
+    // Same deposit/withdrawal split as estimatedBalanceEntries above, at
+    // this wallet's own scope (that wallet's own matched Deposit/Withdrawal
+    // rows + that wallet's own Top Up/Settlement) — required so a shop's
+    // own deposit/withdrawal always equals the sum of its wallets' deposit/
+    // withdrawal (both are built the same way: sum-of-wallets-up, per
+    // explicit "sum of wallets = shop total" requirement).
+    deposit: numeric('deposit', { precision: 18, scale: 2 }).notNull(),
+    withdrawal: numeric('withdrawal', { precision: 18, scale: 2 }).notNull(),
+    assumedBalance: numeric('assumed_balance', { precision: 18, scale: 2 }).notNull(),
+  },
+  (t) => [index('estimated_balance_wallet_lines_upload_id_idx').on(t.uploadId), index('estimated_balance_wallet_lines_agent_id_idx').on(t.agentId)]
+);
+
 // NEW — was entirely missing. Replaces the "Opening AG" col G/I 'REPORT LAST
 // UPDATE' text card. That card is a single roster-wide timestamp (when the
 // whole Opening roster was last refreshed), read today in at least 3 places
@@ -596,8 +712,248 @@ export const rosterSyncLog = pgTable('roster_sync_log', {
 });
 
 // ---------------------------------------------------------------------------
+// Daily Transaction Entry (app/daily-txn-entry) — persistence for a page that
+// previously lived entirely in React state (every edit lost on refresh).
+// Three tabs, three data surfaces below, plus a rollover-idempotency guard.
+// All four data tables are written to live during the day (Operations tab
+// edits / Report tab's own Edit-Save) and additionally rolled over once a
+// business day ends — see dailyTxnRolloverService.ts for that job. Retention
+// differs per table (Report tab: 1 week; CashGo: 2 months; ledger entries:
+// 30 days, added so the carry-forward source row never grows unbounded even
+// though the Operations tab itself has no stated retention) and is enforced
+// as an actual hard DELETE inside the same rollover job, not a filtered read.
+// ---------------------------------------------------------------------------
+
+// Operations tab's 6 LedgerCards (ssp1/ssp2/ess/atp/expay/hkpay), one row per
+// (ledger, brand, row) per business day. `rowKey` is 'opening' | 'deposit' |
+// 'withdrawal' | 'adjustment' for a 'standard' ledger, or 'opening' |
+// 'dpBkash' | 'dpNagad' | 'wdBkash' | 'wdNagad' | 'adjustment' for the one
+// 'ess' ledger — which rowKeys are valid for a given ledgerId is an app-level
+// rule (see LEDGERS/EDITABLE_ROWS in the page), not a DB constraint, same as
+// cashgoDaily.walletType below being a plain unconstrained text column.
+// `opening` carries forward from the PRIOR day's computed closing total
+// (opening+deposit-withdrawal+adjustment, or the ess split) — a true
+// accounting invariant, unlike the two Report-tab tables further down.
+export const dailyTxnLedgerEntry = pgTable(
+  'daily_txn_ledger_entry',
+  {
+    id: serial('id').primaryKey(),
+    ledgerId: text('ledger_id').notNull(),
+    brand: text('brand').notNull(),
+    rowKey: text('row_key').notNull(),
+    businessDate: date('business_date').notNull(),
+    amount: numeric('amount', { precision: 18, scale: 2 }).notNull().default('0'),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [uniqueIndex('daily_txn_ledger_entry_uq').on(t.ledgerId, t.brand, t.rowKey, t.businessDate)]
+);
+
+// Serves BOTH the Operations tab's CashGoHourlyCard ("today" — its newest
+// row) AND the CashGo tab's CashGoDailyTargetCard history — one table, since
+// "today" is nothing more than the latest business date in it. `target` is
+// text (not numeric) because it accepts freeform shorthand like "5M", same
+// as CashGoDailyRecord.bkashTarget/nagadTarget in the page. Both channel
+// rows are written every day for simplicity, but the history READ must
+// filter to `target IS NOT NULL OR process IS NOT NULL` before grouping into
+// a day's wallets[] — the existing seed only shows a channel on days it
+// actually had activity (e.g. no Nagad row at all on a Nagad-quiet day);
+// skipping that filter would regress every historical day to always showing
+// both channels.
+export const dailyTxnCashgoEntry = pgTable(
+  'daily_txn_cashgo_entry',
+  {
+    id: serial('id').primaryKey(),
+    businessDate: date('business_date').notNull(),
+    channel: text('channel').notNull(), // 'bkash' | 'nagad'
+    target: numeric('target', { precision: 18, scale: 2 }),
+    process: numeric('process', { precision: 18, scale: 2 }),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [uniqueIndex('daily_txn_cashgo_entry_uq').on(t.businessDate, t.channel)]
+);
+
+// Report tab's "Wallet Breakdown Opening" card (YesterdayClosingCard,
+// rendered once each for ssp1 and ssp2), per PG_WALLET. `amount` is
+// deliberately nullable with no default — this card is a manually-observed
+// snapshot ("Yesterday Closing"), not a computed ledger, so each new
+// business day starts BLANK rather than carrying forward the prior value.
+// Carrying forward would make "staff forgot to re-enter today's real
+// number" indistinguishable from "verified unchanged," which is worse for a
+// reporting card than an honest blank/'–'.
+export const dailyTxnWalletClosingEntry = pgTable(
+  'daily_txn_wallet_closing_entry',
+  {
+    id: serial('id').primaryKey(),
+    ledgerId: text('ledger_id').notNull(), // 'ssp1' | 'ssp2' only
+    wallet: text('wallet').notNull(), // 'Bkash' | 'Nagad' | 'Rocket' | 'UPay'
+    businessDate: date('business_date').notNull(),
+    amount: numeric('amount', { precision: 18, scale: 2 }),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [uniqueIndex('daily_txn_wallet_closing_entry_uq').on(t.ledgerId, t.wallet, t.businessDate)]
+);
+
+// Report tab's "PG Closing Balances" card (PgClosingBalancesCard), per PG
+// key × brand. Same blank-start reasoning as dailyTxnWalletClosingEntry
+// above — this is its own manually-entered snapshot, not derived from the
+// Operations tab's per-brand ledgers (confirmed explicitly — those are a
+// different, unrelated data-entry surface despite today's hardcoded seed
+// happening to reference LEDGERS at module load, which was only ever a
+// convenient placeholder value, not a required live coupling).
+export const dailyTxnPgBalanceEntry = pgTable(
+  'daily_txn_pg_balance_entry',
+  {
+    id: serial('id').primaryKey(),
+    pgKey: text('pg_key').notNull(), // 'autopay' | 'expay' | 'ssp1' | 'ssp2' | 'essPg' | 'hkpay'
+    brand: text('brand').notNull(),
+    businessDate: date('business_date').notNull(),
+    amount: numeric('amount', { precision: 18, scale: 2 }),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [uniqueIndex('daily_txn_pg_balance_entry_uq').on(t.pgKey, t.brand, t.businessDate)]
+);
+
+// Idempotency guard for the nightly rollover job (app/api/admin/daily-txn-
+// rollover), modeled on sync_runs' atomic-claim-via-unique-index pattern but
+// keyed by business date rather than a concurrency group, and blocking on
+// 'running' OR 'success' (not just 'running') — a plain mutex/advisory lock
+// only stops a CONCURRENT second run; it does nothing to stop a legitimate
+// SEQUENTIAL re-trigger (cron double-fire, or a manual re-curl) for a date
+// that already succeeded, which would silently double-apply the ledger
+// carry-forward math. A 'failure' row is deliberately left retryable.
+export const dailyTxnRolloverStatusEnum = pgEnum('daily_txn_rollover_status', ['running', 'success', 'failure']);
+
+export const dailyTxnRolloverRuns = pgTable(
+  'daily_txn_rollover_runs',
+  {
+    id: serial('id').primaryKey(),
+    businessDate: date('business_date').notNull(),
+    status: dailyTxnRolloverStatusEnum('status').notNull().default('running'),
+    startedAt: timestamp('started_at', { withTimezone: true }).notNull().defaultNow(),
+    finishedAt: timestamp('finished_at', { withTimezone: true }),
+    errorMessage: text('error_message'),
+  },
+  (t) => [
+    uniqueIndex('daily_txn_rollover_runs_business_date_uq')
+      .on(t.businessDate)
+      .where(sql`${t.status} in ('running', 'success')`),
+  ]
+);
+
+// ---------------------------------------------------------------------------
+// Ticketing (creation + leader-facing history/chat — status changes and the
+// staff/admin side are a later phase; leaders only ever read status here)
+// ---------------------------------------------------------------------------
+
+export const ticketTitleEnum = pgEnum('ticket_title', ['agent_concern', 'shop_replacement', 'adding_new_account']);
+// 'day_shift' | '24_hours' — Adding new account's Limit Duration field only.
+export const ticketLimitDurationEnum = pgEnum('ticket_limit_duration', ['day_shift', '24_hours']);
+// 'pending' (default on create) -> 'ongoing' -> 'settled' | 'rejected'.
+// 'rejected' is terminal, same as 'settled' — used when the request is
+// outside this system's scope (see POST .../reject) and the agent needs to
+// be redirected to their Team Leader via Telegram instead. Only the future
+// staff/admin phase ever writes this; leaders are read-only on status.
+export const ticketStatusEnum = pgEnum('ticket_status', ['pending', 'ongoing', 'settled', 'rejected']);
+// 'system' is an auto-generated log entry (e.g. a status change) — never
+// typed by a person, shown in the thread without a chat bubble.
+export const ticketMessageSenderRoleEnum = pgEnum('ticket_message_sender_role', ['leader', 'staff', 'system']);
+export const ticketPriorityEnum = pgEnum('ticket_priority', ['urgent', 'moderate', 'normal']);
+
+export const tickets = pgTable(
+  'tickets',
+  {
+    id: serial('id').primaryKey(),
+    title: ticketTitleEnum('title').notNull(),
+    // Agent concern only. Plain text, not an enum — the dropdown's "Others"
+    // option reveals free text, which an enum couldn't hold.
+    issueType: text('issue_type'),
+    // Agent concern only. References agents.id (this app's existing roster
+    // table doubles as the agent directory — see shopIds below for why the
+    // same table is also "shops"). Postgres can't put a real FK constraint
+    // on an array column; referential integrity here is enforced by the
+    // create-ticket API validating every id against agents before insert.
+    agentIds: integer('agent_ids').array(),
+    // Shop replacement only. "Shop" in this app's existing domain language
+    // is an agents row (e.g. Opening Balance's own roster) — there is no
+    // separate shops table, so this also references agents.id.
+    shopIds: integer('shop_ids').array(),
+    // Adding new account only, all three below.
+    dailyLimit: numeric('daily_limit', { precision: 18, scale: 2 }),
+    limitDuration: ticketLimitDurationEnum('limit_duration'),
+    numShops: integer('num_shops'),
+    // Optional, all title types.
+    details: text('details'),
+    status: ticketStatusEnum('status').notNull().default('pending'),
+    // Set once, server-side, at creation (app/lib/ticketPriorityClassifier.ts)
+    // — never blank, always has a value even when no keyword matched
+    // ('normal' is the fallback). prioritySource is 'rule' for every ticket
+    // today; left nullable so a future non-rule classifier (or a manual
+    // override) has somewhere to record a different provenance without a
+    // schema change.
+    priority: ticketPriorityEnum('priority').notNull().default('normal'),
+    prioritySource: text('priority_source'),
+    createdBy: integer('created_by').notNull().references(() => users.id),
+    // Bumped whenever the owning leader opens this ticket's detail page (or
+    // posts a message there themselves). Compared against the newest
+    // ticket_messages row (excluding the leader's own messages) to compute
+    // the list page's unread indicator — deliberately not a stored/denormalized
+    // "has unread" flag, so it can never drift out of sync with the thread.
+    lastViewedAt: timestamp('last_viewed_at', { withTimezone: true }),
+    // Same idea as lastViewedAt above, but for the staff side — bumped
+    // whenever ANY staff member opens this ticket or posts on it. There's
+    // no per-staff-member read tracking in this phase (matching the same
+    // single-pointer simplicity as the leader side), so this answers "has
+    // *a* staff member looked at this since the leader last spoke," which
+    // is what the staff queue's unread-from-leader sort needs.
+    staffLastViewedAt: timestamp('staff_last_viewed_at', { withTimezone: true }),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    index('tickets_created_by_idx').on(t.createdBy),
+    index('tickets_status_idx').on(t.status),
+  ]
+);
+
+export const ticketMessages = pgTable(
+  'ticket_messages',
+  {
+    id: serial('id').primaryKey(),
+    ticketId: integer('ticket_id').notNull().references(() => tickets.id),
+    senderId: integer('sender_id').notNull().references(() => users.id),
+    senderRole: ticketMessageSenderRoleEnum('sender_role').notNull(),
+    message: text('message').notNull(),
+    // Nullable marker distinguishing special auto-generated rows from plain
+    // chat/status-log text — currently only 'assigned' (set when a ticket
+    // moves to 'ongoing'). senderId already identifies who was assigned; no
+    // separate tickets.assignedTo column — GET /api/tickets/:id resolves
+    // this row's display text server-side per viewer role (see that route:
+    // leaders never receive the assignee's name, even in the raw response).
+    kind: text('kind'),
+    // Image-only attachment support (Photo/Camera picker in the chat
+    // composer) — no object storage configured for this project, so the
+    // image is stored inline as base64 rather than pulling in a new
+    // storage SDK/dependency. Nullable: plain text messages leave these
+    // unset. Documents from the same picker are NOT persisted here (no
+    // viewer built for them yet) — still front-end-preview-only.
+    attachmentData: text('attachment_data'),
+    attachmentMimeType: text('attachment_mime_type'),
+    attachmentName: text('attachment_name'),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    index('ticket_messages_ticket_id_idx').on(t.ticketId),
+  ]
+);
+
+// ---------------------------------------------------------------------------
 // Relations (query ergonomics only — no schema effect)
 // ---------------------------------------------------------------------------
+
+export const leadersRelations = relations(leaders, ({ many }) => ({
+  agents: many(agents),
+  users: many(users),
+}));
 
 export const agentsRelations = relations(agents, ({ one, many }) => ({
   leader: one(leaders, { fields: [agents.leaderId], references: [leaders.id] }),
@@ -616,20 +972,38 @@ export const walletTransactionsRelations = relations(walletTransactions, ({ one 
   agent: one(agents, { fields: [walletTransactions.agentId], references: [agents.id] }),
 }));
 
-export const usersRelations = relations(users, ({ many }) => ({
+export const usersRelations = relations(users, ({ one, many }) => ({
   sessions: many(sessions),
+  leader: one(leaders, { fields: [users.leaderId], references: [leaders.id] }),
+  tickets: many(tickets),
 }));
 
 export const sessionsRelations = relations(sessions, ({ one }) => ({
   user: one(users, { fields: [sessions.userId], references: [users.id] }),
 }));
 
+export const ticketsRelations = relations(tickets, ({ one, many }) => ({
+  createdByUser: one(users, { fields: [tickets.createdBy], references: [users.id] }),
+  messages: many(ticketMessages),
+}));
+
+export const ticketMessagesRelations = relations(ticketMessages, ({ one }) => ({
+  ticket: one(tickets, { fields: [ticketMessages.ticketId], references: [tickets.id] }),
+  sender: one(users, { fields: [ticketMessages.senderId], references: [users.id] }),
+}));
+
 export const estimatedBalanceUploadsRelations = relations(estimatedBalanceUploads, ({ many }) => ({
   entries: many(estimatedBalanceEntries),
   walletTotals: many(estimatedBalanceWalletTotals),
+  walletLines: many(estimatedBalanceWalletLines),
 }));
 
 export const estimatedBalanceEntriesRelations = relations(estimatedBalanceEntries, ({ one }) => ({
   upload: one(estimatedBalanceUploads, { fields: [estimatedBalanceEntries.uploadId], references: [estimatedBalanceUploads.id] }),
   agent: one(agents, { fields: [estimatedBalanceEntries.agentId], references: [agents.id] }),
+}));
+
+export const estimatedBalanceWalletLinesRelations = relations(estimatedBalanceWalletLines, ({ one }) => ({
+  upload: one(estimatedBalanceUploads, { fields: [estimatedBalanceWalletLines.uploadId], references: [estimatedBalanceUploads.id] }),
+  agent: one(agents, { fields: [estimatedBalanceWalletLines.agentId], references: [agents.id] }),
 }));

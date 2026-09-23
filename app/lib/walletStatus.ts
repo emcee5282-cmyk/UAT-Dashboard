@@ -585,8 +585,6 @@ export type WalletSettingsUpdate = {
   closureType: ClosureType;
   affectedServices: AffectedService[];
   minimumAmountCanTake: number | null;
-  balanceLimitOverride: number | null;
-  scheduleOverride: ScheduleOverride;
 };
 
 // Single-wallet save for the unified Edit Wallet Settings modal — reads
@@ -638,11 +636,18 @@ async function updateWalletSettings(
     const existingRows = rows.data.values ?? [];
     const rowOffset = existingRows.findIndex((row) => String(row[0] ?? '').trim().toUpperCase() === normalizedShop);
     const sheetRow = rowOffset !== -1 ? rowOffset + 2 : existingRows.length + 2;
+    // Balance Limit and Schedule columns are both left blank on every
+    // single-wallet save now — neither is staff-editable anymore (Daily
+    // Limit always reads the Balance Limit upload's own real per-wallet
+    // "DP Limit" cell, Schedule is derived from that same upload's own
+    // Group text — see both Wallet Status pages' own dailyLimit/schedule
+    // computation). Column positions are kept as-is (not removed) so
+    // nothing shifts into the wrong Sheet column.
     const newRow = [
       shopName, update.mainReason, update.closureType, update.affectedServices.join(','),
       update.minimumAmountCanTake === null ? '' : String(update.minimumAmountCanTake),
-      update.balanceLimitOverride === null ? '' : String(update.balanceLimitOverride),
-      update.scheduleOverride,
+      '',
+      '',
     ];
     data.push({ range: `${SHEET_TITLE}!${overridesStartCol}${sheetRow}:${overridesEndCol}${sheetRow}`, values: [newRow] });
   }

@@ -61,7 +61,7 @@ export default function FloatingHeader({ title, icon: Icon, onRefresh, refreshin
           <div className="flex min-w-0 items-center gap-2.5">
             <div
               className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg text-white"
-              style={{ background: 'var(--product-accent)' }}
+              style={{ background: 'var(--ui-accent)' }}
             >
               <Icon size={14} />
             </div>

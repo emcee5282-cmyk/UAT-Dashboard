@@ -1,15 +1,15 @@
 'use client';
 
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { createPortal } from 'react-dom';
-import { ChevronDown, ChevronUp, ChevronsUpDown, Columns3, Download, RefreshCw, Search, Shuffle } from 'lucide-react';
+import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
+import { ChevronDown, ChevronUp, ChevronsUpDown, Columns3, Download, Layers, Search, Shuffle } from 'lucide-react';
 import * as XLSX from 'xlsx';
 import SettlementHeader from '@/app/components/SettlementHeader';
-import Toolbar from '@/app/components/Toolbar';
+import FilterDropdown from '@/app/components/FilterDropdown';
 import ColumnsDropdown from '@/app/components/ColumnsDropdown';
 import DataTable from '@/app/components/DataTable';
-import TableFooter from '@/app/components/TableFooter';
+import CompactTableFooter from '@/app/components/CompactTableFooter';
 import EmptyState from '@/app/components/EmptyState';
+import TableLoadingSpinner from '@/app/components/TableLoadingSpinner';
 import ConnectionErrorState from '@/app/components/ConnectionErrorState';
 import { classifyFetchError, type ClassifiedError, assertAllOk } from '@/app/lib/errors';
 import { rawVal } from '@/app/lib/format';
@@ -52,18 +52,25 @@ type PgTransferQueueRow = {
   walletStatus: string;
 };
 
-// Ghost button — copied verbatim from Settlement/Top Up's own toolbar button
-// style, replacing this page's old smaller compact buttons.
-const GHOST_BUTTON =
-  'inline-flex h-9 items-center gap-1.5 rounded-[8px] border border-[#E2E8F0] px-3 text-[13px] font-medium text-[#475569] transition-colors duration-150 ease-out hover:bg-[#F8FAFC] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#2563EB] dark:border-[#3a3a3d] dark:text-[#9CA3AF] dark:hover:bg-white/5';
+// Responsive toolbar buttons, matching Agent Balance's own convention
+// exactly (app/agentbal/page.tsx's ICON_BUTTON/ICON_ONLY_BUTTON) — icon-only
+// below the `xl:` breakpoint, label revealed only once there's room, rather
+// than a fixed-width icon+label button that never adapts. Export keeps the
+// responsive reveal; Columns stays icon-only always, per explicit
+// instruction to match Settlement/Top Up/Agent Balance's own Columns button.
+const ICON_BUTTON =
+  'flex h-8 w-8 xl:w-auto shrink-0 items-center justify-center xl:justify-start gap-[5px] rounded-[10px] border border-[#E2E8F0] bg-white px-0 xl:px-[10px] text-[11px] font-medium text-[#475569] transition-[color,background-color,border-color,box-shadow,transform] duration-150 ease-[var(--ease-out-strong)] hover:border-[var(--ui-accent)] hover:bg-[#F1F5F9] active:scale-[0.97] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--ui-accent)] dark:border-[#262B38] dark:bg-[#12151D] dark:text-[#9CA3AF] dark:hover:bg-white/5';
 
-// 1700 (not 1100) — with 9 columns, every header's own natural width (label
-// + balanced spacer + icon, measured via table-layout:auto) sums to ~1600px;
-// a lower floor let the container squeeze columns below that on ordinary
-// laptop widths, truncating headers even though nothing was actually
-// crowded — a horizontal scrollbar on a smaller screen reads better than a
-// clipped "Company Balanc…".
-const TABLE_MIN_WIDTH_PX = 1760;
+const ICON_ONLY_BUTTON =
+  'flex h-8 w-8 shrink-0 items-center justify-center rounded-[10px] border border-[#E2E8F0] bg-white text-[11px] font-medium text-[#475569] transition-[color,background-color,border-color,box-shadow,transform] duration-150 ease-[var(--ease-out-strong)] hover:border-[var(--ui-accent)] hover:bg-[#F1F5F9] active:scale-[0.97] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--ui-accent)] dark:border-[#262B38] dark:bg-[#12151D] dark:text-[#9CA3AF] dark:hover:bg-white/5';
+
+// Compact sizing (matches Cashout Transfer Queue's density): font/padding/
+// row height scaled down, which shrinks every header's own natural width
+// proportionally — floor trimmed from 1760 to 1400 to match. Trimmed again
+// to 1360 when Brand dropped its badge (see columnWidths' own comment) —
+// every other column's pixel width is unchanged, only the table's total
+// width (and therefore how much it overflows/scrolls) shrank.
+const TABLE_MIN_WIDTH_PX = 1360;
 const PAGE_SIZE_OPTIONS = [50, 100, 250, 500];
 
 function displayNum(num: number): string {
@@ -174,7 +181,9 @@ function computeBrand(groups: string[]): string {
 }
 
 const BRAND_CODES = [...CASHOUT_BRAND_CODES, 'SH'];
-const BRAND_DISPLAY_LABELS: Record<string, string> = { SH: 'Sharing' };
+// 'SH' shows as-is (no override) per explicit instruction, matching the
+// Wallet Status page's own Brand column.
+const BRAND_DISPLAY_LABELS: Record<string, string> = {};
 
 function displayBrand(code: string): string {
   return BRAND_DISPLAY_LABELS[code] ?? code;
@@ -220,9 +229,7 @@ type ColumnKey = typeof COLUMN_IDS[keyof typeof COLUMN_IDS];
 // Column model matches Settlement's ColumnDef shape (`key` kept instead of
 // Settlement's `id` since every existing reference on this page already
 // reads `col.key`). No protected Actions-style column exists here, so all
-// columns are hideable. Brand/Correct Group render a filter-dropdown
-// trigger instead of a sort button (see the header JSX further down), so
-// they're marked not sortable.
+// columns are hideable.
 type ColumnDef = {
   key: ColumnKey;
   label: string;
@@ -235,69 +242,51 @@ type ColumnDef = {
 // Every column left-aligned (incl. numeric ones) per explicit instruction —
 // a deliberate divergence from Settlement/Top Up/Opening's own convention,
 // scoped to this page only.
+// Text columns left-aligned, numeric columns right-aligned — Current
+// Group/Correct Group/Remarks wrap to 2 lines (see renderCell's
+// `wrapCell`) but are still text, so they're left too, matching their
+// header.
 const DEFAULT_COLUMNS: ColumnDef[] = [
-  // Everything center-aligned except Agent, which stays left — explicit
-  // instruction (Agent is a code/name, reads better left-anchored; every
-  // other column is a short value/label that reads better centered).
-  { key: COLUMN_IDS.BRAND, label: 'Brand', visible: true, sortable: false, hideable: true, align: 'center' },
-  { key: COLUMN_IDS.SHOP_NAME, label: 'Agent', visible: true, sortable: true, hideable: true, align: 'left' },
-  { key: COLUMN_IDS.COMPANY_BALANCE, label: 'Company Balance', visible: true, sortable: true, hideable: true, align: 'center' },
-  { key: COLUMN_IDS.BALANCE_INSIDE, label: 'Balance Inside', visible: true, sortable: true, hideable: true, align: 'center' },
-  { key: COLUMN_IDS.DISCREPANCY, label: 'Discrepancy', visible: true, sortable: true, hideable: true, align: 'center' },
-  { key: COLUMN_IDS.SDP_VS_BALANCE, label: 'SDP VS Balance', visible: true, sortable: true, hideable: true, align: 'center' },
-  // Current Group / Correct Group / Remarks are 'center' — their data wraps
-  // to 2 lines and is center-aligned (see renderCell's `wrapCell`), so the
-  // header must match that alignment instead of sitting left while the data
-  // floats centered underneath it.
-  { key: COLUMN_IDS.CURRENT_GROUP, label: 'Current Group', visible: true, sortable: true, hideable: true, align: 'center' },
-  { key: COLUMN_IDS.CORRECT_GROUP, label: 'Correct Group', visible: true, sortable: false, hideable: true, align: 'center' },
-  { key: COLUMN_IDS.REMARKS, label: 'Remarks', visible: true, sortable: true, hideable: true, align: 'center' },
+  { key: COLUMN_IDS.BRAND, label: 'Brand', visible: true, sortable: true, hideable: true, align: 'left' },
+  { key: COLUMN_IDS.SHOP_NAME, label: 'Shop Name', visible: true, sortable: true, hideable: true, align: 'left' },
+  { key: COLUMN_IDS.COMPANY_BALANCE, label: 'Company Balance', visible: true, sortable: true, hideable: true, align: 'right' },
+  { key: COLUMN_IDS.BALANCE_INSIDE, label: 'Balance Inside', visible: true, sortable: true, hideable: true, align: 'right' },
+  { key: COLUMN_IDS.DISCREPANCY, label: 'Discrepancy', visible: true, sortable: true, hideable: true, align: 'right' },
+  { key: COLUMN_IDS.SDP_VS_BALANCE, label: 'SDP VS Balance', visible: true, sortable: true, hideable: true, align: 'right' },
+  { key: COLUMN_IDS.CURRENT_GROUP, label: 'Current Group', visible: true, sortable: true, hideable: true, align: 'left' },
+  { key: COLUMN_IDS.CORRECT_GROUP, label: 'Correct Group', visible: true, sortable: true, hideable: true, align: 'left' },
+  { key: COLUMN_IDS.REMARKS, label: 'Remarks', visible: true, sortable: true, hideable: true, align: 'left' },
 ];
 
 const COLUMN_VISIBILITY_STORAGE_KEY = 'sendMoneyTransferQueueColumnVisibility';
 
-// Rebalanced for 9 left-aligned columns (not copy-pasted from Top Up's own
-// 6-column widths) — roughly proportional to each column's own content
-// length now that numbers no longer need right-aligned "settling room".
-// companyBalance is 11% (not 10% like its same-length siblings) — measured
-// via real DOM scrollWidth that "Company Balance" is the one label among
-// this group that actually needs the extra ~10px at 14px font-semibold;
-// remarks gives up the matching 1% since it degrades gracefully (wraps to
-// 2 lines) instead of truncating, unlike a header label.
-// shopName (Agent) bumped 12% -> 15% — real account codes run up to ~24
-// chars and were truncating even at a normal desktop width (measured
-// scrollWidth vs allotted). The 3% comes out of currentGroup/correctGroup/
-// remarks (-1% each), which degrade gracefully by wrapping to a 2nd line
-// instead of truncating, unlike Agent.
-// Re-measured after the header centering fix switched to a "balanced
-// invisible spacer" (see the header cells below) — that spacer is a REAL
-// flex item now (unlike the old absolute-positioned icon), so every
-// center-aligned column's label has less room than before. sdpVsBalance
-// +1%/remarks -1% keeps every header's own natural width (measured via
-// table-layout:auto) comfortably inside its column at a normal desktop
-// width.
+// Brand dropped from a 22px-tall pill badge to plain text (matches every
+// other page's own Brand column), so its column no longer needs room for a
+// circular chip — shrunk from 112px to 72px. First pass went to 48px, but
+// that clipped the HEADER LABEL itself ("Brand" + sort icon truncated to
+// "B…") — the header must stay fully readable, per explicit follow-up, so
+// 72px is the floor (data cells only need ~20px for a 2-char code; the
+// header text is what actually constrains this column). Every OTHER
+// column's percentage below is recalculated so its ABSOLUTE pixel width is
+// unchanged from before (only Brand actually shrinks) — the freed 40px
+// comes off TABLE_MIN_WIDTH_PX itself (1400 -> 1360), which is what
+// actually reduces the table's total width/horizontal overflow. Shop Name/
+// Company Balance were separately trimmed to reclaim dead space, handed to
+// Remarks — verified safe against the FULL live dataset (3,658 rows):
+// longest real Shop Name needs 159px text (181px with padding) against its
+// 198px column; longest Company Balance needs 56px text (89px with
+// padding) against its 147px column — comfortable margin on both, no
+// truncation risk.
 const columnWidths: Record<ColumnKey, string> = {
-  brand: '8%',
-  shopName: '15%',
-  companyBalance: '11%',
-  balanceInside: '10%',
-  discrepancy: '9%',
-  sdpVsBalance: '11%',
-  currentGroup: '13%',
-  correctGroup: '13%',
-  remarks: '10%',
-};
-
-const rowSkeletonWidths: Record<ColumnKey, string[]> = {
-  brand: ['w-8', 'w-10', 'w-9'],
-  shopName: ['w-20', 'w-24', 'w-16'],
-  companyBalance: ['w-14', 'w-16', 'w-12'],
-  balanceInside: ['w-14', 'w-16', 'w-12'],
-  discrepancy: ['w-12', 'w-14', 'w-10'],
-  sdpVsBalance: ['w-14', 'w-16', 'w-12'],
-  currentGroup: ['w-24', 'w-28', 'w-20'],
-  correctGroup: ['w-24', 'w-28', 'w-20'],
-  remarks: ['w-28', 'w-32', 'w-24'],
+  brand: '5.29%',
+  shopName: '14.56%',
+  companyBalance: '10.81%',
+  balanceInside: '10.29%',
+  discrepancy: '9.26%',
+  sdpVsBalance: '11.32%',
+  currentGroup: '13.38%',
+  correctGroup: '13.38%',
+  remarks: '11.69%',
 };
 
 // 16px both sides (px-4), same for every column regardless of sortability —
@@ -310,7 +299,7 @@ const rowSkeletonWidths: Record<ColumnKey, string[]> = {
 // min-width (narrow viewport/browser zoom) — confirmed via screenshot that
 // "Company Balance"/"Balance Inside" ran into each other without this.
 function headerCellClasses(align: 'left' | 'right' | 'center') {
-  return `group overflow-hidden whitespace-nowrap px-4 text-${align} text-[14px] font-semibold text-[#475569] dark:text-[#9CA3AF]`;
+  return `group overflow-hidden whitespace-nowrap px-[8px] text-${align} text-[12px] font-semibold text-[#475569] dark:text-[#9CA3AF]`;
 }
 
 // Always visible (not opacity-0-until-hover) — same always-on visibility as
@@ -319,56 +308,25 @@ function headerCellClasses(align: 'left' | 'right' | 'center') {
 // at all until the user happens to hover.
 // Copied verbatim from Send Money Settlement/Top Up/Opening's own
 // SortIcon — same solid ChevronsUpDown at full opacity (not a faded/
-// opacity-reduced pair) and the same hardcoded #2563EB active color (not
-// var(--product-accent) — those reference pages don't use the accent var
+// opacity-reduced pair) and the same hardcoded var(--ui-accent) active color (not
+// var(--ui-accent) — those reference pages don't use the accent var
 // here either), so this page's sort icon reads exactly as bold/consistent
 // as every other migrated Send Money page's.
 function SortIcon({ active, direction }: { active: boolean; direction: 'asc' | 'desc' }) {
   return (
-    <span className="flex w-3.5 shrink-0 items-center justify-center transition-colors duration-150 ease-out">
+    <span className="flex w-[11px] shrink-0 items-center justify-center transition-colors duration-150 ease-out">
       {!active ? (
-        <ChevronsUpDown size={14} className="text-[#94A3B8]" />
+        <ChevronsUpDown size={11} className="text-[#94A3B8]" />
       ) : direction === 'asc' ? (
-        <ChevronUp size={14} className="text-[#2563EB]" />
+        <ChevronUp size={11} className="text-[var(--ui-accent)]" />
       ) : (
-        <ChevronDown size={14} className="text-[#2563EB]" />
+        <ChevronDown size={11} className="text-[var(--ui-accent)]" />
       )}
     </span>
   );
 }
 
-// Per-code tint map — same scheme as Cashout Balance's own BrandBadge
-// (app/agentbal/page.tsx), applied here too. Unknown codes (e.g. 'SH') fall
-// back to the same neutral slate this badge used exclusively before.
-const BRAND_BADGE_TINTS: Record<string, string> = {
-  M1: 'bg-blue-50 text-blue-700 border-blue-200 dark:bg-blue-500/10 dark:text-blue-400 dark:border-blue-900/50',
-  M2: 'bg-cyan-50 text-cyan-700 border-cyan-200 dark:bg-cyan-500/10 dark:text-cyan-400 dark:border-cyan-900/50',
-  B1: 'bg-purple-50 text-purple-700 border-purple-200 dark:bg-purple-500/10 dark:text-purple-400 dark:border-purple-900/50',
-  B2: 'bg-violet-50 text-violet-700 border-violet-200 dark:bg-violet-500/10 dark:text-violet-400 dark:border-violet-900/50',
-  B3: 'bg-fuchsia-50 text-fuchsia-700 border-fuchsia-200 dark:bg-fuchsia-500/10 dark:text-fuchsia-400 dark:border-fuchsia-900/50',
-  B4: 'bg-indigo-50 text-indigo-700 border-indigo-200 dark:bg-indigo-500/10 dark:text-indigo-400 dark:border-indigo-900/50',
-  B5: 'bg-sky-50 text-sky-700 border-sky-200 dark:bg-sky-500/10 dark:text-sky-400 dark:border-sky-900/50',
-  K1: 'bg-orange-50 text-orange-700 border-orange-200 dark:bg-orange-500/10 dark:text-orange-400 dark:border-orange-900/50',
-  J1: 'bg-amber-50 text-amber-700 border-amber-200 dark:bg-amber-500/10 dark:text-amber-400 dark:border-amber-900/50',
-  T1: 'bg-teal-50 text-teal-700 border-teal-200 dark:bg-teal-500/10 dark:text-teal-400 dark:border-teal-900/50',
-};
-
-function brandBadgeClasses(brand: string): string {
-  return BRAND_BADGE_TINTS[brand] ?? 'bg-slate-100 text-slate-600 border-slate-200 dark:bg-slate-500/10 dark:text-slate-400 dark:border-slate-700';
-}
-
-// `brand` carries the raw code for the color lookup — `children` is the
-// display-relabeled content (e.g. 'SH' -> 'Sharing'), which can differ from
-// the raw string.
-function BrandBadge({ children, brand }: { children: React.ReactNode; brand: string }) {
-  return (
-    <span className={`inline-flex h-[28px] items-center rounded-[999px] border px-[10px] text-[12px] font-semibold transition-[filter] duration-150 hover:brightness-95 dark:hover:brightness-110 ${brandBadgeClasses(brand)}`}>
-      {children}
-    </span>
-  );
-}
-
-// Blue text, no background — same accent pair (`#2563EB` / dark `#60A5FA`)
+// Blue text, no background — same accent pair (`var(--ui-accent)` / dark `#60A5FA`)
 // already used app-wide for active/interactive text (sort icons, TableFooter
 // "Show", ColumnsDropdown reset), not the old yellow/blue-fill <mark>.
 function highlightMatch(text: string, query: string): React.ReactNode {
@@ -379,7 +337,7 @@ function highlightMatch(text: string, query: string): React.ReactNode {
   if (parts.length === 1) return text;
   return parts.map((part, i) =>
     i % 2 === 1 ? (
-      <mark key={i} className="bg-transparent font-medium text-[#2563EB] no-underline dark:text-[#60A5FA]">{part}</mark>
+      <mark key={i} className="bg-transparent font-medium text-[var(--ui-accent)] no-underline dark:text-[#60A5FA]">{part}</mark>
     ) : (
       part
     )
@@ -434,51 +392,59 @@ function mobileNumericField(row: QueueRow, key: ColumnKey): { value: string; cla
 // lahat" instruction. The only exception is the rose color for a negative
 // balance, which is a semantic flag (not a font-style difference).
 function renderCell(row: QueueRow, key: ColumnKey, searchTerm: string) {
-  // align-top on every cell (not just the wrapping ones) — rows with a
-  // 2-line Current Group/Correct Group/Remarks are taller than the rest,
-  // and without this the plain single-line cells vertically CENTER within
-  // that taller row while the wrapped cells sit at the top, making the row
-  // look uneven/misaligned even though every cell's own text is correct.
-  const base = 'whitespace-nowrap overflow-hidden text-ellipsis text-[13px] font-normal text-center px-4 py-[14px] align-top';
-  // Agent stays left-aligned per explicit instruction — every other column
-  // (short values/labels) reads better centered, but a code/name reads
-  // better left-anchored.
-  const agentBase = 'whitespace-nowrap overflow-hidden text-ellipsis text-[13px] font-normal text-left px-4 py-[14px] align-top';
+  // align-middle on every cell, uniformly — a mixed top/center split (only
+  // the wrapping cells pinned top, everything else centered) was tried
+  // before and looked uneven, since a single-line cell's centered text
+  // wouldn't land on either line of a 2-line neighbor. Centering EVERY
+  // cell, including the wrapping ones, avoids that mismatch: a single-line
+  // cell's text now lands at the row's true vertical middle, which for a
+  // 2-line neighbor falls naturally between its two lines — and it clears
+  // the large dead space that used to sit under short single-line values
+  // (Shop Name, etc.) whenever a sibling cell in the same row wrapped to a
+  // 2nd line.
+  const leftBase = 'whitespace-nowrap overflow-hidden text-ellipsis text-[11px] font-normal text-left px-[8px] py-[11px] align-middle';
+  // Right padding is NOT symmetric with the left — the header's sort icon
+  // sits flush at the column's true right edge (no balanced spacer for
+  // right-aligned columns, see the header button below), so the header
+  // label's own right edge sits inset by that icon+gap gutter, not the
+  // cell's true edge. The data's right edge has to match that same inset
+  // or the header word and the numbers below it drift out of alignment.
+  const rightBase = 'whitespace-nowrap overflow-hidden text-ellipsis text-[11px] font-normal text-right pl-[8px] pr-[25px] align-middle';
   // Current Group / Correct Group / Remarks can run long — instead of
-  // truncating with "…", these wrap onto a 2nd line (capped at 2 lines) and
-  // are center-aligned, per explicit instruction. Every other column stays
-  // single-line/left-aligned. The clamp lives on an inner <span>, NOT the
-  // <td> itself — line-clamp sets `display: -webkit-box`, which breaks a
-  // table cell's own `display: table-cell` and visually collapses/misplaces
-  // the cell's content into the wrong column (confirmed via screenshot).
-  const wrapCell = 'text-center px-4 py-[14px] align-top';
-  const wrapSpan = 'block text-[13px] font-normal whitespace-normal break-words leading-snug line-clamp-2';
+  // truncating with "…", these wrap onto a 2nd line (capped at 2 lines).
+  // Left-aligned like every other text column. The clamp lives on an
+  // inner <span>, NOT the <td> itself — line-clamp sets
+  // `display: -webkit-box`, which breaks a table cell's own
+  // `display: table-cell` and visually collapses/misplaces the cell's
+  // content into the wrong column (confirmed via screenshot).
+  const wrapCell = 'text-left px-[8px] py-[11px] align-middle';
+  const wrapSpan = 'block text-[11px] font-normal whitespace-normal break-words leading-snug line-clamp-2';
   switch (key) {
     case 'brand':
-      return <td key={key} className={base}><BrandBadge brand={row.brand}>{highlightMatch(displayBrand(row.brand), searchTerm)}</BrandBadge></td>;
+      return <td key={key} className={`${leftBase} text-foreground`}>{highlightMatch(displayBrand(row.brand), searchTerm)}</td>;
     case 'shopName':
-      return <td key={key} className={`${agentBase} text-foreground`}>{highlightMatch(row.account, searchTerm)}</td>;
+      return <td key={key} className={`${leftBase} text-foreground`}>{highlightMatch(row.account, searchTerm)}</td>;
     case 'companyBalance':
       return (
-        <td key={key} className={`${base} tabular-nums ${row.companyBalance < 0 ? 'text-rose-600 dark:text-rose-400' : 'text-foreground'}`}>
+        <td key={key} className={`${rightBase} tabular-nums ${row.companyBalance < 0 ? 'text-rose-600 dark:text-rose-400' : 'text-foreground'}`}>
           {highlightMatch(displayNum(row.companyBalance), searchTerm)}
         </td>
       );
     case 'balanceInside':
       return (
-        <td key={key} className={`${base} tabular-nums ${row.balanceInside < 0 ? 'text-rose-600 dark:text-rose-400' : 'text-foreground'}`}>
+        <td key={key} className={`${rightBase} tabular-nums ${row.balanceInside < 0 ? 'text-rose-600 dark:text-rose-400' : 'text-foreground'}`}>
           {highlightMatch(displayNum(row.balanceInside), searchTerm)}
         </td>
       );
     case 'discrepancy':
       return (
-        <td key={key} className={`${base} tabular-nums text-foreground`}>
+        <td key={key} className={`${rightBase} font-[440]! tabular-nums text-foreground`}>
           {highlightMatch(displayNum(row.discrepancy), searchTerm)}
         </td>
       );
     case 'sdpVsBalance':
       return (
-        <td key={key} className={`${base} tabular-nums text-foreground`}>
+        <td key={key} className={`${rightBase} tabular-nums text-foreground`}>
           {row.sdpVsBalance > 0 ? highlightMatch(displayNum(Math.abs(row.sdpVsBalance)), searchTerm) : '−'}
         </td>
       );
@@ -499,12 +465,8 @@ export default function SendMoneyTransferQueue() {
   const [searchTerm, setSearchTerm] = useState('');
   const [sortColumn, setSortColumn] = useState<ColumnKey>('companyBalance');
   const [sortDirection, setSortDirection] = useState<'asc' | 'desc'>('desc');
-  const [brandFilter, setBrandFilter] = useState<Record<string, boolean>>({});
   const [correctGroupFilter, setCorrectGroupFilter] = useState<Record<string, boolean>>({});
-  const [brandMenuOpen, setBrandMenuOpen] = useState(false);
-  const [brandMenuPos, setBrandMenuPos] = useState({ top: 0, left: 0 });
   const [correctGroupMenuOpen, setCorrectGroupMenuOpen] = useState(false);
-  const [correctGroupMenuPos, setCorrectGroupMenuPos] = useState({ top: 0, left: 0 });
   // Column Visibility (Enterprise Table V2) — same model/persistence as
   // app/stlm/page.tsx: read saved preference once on mount (gated by
   // `mounted`), written on every change thereafter.
@@ -513,10 +475,7 @@ export default function SendMoneyTransferQueue() {
   const [mounted, setMounted] = useState(false);
   const columnsButtonRef = useRef<HTMLButtonElement>(null);
 
-  const brandButtonRef = useRef<HTMLButtonElement>(null);
-  const brandDropdownRef = useRef<HTMLDivElement>(null);
   const correctGroupButtonRef = useRef<HTMLButtonElement>(null);
-  const correctGroupDropdownRef = useRef<HTMLDivElement>(null);
   const [page, setPage] = useState(1);
   const [rowsPerPage, setRowsPerPage] = useState(50);
 
@@ -787,45 +746,11 @@ export default function SendMoneyTransferQueue() {
 
   useEffect(() => {
     setPage(1);
-  }, [searchTerm, brandFilter, correctGroupFilter, sortColumn, sortDirection, rowsPerPage]);
+  }, [searchTerm, correctGroupFilter, sortColumn, sortDirection, rowsPerPage]);
 
   const handlePageSizeChange = useCallback((size: number) => {
     setRowsPerPage(size);
   }, []);
-
-  useEffect(() => {
-    if (!brandMenuOpen) return;
-
-    const handlePointerDown = (event: MouseEvent) => {
-      const target = event.target as Node;
-      if (
-        brandButtonRef.current && !brandButtonRef.current.contains(target) &&
-        brandDropdownRef.current && !brandDropdownRef.current.contains(target)
-      ) {
-        setBrandMenuOpen(false);
-      }
-    };
-
-    document.addEventListener('mousedown', handlePointerDown);
-    return () => document.removeEventListener('mousedown', handlePointerDown);
-  }, [brandMenuOpen]);
-
-  useEffect(() => {
-    if (!correctGroupMenuOpen) return;
-
-    const handlePointerDown = (event: MouseEvent) => {
-      const target = event.target as Node;
-      if (
-        correctGroupButtonRef.current && !correctGroupButtonRef.current.contains(target) &&
-        correctGroupDropdownRef.current && !correctGroupDropdownRef.current.contains(target)
-      ) {
-        setCorrectGroupMenuOpen(false);
-      }
-    };
-
-    document.addEventListener('mousedown', handlePointerDown);
-    return () => document.removeEventListener('mousedown', handlePointerDown);
-  }, [correctGroupMenuOpen]);
 
   useEffect(() => {
     setMounted(true);
@@ -856,34 +781,31 @@ export default function SendMoneyTransferQueue() {
     });
   }, [queueRows, searchTerm, columnDefs]);
 
-  const brandOptions = useMemo(() => {
-    const rows = searchedRows.filter((row) => correctGroupFilter[row.correctGroup] !== false);
-    return Array.from(new Set(rows.map((row) => row.brand).filter(Boolean))).sort((a, b) => a.localeCompare(b));
-  }, [searchedRows, correctGroupFilter]);
-  const isBrandChecked = (name: string) => brandFilter[name] !== false;
-  const allBrandsChecked = brandOptions.every((name) => isBrandChecked(name));
-  const anyBrandUnchecked = brandOptions.some((name) => !isBrandChecked(name));
-  const selectedBrandCount = brandOptions.filter((name) => isBrandChecked(name)).length;
-
   const correctGroupOptions = useMemo(() => {
-    const rows = searchedRows.filter((row) => brandFilter[row.brand] !== false);
-    return Array.from(new Set(rows.map((row) => row.correctGroup).filter(Boolean))).sort((a, b) => a.localeCompare(b));
-  }, [searchedRows, brandFilter]);
+    return Array.from(new Set(searchedRows.map((row) => row.correctGroup).filter(Boolean))).sort((a, b) => a.localeCompare(b));
+  }, [searchedRows]);
   const isCorrectGroupChecked = (name: string) => correctGroupFilter[name] !== false;
-  const allCorrectGroupsChecked = correctGroupOptions.every((name) => isCorrectGroupChecked(name));
   const anyCorrectGroupUnchecked = correctGroupOptions.some((name) => !isCorrectGroupChecked(name));
   const selectedCorrectGroupCount = correctGroupOptions.filter((name) => isCorrectGroupChecked(name)).length;
 
+  // Toolbar filter panel (shared FilterDropdown component) needs per-option
+  // row counts, unlike the old header-embedded checkbox list which showed
+  // bare names only.
+  const correctGroupFilterOptions = useMemo(() => {
+    const counts = new Map<string, number>();
+    for (const row of searchedRows) {
+      if (!row.correctGroup) continue;
+      counts.set(row.correctGroup, (counts.get(row.correctGroup) ?? 0) + 1);
+    }
+    return correctGroupOptions.map((name) => ({ value: name, label: name, count: counts.get(name) ?? 0 }));
+  }, [searchedRows, correctGroupOptions]);
+
   const filteredRows = useMemo(() => {
-    let list = searchedRows;
-    if (brandOptions.some((name) => brandFilter[name] === false)) {
-      list = list.filter((row) => brandFilter[row.brand] !== false);
-    }
     if (correctGroupOptions.some((name) => correctGroupFilter[name] === false)) {
-      list = list.filter((row) => correctGroupFilter[row.correctGroup] !== false);
+      return searchedRows.filter((row) => correctGroupFilter[row.correctGroup] !== false);
     }
-    return list;
-  }, [searchedRows, brandFilter, brandOptions, correctGroupFilter, correctGroupOptions]);
+    return searchedRows;
+  }, [searchedRows, correctGroupFilter, correctGroupOptions]);
 
   const sortedRows = useMemo(() => {
     const list = [...filteredRows];
@@ -956,7 +878,7 @@ export default function SendMoneyTransferQueue() {
         case 'discrepancy':
           return row.discrepancy;
         case 'sdpVsBalance':
-          return row.sdpVsBalance > 0 ? Math.abs(row.sdpVsBalance) : undefined;
+          return row.sdpVsBalance > 0 ? Math.abs(row.sdpVsBalance) : 0;
         case 'currentGroup':
           return row.currentGroup;
         case 'correctGroup':
@@ -986,7 +908,7 @@ export default function SendMoneyTransferQueue() {
   }, [page, currentPage]);
 
   return (
-    <div className="h-screen w-full flex flex-col overflow-hidden bg-background font-[Inter,sans-serif] text-foreground transition-colors duration-300 dark:bg-[#1c1c1e]">
+    <div className="h-screen w-full flex flex-col overflow-hidden bg-background font-[Inter,sans-serif] text-foreground transition-colors duration-300 dark:bg-[#0A0C11]">
       <SettlementHeader
         icon={Shuffle}
         title="Transfer Queue"
@@ -994,45 +916,90 @@ export default function SendMoneyTransferQueue() {
         onRefresh={fetchData}
       />
 
-      <main className="flex-1 flex flex-col overflow-hidden px-6 pb-6 pt-4">
+      {/* px-4 md:px-[28px] + the inner mx-auto max-w-[1400px] wrapper (no
+          padding of its own) copies Daily Txn Entry's own <main> classes
+          and nesting order exactly (app/daily-txn-entry/page.tsx), matching
+          Top Up (app/topup/page.tsx) — same container size/placement. No pt
+          here (was pt-4 directly on main) — SettlementHeader's switcher row
+          already owns that spacing (py-4, symmetric top/bottom around the
+          pills). */}
+      <main className="flex-1 flex flex-col overflow-hidden px-4 pb-6 md:px-[28px] md:pb-8">
+        <div className="mx-auto flex w-full max-w-[1400px] flex-1 flex-col min-h-0">
         {error && <ConnectionErrorState error={error} onRetry={fetchData} />}
 
         {!error && (
           <DataTable>
-            <Toolbar>
-              <Toolbar.Left>
-                <div className="flex h-10 w-full min-w-[200px] items-center gap-2 rounded-[10px] border border-border bg-white px-[14px] transition-colors focus-within:border-[#2563EB] focus-within:ring-2 focus-within:ring-[#2563EB]/20 dark:bg-[#2a2a2d] sm:w-[380px]">
-                  {loading ? (
-                    <div className="dt-skeleton h-3 w-32 rounded-md" />
-                  ) : (
-                    <>
-                      <Search size={16} className="shrink-0 text-muted-foreground" />
-                      <input
-                        aria-label="Search for anything"
-                        value={searchTerm}
-                        onChange={(event) => setSearchTerm(event.target.value)}
-                        className="flex-1 bg-transparent text-[13px] font-normal text-foreground placeholder:text-muted-foreground outline-none border-none"
-                        placeholder="Search for anything"
-                      />
-                    </>
-                  )}
+            {/* Custom single-row flex layout (filter block -> search,
+                flex-1 -> actions), matching Wallet Status's toolbar so the
+                search bar actually extends to fill the remaining space —
+                the old Toolbar/Toolbar.Left/Toolbar.Right split couldn't
+                do that since Toolbar.Left never grew relative to
+                Toolbar.Right. */}
+            <div className="flex shrink-0 flex-nowrap items-center overflow-x-auto border-b border-border px-[13px] py-[10px]">
+              {loading ? (
+                <div className="mr-[10px] flex shrink-0 items-center gap-[10px]">
+                  <div className="h-8 w-8 shrink-0 dt-skeleton rounded-[10px] xl:w-[118px]" />
                 </div>
-              </Toolbar.Left>
-              <Toolbar.Right>
-                {loading && <div className="dt-skeleton h-8 w-8 rounded-[8px]" />}
+              ) : (
+                <div className="relative mr-[10px] shrink-0">
+                  <button
+                    type="button"
+                    ref={correctGroupButtonRef}
+                    onClick={() => setCorrectGroupMenuOpen((current) => !current)}
+                    aria-label="Correct Group"
+                    aria-haspopup="true"
+                    aria-expanded={correctGroupMenuOpen}
+                    className="inline-flex h-8 shrink-0 items-center gap-[5px] rounded-[10px] border border-[#E2E8F0] bg-white px-[10px] text-[11px] font-medium text-[#475569] transition-[color,background-color,border-color,box-shadow,transform] duration-150 ease-out hover:border-[color:var(--ui-accent)] hover:bg-[color:var(--ui-accent-soft)] active:scale-[0.97] dark:border-[#262B38] dark:bg-[#12151D] dark:text-[#9CA3AF] dark:hover:bg-white/5"
+                  >
+                    <Layers size={12} className="text-[#475569] dark:text-[#9CA3AF]" />
+                    <span>Correct Group</span>
+                    {anyCorrectGroupUnchecked && (
+                      <span className="flex h-[13px] min-w-[13px] items-center justify-center rounded-full bg-[color:var(--ui-accent)] px-[3px] text-[9px] font-semibold text-white">
+                        {selectedCorrectGroupCount}
+                      </span>
+                    )}
+                    <ChevronDown
+                      size={11}
+                      className={`text-[#475569] transition-transform duration-150 ease-in-out dark:text-[#9CA3AF] ${correctGroupMenuOpen ? 'rotate-180' : ''}`}
+                    />
+                  </button>
+                  <FilterDropdown
+                    open={correctGroupMenuOpen}
+                    onOpenChange={setCorrectGroupMenuOpen}
+                    anchorRef={correctGroupButtonRef}
+                    options={correctGroupFilterOptions}
+                    selected={correctGroupFilter}
+                    onChange={setCorrectGroupFilter}
+                  />
+                </div>
+              )}
+
+              <div className="flex h-8 flex-1 min-w-[200px] items-center gap-[6px] rounded-[10px] border border-border bg-white px-[13px] transition-colors focus-within:border-[var(--ui-accent)] focus-within:ring-2 focus-within:ring-[var(--ui-accent)]/20 dark:bg-[#12151D]">
+                {loading ? (
+                  <div className="dt-skeleton h-[10px] w-32 rounded-md" />
+                ) : (
+                  <>
+                    <Search size={13} className="shrink-0 text-muted-foreground" />
+                    <input
+                      aria-label="Search for anything"
+                      value={searchTerm}
+                      onChange={(event) => setSearchTerm(event.target.value)}
+                      className="flex-1 bg-transparent text-[11px] font-normal text-foreground placeholder:text-muted-foreground outline-none border-none"
+                      placeholder="Search for anything"
+                    />
+                  </>
+                )}
+              </div>
+
+              <div className="ml-[10px] flex shrink-0 items-center gap-[10px]">
+                {loading && <div className="dt-skeleton h-8 w-8 rounded-[10px]" />}
                 {!loading && (
-                  <button type="button" onClick={fetchData} aria-label="Refresh" title="Refresh" className={GHOST_BUTTON}>
-                    <RefreshCw size={15} className={spinning ? 'animate-spin' : ''} />
+                  <button type="button" onClick={handleExport} aria-label="Export to Excel" title="Export to Excel" className={ICON_BUTTON}>
+                    <Download size={13} />
+                    <span className="hidden xl:inline">Export</span>
                   </button>
                 )}
-                {loading && <div className="dt-skeleton h-9 w-[88px] rounded-[8px]" />}
-                {!loading && (
-                  <button type="button" onClick={handleExport} aria-label="Export to Excel" title="Export to Excel" className={GHOST_BUTTON}>
-                    <Download size={15} />
-                    Export
-                  </button>
-                )}
-                {loading && <div className="dt-skeleton h-9 w-[104px] rounded-[8px]" />}
+                {loading && <div className="dt-skeleton h-8 w-8 rounded-[10px]" />}
                 {!loading && (
                   <div className="relative">
                     <button
@@ -1044,10 +1011,9 @@ export default function SendMoneyTransferQueue() {
                       aria-controls="sendmoney-transfer-queue-columns-popover"
                       aria-label="Columns"
                       title="Columns"
-                      className={GHOST_BUTTON}
+                      className={ICON_ONLY_BUTTON}
                     >
-                      <Columns3 size={15} />
-                      Columns
+                      <Columns3 size={13} />
                     </button>
                     <ColumnsDropdown
                       id="sendmoney-transfer-queue-columns-popover"
@@ -1060,10 +1026,14 @@ export default function SendMoneyTransferQueue() {
                     />
                   </div>
                 )}
-              </Toolbar.Right>
-            </Toolbar>
+              </div>
+            </div>
             <div className="hidden h-1.5 shrink-0 sm:block" />
             <div className="relative hidden flex-1 min-h-0 sm:block">
+              {/* Overlay, not in-flow — centers on this outer (bounded,
+                  non-scrolling) container instead of the table's own
+                  horizontally-scrollable content width. */}
+              {loading && <TableLoadingSpinner overlay />}
               <div ref={tableScrollRef} className="dt-scroll h-full overflow-y-auto overflow-x-auto">
               <table className="w-full table-fixed text-xs" style={{ minWidth: TABLE_MIN_WIDTH_PX }}>
                 <colgroup>
@@ -1071,10 +1041,10 @@ export default function SendMoneyTransferQueue() {
                     <col key={col.key} style={{ width: columnWidths[col.key] }} />
                   ))}
                 </colgroup>
-                <thead className={`sticky top-0 z-[50] bg-[#FAFAFB] dark:bg-[#252528] border-b border-[#E2E8F0] dark:border-[#3a3a3d] transition-shadow duration-150 ease-out ${
+                <thead className={`sticky top-0 z-[50] bg-[#FAFAFB] dark:bg-[#0E1119] border-b border-[#E2E8F0] dark:border-[#262B38] transition-shadow duration-150 ease-out ${
                   isScrolled ? 'shadow-[0_2px_4px_rgba(15,23,42,0.1)] dark:shadow-[0_2px_4px_rgba(0,0,0,0.35)]' : ''
                 }`}>
-                  <tr className="h-[48px]">
+                  <tr className="h-[38px]">
                     {visibleColumns.map((col) => (
                       <th
                         key={col.key}
@@ -1084,176 +1054,10 @@ export default function SendMoneyTransferQueue() {
                             earlier "headers are never placeholders" spec. */}
                         {loading ? (
                           <div
-                            className={`h-3 w-3/5 max-w-[72px] dt-skeleton rounded-md ${
+                            className={`h-[10px] w-3/5 max-w-[58px] dt-skeleton rounded-md ${
                               col.align === 'right' ? 'ml-auto' : col.align === 'center' ? 'mx-auto' : ''
                             }`}
                           />
-                        ) : col.key === 'brand' ? (
-                          // A mirrored INVISIBLE copy of the button sits on the
-                          // opposite side of the label, same width as the real
-                          // one — this "balanced spacer" trick centers the
-                          // LABEL itself (matching the data's true center)
-                          // while keeping a normal, consistent gap between the
-                          // label and the real button (an absolute-positioned
-                          // icon put them at inconsistent/overlapping distances
-                          // depending on the label's own rendered width).
-                          <div className="flex w-full items-center justify-center gap-0.5">
-                            <span aria-hidden="true" className="invisible flex items-center justify-center rounded-full p-1">
-                              {anyBrandUnchecked ? (
-                                <span className="flex h-3 min-w-[12px] items-center justify-center px-0.5 text-[10px] font-semibold leading-none">
-                                  {selectedBrandCount}
-                                </span>
-                              ) : (
-                                <ChevronUp size={12} />
-                              )}
-                            </span>
-                            <span className="min-w-0 flex-1 truncate">{col.label}</span>
-                            <button
-                              type="button"
-                              ref={brandButtonRef}
-                              onClick={(event) => {
-                                event.stopPropagation();
-                                const rect = brandButtonRef.current?.getBoundingClientRect();
-                                if (rect) {
-                                  const dropdownWidth = 176;
-                                  const left = Math.min(rect.left, window.innerWidth - dropdownWidth - 8);
-                                  setBrandMenuPos({ top: rect.bottom + 8, left: Math.max(8, left) });
-                                }
-                                setBrandMenuOpen((current) => !current);
-                              }}
-                              className={`flex items-center justify-center rounded-full p-1 transition ${anyBrandUnchecked ? 'bg-[color:var(--product-accent-soft)] text-[color:var(--product-accent)]' : 'text-[#6b7280] hover:bg-slate-200 dark:text-[#a0a0a0] dark:hover:bg-white/10'}`}
-                            >
-                              {anyBrandUnchecked ? (
-                                <span className="flex h-3 min-w-[12px] items-center justify-center px-0.5 text-[10px] font-semibold leading-none">
-                                  {selectedBrandCount}
-                                </span>
-                              ) : (
-                                <ChevronUp
-                                  size={12}
-                                  className={`transition-transform duration-150 ease-in-out ${brandMenuOpen ? 'rotate-180' : ''} opacity-70`}
-                                />
-                              )}
-                            </button>
-                            {brandMenuOpen && typeof document !== 'undefined' && createPortal(
-                              <div
-                                ref={brandDropdownRef}
-                                style={{ position: 'fixed', top: brandMenuPos.top, left: brandMenuPos.left }}
-                                className="z-[9999] w-44 rounded-xl border border-[#e5e5e7] bg-white p-2 shadow-xl dark:border-[#3a3a3d] dark:bg-[#2a2a2d]"
-                                onClick={(event) => event.stopPropagation()}
-                              >
-                                <div className="px-2 py-1.5 text-center text-[10px] font-semibold uppercase tracking-[0.24em] text-[#6b7280] dark:text-[#a0a0a0]">Brand</div>
-                                <div className="max-h-56 overflow-y-auto">
-                                  <label className="flex w-full items-center justify-center gap-2 rounded-xl px-3 py-1.5 text-center text-[10px] text-[#6b7280] hover:bg-[#f5f5f7] dark:text-[#a0a0a0] dark:hover:bg-slate-800">
-                                    <input
-                                      type="checkbox"
-                                      checked={allBrandsChecked}
-                                      onChange={() => {
-                                        const nextValue = !allBrandsChecked;
-                                        setBrandFilter(Object.fromEntries(brandOptions.map((name) => [name, nextValue])));
-                                      }}
-                                    />
-                                    <span>All</span>
-                                  </label>
-                                  {brandOptions.map((brand) => (
-                                    <label key={brand} className="flex w-full items-center justify-center gap-2 rounded-xl px-3 py-1.5 text-center text-[10px] text-[#6b7280] hover:bg-[#f5f5f7] dark:text-[#a0a0a0] dark:hover:bg-slate-800">
-                                      <input
-                                        type="checkbox"
-                                        checked={isBrandChecked(brand)}
-                                        onChange={() => {
-                                          setBrandFilter((current) => ({ ...current, [brand]: !isBrandChecked(brand) }));
-                                        }}
-                                      />
-                                      <span>{displayBrand(brand)}</span>
-                                    </label>
-                                  ))}
-                                </div>
-                              </div>,
-                              document.body
-                            )}
-                          </div>
-                        ) : col.key === 'correctGroup' ? (
-                          // A mirrored INVISIBLE copy of the button sits on the
-                          // opposite side of the label, same width as the real
-                          // one — this "balanced spacer" trick centers the
-                          // LABEL itself (matching the data's true center)
-                          // while keeping a normal, consistent gap between the
-                          // label and the real button (an absolute-positioned
-                          // icon put them at inconsistent/overlapping distances
-                          // depending on the label's own rendered width).
-                          <div className="flex w-full items-center justify-center gap-0.5">
-                            <span aria-hidden="true" className="invisible flex items-center justify-center rounded-full p-1">
-                              {anyCorrectGroupUnchecked ? (
-                                <span className="flex h-3 min-w-[12px] items-center justify-center px-0.5 text-[10px] font-semibold leading-none">
-                                  {selectedCorrectGroupCount}
-                                </span>
-                              ) : (
-                                <ChevronUp size={12} />
-                              )}
-                            </span>
-                            <span className="min-w-0 flex-1 truncate">{col.label}</span>
-                            <button
-                              type="button"
-                              ref={correctGroupButtonRef}
-                              onClick={(event) => {
-                                event.stopPropagation();
-                                const rect = correctGroupButtonRef.current?.getBoundingClientRect();
-                                if (rect) {
-                                  const dropdownWidth = 288;
-                                  const left = Math.min(rect.left, window.innerWidth - dropdownWidth - 8);
-                                  setCorrectGroupMenuPos({ top: rect.bottom + 8, left: Math.max(8, left) });
-                                }
-                                setCorrectGroupMenuOpen((current) => !current);
-                              }}
-                              className={`flex items-center justify-center rounded-full p-1 transition ${anyCorrectGroupUnchecked ? 'bg-[color:var(--product-accent-soft)] text-[color:var(--product-accent)]' : 'text-[#6b7280] hover:bg-slate-200 dark:text-[#a0a0a0] dark:hover:bg-white/10'}`}
-                            >
-                              {anyCorrectGroupUnchecked ? (
-                                <span className="flex h-3 min-w-[12px] items-center justify-center px-0.5 text-[10px] font-semibold leading-none">
-                                  {selectedCorrectGroupCount}
-                                </span>
-                              ) : (
-                                <ChevronUp
-                                  size={12}
-                                  className={`transition-transform duration-150 ease-in-out ${correctGroupMenuOpen ? 'rotate-180' : ''} opacity-70`}
-                                />
-                              )}
-                            </button>
-                            {correctGroupMenuOpen && typeof document !== 'undefined' && createPortal(
-                              <div
-                                ref={correctGroupDropdownRef}
-                                style={{ position: 'fixed', top: correctGroupMenuPos.top, left: correctGroupMenuPos.left }}
-                                className="z-[9999] w-72 max-w-[90vw] rounded-xl border border-[#e5e5e7] bg-white p-2 shadow-xl dark:border-[#3a3a3d] dark:bg-[#2a2a2d]"
-                                onClick={(event) => event.stopPropagation()}
-                              >
-                                <div className="px-2 py-1.5 text-center text-[10px] font-semibold uppercase tracking-[0.24em] text-[#6b7280] dark:text-[#a0a0a0]">Correct Group</div>
-                                <div className="max-h-56 overflow-y-auto">
-                                  <label className="flex w-full items-center justify-start gap-2 whitespace-nowrap rounded-xl px-3 py-1.5 text-left text-[10px] text-[#6b7280] hover:bg-[#f5f5f7] dark:text-[#a0a0a0] dark:hover:bg-slate-800">
-                                    <input
-                                      type="checkbox"
-                                      checked={allCorrectGroupsChecked}
-                                      onChange={() => {
-                                        const nextValue = !allCorrectGroupsChecked;
-                                        setCorrectGroupFilter(Object.fromEntries(correctGroupOptions.map((name) => [name, nextValue])));
-                                      }}
-                                    />
-                                    <span>All</span>
-                                  </label>
-                                  {correctGroupOptions.map((group) => (
-                                    <label key={group} className="flex w-full items-center justify-start gap-2 whitespace-nowrap rounded-xl px-3 py-1.5 text-left text-[10px] text-[#6b7280] hover:bg-[#f5f5f7] dark:text-[#a0a0a0] dark:hover:bg-slate-800">
-                                      <input
-                                        type="checkbox"
-                                        checked={isCorrectGroupChecked(group)}
-                                        onChange={() => {
-                                          setCorrectGroupFilter((current) => ({ ...current, [group]: !isCorrectGroupChecked(group) }));
-                                        }}
-                                      />
-                                      <span>{group}</span>
-                                    </label>
-                                  ))}
-                                </div>
-                              </div>,
-                              document.body
-                            )}
-                          </div>
                         ) : (
                           <button
                             type="button"
@@ -1265,34 +1069,30 @@ export default function SendMoneyTransferQueue() {
                                 setSortDirection('asc');
                               }
                             }}
-                            className={`flex w-full items-center gap-1.5 transition hover:opacity-80 ${col.align === 'center' ? 'justify-center' : 'justify-start'}`}
+                            className={`flex w-full items-center gap-1.5 transition hover:opacity-80 ${col.align === 'center' ? 'justify-center' : col.align === 'right' ? 'justify-end' : 'justify-start'}`}
                           >
+                            {/* No flex-1 on the label — it stretched the
+                                label's BOX to fill the column's real
+                                (colgroup %) width, which is usually much
+                                wider than the header text alone needs, so
+                                the icon (pushed to the far edge by
+                                justify-center/-end) ended up looking
+                                stranded far from the word. Keeping every
+                                piece at its natural size lets
+                                justify-center/-start/-end position the
+                                whole [spacer?, label, icon] group correctly
+                                without any piece over-stretching. */}
                             {col.align === 'center' && (
-                              // A mirrored INVISIBLE copy of the icon sits on
-                              // the opposite side of the label — same
-                              // "balanced spacer" trick as Brand/Correct Group
-                              // above, so the LABEL centers on the data's true
-                              // center while keeping a normal, consistent gap
-                              // to the icon (an absolute-positioned icon put
-                              // them at inconsistent/overlapping distances
-                              // depending on the label's own rendered width).
+                              // Mirrored INVISIBLE copy of the icon on the
+                              // opposite side of the label — balances the
+                              // group so the label itself lands on the
+                              // true center (only needed for center; left/
+                              // right already anchor correctly without it).
                               <span aria-hidden="true" className="invisible">
                                 <SortIcon active={sortColumn === col.key} direction={sortDirection} />
                               </span>
                             )}
-                            {/* flex-1 only for center-aligned columns — it's
-                                what lets the label's own text-center (inherited
-                                from the <th>) land on the true row center. For
-                                a LEFT-aligned column (Agent), flex-1 would still
-                                grow the label's box to fill the whole row, so
-                                text-left renders the text flush left same as
-                                before but leaves a big empty gap between the
-                                text and the icon sitting at the far edge of
-                                that oversized box — Agent needs the label sized
-                                to its own (shrinkable) content only, so the
-                                icon sits directly after it via the row's own
-                                gap-1.5, not stranded at the column's far edge. */}
-                            <span className={`min-w-0 truncate ${col.align === 'center' ? 'flex-1' : ''}`}>{col.label}</span>
+                            <span className="min-w-0 truncate">{col.label}</span>
                             <SortIcon active={sortColumn === col.key} direction={sortDirection} />
                           </button>
                         )}
@@ -1302,21 +1102,15 @@ export default function SendMoneyTransferQueue() {
                 </thead>
                 <tbody>
                   {loading ? (
-                    Array.from({ length: 18 }).map((_, rowIndex) => (
-                      <tr key={rowIndex}>
-                        {visibleColumns.map((col) => {
-                          const widths = rowSkeletonWidths[col.key];
-                          const width = widths[rowIndex % widths.length];
-                          return (
-                            <td key={col.key} className="px-4 py-[14px]">
-                              <div className={`dt-skeleton h-2.5 rounded-md ${width}`} />
-                            </td>
-                          );
-                        })}
-                      </tr>
-                    ))
+                    // Empty — the loading indicator is the overlay spinner
+                    // on the outer container, not row content here.
+                    null
                   ) : pagedRows.length > 0 ? pagedRows.map((row, i) => (
-                    <tr key={row.key} className={`border-b border-border last:border-0 transition-colors hover:bg-muted/10 ${i % 2 === 1 ? 'bg-muted/5' : ''}`}>
+                    <tr
+                      key={row.key}
+                      className={`dt-row-stagger-in border-b border-border last:border-0 transition-colors hover:bg-muted/10 ${i % 2 === 1 ? 'bg-muted/5' : ''}`}
+                      style={{ '--stagger-delay': `${Math.min(i, 12) * 30}ms` } as CSSProperties}
+                    >
                       {visibleColumns.map((col) => renderCell(row, col.key, searchTerm))}
                     </tr>
                   )) : (
@@ -1343,15 +1137,9 @@ export default function SendMoneyTransferQueue() {
             <div className="flex-1 min-h-0 overflow-y-auto sm:hidden">
               <div className="flex flex-col gap-2 p-3">
                 {loading ? (
-                  Array.from({ length: 8 }).map((_, i) => (
-                    <div key={i} className="rounded-xl border border-border bg-white p-3.5 dark:bg-[#2a2a2d]">
-                      <div className="h-4 w-2/3 animate-pulse rounded-md bg-slate-200 dark:bg-slate-700" />
-                      <div className="mt-2 h-3 w-1/3 animate-pulse rounded-md bg-slate-200 dark:bg-slate-700" />
-                      <div className="mt-3 h-6 w-1/2 animate-pulse rounded-md bg-slate-200 dark:bg-slate-700" />
-                    </div>
-                  ))
+                  <TableLoadingSpinner minHeight={8 * 90} />
                 ) : pagedRows.length > 0 ? (
-                  pagedRows.map((row) => {
+                  pagedRows.map((row, i) => {
                     const showAgent = columnVisibility.shopName;
                     const showBrand = columnVisibility.brand;
                     const showBalance = columnVisibility.companyBalance;
@@ -1362,7 +1150,11 @@ export default function SendMoneyTransferQueue() {
                     const showCorrectGroup = columnVisibility.correctGroup;
                     const showRemarks = columnVisibility.remarks;
                     return (
-                      <div key={row.key} className="rounded-xl border border-border bg-white p-3.5 dark:bg-[#2a2a2d]">
+                      <div
+                        key={row.key}
+                        className="dt-row-stagger-in rounded-xl border border-border bg-white p-3.5 dark:bg-[#12151D]"
+                        style={{ '--stagger-delay': `${Math.min(i, 12) * 30}ms` } as CSSProperties}
+                      >
                         {(showAgent || showBrand) && (
                           <div className="flex items-start justify-between gap-2">
                             {showAgent && <p className="min-w-0 truncate text-sm font-bold text-foreground">{highlightMatch(row.account, searchTerm)}</p>}
@@ -1426,7 +1218,7 @@ export default function SendMoneyTransferQueue() {
             </div>
 
             {!loading && (
-              <TableFooter
+              <CompactTableFooter
                 recordCountText={
                   sortedRows.length === 0
                     ? 'Showing 0 of 0 Accounts'
@@ -1444,6 +1236,7 @@ export default function SendMoneyTransferQueue() {
             )}
           </DataTable>
         )}
+        </div>
       </main>
     </div>
   );

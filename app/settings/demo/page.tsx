@@ -1,0 +1,788 @@
+'use client';
+
+import { useCallback, useEffect, useState } from 'react';
+import { SlidersHorizontal, Check, X, Loader2 } from 'lucide-react';
+import PageHeader from '../../components/PageHeader';
+import AccountMenu from '../../components/AccountMenu';
+import ConnectionErrorState from '../../components/ConnectionErrorState';
+import { classifyFetchError, type ClassifiedError, assertAllOk } from '../../lib/errors';
+
+// Mirrors app/lib/transferQueueSettings.ts's own types — not imported
+// directly since that file pulls in `googleapis` (Node-only, breaks the
+// client bundle); same "fetch via API route, define a matching local type"
+// convention every other write-capable feature in this app follows (e.g.
+// app/wallet-status/page.tsx re-declaring app/lib/walletStatus.ts's types).
+// Plain-word form, not symbols — per explicit instruction, so staff reading
+// either the dropdown or the raw sheet cell understand it immediately.
+type Operator = 'Greater Than' | 'Greater Than or Equal' | 'Less Than' | 'Less Than or Equal' | 'Between' | 'Equal';
+// cashout_sh_* and sendmoney_sh_* are the REAL, LIVE sections today —
+// app/lib/transferQueueRules.ts's resolvers treat SH-prefixed Current Group
+// labels as the primary path (confirmed live: 5,173 of 5,174 real Cashout
+// Balance Limit rows are SH-prefixed), with the legacy per-brand sections
+// below as a fallback only reached by the last non-SH holdout. This was the
+// other way around when originally written — the SH sections started as
+// admin-only draft, and cashout_day/cashout_extended/cashout_247 +
+// sendmoney_247/sendmoney_bd were the real ones — but the resolver cutover
+// happened without this file's own comments or SECTION_META descriptions
+// (below) being updated to match. Fixed here: descriptions no longer claim
+// "draft only, not yet applied." Legacy sections are kept in the union for
+// type accuracy and are still real fallback logic, but deliberately never
+// rendered below (nothing to configure there day-to-day; SH is what an
+// admin actually needs to edit).
+type RuleSection =
+  | 'cashout_day' | 'cashout_extended' | 'cashout_247'
+  | 'cashout_sh_day' | 'cashout_sh_early_extended' | 'cashout_sh_extended' | 'cashout_sh_247'
+  | 'sendmoney_247' | 'sendmoney_bd'
+  | 'sendmoney_sh_247' | 'sendmoney_sh_day';
+
+type RuleRow = {
+  section: RuleSection;
+  metric: string;
+  operator: Operator;
+  value1: number;
+  value2: number | null;
+  queueResult: string;
+  enabled: boolean;
+  updatedBy: string;
+  updatedAt: string;
+};
+
+type BundleField = {
+  field: string;
+  value: string;
+  updatedBy: string;
+  updatedAt: string;
+};
+
+type TransferQueueMode = 'production' | 'configuration';
+type MetaConfig = { mode: TransferQueueMode; version: number; updatedBy: string; updatedAt: string };
+
+const OPERATORS: Operator[] = ['Greater Than', 'Greater Than or Equal', 'Less Than', 'Less Than or Equal', 'Between', 'Equal'];
+
+const SECTION_META: Record<RuleSection, { emoji: string; title: string; description: string }> = {
+  // Legacy per-brand sections — never rendered (see RuleSectionCard usage
+  // below), kept here only so SECTION_META still satisfies
+  // Record<RuleSection, ...> for every value in the type. Still real
+  // fallback logic (the last non-SH holdout shop), just not something an
+  // admin edits day-to-day.
+  cashout_day: { emoji: '☀️', title: 'Day Configuration', description: '' },
+  cashout_extended: { emoji: '🌇', title: 'Extended Configuration', description: '' },
+  cashout_247: { emoji: '🌙', title: '24/7 Configuration', description: '' },
+  cashout_sh_day: {
+    emoji: '☀️',
+    title: 'Day Configuration',
+    description: 'SH — one shared configuration applied to every Cashout shop on the Day schedule. This is the live configuration used by the real Transfer Queue today.',
+  },
+  cashout_sh_early_extended: {
+    emoji: '🌅',
+    title: 'Early Extended Configuration',
+    description: 'SH — one shared configuration applied to every Cashout shop on the Early Extended schedule. This is the live configuration used by the real Transfer Queue today.',
+  },
+  cashout_sh_extended: {
+    emoji: '🌇',
+    title: 'Extended Configuration',
+    description: 'SH — one shared configuration applied to every Cashout shop on the Extended schedule. This is the live configuration used by the real Transfer Queue today.',
+  },
+  cashout_sh_247: {
+    emoji: '🌙',
+    title: '24/7 Configuration',
+    description: 'SH — one shared configuration applied to every Cashout shop on the 24/7 schedule. This is the live configuration used by the real Transfer Queue today.',
+  },
+  // Legacy per-brand sections — never rendered, kept only for type
+  // completeness (same reasoning as the Cashout ones above).
+  sendmoney_247: { emoji: '🌙', title: '24/7 Configuration', description: '' },
+  sendmoney_bd: { emoji: '🏷️', title: 'BD Limit', description: '' },
+  sendmoney_sh_247: {
+    emoji: '🌙',
+    title: '24/7',
+    description: 'SH — one shared configuration applied to every SH Send Money account on the 24/7 schedule. Bundle rows use the linked Cashout account\'s balance. This is the live configuration used by the real Transfer Queue today.',
+  },
+  sendmoney_sh_day: {
+    emoji: '☀️',
+    title: 'Day',
+    description: 'SH — one shared configuration applied to every SH Send Money account on the Day schedule. Bundle rows use the linked Cashout account\'s balance. This is the live configuration used by the real Transfer Queue today.',
+  },
+};
+
+// "July 22, 2026 10:42 AM" — same Manila-anchored format convention as
+// app/wallet-status/page.tsx's formatRemarkTimestamp.
+function formatTimestamp(iso: string): string {
+  if (!iso) return '';
+  const date = new Date(iso);
+  if (isNaN(date.getTime())) return '';
+  const parts = new Intl.DateTimeFormat('en-US', {
+    timeZone: 'Asia/Manila',
+    month: 'long', day: 'numeric', year: 'numeric', hour: 'numeric', minute: '2-digit', hour12: true,
+  }).formatToParts(date);
+  const get = (type: string) => parts.find((p) => p.type === type)?.value ?? '';
+  return `${get('month')} ${get('day')}, ${get('year')} ${get('hour')}:${get('minute')} ${get('dayPeriod')}`;
+}
+
+function rowIsDirty(saved: RuleRow, draft: RuleRow): boolean {
+  return saved.operator !== draft.operator || saved.value1 !== draft.value1 || saved.value2 !== draft.value2 || saved.queueResult !== draft.queueResult || saved.enabled !== draft.enabled;
+}
+
+const INPUT_CLASS = 'h-8 w-full rounded-md border border-border bg-white px-2 text-[12px] text-foreground outline-none focus:border-[#2563EB] dark:bg-[#1c1c1e]';
+
+function RuleSectionCard({
+  section,
+  rules,
+  drafts,
+  saving,
+  onChangeRow,
+  onSave,
+  onCancel,
+  excludeMetric,
+}: {
+  section: RuleSection;
+  rules: RuleRow[];
+  drafts: RuleRow[];
+  saving: boolean;
+  onChangeRow: (index: number, patch: Partial<RuleRow>) => void;
+  onSave: (section: RuleSection) => void;
+  onCancel: (section: RuleSection) => void;
+  // Send Money's Bundle rows (metric "Cashout Account Balance") are pulled
+  // out into their own BundleTypeCard below (per explicit instruction — a
+  // dedicated Bundle DP Only / Bundle WD Only container instead of mixed
+  // in with the Day/24-7 Solo rows) — this keeps them out of the generic
+  // per-section rendering here without needing a second RuleSection value.
+  excludeMetric?: string;
+}) {
+  const meta = SECTION_META[section];
+  const indices = drafts.map((_, i) => i).filter((i) => drafts[i].section === section && drafts[i].metric !== excludeMetric);
+  const hasChanges = indices.some((i) => rowIsDirty(rules[i], drafts[i]));
+
+  return (
+    <div className="mb-6 rounded-xl border border-border bg-white p-5 dark:bg-[#2a2a2d]">
+      <div className="mb-1 flex items-center gap-2 text-[15px] font-semibold text-foreground">
+        <span>{meta.emoji}</span> {meta.title}
+      </div>
+      <p className="mb-4 text-[12px] text-muted-foreground">{meta.description}</p>
+
+      <div className="space-y-2.5">
+        {indices.map((i) => {
+          const d = drafts[i];
+          const saved = rules[i];
+          const isBetween = d.operator === 'Between';
+          return (
+            <div key={i} className="overflow-hidden rounded-lg border border-border p-3">
+              <div className="mb-3 flex flex-wrap items-center justify-end gap-2.5 pr-1">
+                <button
+                  type="button"
+                  onClick={() => onChangeRow(i, { enabled: !d.enabled })}
+                  className={`relative h-[30px] w-[52px] shrink-0 cursor-pointer rounded-full border transition-colors duration-200 ease hover:brightness-95 ${d.enabled ? 'border-[#5B5CEB] bg-[#5B5CEB]' : 'border-[#D1D5DB] bg-[#E5E7EB] dark:border-[#4a4a4d] dark:bg-[#3a3a3d]'}`}
+                >
+                  {/* Base position is an explicit left-[3px], never `auto` —
+                      translate is only the incremental shift (22px = track
+                      52 − thumb 24 − 3px inset on each side), so the thumb's
+                      final position is provably always inside the track
+                      regardless of the button's own layout context (the
+                      previous `auto`-based left let the browser's static
+                      positioning push the thumb outside the track). */}
+                  <span
+                    className={`absolute left-[3px] top-[3px] h-6 w-6 rounded-full bg-white transition-transform duration-200 ease ${d.enabled ? 'translate-x-[22px] shadow-[0_2px_6px_rgba(0,0,0,0.15)]' : 'translate-x-0'}`}
+                  />
+                </button>
+              </div>
+              <div className={`grid grid-cols-12 items-center gap-2 transition-opacity duration-150 ease-out ${d.enabled ? '' : 'opacity-50'}`}>
+                <div className="col-span-2 text-[12px] font-medium text-foreground">{d.metric}</div>
+                <select
+                  value={d.operator}
+                  onChange={(e) => onChangeRow(i, { operator: e.target.value as Operator })}
+                  disabled={!d.enabled}
+                  className={`${INPUT_CLASS} col-span-3 disabled:cursor-not-allowed`}
+                >
+                  {OPERATORS.map((op) => <option key={op} value={op}>{op}</option>)}
+                </select>
+                <input
+                  type="number"
+                  value={d.value1}
+                  onChange={(e) => onChangeRow(i, { value1: Number(e.target.value) })}
+                  disabled={!d.enabled}
+                  className={`${INPUT_CLASS} col-span-2 tabular-nums disabled:cursor-not-allowed`}
+                />
+                {isBetween && (
+                  <>
+                    <span className="col-span-1 text-center text-[11px] text-muted-foreground">and</span>
+                    <input
+                      type="number"
+                      value={d.value2 ?? 0}
+                      onChange={(e) => onChangeRow(i, { value2: Number(e.target.value) })}
+                      disabled={!d.enabled}
+                      className={`${INPUT_CLASS} col-span-2 tabular-nums disabled:cursor-not-allowed`}
+                    />
+                  </>
+                )}
+                <input
+                  type="text"
+                  value={d.queueResult}
+                  onChange={(e) => onChangeRow(i, { queueResult: e.target.value })}
+                  placeholder="Queue result…"
+                  disabled={!d.enabled}
+                  className={`${INPUT_CLASS} ${isBetween ? 'col-span-2' : 'col-span-5'} disabled:cursor-not-allowed`}
+                />
+              </div>
+              {/* Per-row (not just per-section) so it's clear exactly which
+                  rule was last touched, per explicit instruction. */}
+              <p className="mt-2 text-[10px] text-muted-foreground">
+                {saved.updatedAt ? `Last updated ${formatTimestamp(saved.updatedAt)} by ${saved.updatedBy}` : 'Never updated'}
+              </p>
+            </div>
+          );
+        })}
+      </div>
+
+      <div className="mt-3 flex items-center justify-end">
+        <div className="flex items-center gap-1.5">
+          <button
+            type="button"
+            onClick={() => onCancel(section)}
+            disabled={!hasChanges || saving}
+            className="flex h-8 items-center gap-1 rounded-[8px] border border-[#E5E7EB] bg-white px-2.5 text-[12px] font-medium text-slate-500 transition-colors duration-150 ease-out hover:border-rose-300 hover:bg-rose-50 hover:text-rose-600 disabled:opacity-50 dark:border-[#3a3a3d] dark:bg-[#2a2a2d] dark:text-[#9CA3AF] dark:hover:border-rose-900/60 dark:hover:bg-rose-500/10 dark:hover:text-rose-400"
+          >
+            <X size={13} /> Cancel
+          </button>
+          <button
+            type="button"
+            onClick={() => onSave(section)}
+            disabled={!hasChanges || saving}
+            className="flex h-8 items-center gap-1 rounded-[8px] bg-[#5B5CEB] px-2.5 text-[12px] font-semibold text-white transition-opacity duration-150 ease-out disabled:cursor-not-allowed disabled:opacity-40"
+          >
+            {saving ? <Loader2 size={13} className="animate-spin" /> : <Check size={13} />} Save
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// One row per schedule (24/7 + Day), each tagged with a schedule badge so
+// it's identifiable outside its schedule's own card — per explicit
+// instruction: a dedicated container per Bundle type (DP Only / WD Only)
+// instead of mixed in with each schedule's Solo rows. Matched by metric +
+// operator (Cashout Account Balance + Less Than = DP Only, + Greater Than
+// = WD Only) rather than a fixed array position, so it stays correct even
+// if a row's own position in DEFAULT_RULES ever shifts.
+const BUNDLE_SCHEDULE_SECTIONS: { section: RuleSection; scheduleLabel: string }[] = [
+  { section: 'sendmoney_sh_247', scheduleLabel: '24/7' },
+  { section: 'sendmoney_sh_day', scheduleLabel: 'Day' },
+];
+
+function BundleTypeCard({
+  title,
+  operator,
+  rules,
+  drafts,
+  savingRowIndex,
+  onChangeRow,
+  onSaveRow,
+  onCancelRow,
+}: {
+  title: string;
+  operator: Operator;
+  rules: RuleRow[];
+  drafts: RuleRow[];
+  savingRowIndex: number | null;
+  onChangeRow: (index: number, patch: Partial<RuleRow>) => void;
+  onSaveRow: (index: number) => void;
+  onCancelRow: (index: number) => void;
+}) {
+  return (
+    <div className="mb-6 rounded-xl border border-border bg-white p-5 dark:bg-[#2a2a2d]">
+      <div className="mb-1 flex items-center gap-2 text-[15px] font-semibold text-foreground">
+        <span>📦</span> {title}
+      </div>
+      <p className="mb-4 text-[12px] text-muted-foreground">SH Send Money — determined by the linked Cashout account's balance, not this account's own SDP/Discrepancy/Company Balance.</p>
+
+      <div className="space-y-2.5">
+        {BUNDLE_SCHEDULE_SECTIONS.map(({ section, scheduleLabel }) => {
+          const index = drafts.findIndex((r) => r.section === section && r.metric === 'Cashout Account Balance' && r.operator === operator);
+          if (index === -1) return null;
+          const d = drafts[index];
+          const saved = rules[index];
+          const saving = savingRowIndex === index;
+          const hasChanges = rowIsDirty(saved, d);
+          return (
+            <div key={section} className="overflow-hidden rounded-lg border border-border p-3">
+              <div className="mb-3 flex flex-wrap items-center justify-between gap-2.5">
+                {/* Schedule identifier — this is the "way to identify if it's
+                    Day or 24/7" once Bundle rows are pulled out of their own
+                    schedule's card. */}
+                <span className="inline-flex items-center rounded-full border border-[#5B5CEB]/30 bg-[#5B5CEB]/10 px-2.5 py-1 text-[11px] font-semibold text-[#5B5CEB] dark:border-[#5B5CEB]/40 dark:bg-[#5B5CEB]/15">
+                  {scheduleLabel === '24/7' ? '🌙' : '☀️'} {scheduleLabel}
+                </span>
+                <button
+                  type="button"
+                  onClick={() => onChangeRow(index, { enabled: !d.enabled })}
+                  className={`relative h-[30px] w-[52px] shrink-0 cursor-pointer rounded-full border transition-colors duration-200 ease hover:brightness-95 ${d.enabled ? 'border-[#5B5CEB] bg-[#5B5CEB]' : 'border-[#D1D5DB] bg-[#E5E7EB] dark:border-[#4a4a4d] dark:bg-[#3a3a3d]'}`}
+                >
+                  <span
+                    className={`absolute left-[3px] top-[3px] h-6 w-6 rounded-full bg-white transition-transform duration-200 ease ${d.enabled ? 'translate-x-[22px] shadow-[0_2px_6px_rgba(0,0,0,0.15)]' : 'translate-x-0'}`}
+                  />
+                </button>
+              </div>
+              <div className={`grid grid-cols-12 items-center gap-2 transition-opacity duration-150 ease-out ${d.enabled ? '' : 'opacity-50'}`}>
+                <div className="col-span-3 text-[12px] font-medium text-foreground">{d.metric}</div>
+                <select
+                  value={d.operator}
+                  onChange={(e) => onChangeRow(index, { operator: e.target.value as Operator })}
+                  disabled={!d.enabled}
+                  className={`${INPUT_CLASS} col-span-3 disabled:cursor-not-allowed`}
+                >
+                  {OPERATORS.map((op) => <option key={op} value={op}>{op}</option>)}
+                </select>
+                <input
+                  type="number"
+                  value={d.value1}
+                  onChange={(e) => onChangeRow(index, { value1: Number(e.target.value) })}
+                  disabled={!d.enabled}
+                  className={`${INPUT_CLASS} col-span-2 tabular-nums disabled:cursor-not-allowed`}
+                />
+                <input
+                  type="text"
+                  value={d.queueResult}
+                  onChange={(e) => onChangeRow(index, { queueResult: e.target.value })}
+                  placeholder="Queue result…"
+                  disabled={!d.enabled}
+                  className={`${INPUT_CLASS} col-span-4 disabled:cursor-not-allowed`}
+                />
+              </div>
+              <div className="mt-2 flex items-center justify-between gap-2">
+                <p className="text-[10px] text-muted-foreground">
+                  {saved.updatedAt ? `Last updated ${formatTimestamp(saved.updatedAt)} by ${saved.updatedBy}` : 'Never updated'}
+                </p>
+                <div className="flex items-center gap-1.5">
+                  <button
+                    type="button"
+                    onClick={() => onCancelRow(index)}
+                    disabled={!hasChanges || saving}
+                    className="flex h-7 items-center gap-1 rounded-[8px] border border-[#E5E7EB] bg-white px-2 text-[11px] font-medium text-slate-500 transition-colors duration-150 ease-out hover:border-rose-300 hover:bg-rose-50 hover:text-rose-600 disabled:opacity-50 dark:border-[#3a3a3d] dark:bg-[#2a2a2d] dark:text-[#9CA3AF] dark:hover:border-rose-900/60 dark:hover:bg-rose-500/10 dark:hover:text-rose-400"
+                  >
+                    <X size={12} /> Cancel
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => onSaveRow(index)}
+                    disabled={!hasChanges || saving}
+                    className="flex h-7 items-center gap-1 rounded-[8px] bg-[#5B5CEB] px-2 text-[11px] font-semibold text-white transition-opacity duration-150 ease-out disabled:cursor-not-allowed disabled:opacity-40"
+                  >
+                    {saving ? <Loader2 size={12} className="animate-spin" /> : <Check size={12} />} Save
+                  </button>
+                </div>
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+function BundleSectionCard({
+  saved,
+  drafts,
+  saving,
+  onChangeField,
+  onSave,
+  onCancel,
+}: {
+  saved: BundleField[];
+  drafts: BundleField[];
+  saving: boolean;
+  onChangeField: (index: number, value: string) => void;
+  onSave: () => void;
+  onCancel: () => void;
+}) {
+  const hasChanges = drafts.some((d, i) => d.value !== saved[i]?.value);
+
+  return (
+    <div className="mb-6 rounded-xl border border-border bg-white p-5 dark:bg-[#2a2a2d]">
+      <div className="mb-1 flex items-center gap-2 text-[15px] font-semibold text-foreground">
+        <span>📦</span> Bundle Configuration
+      </div>
+      <p className="mb-4 text-[12px] text-muted-foreground">Future configurable values may be added here.</p>
+
+      <div className="space-y-2.5">
+        {drafts.map((f, i) => {
+          const isToggle = f.field === 'Bundle Enabled' || f.field === 'Auto Grouping';
+          const savedField = saved[i];
+          return (
+            <div key={i} className="rounded-lg border border-border p-3">
+              <div className="flex items-center justify-between gap-3">
+                <span className="text-[12px] font-medium text-foreground">{f.field}</span>
+                {isToggle ? (
+                  <button
+                    type="button"
+                    onClick={() => onChangeField(i, f.value === 'true' ? 'false' : 'true')}
+                    className={`relative h-6 w-11 shrink-0 rounded-full transition-colors duration-150 ease-out ${f.value === 'true' ? 'bg-[#5B5CEB]' : 'bg-muted'}`}
+                  >
+                    <span className={`absolute top-0.5 h-5 w-5 rounded-full bg-white shadow transition-transform duration-150 ease-out ${f.value === 'true' ? 'translate-x-[22px]' : 'translate-x-0.5'}`} />
+                  </button>
+                ) : (
+                  <input
+                    type="text"
+                    value={f.value}
+                    onChange={(e) => onChangeField(i, e.target.value)}
+                    className={`${INPUT_CLASS} max-w-[220px]`}
+                  />
+                )}
+              </div>
+              <p className="mt-2 text-[10px] text-muted-foreground">
+                {savedField?.updatedAt ? `Last updated ${formatTimestamp(savedField.updatedAt)} by ${savedField.updatedBy}` : 'Never updated'}
+              </p>
+            </div>
+          );
+        })}
+      </div>
+
+      <div className="mt-3 flex items-center justify-end">
+        <div className="flex items-center gap-1.5">
+          <button
+            type="button"
+            onClick={onCancel}
+            disabled={!hasChanges || saving}
+            className="flex h-8 items-center gap-1 rounded-[8px] border border-[#E5E7EB] bg-white px-2.5 text-[12px] font-medium text-slate-500 transition-colors duration-150 ease-out hover:border-rose-300 hover:bg-rose-50 hover:text-rose-600 disabled:opacity-50 dark:border-[#3a3a3d] dark:bg-[#2a2a2d] dark:text-[#9CA3AF] dark:hover:border-rose-900/60 dark:hover:bg-rose-500/10 dark:hover:text-rose-400"
+          >
+            <X size={13} /> Cancel
+          </button>
+          <button
+            type="button"
+            onClick={onSave}
+            disabled={!hasChanges || saving}
+            className="flex h-8 items-center gap-1 rounded-[8px] bg-[#5B5CEB] px-2.5 text-[12px] font-semibold text-white transition-opacity duration-150 ease-out disabled:cursor-not-allowed disabled:opacity-40"
+          >
+            {saving ? <Loader2 size={13} className="animate-spin" /> : <Check size={13} />} Save
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// Static — no threshold editing, no backend row, no Save/Cancel. Per
+// explicit instruction: these just exist as a fixed reference list
+// alongside the real schedule configs (Cashout's own Wallet With Issue,
+// and Send Money's DC Account / Wallet with Issue "Special Groups").
+function StaticGroupsCard({ emoji, title, rows }: { emoji: string; title: string; rows: string[] }) {
+  return (
+    <div className="mb-6 rounded-xl border border-border bg-white p-5 dark:bg-[#2a2a2d]">
+      <div className="mb-1 flex items-center gap-2 text-[15px] font-semibold text-foreground">
+        <span>{emoji}</span> {title}
+      </div>
+      <p className="mb-4 text-[12px] text-muted-foreground">Static reference — no threshold editing required.</p>
+      <div className="space-y-2.5">
+        {rows.map((label) => (
+          <div key={label} className="rounded-lg border border-border p-3 text-[12px] font-medium text-foreground">
+            {label}
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function ModeStatusCard({
+  meta,
+  saving,
+  onToggle,
+}: {
+  meta: MetaConfig | null;
+  saving: boolean;
+  onToggle: () => void;
+}) {
+  if (!meta) return null;
+  const isConfiguration = meta.mode === 'configuration';
+
+  return (
+    <div
+      className={`mb-6 flex items-start justify-between gap-3 rounded-xl border px-4 py-3 ${
+        isConfiguration
+          ? 'border-emerald-200 bg-emerald-50 dark:border-emerald-900/50 dark:bg-emerald-500/10'
+          : 'border-amber-200 bg-amber-50 dark:border-amber-900/50 dark:bg-amber-500/10'
+      }`}
+    >
+      <div className="flex items-start gap-2.5">
+        <span className="text-[14px] leading-none">{isConfiguration ? '🟢' : '🟡'}</span>
+        <div>
+          <p className={`text-[13px] font-semibold ${isConfiguration ? 'text-emerald-800 dark:text-emerald-300' : 'text-amber-800 dark:text-amber-300'}`}>
+            {isConfiguration ? 'Live — Configuration Mode' : 'Rollback — Production Mode'}
+          </p>
+          <p className={`mt-0.5 text-[12px] leading-relaxed ${isConfiguration ? 'text-emerald-700 dark:text-emerald-400/90' : 'text-amber-700 dark:text-amber-400/90'}`}>
+            {isConfiguration
+              ? 'These values are actively used by the live Transfer Queue right now.'
+              : 'The original hardcoded logic is active — every saved value below is being ignored until switched back.'}
+          </p>
+          <p className="mt-1.5 text-[11px] text-muted-foreground">
+            Version v{meta.version}
+            {meta.updatedAt && ` · Last applied ${formatTimestamp(meta.updatedAt)}${meta.updatedBy ? ` by ${meta.updatedBy}` : ''}`}
+          </p>
+        </div>
+      </div>
+
+      <div className="flex shrink-0 items-center gap-2.5 pt-0.5">
+        <span className={`text-[12px] font-semibold ${isConfiguration ? 'text-emerald-700 dark:text-emerald-400' : 'text-amber-700 dark:text-amber-400'}`}>
+          {isConfiguration ? 'Configuration' : 'Production'}
+        </span>
+        <button
+          type="button"
+          onClick={onToggle}
+          disabled={saving}
+          className={`relative h-[30px] w-[52px] shrink-0 cursor-pointer rounded-full border transition-colors duration-200 ease hover:brightness-95 disabled:cursor-not-allowed disabled:opacity-60 ${isConfiguration ? 'border-[#5B5CEB] bg-[#5B5CEB]' : 'border-[#D1D5DB] bg-[#E5E7EB] dark:border-[#4a4a4d] dark:bg-[#3a3a3d]'}`}
+        >
+          <span
+            className={`absolute left-[3px] top-[3px] h-6 w-6 rounded-full bg-white transition-transform duration-200 ease ${isConfiguration ? 'translate-x-[22px] shadow-[0_2px_6px_rgba(0,0,0,0.15)]' : 'translate-x-0'}`}
+          />
+        </button>
+      </div>
+    </div>
+  );
+}
+
+export default function SettingsPage() {
+  const [rules, setRules] = useState<RuleRow[]>([]);
+  const [drafts, setDrafts] = useState<RuleRow[]>([]);
+  const [bundle, setBundle] = useState<BundleField[]>([]);
+  const [bundleDraft, setBundleDraft] = useState<BundleField[]>([]);
+  const [meta, setMeta] = useState<MetaConfig | null>(null);
+  const [savingMode, setSavingMode] = useState(false);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<ClassifiedError | null>(null);
+  const [savingSection, setSavingSection] = useState<RuleSection | 'bundle' | null>(null);
+  const [savingRowIndex, setSavingRowIndex] = useState<number | null>(null);
+  const [toast, setToast] = useState<string | null>(null);
+
+  const fetchData = useCallback(async () => {
+    try {
+      setLoading(true);
+      setError(null);
+      const res = await fetch(`/api/configurations/transfer-queue-settings?t=${Date.now()}`);
+      await assertAllOk([res]);
+      const data: { rules: RuleRow[]; bundle: BundleField[]; meta: MetaConfig } = await res.json();
+      setRules(data.rules);
+      setDrafts(data.rules);
+      setBundle(data.bundle);
+      setBundleDraft(data.bundle);
+      setMeta(data.meta);
+    } catch (err) {
+      setError(classifyFetchError(err instanceof Error ? err.message : String(err)));
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  const toggleMode = useCallback(async () => {
+    if (!meta) return;
+    const nextMode: TransferQueueMode = meta.mode === 'configuration' ? 'production' : 'configuration';
+    setSavingMode(true);
+    try {
+      const res = await fetch('/api/configurations/transfer-queue-settings/update-mode', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ mode: nextMode }),
+      });
+      if (!res.ok) throw new Error('Save failed');
+      const data: { updatedBy: string; updatedAt: string } = await res.json();
+      setMeta((current) => (current ? { ...current, mode: nextMode, updatedBy: data.updatedBy, updatedAt: data.updatedAt } : current));
+      setToast(nextMode === 'production' ? 'Switched to Production Mode — live logic reverted to hardcoded defaults.' : 'Switched to Configuration Mode — saved values are now live.');
+    } catch {
+      await fetchData();
+    } finally {
+      setSavingMode(false);
+    }
+  }, [meta, fetchData]);
+
+  useEffect(() => {
+    fetchData();
+  }, [fetchData]);
+
+  useEffect(() => {
+    if (!toast) return;
+    const timer = setTimeout(() => setToast(null), 2500);
+    return () => clearTimeout(timer);
+  }, [toast]);
+
+  const updateDraftRow = useCallback((index: number, patch: Partial<RuleRow>) => {
+    setDrafts((current) => current.map((r, i) => (i === index ? { ...r, ...patch } : r)));
+  }, []);
+
+  // Bundle rows (metric "Cashout Account Balance") within sendmoney_sh_247/
+  // sendmoney_sh_day live in their own BundleTypeCard below with their own
+  // independent saveRow/cancelRow — excluded here too (not just from
+  // RuleSectionCard's display) so this section-wide Save/Cancel can never
+  // silently pick up or discard an edit the admin made in that other card.
+  const isSectionOwnedRow = useCallback((row: RuleRow, section: RuleSection) => {
+    if (row.section !== section) return false;
+    if ((section === 'sendmoney_sh_247' || section === 'sendmoney_sh_day') && row.metric === 'Cashout Account Balance') return false;
+    return true;
+  }, []);
+
+  const cancelSection = useCallback((section: RuleSection) => {
+    setDrafts((current) => current.map((r, i) => (isSectionOwnedRow(rules[i], section) ? rules[i] : r)));
+  }, [rules, isSectionOwnedRow]);
+
+  // Every row's Save only ever POSTs the rows that actually changed within
+  // that section — Cancel just re-renders from the already-fetched saved
+  // state, no refetch needed (single-admin editing, nothing else could
+  // have changed it meanwhile).
+  const saveSection = useCallback(async (section: RuleSection) => {
+    const dirtyIndices = drafts
+      .map((_, i) => i)
+      .filter((i) => isSectionOwnedRow(rules[i], section) && rowIsDirty(rules[i], drafts[i]));
+    if (dirtyIndices.length === 0) return;
+
+    setSavingSection(section);
+    try {
+      const results = await Promise.all(dirtyIndices.map(async (i) => {
+        const d = drafts[i];
+        const res = await fetch('/api/configurations/transfer-queue-settings/update-rule', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ index: i, operator: d.operator, value1: d.value1, value2: d.value2, queueResult: d.queueResult, enabled: d.enabled }),
+        });
+        if (!res.ok) throw new Error('Save failed');
+        const data: { updatedBy: string; updatedAt: string } = await res.json();
+        return { i, updatedBy: data.updatedBy, updatedAt: data.updatedAt };
+      }));
+
+      setRules((current) => current.map((r, i) => {
+        const match = results.find((x) => x.i === i);
+        return match ? { ...drafts[i], updatedBy: match.updatedBy, updatedAt: match.updatedAt } : r;
+      }));
+      setDrafts((current) => current.map((r, i) => {
+        const match = results.find((x) => x.i === i);
+        return match ? { ...r, updatedBy: match.updatedBy, updatedAt: match.updatedAt } : r;
+      }));
+      setToast('Configuration saved successfully.');
+    } catch {
+      await fetchData();
+    } finally {
+      setSavingSection(null);
+    }
+  }, [rules, drafts, fetchData]);
+
+  // Independent per-row Save/Cancel for BundleTypeCard's rows — each of the
+  // 4 Bundle rows (2 schedules × DP Only/WD Only) now lives in its own
+  // dedicated container, not grouped with its schedule's Solo rows, so
+  // saving one must never touch any other row (see isSectionOwnedRow
+  // above, which keeps saveSection from double-handling these same rows).
+  const cancelRow = useCallback((index: number) => {
+    setDrafts((current) => current.map((r, i) => (i === index ? rules[i] : r)));
+  }, [rules]);
+
+  const saveRow = useCallback(async (index: number) => {
+    if (!rowIsDirty(rules[index], drafts[index])) return;
+    const d = drafts[index];
+
+    setSavingRowIndex(index);
+    try {
+      const res = await fetch('/api/configurations/transfer-queue-settings/update-rule', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ index, operator: d.operator, value1: d.value1, value2: d.value2, queueResult: d.queueResult, enabled: d.enabled }),
+      });
+      if (!res.ok) throw new Error('Save failed');
+      const data: { updatedBy: string; updatedAt: string } = await res.json();
+      setRules((current) => current.map((r, i) => (i === index ? { ...drafts[i], updatedBy: data.updatedBy, updatedAt: data.updatedAt } : r)));
+      setDrafts((current) => current.map((r, i) => (i === index ? { ...r, updatedBy: data.updatedBy, updatedAt: data.updatedAt } : r)));
+      setToast('Configuration saved successfully.');
+    } catch {
+      await fetchData();
+    } finally {
+      setSavingRowIndex(null);
+    }
+  }, [rules, drafts, fetchData]);
+
+  const updateBundleField = useCallback((index: number, value: string) => {
+    setBundleDraft((current) => current.map((f, i) => (i === index ? { ...f, value } : f)));
+  }, []);
+
+  const cancelBundle = useCallback(() => {
+    setBundleDraft(bundle);
+  }, [bundle]);
+
+  const saveBundle = useCallback(async () => {
+    const dirtyIndices = bundleDraft.map((_, i) => i).filter((i) => bundleDraft[i].value !== bundle[i]?.value);
+    if (dirtyIndices.length === 0) return;
+
+    setSavingSection('bundle');
+    try {
+      const results = await Promise.all(dirtyIndices.map(async (i) => {
+        const res = await fetch('/api/configurations/transfer-queue-settings/update-bundle', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ index: i, value: bundleDraft[i].value }),
+        });
+        if (!res.ok) throw new Error('Save failed');
+        const data: { updatedBy: string; updatedAt: string } = await res.json();
+        return { i, updatedBy: data.updatedBy, updatedAt: data.updatedAt };
+      }));
+
+      setBundle((current) => current.map((f, i) => {
+        const match = results.find((x) => x.i === i);
+        return match ? { ...bundleDraft[i], updatedBy: match.updatedBy, updatedAt: match.updatedAt } : f;
+      }));
+      setBundleDraft((current) => current.map((f, i) => {
+        const match = results.find((x) => x.i === i);
+        return match ? { ...f, updatedBy: match.updatedBy, updatedAt: match.updatedAt } : f;
+      }));
+      setToast('Configuration saved successfully.');
+    } catch {
+      await fetchData();
+    } finally {
+      setSavingSection(null);
+    }
+  }, [bundle, bundleDraft, fetchData]);
+
+  return (
+    <div className="min-h-screen w-full bg-background pb-24 font-[Inter,sans-serif] text-foreground transition-colors duration-300 dark:bg-[#1c1c1e]">
+      {toast && (
+        <div className="fixed right-5 top-5 z-[100] flex items-center gap-2 rounded-lg border border-emerald-200 bg-white px-3.5 py-2.5 text-[12px] font-medium text-foreground shadow-lg dark:border-emerald-900/50 dark:bg-[#2a2a2d]">
+          <Check size={15} className="shrink-0 text-emerald-500" />
+          {toast}
+        </div>
+      )}
+
+      <PageHeader
+        icon={SlidersHorizontal}
+        title="Transfer Queue Settings"
+        description="Configure the threshold that determines when a shop becomes eligible for Transfer Queue. Changes take effect on the live Transfer Queue."
+        actions={<AccountMenu />}
+      />
+
+      <main className="mx-auto max-w-4xl px-4 pb-10 pt-24 md:px-8">
+        <ModeStatusCard meta={meta} saving={savingMode} onToggle={toggleMode} />
+
+        {error && <ConnectionErrorState error={error} onRetry={fetchData} />}
+
+        {!error && loading && (
+          <div className="flex items-center justify-center py-16 text-[13px] text-muted-foreground">
+            <Loader2 size={18} className="mr-2 animate-spin" /> Loading configuration…
+          </div>
+        )}
+
+        {!error && !loading && (
+          <>
+            <p className="mb-3 text-[13px] font-bold text-foreground">🟣 CASHOUT — SSP Transfer Queue Configuration (SH)</p>
+            <RuleSectionCard section="cashout_sh_day" rules={rules} drafts={drafts} saving={savingSection === 'cashout_sh_day'} onChangeRow={updateDraftRow} onSave={saveSection} onCancel={cancelSection} />
+            <RuleSectionCard section="cashout_sh_early_extended" rules={rules} drafts={drafts} saving={savingSection === 'cashout_sh_early_extended'} onChangeRow={updateDraftRow} onSave={saveSection} onCancel={cancelSection} />
+            <RuleSectionCard section="cashout_sh_extended" rules={rules} drafts={drafts} saving={savingSection === 'cashout_sh_extended'} onChangeRow={updateDraftRow} onSave={saveSection} onCancel={cancelSection} />
+            <RuleSectionCard section="cashout_sh_247" rules={rules} drafts={drafts} saving={savingSection === 'cashout_sh_247'} onChangeRow={updateDraftRow} onSave={saveSection} onCancel={cancelSection} />
+            <StaticGroupsCard emoji="⚠️" title="Wallet With Issue" rows={['SH Wallet with Issue', 'SH DC Account']} />
+
+            <p className="mb-3 mt-8 text-[13px] font-bold text-foreground">🟢 SEND MONEY — SSP Transfer Queue Configuration (SH)</p>
+            <RuleSectionCard section="sendmoney_sh_247" rules={rules} drafts={drafts} saving={savingSection === 'sendmoney_sh_247'} onChangeRow={updateDraftRow} onSave={saveSection} onCancel={cancelSection} excludeMetric="Cashout Account Balance" />
+            <RuleSectionCard section="sendmoney_sh_day" rules={rules} drafts={drafts} saving={savingSection === 'sendmoney_sh_day'} onChangeRow={updateDraftRow} onSave={saveSection} onCancel={cancelSection} excludeMetric="Cashout Account Balance" />
+            <BundleTypeCard title="Bundle DP Only" operator="Less Than" rules={rules} drafts={drafts} savingRowIndex={savingRowIndex} onChangeRow={updateDraftRow} onSaveRow={saveRow} onCancelRow={cancelRow} />
+            <BundleTypeCard title="Bundle WD Only" operator="Greater Than" rules={rules} drafts={drafts} savingRowIndex={savingRowIndex} onChangeRow={updateDraftRow} onSaveRow={saveRow} onCancelRow={cancelRow} />
+            <StaticGroupsCard emoji="⚠️" title="Special Groups" rows={['SH - DC Account', 'SH - Wallet with Issue']} />
+            <BundleSectionCard saved={bundle} drafts={bundleDraft} saving={savingSection === 'bundle'} onChangeField={updateBundleField} onSave={saveBundle} onCancel={cancelBundle} />
+          </>
+        )}
+      </main>
+
+      <div className="fixed inset-x-0 bottom-0 z-40 border-t border-border bg-white px-4 py-2.5 text-center text-[12px] text-muted-foreground dark:bg-[#2a2a2d]">
+        <span className="font-semibold text-foreground">Live Configuration</span> — Saved changes take effect on the real Transfer Queue (Cashout, Send Money, and the Sidebar badge counts) within about a minute. Use the Production/Configuration switch above for an instant rollback.
+      </div>
+    </div>
+  );
+}

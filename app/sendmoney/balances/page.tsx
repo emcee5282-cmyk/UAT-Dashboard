@@ -1,37 +1,48 @@
 'use client';
 
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
 import { createPortal } from 'react-dom';
 import {
-  ChevronDown, Columns3, Download, RefreshCw, Search, Upload, Wallet,
-  TrendingUp, ArrowDownToLine, ArrowUpFromLine, Shield, ArrowUpDown,
+  ChevronDown, Columns3, Download, Search, Upload, Wallet,
+  Shield, ArrowUpDown,
   Tag, User, FilterX,
 } from 'lucide-react';
 import * as XLSX from 'xlsx';
+import { Manrope, Space_Grotesk } from 'next/font/google';
 import SettlementHeader from '@/app/components/SettlementHeader';
 import ConnectionErrorState from '@/app/components/ConnectionErrorState';
 import DataTable from '@/app/components/DataTable';
-import TableFooter from '@/app/components/TableFooter';
+import CompactTableFooter from '@/app/components/CompactTableFooter';
 import EmptyState from '@/app/components/EmptyState';
+import TableLoadingSpinner from '@/app/components/TableLoadingSpinner';
 import FilterDropdown from '@/app/components/FilterDropdown';
 import ColumnsDropdown from '@/app/components/ColumnsDropdown';
 import BalanceLimitUploadModal from '@/app/components/BalanceLimitUploadModal';
 import { classifyFetchError, type ClassifiedError, assertAllOk } from '@/app/lib/errors';
-import { rawVal, fmt, fmtAbbrev } from '@/app/lib/format';
+import { rawVal, fmt, fmtAbbrev, exportNum } from '@/app/lib/format';
 import { parseCsvLines } from '@/app/lib/csv';
 import { BRAND_CODES as CASHOUT_BRAND_CODES } from '@/app/lib/transferQueueCount';
 import { getBusinessToday, toBusinessDate, parseCardCutoffDate } from '@/app/lib/businessDate';
 import {
-  computeWalletStatus,
   WALLET_STATUS_OPTIONS,
   computeCompanyBalance,
   computeAgentWithdrawal,
   computeSdpVsBalance,
   resolveBrand,
+  computeSendMoneyWalletStatus,
+  SENDMONEY_REACH_LIMIT_STATUSES,
 } from '@/app/lib/balanceEngine';
 import { getPreference, setPreference } from '@/app/lib/preferences';
 import type { BalanceLimitWalletRow } from '@/app/lib/db/read/balanceLimit';
 import type { AgentBalanceRow as PgAgentBalanceRow } from '@/app/lib/services/balanceService';
+
+// Page-scoped font override (Manrope for body/labels, Space Grotesk for
+// tabular-nums), matching Daily Txn Entry's own treatment and Top Up's port
+// of it (app/topup/page.tsx) — per explicit instruction, Balance now
+// matches Top Up's typeface exactly, not just its font SIZE. Every other
+// page keeps Inter.
+const manrope = Manrope({ subsets: ['latin'], variable: '--font-manrope', display: 'swap' });
+const spaceGrotesk = Space_Grotesk({ subsets: ['latin'], variable: '--font-space-grotesk', display: 'swap' });
 
 // LOCALHOST-ONLY, page-scoped data-source override — deliberately isolated
 // from app/lib/dataSource.ts's global DATA_SOURCE (that switch is not wired
@@ -110,6 +121,18 @@ function parseNumber(val: string): number {
   return isNaN(num) ? 0 : num;
 }
 
+// A shop auto-created by the Balance Limit upload (unmatched shop code with
+// real DP/WD activity — see balanceLimitService.ts) has no real SDP to show
+// (the column is numeric, so it can't literally store "NEW SHOP" — leader
+// is the one field that actually carries that text, via a real "NEW SHOP"
+// leader record). Displaying the raw 0 here would misleadingly read as "a
+// real shop with zero SDP" instead of "no SDP data exists yet" — this
+// keys off the same signal every other page would use to spot one of these
+// rows: its Leader is literally "NEW SHOP".
+function sdpDisplay(row: MergedRow): string {
+  return row.leader === 'NEW SHOP' ? 'NEW SHOP' : displayNum(row.sdp);
+}
+
 // Type comes straight from the wallet name's own suffix, not the Balance
 // Limit sheet's Bank field — every Send Money shop is solo (one wallet per
 // network, at most 2 wallets total per shop), so each row's own name already
@@ -144,8 +167,10 @@ const BRAND_CODES = [...CASHOUT_BRAND_CODES, 'SH'];
 
 // Human-readable overrides for brand codes whose 2-letter form isn't a
 // meaningful label on its own — shown wherever the brand is displayed, but
-// the underlying code (e.g. 'SH') stays the value used for filtering/sorting.
-const BRAND_DISPLAY_LABELS: Record<string, string> = { SH: 'Sharing' };
+// the underlying code stays the value used for filtering/sorting. 'SH'
+// shows as-is (no override) per explicit instruction, matching the Wallet
+// Status page's own Brand column.
+const BRAND_DISPLAY_LABELS: Record<string, string> = {};
 
 function displayBrand(code: string): string {
   return BRAND_DISPLAY_LABELS[code] ?? code;
@@ -222,11 +247,6 @@ const COLUMN_ALIGN: Record<ColumnKey, 'left' | 'right' | 'center'> = Object.from
   DEFAULT_COLUMNS.map((col) => [col.key, col.align])
 ) as Record<ColumnKey, 'left' | 'right' | 'center'>;
 
-const LEADER_SKELETON_WIDTHS = [55, 70, 85];
-const SHOP_NAME_SKELETON_WIDTHS = [50, 65, 80];
-const TYPE_SKELETON_WIDTHS = [40, 55, 70];
-const AMOUNT_SKELETON_WIDTHS = [50, 60, 45, 55];
-
 // This table is plain `table-auto` with no <colgroup> — every column is
 // purely content-driven, none has an explicit width. Fixing every column's
 // own width to its longest real value across the FULL dataset (rows, not
@@ -242,14 +262,34 @@ function measureTextWidthPx(text: string, font: string): number {
   return ctx.measureText(text).width;
 }
 
-const BODY_TEXT_FONT = '400 13px Inter, sans-serif';
-const HEADER_TEXT_FONT = '600 13px Inter, sans-serif';
-const BRAND_BADGE_FONT = '600 11px Inter, sans-serif';
-const WALLET_STATUS_BADGE_FONT = '500 11px Inter, sans-serif';
+// Fonts mirror each cell type's own real classes exactly, matching Cashout
+// Balance's own port of Top Up's typeface (app/agentbal/page.tsx: Manrope
+// for body/labels, uppercase-measured header). Brand is plain text now (no
+// badge — matches Top Up), so it shares BODY_TEXT_FONT, no dedicated font
+// constant of its own. Kept in sync with the real CSS classes below so the
+// canvas measurement stays accurate to what's actually rendered.
+const BODY_TEXT_FONT = '400 12.5px Manrope, sans-serif';
+const HEADER_TEXT_FONT = '700 11.5px Manrope, sans-serif';
+const WALLET_STATUS_BADGE_FONT = '500 11px Manrope, sans-serif';
 
-const CELL_PADDING_PX = 40;
-const HEADER_SORT_ICON_RESERVE_PX = 20;
-const BRAND_BADGE_CHROME_PX = 22;
+// px-[12px] cell padding = 12px each side = 24px total, on every cell —
+// widened from the earlier 8px per explicit instruction to "maximize the
+// spacing" between columns, matching Daily Txn Entry's own brand-grid table
+// (app/daily-txn-entry/page.tsx's LedgerCard, px-3/px-3.5), same as Cashout
+// Balance's own port (app/agentbal/page.tsx). Except right-aligned columns,
+// which use asymmetric pl-[12px] pr-[29px] (41px total) instead:
+// right-aligned sortable headers position their label flush against the
+// padding-right edge (justify-end) and then hang the sort icon off the
+// label's own right edge via absolute positioning, so the icon extends
+// INTO the padding-right zone rather than being reserved for by the
+// column's overall width — a plain 12px right pad isn't enough room for it
+// and the icon gets clipped by the header cell's overflow-hidden. Same
+// asymmetric convention as Transfer Queue and Cashout Balance
+// (app/agentbal/page.tsx), where this was verified empirically via
+// Playwright scrollWidth/clientWidth on every header.
+const CELL_PADDING_PX = 24;
+const CELL_PADDING_RIGHT_ALIGN_PX = 41;
+const HEADER_SORT_ICON_RESERVE_PX = 19;
 const WALLET_STATUS_BADGE_CHROME_PX = 30;
 const EXTRA_BREATHING_ROOM_PX = 8;
 
@@ -259,7 +299,7 @@ function getColumnDisplayText(row: MergedRow, key: ColumnKey): string {
     case 'leader': return toProperCase(row.leader);
     case 'walletName': return row.agentName;
     case 'walletType': return row.walletType;
-    case 'sdp': return displayNum(row.sdp);
+    case 'sdp': return sdpDisplay(row);
     case 'opening': return displayNum(row.openingBal);
     case 'totalDP': return displayNum(row.agentTotalDP);
     case 'totalWD': return displayNum(row.agentTotalWD);
@@ -277,41 +317,69 @@ function getColumnDisplayText(row: MergedRow, key: ColumnKey): string {
 function computeColumnWidthsPx(rows: MergedRow[], columns: ColumnDef[]): Partial<Record<ColumnKey, number>> {
   const result: Partial<Record<ColumnKey, number>> = {};
   for (const col of columns) {
-    const font = col.key === 'brand' ? BRAND_BADGE_FONT
-      : col.key === 'walletStatus' ? WALLET_STATUS_BADGE_FONT
-      : BODY_TEXT_FONT;
-    const chrome = col.key === 'brand' ? BRAND_BADGE_CHROME_PX
-      : col.key === 'walletStatus' ? WALLET_STATUS_BADGE_CHROME_PX
-      : 0;
+    const font = col.key === 'walletStatus' ? WALLET_STATUS_BADGE_FONT : BODY_TEXT_FONT;
+    const chrome = col.key === 'walletStatus' ? WALLET_STATUS_BADGE_CHROME_PX : 0;
+    const cellPadding = col.align === 'right' ? CELL_PADDING_RIGHT_ALIGN_PX : CELL_PADDING_PX;
 
     let maxTextWidth = 0;
     for (const row of rows) {
       const w = measureTextWidthPx(getColumnDisplayText(row, col.key) ?? '', font);
       if (w > maxTextWidth) maxTextWidth = w;
     }
-    const dataWidth = maxTextWidth > 0 ? Math.ceil(maxTextWidth) + chrome + CELL_PADDING_PX + EXTRA_BREATHING_ROOM_PX : 0;
+    const dataWidth = maxTextWidth > 0 ? Math.ceil(maxTextWidth) + chrome + cellPadding + EXTRA_BREATHING_ROOM_PX : 0;
 
-    const headerWidth = Math.ceil(measureTextWidthPx(col.label, HEADER_TEXT_FONT))
-      + CELL_PADDING_PX
-      + (col.sortable ? HEADER_SORT_ICON_RESERVE_PX : 0);
+    // Right-aligned sortable headers don't need this reserve added on top —
+    // their sort icon lives inside the wider pr-[29px] (already folded into
+    // cellPadding above), not in normal flow after the label like left-
+    // aligned headers' inline gap-1.5 icon does. Measured in UPPERCASE
+    // (matching the header's own `uppercase` CSS transform — Top Up's
+    // typography, per explicit instruction) since capital glyphs are wider
+    // than the label's own mixed-case string.
+    const headerWidth = Math.ceil(measureTextWidthPx(col.label.toUpperCase(), HEADER_TEXT_FONT))
+      + cellPadding
+      + (col.sortable && col.align !== 'right' ? HEADER_SORT_ICON_RESERVE_PX : 0);
 
     const width = Math.max(dataWidth, headerWidth);
     if (width > 0) result[col.key] = width;
+  }
+
+  // Wallet Status is sized to fit its own longest real value ("Monthly
+  // Reach Limit") but that leaves ~26px of dead space against every
+  // shorter badge shown in practice — made more noticeable by the table's
+  // own right-edge fade cue sitting right on top of it. Brand, at the
+  // opposite end, is tight around its short code. Verified against the
+  // full live dataset (Playwright, scrollWidth vs clientWidth across all
+  // rows/27 pages): Wallet Status's real content tops out at 128px against
+  // a 154px column, so shifting 20px to Brand still leaves a comfortable
+  // margin. Same fix as Cashout Balance (app/agentbal/page.tsx).
+  if (result.walletStatus !== undefined && result.brand !== undefined) {
+    result.walletStatus -= 20;
+    result.brand += 20;
   }
   return result;
 }
 
 const GHOST_BUTTON =
-  'inline-flex h-9 items-center gap-1.5 rounded-[8px] border border-[#E2E8F0] px-3 text-[13px] font-medium text-[#475569] transition-[color,background-color,transform] duration-150 ease-[var(--ease-out-strong)] hover:bg-[#E2E8F0] active:scale-[0.97] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#2563EB] dark:border-[#3a3a3d] dark:text-[#9CA3AF] dark:hover:bg-white/5';
+  'inline-flex h-9 items-center gap-1.5 rounded-[8px] border border-[#E2E8F0] px-3 text-[13px] font-medium text-[#475569] transition-[color,background-color,transform] duration-150 ease-[var(--ease-out-strong)] hover:bg-[#E2E8F0] active:scale-[0.97] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--ui-accent)] dark:border-[#262B38] dark:text-[#9CA3AF] dark:hover:bg-white/5';
 
+// Compact sizing (matches Wallet Status/Transfer Queue/Top Up/Settlement/
+// Opening/Cashout Balance's own density): h-10/rounded-[12px]/text-[13px]
+// scaled down to h-8/rounded-[10px]/text-[11px], gap-1.5 -> gap-[5px] —
+// was left over at the old full size while those other pages had already
+// migrated, per explicit instruction.
+// Label collapse is driven by the toolbar's own rendered width (a
+// container query on the toolbar row below), not the viewport — the
+// viewport can be well past `xl` while the toolbar itself still has no
+// room (sidebar width, product switcher, etc. all eat into it), which
+// used to leave the toolbar to horizontally scroll instead of shrinking.
 const ICON_BUTTON =
-  'flex h-10 w-10 xl:w-auto shrink-0 items-center justify-center xl:justify-start gap-1.5 rounded-[12px] border border-[#E2E8F0] bg-white px-0 xl:px-3 text-[13px] font-medium text-[#475569] transition-[color,background-color,border-color,box-shadow,transform] duration-150 ease-[var(--ease-out-strong)] hover:border-[#2563EB] hover:bg-[#F1F5F9] hover:ring-2 hover:ring-[#2563EB]/20 active:scale-[0.97] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#2563EB] dark:border-[#3a3a3d] dark:bg-[#2a2a2d] dark:text-[#9CA3AF] dark:hover:bg-white/5';
+  'flex h-8 w-8 @min-[1000px]/toolbar:w-auto shrink-0 items-center justify-center @min-[1000px]/toolbar:justify-start gap-[5px] rounded-[10px] border border-[#E2E8F0] bg-white px-0 @min-[1000px]/toolbar:px-[10px] text-[11px] font-medium text-[#475569] transition-[color,background-color,border-color,box-shadow,transform] duration-150 ease-[var(--ease-out-strong)] hover:border-[var(--ui-accent)] hover:bg-[#F1F5F9] active:scale-[0.97] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--ui-accent)] dark:border-[#262B38] dark:bg-[#12151D] dark:text-[#9CA3AF] dark:hover:bg-white/5';
 
 // Always-icon-only variant (never shows a text label, unlike ICON_BUTTON's
-// xl: breakpoint reveal) — Columns only, per explicit instruction to match
+// container-query reveal) — Columns only, per explicit instruction to match
 // Settlement/Top Up's own Columns button. Refresh/Export keep ICON_BUTTON.
 const ICON_ONLY_BUTTON =
-  'flex h-10 w-10 shrink-0 items-center justify-center rounded-[12px] border border-[#E2E8F0] bg-white text-[13px] font-medium text-[#475569] transition-[color,background-color,border-color,box-shadow,transform] duration-150 ease-[var(--ease-out-strong)] hover:border-[#2563EB] hover:bg-[#F1F5F9] hover:ring-2 hover:ring-[#2563EB]/20 active:scale-[0.97] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#2563EB] dark:border-[#3a3a3d] dark:bg-[#2a2a2d] dark:text-[#9CA3AF] dark:hover:bg-white/5';
+  'flex h-8 w-8 shrink-0 items-center justify-center rounded-[10px] border border-[#E2E8F0] bg-white text-[11px] font-medium text-[#475569] transition-[color,background-color,border-color,box-shadow,transform] duration-150 ease-[var(--ease-out-strong)] hover:border-[var(--ui-accent)] hover:bg-[#F1F5F9] active:scale-[0.97] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--ui-accent)] dark:border-[#262B38] dark:bg-[#12151D] dark:text-[#9CA3AF] dark:hover:bg-white/5';
 
 const PAGE_SIZE_OPTIONS = [50, 100, 250, 500];
 
@@ -324,14 +392,26 @@ const BALANCE_GRID_ORDER: ColumnKey[] = [
 function SortIcon({ active }: { active: boolean; direction: 'asc' | 'desc' }) {
   return (
     <ArrowUpDown
-      size={12}
+      size={11}
       className={active ? 'text-indigo-600 dark:text-indigo-400' : 'text-slate-400 dark:text-slate-500'}
     />
   );
 }
 
 function headerCellClasses(colKey: ColumnKey, _isSorted: boolean) {
-  return `group overflow-hidden whitespace-nowrap px-5 text-${COLUMN_ALIGN[colKey]} text-[13px] font-semibold text-[#475569] dark:text-[#9CA3AF]`;
+  // Right-aligned columns get asymmetric pl-[12px] pr-[29px] — their sort
+  // icon hangs off the right-justified label via absolute positioning
+  // (see the sort button JSX below), extending into the padding-right
+  // zone rather than being reserved for by the column's own width, so a
+  // plain px-[12px] isn't enough room and the icon gets clipped by this
+  // header's own overflow-hidden. Same convention as Transfer Queue,
+  // widened +4px per explicit "maximize the spacing" instruction, matching
+  // Daily Txn Entry's own brand-grid table column spacing.
+  const paddingCls = COLUMN_ALIGN[colKey] === 'right' ? 'pl-[12px] pr-[29px]' : 'px-[12px]';
+  // Size/weight/case matched to Top Up's own table header cells
+  // (app/topup/page.tsx: text-[11.5px] font-bold uppercase tracking-[0.03em])
+  // per explicit instruction.
+  return `group overflow-hidden whitespace-nowrap ${paddingCls} text-${COLUMN_ALIGN[colKey]} text-[11.5px] font-bold uppercase tracking-[0.03em] text-[#475569] dark:text-[#9CA3AF]`;
 }
 
 function useTooltip(triggerRef: React.RefObject<HTMLElement | null>) {
@@ -381,7 +461,7 @@ function Tooltip({
       style={{ position: 'fixed', top: pos.top, left: pos.left, transform: 'translate(-50%, -100%)' }}
       className={`pointer-events-none z-[9999] whitespace-nowrap rounded-md bg-[#1F2937] px-2.5 py-1.5 text-[12px] text-white transition-opacity duration-150 ease-out ${
         open ? 'opacity-100' : 'opacity-0'
-      } ${onlyWhenCompact ? 'xl:hidden' : ''}`}
+      } ${onlyWhenCompact ? '@min-[1000px]/toolbar:hidden' : ''}`}
     >
       {label}
       <span className="absolute left-1/2 top-full h-2 w-2 -translate-x-1/2 -translate-y-1/2 rotate-45 bg-[#1F2937]" />
@@ -416,18 +496,18 @@ function FilterTriggerButton({
         onClick={onClick}
         aria-label={label}
         {...tooltip.handlers}
-        className="inline-flex h-10 w-10 xl:w-auto shrink-0 items-center justify-center xl:justify-start gap-1.5 rounded-[12px] border border-[#E2E8F0] bg-white px-0 xl:px-3 text-[13px] font-medium text-[#475569] transition-[color,background-color,border-color,box-shadow,transform] duration-150 ease-[var(--ease-out-strong)] hover:border-[#2563EB] hover:bg-[#F1F5F9] hover:ring-2 hover:ring-[#2563EB]/20 active:scale-[0.97] dark:border-[#3a3a3d] dark:bg-[#2a2a2d] dark:text-[#9CA3AF] dark:hover:bg-white/5"
+        className="inline-flex h-8 w-8 @min-[1000px]/toolbar:w-auto shrink-0 items-center justify-center @min-[1000px]/toolbar:justify-start gap-[5px] rounded-[10px] border border-[#E2E8F0] bg-white px-0 @min-[1000px]/toolbar:px-[10px] text-[11px] font-medium text-[#475569] transition-[color,background-color,border-color,box-shadow,transform] duration-150 ease-[var(--ease-out-strong)] hover:border-[var(--ui-accent)] hover:bg-[#F1F5F9] active:scale-[0.97] dark:border-[#262B38] dark:bg-[#12151D] dark:text-[#9CA3AF] dark:hover:bg-white/5"
       >
-        <Icon size={15} className="text-[#475569] dark:text-[#9CA3AF]" />
-        <span className="hidden xl:inline">{label}</span>
+        <Icon size={12} className="text-[#475569] dark:text-[#9CA3AF]" />
+        <span className="hidden @min-[1000px]/toolbar:inline">{label}</span>
         {anyUnchecked && (
-          <span className="flex h-4 min-w-[16px] animate-[dt-badge-pop_150ms_var(--ease-out-strong)] items-center justify-center rounded-full bg-indigo-600 px-1 text-[10px] font-semibold text-white">
+          <span className="flex h-[13px] min-w-[13px] animate-[dt-badge-pop_150ms_var(--ease-out-strong)] items-center justify-center rounded-full bg-indigo-600 px-[3px] text-[9px] font-semibold text-white">
             {selectedCount}
           </span>
         )}
         <ChevronDown
-          size={14}
-          className={`hidden text-[#475569] transition-transform duration-150 ease-[var(--ease-in-out-strong)] dark:text-[#9CA3AF] xl:inline ${menuOpen ? 'rotate-180' : ''}`}
+          size={11}
+          className={`hidden text-[#475569] transition-transform duration-150 ease-[var(--ease-in-out-strong)] dark:text-[#9CA3AF] @min-[1000px]/toolbar:inline ${menuOpen ? 'rotate-180' : ''}`}
         />
       </button>
       {tooltip.rendered && <Tooltip label={label} open={tooltip.open} pos={tooltip.pos} onlyWhenCompact />}
@@ -448,13 +528,13 @@ function ResetFiltersButton({ anyFilterActive, onClick }: { anyFilterActive: boo
         {...tooltip.handlers}
         aria-label="Reset all filters"
         aria-disabled={!anyFilterActive}
-        className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-[12px] border transition-[color,background-color,border-color,transform] duration-150 ease-[var(--ease-out-strong)] ${
+        className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-[10px] border transition-[color,background-color,border-color,transform] duration-150 ease-[var(--ease-out-strong)] ${
           anyFilterActive
-            ? 'cursor-pointer border-[#E2E8F0] bg-white text-indigo-600 hover:border-[#FCA5A5] hover:bg-[#FEF2F2] hover:text-[#DC2626] active:scale-[0.97] active:border-[#FCA5A5] active:bg-[#FEF2F2] active:text-[#DC2626] dark:border-[#3a3a3d] dark:bg-[#2a2a2d] dark:text-indigo-400'
-            : 'cursor-default border-[#E2E8F0] bg-white text-[#475569] opacity-40 dark:border-[#3a3a3d] dark:bg-[#2a2a2d] dark:text-[#9CA3AF]'
+            ? 'cursor-pointer border-[#E2E8F0] bg-white text-indigo-600 hover:border-[#FCA5A5] hover:bg-[#FEF2F2] hover:text-[#DC2626] active:scale-[0.97] active:border-[#FCA5A5] active:bg-[#FEF2F2] active:text-[#DC2626] dark:border-[#262B38] dark:bg-[#12151D] dark:text-indigo-400'
+            : 'cursor-default border-[#E2E8F0] bg-white text-[#475569] opacity-40 dark:border-[#262B38] dark:bg-[#12151D] dark:text-[#9CA3AF]'
         }`}
       >
-        <FilterX size={20} fill={anyFilterActive ? 'currentColor' : 'none'} />
+        <FilterX size={16} fill={anyFilterActive ? 'currentColor' : 'none'} />
       </button>
       {tooltip.rendered && <Tooltip label="Reset all filters" open={tooltip.open} pos={tooltip.pos} />}
     </div>
@@ -488,10 +568,10 @@ function applyBundleAccLabel(agentCode: string, status: string): string {
 }
 
 // Extends the shared, cross-product WALLET_STATUS_OPTIONS (balanceEngine.ts)
-// with the two Bundle Acc. labels — kept local to this page rather than
-// added to the shared constant, since the BD convention is Send Money-only
-// and Cashout never produces these values.
-const SENDMONEY_WALLET_STATUS_OPTIONS = [...WALLET_STATUS_OPTIONS, 'DP Bundle Acc.', 'WD Bundle Acc.'];
+// with the two Bundle Acc. labels and the two Reach Limit labels — kept
+// local to this page rather than added to the shared constant, since both
+// conventions are Send Money-only and Cashout never produces these values.
+const SENDMONEY_WALLET_STATUS_OPTIONS = [...WALLET_STATUS_OPTIONS, 'DP Bundle Acc.', 'WD Bundle Acc.', ...SENDMONEY_REACH_LIMIT_STATUSES];
 
 function walletStatusBadgeClasses(status: string): string {
   switch (status) {
@@ -507,6 +587,18 @@ function walletStatusBadgeClasses(status: string): string {
     case 'Wallet With Issue':
     case 'Account Problem':
       return 'bg-rose-50 text-rose-700 border-rose-200 dark:bg-rose-500/10 dark:text-rose-400 dark:border-rose-900/50';
+    // Explicit hex per instruction (#F59E0B / Amber 500) — kept as its own
+    // literal value rather than Tailwind's amber-50/700 pairing (already
+    // used above for WD Only/WD Bundle Acc.) so the two read as visibly
+    // different colors, not just different labels on the same color.
+    case 'Disable':
+      return 'bg-[#F59E0B]/10 text-[#F59E0B] border-[#F59E0B]/30 dark:bg-[#F59E0B]/15 dark:border-[#F59E0B]/40';
+    // Violet: a real, non-muted color deliberately distinct from every
+    // other status here (including Disable's amber), per explicit
+    // instruction — same color for both Daily and Monthly.
+    case 'Daily Reach Limit':
+    case 'Monthly Reach Limit':
+      return 'bg-violet-50 text-violet-700 border-violet-200 dark:bg-violet-500/10 dark:text-violet-400 dark:border-violet-900/50';
     default:
       return 'bg-slate-100 text-slate-600 border-slate-200 dark:bg-slate-500/10 dark:text-slate-400 dark:border-slate-700';
   }
@@ -521,50 +613,60 @@ function WalletStatusBadge({ status }: { status: string }) {
   );
 }
 
-// Per-code tint map — same scheme as Cashout Balance's own BrandBadge, plus
-// 'SH', a brand Cashout's own roster doesn't have.
-const BRAND_BADGE_TINTS: Record<string, string> = {
-  M1: 'bg-blue-50 text-blue-700 border-blue-200 dark:bg-blue-500/10 dark:text-blue-400 dark:border-blue-900/50',
-  M2: 'bg-cyan-50 text-cyan-700 border-cyan-200 dark:bg-cyan-500/10 dark:text-cyan-400 dark:border-cyan-900/50',
-  B1: 'bg-purple-50 text-purple-700 border-purple-200 dark:bg-purple-500/10 dark:text-purple-400 dark:border-purple-900/50',
-  B2: 'bg-violet-50 text-violet-700 border-violet-200 dark:bg-violet-500/10 dark:text-violet-400 dark:border-violet-900/50',
-  B3: 'bg-fuchsia-50 text-fuchsia-700 border-fuchsia-200 dark:bg-fuchsia-500/10 dark:text-fuchsia-400 dark:border-fuchsia-900/50',
-  B4: 'bg-indigo-50 text-indigo-700 border-indigo-200 dark:bg-indigo-500/10 dark:text-indigo-400 dark:border-indigo-900/50',
-  B5: 'bg-sky-50 text-sky-700 border-sky-200 dark:bg-sky-500/10 dark:text-sky-400 dark:border-sky-900/50',
-  K1: 'bg-orange-50 text-orange-700 border-orange-200 dark:bg-orange-500/10 dark:text-orange-400 dark:border-orange-900/50',
-  J1: 'bg-amber-50 text-amber-700 border-amber-200 dark:bg-amber-500/10 dark:text-amber-400 dark:border-amber-900/50',
-  T1: 'bg-teal-50 text-teal-700 border-teal-200 dark:bg-teal-500/10 dark:text-teal-400 dark:border-teal-900/50',
-};
+// Brand is plain text (no badge) — matches Top Up (app/topup/page.tsx):
+// Wallet Status only has a handful of values (color-coding aids scanning),
+// but Brand has 11 (10 shared codes + 'SH'), which would be visually noisy
+// with 11 badge colors.
 
-function brandBadgeClasses(brand: string): string {
-  return BRAND_BADGE_TINTS[brand] ?? 'bg-slate-100 text-slate-600 border-slate-200 dark:bg-slate-500/10 dark:text-slate-400 dark:border-slate-700';
-}
-
-function BrandBadge({ children, brand }: { children: React.ReactNode; brand: string }) {
+// Hero KPI card — ported from Daily Txn Entry's own PgBalanceCard
+// (app/daily-txn-entry/page.tsx) exactly: big value + a tinted ▲/▼ pill
+// showing the net movement vs Opening. Used for Running Balance, the
+// biggest figure in the row, per explicit instruction/reference screenshot.
+function HeroStatCard({ label, value, openingValue, discrepancy }: { label: string; value: number; openingValue: number; discrepancy?: number }) {
+  const change = value - openingValue;
+  const up = change >= 0;
   return (
-    <span className={`inline-flex h-[26px] items-center rounded-md border px-2.5 text-[11px] font-semibold transition-[filter] duration-150 hover:brightness-95 dark:hover:brightness-110 ${brandBadgeClasses(brand)}`}>
-      {children}
-    </span>
+    <div className="kpi-value-fade-in flex flex-col rounded-lg border border-border bg-white px-3 py-2.5 dark:bg-[#12151D]">
+      <p className="text-[10px] font-semibold uppercase tracking-[0.06em] text-muted-foreground">{label}</p>
+      <div className="flex flex-1 flex-col justify-center gap-1">
+        <p className={`text-[19px] font-semibold tabular-nums ${value < 0 ? 'text-rose-600 dark:text-rose-400' : 'text-foreground'}`}>{fmtAbbrev(value)}</p>
+        <span
+          className={`inline-flex w-fit items-center gap-1 rounded-md px-1.5 py-[3px] text-[10.5px] tabular-nums ${
+            up ? 'bg-emerald-50 text-emerald-600 dark:bg-emerald-500/10 dark:text-emerald-400' : 'bg-rose-50 text-rose-600 dark:bg-rose-500/10 dark:text-rose-400'
+          }`}
+        >
+          {up ? '▲' : '▼'} {fmt(Math.abs(change))} vs Opening
+        </span>
+        {/* Agent Withdrawal total — a second, smaller/plainer line under the
+            "vs Opening" badge (not another colored pill, per explicit "don't
+            make it too big" instruction), left-aligned in the same bottom
+            area, additive to the existing badge rather than replacing it. */}
+        {discrepancy !== undefined && (
+          <p className="mt-1 text-[10px] font-[440] tabular-nums text-muted-foreground">
+            Discrepancy: {fmt(discrepancy)}
+          </p>
+        )}
+      </div>
+    </div>
   );
 }
 
-function FadeValue({ value, className }: { value: string; className: string }) {
-  const [visible, setVisible] = useState(false);
-
-  useEffect(() => {
-    setVisible(false);
-    const raf = requestAnimationFrame(() => setVisible(true));
-    return () => cancelAnimationFrame(raf);
-  }, [value]);
-
+// Grid KPI card — ported from Daily Txn Entry's own StatCard
+// (app/daily-txn-entry/page.tsx) exactly. `variant="deduction"` reds
+// Total WD/Settlement (stored as positive magnitudes but read as
+// deductions), per explicit instruction — everything else (including
+// Total DP, kept neutral/black per explicit instruction) stays neutral,
+// red only if the raw value itself is negative.
+function GridStatCard({ label, value, variant }: { label: string; value: number; variant?: 'deduction' }) {
+  const colorClass =
+    variant === 'deduction' && value !== 0 ? 'text-rose-600 dark:text-rose-400'
+    : value < 0 ? 'text-rose-600 dark:text-rose-400'
+    : 'text-foreground';
   return (
-    <p
-      className={`${className} transition-[opacity,transform] duration-200 ease-out ${
-        visible ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-[5px]'
-      }`}
-    >
-      {value}
-    </p>
+    <div className="kpi-value-fade-in flex flex-1 flex-col justify-between gap-0.5 rounded-lg border border-border bg-white px-3 py-2 dark:bg-[#12151D]">
+      <p className="text-[10px] font-semibold uppercase tracking-[0.06em] text-muted-foreground">{label}</p>
+      <p className={`text-[15.5px] font-semibold tabular-nums ${colorClass}`}>{fmt(value)}</p>
+    </div>
   );
 }
 
@@ -577,7 +679,7 @@ function mobileCardFieldValue(row: MergedRow, key: ColumnKey): { value: string; 
     case 'walletType':
       return { value: row.walletType, className: 'text-muted-foreground' };
     case 'sdp':
-      return { value: displayNum(row.sdp), className: 'text-foreground' };
+      return { value: sdpDisplay(row), className: 'text-foreground' };
     case 'opening':
       return { value: displayNum(row.openingBal), className: 'text-foreground' };
     case 'totalDP': {
@@ -610,14 +712,24 @@ function mobileCardFieldValue(row: MergedRow, key: ColumnKey): { value: string; 
 }
 
 function renderCell(row: MergedRow, key: ColumnKey, colWidthsPx?: Partial<Record<ColumnKey, number>>) {
-  const baseNoColor = `whitespace-nowrap px-5 py-[12px] text-${COLUMN_ALIGN[key]} text-[13px] leading-[20px] font-normal`;
+  // Right-aligned data must match the header's own asymmetric pl-[12px]
+  // pr-[29px] inset (see headerCellClasses), not the cell's true right
+  // edge, or the numbers drift out of alignment with their header label.
+  // Widened +4px per explicit "maximize the spacing" instruction, matching
+  // Daily Txn Entry's own brand-grid table column spacing.
+  const dataPaddingCls = COLUMN_ALIGN[key] === 'right' ? 'pl-[12px] pr-[29px]' : 'px-[12px]';
+  // Size AND row density matched to Top Up's own table body cells
+  // (app/topup/page.tsx: text-[12.5px], py-1.5 = 6px) per explicit
+  // instruction — color kept as this page's own established token (font
+  // style/size only, not color).
+  const baseNoColor = `whitespace-nowrap ${dataPaddingCls} py-[6px] text-${COLUMN_ALIGN[key]} text-[12.5px] leading-[16px] font-normal`;
   const base = `${baseNoColor} text-[#111827] dark:text-[#E5E7EB]`;
   const width = colWidthsPx?.[key];
   const cellStyle = width ? { width, minWidth: width } : undefined;
 
   switch (key) {
     case 'brand':
-      return <td key={key} style={cellStyle} className={base}><BrandBadge brand={row.brand}>{displayBrand(row.brand)}</BrandBadge></td>;
+      return <td key={key} style={cellStyle} title={displayBrand(row.brand)} className={base}>{displayBrand(row.brand)}</td>;
     case 'leader':
       return <td key={key} style={cellStyle} className={base}>{toProperCase(row.leader)}</td>;
     case 'walletName':
@@ -625,7 +737,7 @@ function renderCell(row: MergedRow, key: ColumnKey, colWidthsPx?: Partial<Record
     case 'walletType':
       return <td key={key} style={cellStyle} className={base}>{row.walletType}</td>;
     case 'sdp':
-      return <td key={key} style={cellStyle} className={`${base} tabular-nums`}>{displayNum(row.sdp)}</td>;
+      return <td key={key} style={cellStyle} className={`${base} tabular-nums`}>{sdpDisplay(row)}</td>;
     case 'opening':
       return <td key={key} style={cellStyle} className={`${base} tabular-nums`}>{displayNum(row.openingBal)}</td>;
     case 'totalDP': {
@@ -683,6 +795,13 @@ export default function SendMoneyAgentBalance() {
   }, [loading]);
   const [error, setError] = useState<ClassifiedError | null>(null);
   const [spinning, setSpinning] = useState(false);
+  // Bulk Import Balance Limit's own last-upload timestamp — THIS page's own
+  // data source (agent_wallets/Company Balance etc all come from this
+  // upload), header's "Last update" indicator. Previously this showed
+  // Opening's own timestamp instead (borrowed from a different upload) —
+  // corrected per explicit instruction: each page shows only its own
+  // source's timestamp, never another page's.
+  const [lastBalanceLimitUpload, setLastBalanceLimitUpload] = useState<Date | null>(null);
   const [searchTerm, setSearchTerm] = useState('');
   const [leaderFilter, setLeaderFilter] = useState<Record<string, boolean>>({});
   const [brandFilter, setBrandFilter] = useState<Record<string, boolean>>({});
@@ -698,10 +817,8 @@ export default function SendMoneyAgentBalance() {
   const [columnsMenuOpen, setColumnsMenuOpen] = useState(false);
   const [mounted, setMounted] = useState(false);
   const columnsButtonRef = useRef<HTMLButtonElement>(null);
-  const refreshButtonRef = useRef<HTMLButtonElement>(null);
   const exportButtonRef = useRef<HTMLButtonElement>(null);
   const uploadButtonRef = useRef<HTMLButtonElement>(null);
-  const refreshTooltip = useTooltip(refreshButtonRef);
   const exportTooltip = useTooltip(exportButtonRef);
   const columnsTooltip = useTooltip(columnsButtonRef);
   const uploadTooltip = useTooltip(uploadButtonRef);
@@ -722,13 +839,14 @@ export default function SendMoneyAgentBalance() {
   const scrollRef = useRef<number>(0);
   const tableScrollRef = useRef<HTMLDivElement>(null);
   const [isScrolled, setIsScrolled] = useState(false);
-  const [selectedRows, setSelectedRows] = useState<Set<string>>(new Set());
+  const [isHScrolled, setIsHScrolled] = useState(false);
 
   useEffect(() => {
     const el = tableScrollRef.current;
     if (!el) return;
     const handleScroll = () => {
       setIsScrolled(el.scrollTop > 0);
+      setIsHScrolled(el.scrollLeft > 0);
     };
     handleScroll();
     el.addEventListener('scroll', handleScroll, { passive: true });
@@ -738,18 +856,6 @@ export default function SendMoneyAgentBalance() {
       el.removeEventListener('scroll', handleScroll);
       resizeObserver.disconnect();
     };
-  }, []);
-
-  const toggleRowSelection = useCallback((agentName: string) => {
-    setSelectedRows((current) => {
-      const next = new Set(current);
-      if (next.has(agentName)) {
-        next.delete(agentName);
-      } else {
-        next.add(agentName);
-      }
-      return next;
-    });
   }, []);
 
   const handlePageSizeChange = useCallback((size: number) => {
@@ -762,14 +868,14 @@ export default function SendMoneyAgentBalance() {
     setLeaderFilter({});
     setBrandFilter({});
     setWalletTypeFilter({});
-    setWalletStatusFilter(Object.fromEntries(WALLET_STATUS_OPTIONS.map((status) => [status, true])));
+    setWalletStatusFilter(Object.fromEntries(SENDMONEY_WALLET_STATUS_OPTIONS.map((status) => [status, true])));
   }, []);
 
   const resetAllFilters = useCallback(() => {
     setBrandFilter({});
     setLeaderFilter({});
     setWalletTypeFilter({});
-    setWalletStatusFilter(Object.fromEntries(WALLET_STATUS_OPTIONS.map((status) => [status, true])));
+    setWalletStatusFilter(Object.fromEntries(SENDMONEY_WALLET_STATUS_OPTIONS.map((status) => [status, true])));
     setBrandMenuOpen(false);
     setLeaderMenuOpen(false);
     setWalletTypeMenuOpen(false);
@@ -802,8 +908,18 @@ export default function SendMoneyAgentBalance() {
         // (3) an agent with zero wallet rows reads as "Disconnected" here
         // instead of Sheets mode's "No Record" (the API doesn't expose
         // wallet count to distinguish the two cases).
-        const res = await fetch(`/api/v2/sendmoney/balances?t=${Date.now()}`);
+        const [res, lastBalanceLimitUploadRes] = await Promise.all([
+          fetch(`/api/v2/sendmoney/balances?t=${Date.now()}`),
+          // Balance Limit's own last-upload timestamp — this page's own
+          // data source, same generic route Cashout's own /agentbal Sheets
+          // path already reads (getBalanceLimitLastImport, product-scoped).
+          fetch(`/api/v2/balance-limit?product=sendmoney&t=${Date.now()}`),
+        ]);
         await assertAllOk([res]);
+        if (lastBalanceLimitUploadRes.ok) {
+          const { lastImport }: { lastImport: { fileName: string; uploadedBy: string; completedAt: string } | null } = await lastBalanceLimitUploadRes.json();
+          setLastBalanceLimitUpload(lastImport?.completedAt ? new Date(lastImport.completedAt) : null);
+        }
         const pgRows: PgAgentBalanceRow[] = await res.json();
         merged = pgRows.map((row) => ({
           agentName: row.agentCode,
@@ -860,7 +976,8 @@ export default function SendMoneyAgentBalance() {
       await assertAllOk([openingRes, balRes, stlmRes, estimatedRes]);
 
       const openingText = await openingRes.text();
-      const balJson: { rows: BalanceLimitWalletRow[] } = await balRes.json();
+      const balJson: { rows: BalanceLimitWalletRow[]; lastImport: { fileName: string; uploadedBy: string; completedAt: string } | null } = await balRes.json();
+      setLastBalanceLimitUpload(balJson.lastImport?.completedAt ? new Date(balJson.lastImport.completedAt) : null);
       const stlmJson: { totals: Record<string, { totalTopUp: number; totalSettlement: number }> } = await stlmRes.json();
       const estimatedData: { balances: Record<string, number>; uploadedAt: string | null } = await estimatedRes.json();
 
@@ -926,11 +1043,19 @@ export default function SendMoneyAgentBalance() {
       const brandGroups = new Map<string, string[]>();
       balRows.forEach((bal) => {
         const name = bal.agentCode;
-        const existing = balanceTotals.get(name) ?? { dp: 0, wd: 0 };
-        balanceTotals.set(name, {
-          dp: existing.dp + bal.totalDP,
-          wd: existing.wd + bal.totalWD,
-        });
+        // A wallet that's Disconnected (Login=No) or Disable no longer
+        // contributes its DP/WD to the shop's Total DP/WD — per explicit
+        // instruction, its own historical figures are stale/frozen and
+        // must not inflate the live-looking total (same fix as
+        // app/agentbal/page.tsx, confirmed live there via FADE050).
+        const excludedFromDpWd = !bal.isLoggedIn || bal.accountStatus === 'Disable';
+        if (!excludedFromDpWd) {
+          const existing = balanceTotals.get(name) ?? { dp: 0, wd: 0 };
+          balanceTotals.set(name, {
+            dp: existing.dp + bal.totalDP,
+            wd: existing.wd + bal.totalWD,
+          });
+        }
 
         if (bal.group && bal.group !== '-') {
           const groups = brandGroups.get(name) ?? [];
@@ -973,7 +1098,7 @@ export default function SendMoneyAgentBalance() {
         const runningBalance = computeCompanyBalance(parseNumber(opening.openingBal), totals.dp, totalTopUp, totals.wd, totalStlm);
         const sdpNum = parseNumber(opening.sdp);
         const walletStatus = balWalletNames.has(opening.agentName)
-          ? applyBundleAccLabel(opening.agentName, computeWalletStatus(walletStatusValues.get(opening.agentName) ?? []))
+          ? applyBundleAccLabel(opening.agentName, computeSendMoneyWalletStatus(walletStatusValues.get(opening.agentName) ?? []))
           : 'No Record';
         return {
           ...opening,
@@ -1212,69 +1337,58 @@ export default function SendMoneyAgentBalance() {
     return walletTypeOptions.map((name) => ({ value: name, label: name, count: counts.get(name) ?? 0 }));
   }, [walletTypeFacetRows, walletTypeOptions]);
 
-  // Unified 5-card KPI row — same shape as Cashout Balance's own (Total DP,
-  // Total WD, SDP, Actual Balance, Running Balance).
+  // Hero + grid KPI card layout — ported from Daily Txn Entry's own
+  // PgBalanceCard (hero) + StatCard (grid) components exactly
+  // (app/daily-txn-entry/page.tsx), per explicit instruction/reference
+  // screenshot, mirroring Cashout Balance's own port
+  // (app/agentbal/page.tsx). Running Balance is the hero (biggest figure,
+  // with a tinted ▲/▼ delta pill vs Opening); Total DP, SDP, Total WD,
+  // Actual Balance, Top Up, and Settlement fill the 3 stacked-pair columns
+  // alongside it. Colors mirror this same table's own established
+  // per-column convention (case 'totalDP'/'totalWD'/'settlement' in
+  // renderCell below): Total DP green when nonzero, Total WD/Settlement
+  // red (stored as positive magnitudes but read as deductions), everything
+  // else neutral.
   const kpis = useMemo(() => {
     const totalDP = filteredRows.reduce((sum, row) => sum + row.agentTotalDP, 0);
     const totalWD = filteredRows.reduce((sum, row) => sum + row.agentTotalWD, 0);
     const totalSdp = filteredRows.reduce((sum, row) => sum + parseNumber(row.sdp), 0);
-    const totalBalanceInside = filteredRows.reduce((sum, row) => sum + row.balanceInside, 0);
+    const totalTopUp = filteredRows.reduce((sum, row) => sum + row.totalTopUp, 0);
+    const totalSettlement = filteredRows.reduce((sum, row) => sum + row.totalStlm, 0);
+    // Disconnected/No Record wallets never really "hold" a balance worth
+    // counting toward the KPI, per explicit instruction — excluded here
+    // even though balanceInside is already 0 for most of them in practice
+    // (it's only summed from logged-in wallets), since a wallet can be
+    // logged in with unrecognized/blank status text and still resolve to
+    // "Disconnected" — this guards that edge case too.
+    const totalBalanceInside = filteredRows
+      .filter((row) => row.walletStatus !== 'Disconnected' && row.walletStatus !== 'No Record')
+      .reduce((sum, row) => sum + row.balanceInside, 0);
     const totalRunningBalance = filteredRows.reduce((sum, row) => sum + row.runningBalance, 0);
     const totalOpening = filteredRows.reduce((sum, row) => sum + parseNumber(row.openingBal), 0);
-    const runningVsOpening = totalRunningBalance - totalOpening;
+    // Sum of each row's own Agent Withdrawal (Company Balance − Balance
+    // Inside, already computed per row via computeAgentWithdrawal) — shown
+    // as the Running Balance hero card's "Discrepancy" figure, per explicit
+    // instruction, alongside (not replacing) the existing "vs Opening" delta.
+    const totalAgentWithdrawal = filteredRows.reduce((sum, row) => sum + row.agentWithdrawal, 0);
 
-    return [
-      {
-        label: 'Total DP',
-        icon: ArrowDownToLine,
-        accent: 'text-emerald-600 dark:text-emerald-400',
-        iconBg: 'bg-emerald-50 dark:bg-emerald-500/10',
-        bigValue: fmtAbbrev(totalDP),
-        subtitle: fmt(totalDP),
-        trend: undefined as 'up' | 'down' | undefined,
-      },
-      {
-        label: 'Total WD',
-        icon: ArrowUpFromLine,
-        accent: 'text-rose-600 dark:text-rose-400',
-        iconBg: 'bg-rose-50 dark:bg-rose-500/10',
-        bigValue: fmtAbbrev(totalWD),
-        subtitle: fmt(totalWD),
-        trend: undefined as 'up' | 'down' | undefined,
-      },
-      {
-        label: 'SDP',
-        icon: Shield,
-        accent: 'text-slate-500 dark:text-slate-400',
-        iconBg: 'bg-slate-100 dark:bg-slate-500/10',
-        bigValue: fmtAbbrev(totalSdp),
-        subtitle: fmt(totalSdp),
-        trend: undefined as 'up' | 'down' | undefined,
-      },
-      {
-        label: 'Actual Balance',
-        icon: Wallet,
-        accent: 'text-blue-600 dark:text-blue-400',
-        iconBg: 'bg-blue-50 dark:bg-blue-500/10',
-        bigValue: fmtAbbrev(totalBalanceInside),
-        subtitle: 'Current available balance',
-        trend: undefined as 'up' | 'down' | undefined,
-      },
-      {
-        label: 'Running Balance',
-        icon: TrendingUp,
-        accent: 'text-emerald-600 dark:text-emerald-400',
-        iconBg: 'bg-emerald-50 dark:bg-emerald-500/10',
-        bigValue: fmtAbbrev(totalRunningBalance),
-        subtitle: `${runningVsOpening >= 0 ? '+' : '-'}${fmtAbbrev(Math.abs(runningVsOpening))} vs Opening`,
-        trend: (runningVsOpening >= 0 ? 'up' : 'down') as 'up' | 'down' | undefined,
-      },
-    ];
+    return { totalDP, totalWD, totalSdp, totalTopUp, totalSettlement, totalBalanceInside, totalRunningBalance, totalOpening, totalAgentWithdrawal };
   }, [filteredRows]);
 
   const sortedRows = useMemo(() => {
     const list = [...filteredRows];
     list.sort((a, b) => {
+      // "No Record" (zero agent_wallets rows for this shop) always sinks to
+      // the bottom, regardless of which column is sorted or asc/desc — per
+      // explicit instruction, same rule as Cashout's own Balance page
+      // (app/agentbal/page.tsx). Checked before any column-specific
+      // comparison so it overrides every other sort key; unaffected by
+      // sortDirection on purpose. Rows within each group (No Record vs.
+      // everything else) still sort normally against each other below.
+      const aNoRecord = a.walletStatus === 'No Record';
+      const bNoRecord = b.walletStatus === 'No Record';
+      if (aNoRecord !== bNoRecord) return aNoRecord ? 1 : -1;
+
       const getValue = (row: typeof a, column: ColumnKey) => {
         switch (column) {
           case 'brand':
@@ -1344,25 +1458,25 @@ export default function SendMoneyAgentBalance() {
         case 'walletType':
           return row.walletType;
         case 'sdp':
-          return numOrBlank(parseNumber(row.sdp));
+          return exportNum(parseNumber(row.sdp));
         case 'opening':
-          return numOrBlank(parseNumber(row.openingBal));
+          return exportNum(parseNumber(row.openingBal));
         case 'totalDP':
-          return numOrBlank(row.agentTotalDP);
+          return exportNum(row.agentTotalDP);
         case 'totalWD':
-          return numOrBlank(row.agentTotalWD);
+          return exportNum(row.agentTotalWD);
         case 'topUp':
-          return numOrBlank(row.totalTopUp);
+          return exportNum(row.totalTopUp);
         case 'settlement':
-          return numOrBlank(row.totalStlm);
+          return exportNum(row.totalStlm);
         case 'companyBalance':
-          return numOrBlank(row.runningBalance);
+          return exportNum(row.runningBalance);
         case 'balanceInside':
-          return numOrBlank(row.balanceInside);
+          return exportNum(row.balanceInside);
         case 'agentWithdrawal':
-          return numOrBlank(row.agentWithdrawal);
+          return exportNum(row.agentWithdrawal);
         case 'sdpVsBalance':
-          return row.sdpVsBalance > 0 ? Math.abs(row.sdpVsBalance) : undefined;
+          return row.sdpVsBalance > 0 ? Math.abs(row.sdpVsBalance) : 0;
         case 'walletStatus':
           return row.walletStatus;
       }
@@ -1390,74 +1504,117 @@ export default function SendMoneyAgentBalance() {
   }, [page, currentPage]);
 
   return (
-    <div className="h-screen w-full flex flex-col overflow-hidden bg-background font-[Inter,sans-serif] text-foreground transition-colors duration-300 dark:bg-[#1c1c1e]">
+    <div className={`balance-page h-screen w-full flex flex-col overflow-hidden bg-background text-foreground transition-colors duration-300 dark:bg-[#0A0C11] ${manrope.variable} ${spaceGrotesk.variable}`}>
+      {/* Page-scoped font override (Manrope/Space Grotesk, matching Daily
+          Txn Entry's own treatment) — cascades down through SettlementHeader
+          too even though that component is shared/universal, since it sets
+          no font-family of its own. Every other page using SettlementHeader
+          stays on Inter, unaffected. */}
+      <style>{`
+        .balance-page {
+          font-family: var(--font-manrope), ui-sans-serif, system-ui, sans-serif;
+        }
+        .balance-page .tabular-nums {
+          font-family: var(--font-space-grotesk), ui-monospace, monospace;
+        }
+      `}</style>
       <SettlementHeader
         icon={Wallet}
         title="Balance"
         isRefreshing={spinning}
         onRefresh={fetchData}
+        titleExtra={
+          lastBalanceLimitUpload && (
+            <span className="hidden text-[10.5px] text-muted-foreground sm:inline">
+              Last Update: <span className="font-[500]! tabular-nums">{lastBalanceLimitUpload.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', second: '2-digit', hour12: true })}</span>
+            </span>
+          )
+        }
       />
 
-      {!error && (
-        <div className="w-full border-t border-border bg-[#f4f6fb] px-4 py-3 dark:bg-[#1c1c1e] md:px-6">
-          <div className="flex gap-2">
-            {loading ? (
-              Array.from({ length: 5 }).map((_, i) => (
-                <div key={i} className="flex-1 min-w-[200px] rounded-xl border border-border bg-white p-2.5 dark:bg-[#2a2a2d]">
-                  <div className="flex items-center gap-3">
-                    <div className="h-8 w-8 shrink-0 dt-skeleton rounded-full" />
-                    <div className="min-w-0 flex-1">
-                      <div className="h-3 w-20 dt-skeleton rounded-md" />
-                      <div className="mt-1.5 h-6 w-24 dt-skeleton rounded-md" />
-                      <div className="mt-1 h-3 w-28 dt-skeleton rounded-md" />
-                    </div>
-                  </div>
-                </div>
-              ))
-            ) : (
-              kpis.map((kpi, i) => (
-                <div
-                  key={kpi.label}
-                  style={{ animationDelay: `${i * 25}ms`, animationFillMode: 'backwards' }}
-                  className="dt-step-fade-in flex-1 min-w-[200px] rounded-xl border border-border bg-white p-2.5 transition-[transform,box-shadow,border-color] duration-150 ease-out hover:-translate-y-px hover:border-foreground/20 hover:shadow-sm dark:bg-[#2a2a2d]"
-                >
-                  <div className="flex items-center gap-3">
-                    <div className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-full ${kpi.iconBg}`}>
-                      <kpi.icon size={16} className={kpi.accent} />
-                    </div>
-                    <div className="min-w-0 flex-1">
-                      <p className="text-[11px] font-medium leading-snug text-muted-foreground truncate">{kpi.label}</p>
-                      <FadeValue value={kpi.bigValue} className={`font-bold leading-tight text-foreground ${kpi.subtitle ? 'text-[21px]' : 'text-[28px]'}`} />
-                      <p className="mt-0.5 flex items-center gap-1 text-[11px] leading-snug text-muted-foreground truncate">
-                        {kpi.trend === 'up' && <span className="text-emerald-600 dark:text-emerald-400">▲</span>}
-                        {kpi.trend === 'down' && <span className="text-rose-600 dark:text-rose-400">▼</span>}
-                        {kpi.subtitle}
-                      </p>
-                    </div>
-                  </div>
-                </div>
-              ))
-            )}
-          </div>
-        </div>
-      )}
+      {/* px-4 md:px-[28px] + the inner mx-auto max-w-[1400px] wrapper (no
+          padding of its own) copies Daily Txn Entry's own <main> classes
+          and nesting order exactly (app/daily-txn-entry/page.tsx), matching
+          Top Up (app/topup/page.tsx) — same container size/placement. No pt
+          here — SettlementHeader's switcher row already owns that spacing
+          (py-4, symmetric top/bottom around the pills) on every page that
+          shows it, this one included. */}
+      <main className="flex-1 flex flex-col overflow-hidden px-4 pb-6 md:px-[28px] md:pb-8">
+        <div className="mx-auto flex w-full max-w-[1400px] flex-1 flex-col min-h-0">
 
-      <main className="flex-1 flex flex-col overflow-hidden px-6 pb-6 pt-1">
         {error && <ConnectionErrorState error={error} onRetry={fetchData} />}
 
         {!error && (
           <DataTable>
-            <div className="flex shrink-0 flex-nowrap items-center overflow-x-auto border-b border-[#E5E7EB] px-4 py-3 dark:border-[#3a3a3d]">
+            {/* Hero + grid KPI cards — ported from Daily Txn Entry's own
+                PgBalanceCard (hero) + StatCard (grid) layout exactly
+                (app/daily-txn-entry/page.tsx), per explicit
+                instruction/reference screenshot, mirroring Cashout
+                Balance's own port (app/agentbal/page.tsx). Running Balance
+                is the hero (biggest figure); Total DP, SDP, Total WD,
+                Actual Balance, Top Up, Settlement fill the 3 stacked-pair
+                columns alongside it. Still living INSIDE the same bordered
+                card as the toolbar/table (border-b divider), not a
+                separate full-width band above <main>. */}
+            <div className="shrink-0 border-b border-border p-[10px]">
+              <div className="grid grid-cols-1 gap-1.5 sm:grid-cols-4">
+                {loading ? (
+                  <>
+                    <div className="rounded-lg border border-border bg-white p-2.5 dark:bg-[#12151D]">
+                      <div className="kpi-skeleton-bar kpi-skeleton-label" />
+                      <div className="kpi-skeleton-bar kpi-skeleton-value" />
+                      <div className="kpi-skeleton-bar mt-2" style={{ height: 14, width: '50%' }} />
+                    </div>
+                    {Array.from({ length: 3 }).map((_, i) => (
+                      <div key={i} className="flex flex-col gap-1.5">
+                        <div className="flex-1 rounded-lg border border-border bg-white p-2.5 dark:bg-[#12151D]">
+                          <div className="kpi-skeleton-bar kpi-skeleton-label" />
+                          <div className="kpi-skeleton-bar kpi-skeleton-value" />
+                        </div>
+                        <div className="flex-1 rounded-lg border border-border bg-white p-2.5 dark:bg-[#12151D]">
+                          <div className="kpi-skeleton-bar kpi-skeleton-label" />
+                          <div className="kpi-skeleton-bar kpi-skeleton-value" />
+                        </div>
+                      </div>
+                    ))}
+                  </>
+                ) : (
+                  <>
+                    <HeroStatCard label="Running Balance" value={kpis.totalRunningBalance} openingValue={kpis.totalOpening} discrepancy={kpis.totalAgentWithdrawal} />
+                    <div className="flex flex-col gap-1.5">
+                      <GridStatCard label="Total DP" value={kpis.totalDP} />
+                      <GridStatCard label="SDP" value={kpis.totalSdp} />
+                    </div>
+                    <div className="flex flex-col gap-1.5">
+                      <GridStatCard label="Total WD" value={kpis.totalWD} variant="deduction" />
+                      <GridStatCard label="Actual Balance" value={kpis.totalBalanceInside} />
+                    </div>
+                    <div className="flex flex-col gap-1.5">
+                      <GridStatCard label="Top Up" value={kpis.totalTopUp} />
+                      <GridStatCard label="Settlement" value={kpis.totalSettlement} variant="deduction" />
+                    </div>
+                  </>
+                )}
+              </div>
+            </div>
+            {/* @container/toolbar — label collapse for every button in this
+                row is driven by this container's own rendered width (see
+                ICON_BUTTON/FilterTriggerButton above), not the viewport, so
+                the row always fits without ever needing to horizontally
+                scroll: past the threshold everything shows icon+label, below
+                it every button falls back to icon-only and the row shrinks
+                to fit naturally. */}
+            <div className="@container/toolbar flex shrink-0 flex-nowrap items-center overflow-x-auto border-b border-[#E5E7EB] px-[13px] py-[10px] dark:border-[#262B38]">
               {loading ? (
-                <div className="mr-3 flex shrink-0 items-center gap-3">
-                  <div className="h-10 w-10 shrink-0 dt-skeleton rounded-[12px] xl:w-[92px]" />
-                  <div className="h-10 w-10 shrink-0 dt-skeleton rounded-[12px] xl:w-[98px]" />
-                  <div className="h-10 w-10 shrink-0 dt-skeleton rounded-[12px] xl:w-[130px]" />
-                  <div className="h-10 w-10 shrink-0 dt-skeleton rounded-[12px] xl:w-[140px]" />
-                  <div className="h-10 w-10 shrink-0 dt-skeleton rounded-[12px]" />
+                <div className="mr-[10px] flex shrink-0 items-center gap-[10px]">
+                  <div className="h-8 w-8 shrink-0 dt-skeleton rounded-[10px] @min-[1000px]/toolbar:w-[74px]" />
+                  <div className="h-8 w-8 shrink-0 dt-skeleton rounded-[10px] @min-[1000px]/toolbar:w-[80px]" />
+                  <div className="h-8 w-8 shrink-0 dt-skeleton rounded-[10px] @min-[1000px]/toolbar:w-[104px]" />
+                  <div className="h-8 w-8 shrink-0 dt-skeleton rounded-[10px] @min-[1000px]/toolbar:w-[112px]" />
+                  <div className="h-8 w-8 shrink-0 dt-skeleton rounded-[10px]" />
                 </div>
               ) : (
-                <div className="mr-3 flex shrink-0 items-center gap-3">
+                <div className="mr-[10px] flex shrink-0 items-center gap-[10px]">
                   <div className="relative">
                     <FilterTriggerButton
                       label="Brand"
@@ -1538,16 +1695,16 @@ export default function SendMoneyAgentBalance() {
                 </div>
               )}
 
-              <div className="flex h-10 flex-1 min-w-[200px] items-center gap-2 rounded-full border border-[#E5E7EB] bg-white px-[16px] transition-colors focus-within:border-[#2563EB] focus-within:ring-2 focus-within:ring-[#2563EB]/20 dark:border-[#3a3a3d] dark:bg-[#2a2a2d]">
+              <div className="flex h-8 flex-1 min-w-[200px] items-center gap-[6px] rounded-full border border-[#E5E7EB] bg-white px-[13px] transition-colors focus-within:border-[var(--ui-accent)] focus-within:ring-2 focus-within:ring-[var(--ui-accent)]/20 dark:border-[#262B38] dark:bg-[#12151D]">
                 {loading ? (
-                  <div className="h-3 w-32 dt-skeleton rounded-md" />
+                  <div className="dt-skeleton h-[10px] w-32 rounded-md" />
                 ) : (
                   <>
-                    <Search size={16} className="shrink-0 text-[#475569] dark:text-[#9CA3AF]" />
+                    <Search size={13} className="shrink-0 text-[#475569] dark:text-[#9CA3AF]" />
                     <input
                       value={searchTerm}
                       onChange={(event) => setSearchTerm(event.target.value)}
-                      className="flex-1 bg-transparent text-[13px] font-normal text-[#111827] placeholder:text-[#94A3B8] outline-none border-none dark:text-[#E5E7EB]"
+                      className="flex-1 bg-transparent text-[11px] font-normal text-[#111827] placeholder:text-[#94A3B8] outline-none border-none dark:text-[#E5E7EB]"
                       placeholder="Search for anything"
                     />
                   </>
@@ -1555,33 +1712,27 @@ export default function SendMoneyAgentBalance() {
               </div>
 
               {loading ? (
-                <div className="ml-3 flex shrink-0 items-center gap-3">
-                  <div className="h-10 w-10 shrink-0 dt-skeleton rounded-[12px] xl:w-[88px]" />
-                  <div className="h-10 w-10 shrink-0 dt-skeleton rounded-[12px] xl:w-[88px]" />
-                  <div className="h-10 w-10 shrink-0 dt-skeleton rounded-[12px]" />
-                  <div className="h-10 w-10 shrink-0 dt-skeleton rounded-[12px]" />
+                <div className="ml-[10px] flex shrink-0 items-center gap-[10px]">
+                  <div className="h-8 w-8 shrink-0 dt-skeleton rounded-[10px] @min-[1000px]/toolbar:w-[74px]" />
+                  <div className="h-8 w-8 shrink-0 dt-skeleton rounded-[10px] @min-[1000px]/toolbar:w-[74px]" />
+                  <div className="h-8 w-8 shrink-0 dt-skeleton rounded-[10px]" />
+                  <div className="h-8 w-8 shrink-0 dt-skeleton rounded-[10px]" />
                 </div>
               ) : (
-                <div className="ml-3 flex shrink-0 items-center gap-3">
+                <div className="ml-[10px] flex shrink-0 items-center gap-[10px]">
                   <div className="relative">
                     <button type="button" ref={uploadButtonRef} onClick={() => setBalanceLimitModalOpen(true)} aria-label="Upload Balance Limit" {...uploadTooltip.handlers} className={ICON_BUTTON}>
-                      <Upload size={16} />
-                      <span className="hidden xl:inline">Upload</span>
+                      <Upload size={13} />
+                      <span className="hidden @min-[1000px]/toolbar:inline">Upload</span>
                     </button>
                     {uploadTooltip.rendered && <Tooltip label="Upload Balance Limit" open={uploadTooltip.open} pos={uploadTooltip.pos} onlyWhenCompact />}
                   </div>
                   <div className="relative">
                     <button type="button" ref={exportButtonRef} onClick={handleExport} aria-label="Export to Excel" {...exportTooltip.handlers} className={ICON_BUTTON}>
-                      <Download size={16} />
-                      <span className="hidden xl:inline">Export</span>
+                      <Download size={13} />
+                      <span className="hidden @min-[1000px]/toolbar:inline">Export</span>
                     </button>
                     {exportTooltip.rendered && <Tooltip label="Export" open={exportTooltip.open} pos={exportTooltip.pos} onlyWhenCompact />}
-                  </div>
-                  <div className="relative">
-                    <button type="button" ref={refreshButtonRef} onClick={fetchData} aria-label="Refresh" {...refreshTooltip.handlers} className={ICON_ONLY_BUTTON}>
-                      <RefreshCw size={16} className={spinning ? 'animate-spin' : ''} />
-                    </button>
-                    {refreshTooltip.rendered && <Tooltip label="Refresh" open={refreshTooltip.open} pos={refreshTooltip.pos} />}
                   </div>
                   <div className="relative">
                     <button
@@ -1595,7 +1746,7 @@ export default function SendMoneyAgentBalance() {
                       {...columnsTooltip.handlers}
                       className={ICON_ONLY_BUTTON}
                     >
-                      <Columns3 size={16} />
+                      <Columns3 size={13} />
                     </button>
                     {columnsTooltip.rendered && <Tooltip label="Columns" open={columnsTooltip.open} pos={columnsTooltip.pos} />}
                     <ColumnsDropdown
@@ -1612,6 +1763,10 @@ export default function SendMoneyAgentBalance() {
               )}
             </div>
             <div className="relative hidden flex-1 min-h-0 sm:block">
+              {/* Overlay, not in-flow — centers on this outer (bounded,
+                  non-scrolling) container instead of the table's own
+                  horizontally-scrollable content width. */}
+              {loading && <TableLoadingSpinner overlay />}
               <div
                 ref={tableScrollRef}
                 className={`dt-scroll h-full ${
@@ -1619,10 +1774,10 @@ export default function SendMoneyAgentBalance() {
                 }`}
               >
               <table className="w-full text-xs">
-                <thead className={`sticky top-0 z-[50] bg-[#FAFBFC] dark:bg-[#1C1F26] border-b border-[#E2E8F0] dark:border-[#3a3a3d] transition-shadow duration-150 ease-out ${
+                <thead className={`sticky top-0 z-[50] bg-[#FAFBFC] dark:bg-[#0E1119] border-b border-[#E2E8F0] dark:border-[#262B38] transition-shadow duration-150 ease-out ${
                   isScrolled ? 'shadow-[0_2px_4px_rgba(15,23,42,0.1)] dark:shadow-[0_2px_4px_rgba(0,0,0,0.35)]' : ''
                 }`}>
-                  <tr className="h-[48px]">
+                  <tr className="h-[38px]">
                     {visibleColumns.map((col) => (
                       <th
                         key={col.key}
@@ -1633,7 +1788,7 @@ export default function SendMoneyAgentBalance() {
                             earlier "headers are never placeholders" spec. */}
                         {loading ? (
                           <div
-                            className={`h-3 w-3/5 max-w-[72px] dt-skeleton rounded-md ${
+                            className={`h-[10px] w-3/5 max-w-[58px] dt-skeleton rounded-md ${
                               col.align === 'right' ? 'ml-auto' : col.align === 'center' ? 'mx-auto' : ''
                             }`}
                           />
@@ -1684,41 +1839,16 @@ export default function SendMoneyAgentBalance() {
                       : 'opacity-100'
                   }
                 >
-                  {rowsPhase !== 'table' ? Array.from({ length: 18 }).map((_, i) => (
-                    <tr key={i}>
-                      {visibleColumns.map((col) => (
-                        <td
-                          key={col.key}
-                          style={colWidthsPx[col.key] ? { width: colWidthsPx[col.key], minWidth: colWidthsPx[col.key] } : undefined}
-                          className={`px-5 py-[12px] text-${COLUMN_ALIGN[col.key]}`}
-                        >
-                          {col.key === 'brand' ? (
-                            <div className="h-[26px] w-12 dt-skeleton rounded-md" />
-                          ) : col.key === 'walletStatus' ? (
-                            <div className="h-5 w-20 dt-skeleton rounded-md" />
-                          ) : col.key === 'leader' ? (
-                            <div className="h-2.5 dt-skeleton rounded-md" style={{ width: `${LEADER_SKELETON_WIDTHS[i % LEADER_SKELETON_WIDTHS.length]}%` }} />
-                          ) : col.key === 'walletName' ? (
-                            <div className="h-2.5 dt-skeleton rounded-md" style={{ width: `${SHOP_NAME_SKELETON_WIDTHS[i % SHOP_NAME_SKELETON_WIDTHS.length]}%` }} />
-                          ) : col.key === 'walletType' ? (
-                            <div className="h-2.5 dt-skeleton rounded-md" style={{ width: `${TYPE_SKELETON_WIDTHS[i % TYPE_SKELETON_WIDTHS.length]}%` }} />
-                          ) : (
-                            <div className="ml-auto h-2.5 dt-skeleton rounded-md" style={{ width: `${AMOUNT_SKELETON_WIDTHS[i % AMOUNT_SKELETON_WIDTHS.length]}%` }} />
-                          )}
-                        </td>
-                      ))}
-                    </tr>
-                  )) : pagedRows.length > 0 ? pagedRows.map((row, i) => {
-                    const isSelected = selectedRows.has(row.agentName);
+                  {rowsPhase !== 'table' ? (
+                    // Empty — the loading indicator is the overlay spinner
+                    // on the outer container above, not row content here.
+                    null
+                  ) : pagedRows.length > 0 ? pagedRows.map((row, i) => {
                     return (
                       <tr
                         key={row.agentName || i}
-                        onClick={() => toggleRowSelection(row.agentName)}
-                        className={`border-b border-[#ECEFF3] last:border-0 dark:border-[#2f2f32] transition-colors duration-150 ease-out ${
-                          isSelected
-                            ? 'bg-[color:var(--product-accent-soft)] shadow-[inset_4px_0_0_var(--product-accent)]'
-                            : 'hover:bg-slate-50 dark:hover:bg-slate-800'
-                        }`}
+                        className="dt-row-stagger-in border-b border-[#ECEFF3] last:border-0 dark:border-[#1A1E29] transition-colors duration-150 ease-out hover:bg-slate-50 dark:hover:bg-slate-800"
+                        style={{ '--stagger-delay': `${Math.min(i, 12) * 30}ms` } as CSSProperties}
                       >
                         {visibleColumns.map((col) => renderCell(row, col.key, colWidthsPx))}
                       </tr>
@@ -1741,21 +1871,15 @@ export default function SendMoneyAgentBalance() {
                 </tbody>
               </table>
               </div>
-              {!loading && (
-                <div className="pointer-events-none absolute inset-y-0 left-0 z-[55] w-6 bg-gradient-to-r from-white to-transparent dark:from-[#2a2a2d]" />
+              {!loading && isHScrolled && (
+                <div className="pointer-events-none absolute inset-y-0 left-0 z-[55] w-6 bg-gradient-to-r from-white to-transparent dark:from-[#12151D] transition-opacity duration-150 ease-out" />
               )}
             </div>
 
             <div className="flex-1 min-h-0 overflow-y-auto sm:hidden">
               <div className="flex flex-col gap-2 p-3">
                 {loading ? (
-                  Array.from({ length: 8 }).map((_, i) => (
-                    <div key={i} className="rounded-xl border border-border bg-white p-3.5 dark:bg-[#2a2a2d]">
-                      <div className="h-4 w-2/3 dt-skeleton rounded-md" />
-                      <div className="mt-2 h-3 w-1/3 dt-skeleton rounded-md" />
-                      <div className="mt-3 h-6 w-1/2 dt-skeleton rounded-md" />
-                    </div>
-                  ))
+                  <TableLoadingSpinner minHeight={8 * 78} />
                 ) : pagedRows.length > 0 ? (
                   pagedRows.map((row, i) => {
                     const showName = columnVisibility.walletName;
@@ -1771,7 +1895,11 @@ export default function SendMoneyAgentBalance() {
                     const gridFields = BALANCE_GRID_ORDER.filter((key) => columnVisibility[key]);
 
                     return (
-                      <div key={row.agentName || i} className="rounded-xl border-[0.5px] border-border bg-white p-4 dark:bg-[#2a2a2d]">
+                      <div
+                        key={row.agentName || i}
+                        className="dt-row-stagger-in rounded-xl border-[0.5px] border-border bg-white p-4 dark:bg-[#12151D]"
+                        style={{ '--stagger-delay': `${Math.min(i, 12) * 30}ms` } as CSSProperties}
+                      >
                         {hasHeader && (
                           <div className="flex items-start justify-between gap-2 border-b border-border pb-3">
                             <div className="min-w-0">
@@ -1780,7 +1908,7 @@ export default function SendMoneyAgentBalance() {
                             </div>
                             <div className="flex shrink-0 items-center gap-1.5">
                               {showBrand && (
-                                <BrandBadge brand={row.brand}>{displayBrand(row.brand)}</BrandBadge>
+                                <span className="text-[12px] font-medium text-muted-foreground">{displayBrand(row.brand)}</span>
                               )}
                               {showStatus && (
                                 <span className={`rounded-full border px-2.5 py-0.5 text-[11px] font-medium ${walletStatusBadgeClasses(row.walletStatus)}`}>
@@ -1830,7 +1958,7 @@ export default function SendMoneyAgentBalance() {
             </div>
 
             {!loading && (
-              <TableFooter
+              <CompactTableFooter
                 recordCountText={
                   sortedRows.length === 0
                     ? 'Showing 0 of 0 Accounts'
@@ -1848,6 +1976,7 @@ export default function SendMoneyAgentBalance() {
             )}
           </DataTable>
         )}
+        </div>
       </main>
 
       <BalanceLimitUploadModal
@@ -1856,7 +1985,7 @@ export default function SendMoneyAgentBalance() {
         product="sendmoney"
         dataProduct="sendmoney"
         agentRoster={rows.map((row) => row.agentName)}
-        accentButtonClassName="bg-[color:var(--product-accent)] hover:opacity-90"
+        accentButtonClassName="bg-[color:var(--ui-accent)] hover:opacity-90"
         onImported={fetchData}
       />
     </div>

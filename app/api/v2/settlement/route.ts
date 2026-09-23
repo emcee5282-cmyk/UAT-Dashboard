@@ -1,12 +1,17 @@
 import { NextResponse } from 'next/server';
-import { getSettlementRows } from '@/app/lib/services/transactionPageService';
+import { getSettlementPageData } from '@/app/lib/services/transactionPageService';
 import { updateTransactions, deleteTransaction, createTransaction, TransactionActionError, type TransactionFieldUpdates, type NewTransaction } from '@/app/lib/services/transactionActionsService';
+import { parseDateRangeParams } from '@/app/lib/api/dateRangeParams';
 
 // Phase 7 — Postgres-backed Settlement for Cashout (app/stlm).
-export async function GET() {
+// ?from=&to= (both, 'YYYY-MM-DD') filters to that Manila date range;
+// omitted defaults to Effective Today (see getEffectiveBusinessToday).
+export async function GET(request: Request) {
   try {
-    const rows = await getSettlementRows('cashout');
-    return NextResponse.json(rows, { headers: { 'Cache-Control': 'no-store' } });
+    const { range, error } = parseDateRangeParams(new URL(request.url));
+    if (error) return NextResponse.json({ error }, { status: 400 });
+    const data = await getSettlementPageData('cashout', range);
+    return NextResponse.json(data, { headers: { 'Cache-Control': 'no-store' } });
   } catch (err) {
     const message = err instanceof Error ? err.message : 'Failed to load Settlement data';
     return NextResponse.json({ error: message }, { status: 500 });

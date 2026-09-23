@@ -75,7 +75,7 @@ type BulkEditModalProps = {
   priorityOptions?: string[];
   primaryButtonClassName: string;
   // Same fix as BulkImportModal/RecordFormModal — Send Money's
-  // primaryButtonClassName resolves var(--product-accent), scoped to
+  // primaryButtonClassName resolves var(--ui-accent), scoped to
   // [data-product="sendmoney"]; createPortal renders outside that scope,
   // so this re-establishes it on the portal root.
   dataProduct?: string;
@@ -272,7 +272,7 @@ export default function BulkEditModal({
                   <select
                     value={priority}
                     onChange={(event) => setPriority(event.target.value)}
-                    className="h-10 w-full rounded-[10px] border border-border bg-white px-3.5 text-[13px] text-foreground outline-none transition-colors focus:border-[color:var(--product-accent)] focus:ring-2 focus:ring-[color:var(--product-accent-soft)] dark:bg-[#1c1c1e]"
+                    className="h-10 w-full rounded-[10px] border border-border bg-white px-3.5 text-[13px] text-foreground outline-none transition-colors focus:border-[color:var(--ui-accent)] focus:ring-2 focus:ring-[color:var(--ui-accent-soft)] dark:bg-[#1c1c1e]"
                   >
                     {(priorityOptions ?? []).map((opt) => (
                       <option key={opt} value={opt}>{opt}</option>
@@ -300,7 +300,7 @@ export default function BulkEditModal({
                     value={leader}
                     onChange={(event) => setLeader(event.target.value)}
                     placeholder="Leader name"
-                    className="h-10 w-full rounded-[10px] border border-border bg-white px-3.5 text-[13px] text-foreground outline-none transition-colors focus:border-[color:var(--product-accent)] focus:ring-2 focus:ring-[color:var(--product-accent-soft)] dark:bg-[#1c1c1e]"
+                    className="h-10 w-full rounded-[10px] border border-border bg-white px-3.5 text-[13px] text-foreground outline-none transition-colors focus:border-[color:var(--ui-accent)] focus:ring-2 focus:ring-[color:var(--ui-accent-soft)] dark:bg-[#1c1c1e]"
                   />
                 </div>
               )}

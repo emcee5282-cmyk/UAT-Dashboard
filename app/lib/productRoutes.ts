@@ -8,26 +8,28 @@ import { sendMoneyRoutes } from './sendMoneyRoutes';
 
 export type Product = 'cashout' | 'sendmoney';
 
-// Dashboard and Overview swapped URLs — Overview is now the site's root
-// landing page ('/'), Dashboard (Cashout's own Cash Out Wallets page) moved
-// to '/balance-overview'. Only the routes changed; each page's own content
-// moved with it (see app/page.tsx and app/balance-overview/page.tsx).
-export const CASHOUT_DASHBOARD = '/balance-overview';
-export const SENDMONEY_DASHBOARD = sendMoneyRoutes[0].path; // '/sendmoney'
+// '/sendmoney' itself (its old dashboard-index page) was retired and now
+// redirects to '/' (see next.config.ts) — its content moved into the
+// redesigned '/' Dashboard, which replaced both this and Cashout's own old
+// '/balance-overview' dashboard. This constant is NOT a "which page is the
+// dashboard" pointer anymore — it's only the path *prefix* used below to
+// detect "is Send Money the active product", since /sendmoney/balances,
+// /sendmoney/opening, etc. are still real, separate pages.
+const SENDMONEY_ROOT = sendMoneyRoutes[0].path; // '/sendmoney'
 
 type RoutePair = { cashout: string; sendmoney: string };
 
 export const ROUTE_MAP: RoutePair[] = [
-  { cashout: CASHOUT_DASHBOARD, sendmoney: SENDMONEY_DASHBOARD },
   { cashout: '/agentbal', sendmoney: '/sendmoney/balances' },
   { cashout: '/summary', sendmoney: '/sendmoney/opening' },
   { cashout: '/stlm', sendmoney: '/sendmoney/settlement' },
   { cashout: '/topup', sendmoney: '/sendmoney/topup' },
   { cashout: '/transfer-queue', sendmoney: '/sendmoney/transfer-queue' },
   { cashout: '/wallet-status', sendmoney: '/sendmoney/wallet-status' },
-  // Balance Overview combines both products on one page — self-mapped so it
-  // never redirects away when the Cashout/Send Money switcher is toggled.
-  // Now lives at '/' (the site's landing page).
+  // The redesigned Dashboard combines both products on one page — self-mapped
+  // so it never redirects away when the Cashout/Send Money switcher is
+  // toggled. Absorbed the old '/balance-overview' (Cashout) and '/sendmoney'
+  // (Send Money) dashboard pages, both of which now redirect here.
   { cashout: '/', sendmoney: '/' },
 ];
 
@@ -60,21 +62,23 @@ export function getActiveProduct(pathname: string, productParam?: string | null)
   if ((productParam === 'cashout' || productParam === 'sendmoney') && isSharedRoute(pathname)) {
     return productParam;
   }
-  if (pathname === SENDMONEY_DASHBOARD || pathname.startsWith(`${SENDMONEY_DASHBOARD}/`)) {
+  if (pathname === SENDMONEY_ROOT || pathname.startsWith(`${SENDMONEY_ROOT}/`)) {
     return 'sendmoney';
   }
   return 'cashout';
 }
 
 // Resolves the equivalent page in the target product for a given current path.
-// Falls back to that product's dashboard root when there's no mapping — never a 404.
+// Falls back to the shared Dashboard ('/') when there's no mapping — never a
+// 404. There's no longer a per-product dashboard root to fall back to; '/'
+// is the one shared destination both products always resolve to.
 // Shared routes get a ?product= query appended so switching products there is
 // an actual navigation (same path otherwise means router.push() is a no-op
 // and nothing re-renders as active).
 export function getCounterpartPath(currentPath: string, targetProduct: Product): string {
   const entry = ROUTE_MAP.find((pair) => pair.cashout === currentPath || pair.sendmoney === currentPath);
   if (!entry) {
-    return targetProduct === 'cashout' ? CASHOUT_DASHBOARD : SENDMONEY_DASHBOARD;
+    return `/?product=${targetProduct}`;
   }
   const target = targetProduct === 'cashout' ? entry.cashout : entry.sendmoney;
   return entry.cashout === entry.sendmoney ? `${target}?product=${targetProduct}` : target;

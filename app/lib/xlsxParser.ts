@@ -1,5 +1,23 @@
 import * as XLSX from 'xlsx';
-import { normalizeOpeningAgentName } from './realShopName';
+import { normalizeOpeningAgentName, extractOpeningWalletTypeSuffix, extractRealShopName, extractSendMoneyShopName } from './realShopName';
+
+// Settlement/Top Up's own "Agent"/"To Agent" cell mostly already carries a
+// clean bare code, but — confirmed live via DRUID004 (2 real ₱50,000
+// settlements landed on a stale duplicate agent instead of the real, active
+// shop) — the SAME raw per-wallet account text Opening/Balance Limit both
+// already handle (e.g. "N-M1AG-S8-DRUID004-BK") sometimes appears here too.
+// Unlike importOpeningFile's own agentName, this pipeline has no roster
+// available at parse time to decide "does the extracted code actually
+// match a real shop" — so instead of Opening's stricter contract, this
+// tries the same extraction Balance Limit already trusts and ONLY uses it
+// when it produces something non-empty; a cell extraction can't resolve
+// (blank result) keeps the ORIGINAL raw text unchanged, exactly matching
+// today's behavior — this can only IMPROVE a currently-broken/ambiguous
+// match, never break a currently-working one.
+function resolveTransactionAgentName(raw: string, product?: 'cashout' | 'sendmoney'): string {
+  const extracted = product === 'sendmoney' ? extractSendMoneyShopName(raw) : extractRealShopName(raw);
+  return extracted || raw;
+}
 
 // Thin, reusable wrapper around the `xlsx` library — every bulk-import
 // flow (Settlement today; other modules later) needs the exact same
@@ -73,7 +91,7 @@ function findHeaderRowIndex(allRows: (string | number)[][]): number {
   );
 }
 
-export function mapSettlementRows(parsed: ParsedWorkbook): SettlementImportRow[] {
+export function mapSettlementRows(parsed: ParsedWorkbook, product?: 'cashout' | 'sendmoney'): SettlementImportRow[] {
   const headerRowIndex = findHeaderRowIndex(parsed.allRows);
   if (headerRowIndex === -1) {
     throw new Error('Could not find a "Brand" column — this doesn\'t look like the Settlement template.');
@@ -102,7 +120,7 @@ export function mapSettlementRows(parsed: ParsedWorkbook): SettlementImportRow[]
     .map((cols, i) => ({
       row: headerRowIndex + i + 2, // +1 for 0-index, +1 to point past the header row itself
       brand: String(cols[indices.brand] ?? '').trim(),
-      agentName: String(cols[indices.agentName] ?? '').trim(),
+      agentName: resolveTransactionAgentName(String(cols[indices.agentName] ?? '').trim(), product),
       wallet: String(cols[indices.wallet] ?? '').trim(),
       amount: String(cols[indices.amount] ?? '').trim(),
       remarks: String(cols[indices.remarks] ?? '').trim(),
@@ -127,7 +145,7 @@ export type TopUpImportRow = {
   date: string;
 };
 
-export function mapTopUpRows(parsed: ParsedWorkbook): TopUpImportRow[] {
+export function mapTopUpRows(parsed: ParsedWorkbook, product?: 'cashout' | 'sendmoney'): TopUpImportRow[] {
   const headerRowIndex = findHeaderRowIndex(parsed.allRows);
   if (headerRowIndex === -1) {
     throw new Error('Could not find a "Brand" column — this doesn\'t look like the Top Up template.');
@@ -156,7 +174,7 @@ export function mapTopUpRows(parsed: ParsedWorkbook): TopUpImportRow[] {
     .map((cols, i) => ({
       row: headerRowIndex + i + 2,
       brand: String(cols[indices.brand] ?? '').trim(),
-      agentName: String(cols[indices.agentName] ?? '').trim(),
+      agentName: resolveTransactionAgentName(String(cols[indices.agentName] ?? '').trim(), product),
       wallet: String(cols[indices.wallet] ?? '').trim(),
       amount: String(cols[indices.amount] ?? '').trim(),
       type: String(cols[indices.type] ?? '').trim(),
@@ -199,6 +217,19 @@ export type OpeningImportRow = {
   leader: string;
   openingBalance: string;
   sdp: string;
+  // The wallet-type suffix (e.g. "BK") the RAW cell carried before
+  // normalizeOpeningAgentName stripped it off agentName below — captured
+  // here, at the only place that still has the raw text, so a caller that
+  // needs to know WHICH wallet this row belongs to (importOpeningFile's
+  // per-wallet Opening Balance write) doesn't have to re-derive it from an
+  // already-stripped agentName, where it's gone. null for a Pattern A row
+  // (already bare, no suffix to begin with) or an unrecognized brand.
+  walletTypeSuffix: string | null;
+  // The raw cell text, whitespace-cleaned ONLY — never brand/suffix-
+  // stripped. Per explicit instruction: the Opening page must display
+  // exactly what the file says (e.g. "N-K1AG-T1-SANGE006-BK"), never the
+  // normalized agentName above, which stays reserved for roster matching.
+  rawAgentName: string;
 };
 
 // Normalizes exactly once, here, at parse time — so every downstream
@@ -233,8 +264,7 @@ export function mapOpeningRows(parsed: ParsedWorkbook, product?: 'cashout' | 'se
 
   return dataRows
     .filter((cols) => cols.some((cell) => String(cell ?? '').trim() !== ''))
-    .map((cols, i) => ({
-      row: headerRowIndex + i + 2,
+    .map((cols, i) => {
       // Strips ALL whitespace, not just leading/trailing (.trim() alone
       // misses an internal stray space, e.g. "N- M2PS1-BROOK072-NG" instead
       // of "N-M2PS1-BROOK072-NG" — a real, recurring typo in the live
@@ -243,16 +273,19 @@ export function mapOpeningRows(parsed: ParsedWorkbook, product?: 'cashout' | 'se
       // legitimate space, so this is safe for every row — it only ever
       // "rescues" a name whose sole defect was stray whitespace; a name
       // with any other structural problem still fails validation
-      // afterward exactly as before. This is the single shared parse this
-      // codebase uses both for the upload wizard's preview AND the actual
-      // server-side import (importOpeningFile re-parses the raw file
-      // itself rather than trusting client state), so the cleaned value is
-      // what ultimately reaches the database either way.
-      agentName: product === 'cashout'
-        ? normalizeOpeningAgentName(String(cols[indices.agentName] ?? '').replace(/\s+/g, ''))
-        : String(cols[indices.agentName] ?? '').replace(/\s+/g, ''),
-      leader: String(cols[indices.leader] ?? '').trim(),
-      openingBalance: String(cols[indices.openingBalance] ?? '').trim(),
-      sdp: String(cols[indices.sdp] ?? '').trim(),
-    }));
+      // afterward exactly as before. This is the ONLY cleanup ever applied
+      // to rawAgentName below — agentName additionally normalizes on top
+      // of this for roster matching, but the raw form itself is never
+      // brand/suffix-stripped, per explicit instruction.
+      const rawAgentName = String(cols[indices.agentName] ?? '').replace(/\s+/g, '');
+      return {
+        row: headerRowIndex + i + 2,
+        agentName: product === 'cashout' ? normalizeOpeningAgentName(rawAgentName) : rawAgentName,
+        leader: String(cols[indices.leader] ?? '').trim(),
+        openingBalance: String(cols[indices.openingBalance] ?? '').trim(),
+        sdp: String(cols[indices.sdp] ?? '').trim(),
+        walletTypeSuffix: product === 'cashout' ? extractOpeningWalletTypeSuffix(rawAgentName) : null,
+        rawAgentName,
+      };
+    });
 }

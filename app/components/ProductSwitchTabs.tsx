@@ -7,9 +7,15 @@ import { getActiveProduct, getCounterpartPath, isProductSwitchRoute } from '@/ap
 type ProductSwitchTabsProps = {
   // 'text' (default) is the original plain-text tab look used by every
   // PageHeader consumer — unchanged. 'segmented' is a Settlement-only pill
-  // control (Stripe/Linear style) added for SettlementHeader; it reuses the
-  // exact same route-detection/navigation logic below, just different JSX.
-  variant?: 'text' | 'segmented';
+  // control (Stripe/Linear style), superseded by 'pills' below as
+  // SettlementHeader's own switcher (kept, unused internally, in case
+  // something still references it directly). 'pills' is SettlementHeader's
+  // current style — individually bordered pills (bordered-white idle,
+  // tinted-indigo active), copied verbatim from Daily Txn Entry's own
+  // Operations/Report/CashGo tab switcher (app/daily-txn-entry/page.tsx's
+  // PAGE_TABS buttons) per explicit instruction to match that look
+  // everywhere SettlementHeader appears.
+  variant?: 'text' | 'segmented' | 'pills';
 };
 
 // Cashout/Send Money switcher — extracted out of the old FloatingHeader's
@@ -53,6 +59,31 @@ export default function ProductSwitchTabs({ variant = 'text' }: ProductSwitchTab
   const goToProduct = (target: 'cashout' | 'sendmoney') => {
     router.push(getCounterpartPath(pathname, target));
   };
+
+  if (variant === 'pills') {
+    // --ui-accent (not --product-accent) deliberately — this pill's active
+    // state must stay the universal indigo/gold highlight on BOTH products,
+    // not pick up Send Money's teal branding accent, per explicit
+    // instruction: this switcher isn't product branding, it's the same
+    // interactive-highlight treatment used everywhere else in the app.
+    const pillClass = (isActive: boolean) =>
+      `rounded-[8px] border px-3.5 py-1.5 text-[12px] transition-colors ${
+        isActive
+          ? 'border-[var(--ui-accent)]/30 bg-[var(--ui-accent-soft)] font-medium text-[var(--ui-accent)]'
+          : 'border-[#DEE1E8] bg-white font-normal text-muted-foreground hover:bg-[#F1F2F5] dark:border-[#262B38] dark:bg-[#12151D] dark:hover:bg-[#1A1E29]'
+      }`;
+
+    return (
+      <div className="flex items-center gap-2">
+        <button type="button" onClick={() => goToProduct('cashout')} className={pillClass(activeProduct === 'cashout')}>
+          Cashout
+        </button>
+        <button type="button" onClick={() => goToProduct('sendmoney')} className={pillClass(activeProduct === 'sendmoney')}>
+          Send Money
+        </button>
+      </div>
+    );
+  }
 
   if (variant === 'segmented') {
     const segmentClass = (isActive: boolean) =>

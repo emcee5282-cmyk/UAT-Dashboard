@@ -1,0 +1,1 @@
+ALTER TABLE "daily_txn_cashgo_entry" ALTER COLUMN "target" SET DATA TYPE numeric(18, 2);

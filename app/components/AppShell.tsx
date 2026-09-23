@@ -11,10 +11,22 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
   const searchParams = useSearchParams();
   const activeProduct = getActiveProduct(pathname, searchParams.get('product'));
 
-  // Login is a standalone full-page layout — no sidebar/dock, no product
-  // theming. Kept as a pathname check here (rather than a route group)
-  // since every other route already flows through this one AppShell.
-  if (pathname === '/login') {
+  // Login and the leader-facing ticketing flow (create, history list,
+  // detail/chat) are standalone full-page layouts — no sidebar/dock, no
+  // product theming, own light/purple visual language (see
+  // create_ticket_mobile.html). Leaders are external to the dashboard's
+  // normal navigation, unlike staff/admin — the staff ticket queue
+  // (/staff/tickets) deliberately does NOT bypass AppShell; it's a normal
+  // dashboard destination (see Sidebar.tsx's "Tickets" entry), not a
+  // separate flow. Kept as a pathname check here (rather than a route
+  // group) since every other route already flows through this one
+  // AppShell.
+  //
+  // /ticket-settlement is a separate, self-contained prototype (mock data
+  // only, no DB/API) built to pixel-match an external design spec with its
+  // own fonts/tokens/dark-default theme/sidebar — bypassed the same way so
+  // it isn't double-chromed by this AppShell's own Sidebar/theme.
+  if (pathname === '/login' || pathname.startsWith('/tickets') || pathname.startsWith('/ticket-settlement')) {
     return <>{children}</>;
   }
 

@@ -42,14 +42,20 @@ async function hmacKey(): Promise<CryptoKey> {
   );
 }
 
-export type SessionPayload = { username: string; exp: number };
+// role/leaderId are embedded directly in the signed payload rather than
+// looked up from the DB on every request — this file has to keep working
+// unchanged in the Edge runtime (middleware.ts), which can't reach
+// Postgres. Whatever role a user had at login time is what a role check
+// sees until they log in again; there's no live revocation of an
+// in-progress session's role today.
+export type SessionPayload = { userId: number; username: string; role: string; leaderId: number | null; exp: number };
 
 export async function createSessionToken(
-  username: string,
+  user: { id: number; username: string; role: string; leaderId: number | null },
   persistent: boolean
 ): Promise<{ token: string; maxAge: number | undefined }> {
   const exp = Date.now() + (persistent ? REMEMBER_ME_MAX_AGE_SECONDS * 1000 : DEFAULT_SESSION_MS);
-  const payload: SessionPayload = { username, exp };
+  const payload: SessionPayload = { userId: user.id, username: user.username, role: user.role, leaderId: user.leaderId, exp };
   const encoder = new TextEncoder();
   const payloadPart = base64UrlEncode(encoder.encode(JSON.stringify(payload)));
   const signature = await crypto.subtle.sign('HMAC', await hmacKey(), encoder.encode(payloadPart));

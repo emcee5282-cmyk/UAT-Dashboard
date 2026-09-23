@@ -3,14 +3,17 @@
 // Same sibling relationship to transactionActionsService.ts (mutations) as
 // openingPageService.ts has to openingActionsService.ts.
 //
-// Brand/Leader are read via a plain join onto agents.brand_id/leader_id —
-// the same canonical resolution Today's Opening/Agent Balance already use —
-// rather than re-deriving the live sheet's per-transaction brand-suffix
-// override (never captured anywhere in wallet_transactions, and not
-// something the already-built import pipeline stores either). A shop's
-// brand doesn't change transaction to transaction in practice, so this is
-// expected to be behaviorally equivalent; the one disclosed divergence is
-// documented in transactionActionsService.ts's own header comment.
+// Brand/Leader — Leader is read via a plain join onto agents.leader_id (a
+// shop's leader doesn't vary transaction to transaction). Brand used to be
+// read the same way, off agents.brand_id, on the theory that "a shop's
+// brand doesn't change transaction to transaction in practice" — but that's
+// exactly wrong for a shop uploaded under more than one brand: a row's own
+// walletTransactions.brand_id (the file's actual uploaded Brand for THAT
+// row, Phase 10 onward) is preferred, falling back to agents.brand_id only
+// for pre-Phase-10 rows with no per-transaction brand of their own.
+// Confirmed live bug otherwise: uploading a Settlement row tagged Brand=M1
+// for a shop whose current agents.brand_id resolves to a different brand
+// displayed that other brand instead of the uploaded M1.
 //
 // Bounded to occurred_on >= yesterday's business date (2 AM Manila
 // rollover, same boundary the pages' own isToday()/isYesterday() already
@@ -18,19 +21,63 @@
 // today vs. yesterday, so there is no reason to pull more over the wire.
 // isToday()/isYesterday() themselves are left completely untouched on the
 // page side; this only narrows what reaches them.
-import { eq, and, gte, inArray } from 'drizzle-orm';
+import { eq, and, gte, lte, inArray, sql } from 'drizzle-orm';
+import { alias } from 'drizzle-orm/pg-core';
 import { getDb } from '../db/client';
 import * as schema from '../db/schema';
 import { getBusinessToday, manilaFields } from '../businessDate';
+import { getEffectiveBusinessToday } from './balanceService';
 
 export type Product = 'cashout' | 'sendmoney';
 export type TransactionType = 'settlement' | 'topup';
+export type DateRange = { from: string; to: string }; // 'YYYY-MM-DD', inclusive, Manila
 
 function yesterdayBoundaryIso(): string {
   const today = getBusinessToday();
   const yesterday = new Date(today.getTime() - 24 * 60 * 60 * 1000);
   const { year, month, day } = manilaFields(yesterday);
   return `${year}-${String(month + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+}
+
+// Plain 'YYYY-MM-DD' arithmetic — same UTC-anchored-noon trick used
+// elsewhere in this codebase's own date-range scripts to sidestep DST/
+// timezone drift entirely (there's no DST in Asia/Manila, but this keeps
+// the string math trustworthy regardless of the server runtime's own TZ).
+function addDaysIso(iso: string, days: number): string {
+  const [y, m, d] = iso.split('-').map(Number);
+  const dt = new Date(Date.UTC(y, m - 1, d + days));
+  return `${dt.getUTCFullYear()}-${String(dt.getUTCMonth() + 1).padStart(2, '0')}-${String(dt.getUTCDate()).padStart(2, '0')}`;
+}
+
+function daysBetweenInclusive(from: string, to: string): number {
+  const [fy, fm, fd] = from.split('-').map(Number);
+  const [ty, tm, td] = to.split('-').map(Number);
+  const ms = Date.UTC(ty, tm - 1, td) - Date.UTC(fy, fm - 1, fd);
+  return Math.round(ms / 86400000) + 1;
+}
+
+// The equal-length window immediately preceding [from, to] — the delta
+// badge's "vs previous period" baseline.
+function previousPeriod(from: string, to: string): DateRange {
+  const length = daysBetweenInclusive(from, to);
+  const prevTo = addDaysIso(from, -1);
+  const prevFrom = addDaysIso(prevTo, -(length - 1));
+  return { from: prevFrom, to: prevTo };
+}
+
+// Resolves the caller-supplied (optional) range against this product's
+// "Effective Today" (see getEffectiveBusinessToday's own header comment —
+// gated on that day's Estimated Opening actually existing, not raw
+// wall-clock). No range supplied -> defaults to today only, exactly
+// preserving pre-range-filter behavior. A supplied `to` later than
+// effective-today is clamped down to it rather than rejected — a stale
+// client shouldn't be able to request into a day that isn't "today" yet.
+async function resolveDateRange(product: Product, range?: DateRange): Promise<DateRange & { today: string }> {
+  const today = await getEffectiveBusinessToday(product);
+  if (!range) return { from: today, to: today, today };
+  const to = range.to > today ? today : range.to;
+  const from = range.from > to ? to : range.from;
+  return { from, to, today };
 }
 
 // Reverses the DB's 'YYYY-MM-DD' storage back into the pages' own
@@ -53,9 +100,14 @@ type RawRow = {
   brandCode: string | null;
 };
 
-async function getTransactionRowsRaw(product: Product, transactionType: TransactionType): Promise<RawRow[]> {
+const txnBrand = alias(schema.brands, 'txn_brand');
+const agentBrand = alias(schema.brands, 'agent_brand');
+
+async function getTransactionRowsRaw(product: Product, transactionType: TransactionType, range?: DateRange): Promise<RawRow[]> {
   const db = getDb();
-  const boundary = yesterdayBoundaryIso();
+  const dateFilter = range
+    ? and(gte(schema.walletTransactions.occurredOn, range.from), lte(schema.walletTransactions.occurredOn, range.to))
+    : gte(schema.walletTransactions.occurredOn, yesterdayBoundaryIso());
 
   return db
     .select({
@@ -66,17 +118,53 @@ async function getTransactionRowsRaw(product: Product, transactionType: Transact
       occurredOn: schema.walletTransactions.occurredOn,
       remarks: schema.walletTransactions.remarks,
       leaderName: schema.leaders.name,
-      brandCode: schema.brands.code,
+      brandCode: sql<string | null>`coalesce(${txnBrand.code}, ${agentBrand.code})`,
     })
     .from(schema.walletTransactions)
     .innerJoin(schema.agents, eq(schema.walletTransactions.agentId, schema.agents.id))
     .leftJoin(schema.leaders, eq(schema.agents.leaderId, schema.leaders.id))
-    .leftJoin(schema.brands, eq(schema.agents.brandId, schema.brands.id))
+    .leftJoin(txnBrand, eq(schema.walletTransactions.brandId, txnBrand.id))
+    .leftJoin(agentBrand, eq(schema.agents.brandId, agentBrand.id))
     .where(and(
       eq(schema.walletTransactions.product, product),
       eq(schema.walletTransactions.transactionType, transactionType),
-      gte(schema.walletTransactions.occurredOn, boundary)
+      dateFilter
     ));
+}
+
+// Lightweight aggregate (no row payload) — the delta badge's "previous
+// period" baseline never needs to reach the client as rows, just a total
+// and a count.
+async function getTransactionRangeSummary(product: Product, transactionType: TransactionType, range: DateRange): Promise<{ total: number; count: number }> {
+  const db = getDb();
+  const [row] = await db
+    .select({
+      total: sql<string>`coalesce(sum(${schema.walletTransactions.amount}), 0)`,
+      count: sql<number>`count(*)::int`,
+    })
+    .from(schema.walletTransactions)
+    .where(and(
+      eq(schema.walletTransactions.product, product),
+      eq(schema.walletTransactions.transactionType, transactionType),
+      gte(schema.walletTransactions.occurredOn, range.from),
+      lte(schema.walletTransactions.occurredOn, range.to)
+    ));
+  return { total: parseFloat(row?.total ?? '0'), count: row?.count ?? 0 };
+}
+
+// Distinct Manila business dates that have at least one row — powers the
+// date-range popover's calendar (disabled = not in this list) and Quick
+// Select presets (disabled if none of their days are in this list).
+export async function getAvailableTransactionDates(product: Product, transactionType: TransactionType): Promise<string[]> {
+  const db = getDb();
+  const rows = await db
+    .selectDistinct({ occurredOn: schema.walletTransactions.occurredOn })
+    .from(schema.walletTransactions)
+    .where(and(
+      eq(schema.walletTransactions.product, product),
+      eq(schema.walletTransactions.transactionType, transactionType)
+    ));
+  return rows.map((r) => r.occurredOn).sort();
 }
 
 export type SettlementPgRow = {
@@ -90,8 +178,19 @@ export type SettlementPgRow = {
   leader: string;
 };
 
-export async function getSettlementRows(product: Product): Promise<SettlementPgRow[]> {
-  const rows = await getTransactionRowsRaw(product, 'settlement');
+export type TransactionPageData<Row> = {
+  rows: Row[];
+  total: number;
+  count: number;
+  previousPeriodTotal: number;
+  previousPeriodCount: number;
+  today: string; // Effective Today (see getEffectiveBusinessToday) — the client never computes "today" itself
+  from: string;
+  to: string;
+};
+
+export async function getSettlementRows(product: Product, range?: DateRange): Promise<SettlementPgRow[]> {
+  const rows = await getTransactionRowsRaw(product, 'settlement', range);
   return rows.map((r) => ({
     id: r.id,
     agentName: r.agentCode,
@@ -102,6 +201,19 @@ export async function getSettlementRows(product: Product): Promise<SettlementPgR
     brand: r.brandCode ?? '−',
     leader: r.leaderName ?? '−',
   }));
+}
+
+// Orchestrates a full page load: resolves the requested range against
+// Effective Today, fetches the range's own rows (current-period total/count
+// reduced from them, same math the pages already did client-side), and a
+// separate lightweight aggregate for the equal-length prior period (never
+// fetches that period's full row set).
+export async function getSettlementPageData(product: Product, range?: DateRange): Promise<TransactionPageData<SettlementPgRow>> {
+  const resolved = await resolveDateRange(product, range);
+  const rows = await getSettlementRows(product, resolved);
+  const total = rows.reduce((sum, r) => sum + parseFloat(r.amount), 0);
+  const prevSummary = await getTransactionRangeSummary(product, 'settlement', previousPeriod(resolved.from, resolved.to));
+  return { rows, total, count: rows.length, previousPeriodTotal: prevSummary.total, previousPeriodCount: prevSummary.count, today: resolved.today, from: resolved.from, to: resolved.to };
 }
 
 export type TopUpPgRow = {
@@ -128,8 +240,8 @@ const TOPUP_TYPE_LABEL: Record<Product, string> = {
   sendmoney: 'INTERNAL TRANSFER',
 };
 
-export async function getTopUpRows(product: Product): Promise<TopUpPgRow[]> {
-  const rows = await getTransactionRowsRaw(product, 'topup');
+export async function getTopUpRows(product: Product, range?: DateRange): Promise<TopUpPgRow[]> {
+  const rows = await getTransactionRowsRaw(product, 'topup', range);
   return rows.map((r) => ({
     id: r.id,
     agentName: r.agentCode,
@@ -140,6 +252,14 @@ export async function getTopUpRows(product: Product): Promise<TopUpPgRow[]> {
     leader: r.leaderName ?? '−',
     brand: r.brandCode ?? '−',
   }));
+}
+
+export async function getTopUpPageData(product: Product, range?: DateRange): Promise<TransactionPageData<TopUpPgRow>> {
+  const resolved = await resolveDateRange(product, range);
+  const rows = await getTopUpRows(product, resolved);
+  const total = rows.reduce((sum, r) => sum + parseFloat(r.amount), 0);
+  const prevSummary = await getTransactionRangeSummary(product, 'topup', previousPeriod(resolved.from, resolved.to));
+  return { rows, total, count: rows.length, previousPeriodTotal: prevSummary.total, previousPeriodCount: prevSummary.count, today: resolved.today, from: resolved.from, to: resolved.to };
 }
 
 export type ExistingTransactionSignature = {

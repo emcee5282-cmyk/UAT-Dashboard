@@ -95,7 +95,7 @@ export default function SearchableCombobox({
   return (
     <div className="relative">
       <div
-        className={`flex h-10 items-center gap-2 rounded-[10px] border bg-white px-3.5 transition-colors focus-within:border-[color:var(--product-accent)] focus-within:ring-2 focus-within:ring-[color:var(--product-accent-soft)] dark:bg-[#1c1c1e] ${
+        className={`flex h-10 items-center gap-2 rounded-[10px] border bg-white px-3.5 transition-colors focus-within:border-[color:var(--ui-accent)] focus-within:ring-2 focus-within:ring-[color:var(--ui-accent-soft)] dark:bg-[#1c1c1e] ${
           error ? 'border-rose-400' : 'border-border'
         } ${disabled ? 'opacity-50' : ''}`}
       >
@@ -204,7 +204,7 @@ export default function SearchableCombobox({
               onMouseDown={(event) => event.preventDefault()}
               onClick={() => selectOption(option)}
               className={`flex w-full items-center rounded-md px-2.5 py-1.5 text-left text-[13px] transition-colors ${
-                i === highlightIndex ? 'bg-[color:var(--product-accent-soft)] text-[color:var(--product-accent)]' : 'text-foreground hover:bg-muted'
+                i === highlightIndex ? 'bg-[color:var(--ui-accent-soft)] text-[color:var(--ui-accent)]' : 'text-foreground hover:bg-muted'
               }`}
             >
               {option}

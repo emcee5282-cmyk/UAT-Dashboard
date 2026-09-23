@@ -17,12 +17,13 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: 'Username and password are required.' }, { status: 400 });
   }
 
-  if (!verifyCredentials(username, password)) {
+  const user = await verifyCredentials(username, password);
+  if (!user) {
     return NextResponse.json({ error: 'Invalid username or password.' }, { status: 401 });
   }
 
-  const { token, maxAge } = await createSessionToken(username, !!body.rememberMe);
-  const response = NextResponse.json({ ok: true });
+  const { token, maxAge } = await createSessionToken(user, !!body.rememberMe);
+  const response = NextResponse.json({ ok: true, role: user.role });
   response.cookies.set(SESSION_COOKIE_NAME, token, {
     httpOnly: true,
     secure: process.env.NODE_ENV === 'production',

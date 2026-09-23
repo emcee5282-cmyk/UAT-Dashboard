@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useRef, useState, type ReactNode } from 'react';
+import TableLoadingSpinner from './TableLoadingSpinner';
 
 // Outer shell — border, radius, overflow, flex-col. Owns none of the
 // content inside; Toolbar / DataTable.ScrollArea / TableFooter are all
@@ -10,7 +11,7 @@ import { useEffect, useRef, useState, type ReactNode } from 'react';
 // the fixed border/radius/bg the way Toolbar's height/padding would.
 export default function DataTable({ children, className = '' }: { children: ReactNode; className?: string }) {
   return (
-    <div className={`flex-1 flex flex-col min-h-0 bg-white rounded-[12px] border border-[#E5E7EB] overflow-hidden dark:bg-[#2a2a2d] dark:border-[#3a3a3d] ${className}`}>
+    <div className={`flex-1 flex flex-col min-h-0 bg-white rounded-[12px] border border-[#E5E7EB] overflow-hidden dark:bg-[#12151D] dark:border-[#262B38] ${className}`}>
       {children}
     </div>
   );
@@ -38,10 +39,21 @@ function DataTableScrollArea({
   children,
   className = '',
   onScrolledChange,
+  loading = false,
 }: {
   children: (isScrolled: boolean) => ReactNode;
   className?: string;
   onScrolledChange?: (isScrolled: boolean) => void;
+  // Renders TableLoadingSpinner as an overlay centered on THIS component's
+  // own outer (bounded, non-scrolling) wrapper — not inside the scrollable
+  // `children` content, which can be wider than the visible area on a
+  // column-heavy table. Centering inside that wide, overflow-clipped
+  // content used to leave the spinner visually pinned to one side instead
+  // of the middle of what's actually visible, per explicit bug report.
+  // The caller is still responsible for not rendering row content while
+  // `loading` is true (an empty rowgroup is fine — the sticky header stays
+  // visible above this overlay either way).
+  loading?: boolean;
 }) {
   const [isScrolled, setIsScrolled] = useState(false);
   const [atScrollStart, setAtScrollStart] = useState(true);
@@ -70,6 +82,7 @@ function DataTableScrollArea({
 
   return (
     <div className={`relative flex-1 min-h-0 ${className}`}>
+      {loading && <TableLoadingSpinner overlay />}
       <div ref={ref} className="dt-scroll h-full overflow-y-auto overflow-x-auto">
         <div className="w-full text-sm" role="table">
           {children(isScrolled)}
@@ -94,7 +107,7 @@ function DataTableStickyHeader({ isScrolled, children }: { isScrolled: boolean; 
   return (
     <div
       role="rowgroup"
-      className={`sticky top-0 z-[50] bg-[#FAFAFB] dark:bg-[#252528] border-b border-[#E2E8F0] dark:border-[#3a3a3d] transition-shadow duration-150 ease-out ${
+      className={`sticky top-0 z-[50] bg-[#FAFAFB] dark:bg-[#0E1119] border-b border-[#E2E8F0] dark:border-[#262B38] transition-shadow duration-150 ease-out ${
         isScrolled ? 'shadow-[0_2px_4px_rgba(15,23,42,0.1)] dark:shadow-[0_2px_4px_rgba(0,0,0,0.35)]' : ''
       }`}
     >

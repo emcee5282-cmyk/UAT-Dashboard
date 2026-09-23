@@ -1,0 +1,1 @@
+ALTER TABLE "agent_wallets" ADD COLUMN "raw_account" text;

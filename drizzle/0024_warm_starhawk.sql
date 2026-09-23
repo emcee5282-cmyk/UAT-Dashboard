@@ -1,0 +1,1 @@
+ALTER TABLE "agent_wallets" ADD COLUMN "opening_balance" numeric(18, 2);

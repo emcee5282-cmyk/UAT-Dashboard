@@ -1,859 +1,230 @@
 'use client';
 
-import { useEffect, useState, useCallback, useMemo } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import Image from 'next/image';
 import * as XLSX from 'xlsx';
-import { ArrowLeftRight, Wallet, Banknote, Building2, Download, Send, ChevronUp, ChevronDown, RefreshCw } from 'lucide-react';
+import {
+  Wallet, Building2, Download, ChevronUp, ChevronDown, Sun, Moon, Send,
+} from 'lucide-react';
 import PageHeader from './components/PageHeader';
 import AccountMenu from './components/AccountMenu';
 import ConnectionErrorState from './components/ConnectionErrorState';
+import WaveTrendChart, { type WaveTrendDataPoint, type WaveTrendSeriesDef } from './components/WaveTrendChart';
 import Toast, { type ToastState } from './components/Toast';
-import { classifyFetchError, type ClassifiedError, assertAllOk } from './lib/errors';
-import { getBusinessToday, toBusinessDate, parseCardCutoffDate, manilaMidnight, manilaFields } from './lib/businessDate';
+import { useTheme } from './components/ThemeProvider';
+import { classifyFetchError, type ClassifiedError } from './lib/errors';
 
-function clean(val: string): number {
-  return parseFloat((val ?? '0').replace(/"/g, '').replace(/,/g, '').trim()) || 0;
-}
+/* =============================================================================
+   Production Dashboard ("/") — full replacement per the approved plan
+   (rippling-orbiting-duckling.md): ports public/dashboard-demo.html's design
+   into React/Tailwind on this project's Design System v2 tokens, wired to the
+   real app/api/dashboard/route.ts response (no client-side CSV parsing —
+   that route already does every computation server-side). Telegram capture
+   (deferred when this page first shipped) is now wired — same
+   /api/telegram/screenshot + `data-telegram-capture` selector pattern
+   already proven on app/shadcn-demo/balance-overview/page.tsx, applied to
+   this page's own Today's Insights + Brand Balance sections.
+   ============================================================================= */
 
-// "Brand Balance" sheet writes negative cash-in-hand in accounting format,
-// e.g. "(1,137,336.19)", and a bare "-" for zero — neither parses correctly
-// through clean()'s plain parseFloat.
-function cleanSigned(val: string): number {
-  const raw = (val ?? '').replace(/"/g, '').trim();
-  if (!raw || raw === '-') return 0;
-  const negative = raw.startsWith('(') && raw.endsWith(')');
-  const inner = negative ? raw.slice(1, -1) : raw;
-  const num = parseFloat(inner.replace(/,/g, '')) || 0;
-  return negative ? -num : num;
-}
+// ---------------------------------------------------------------------------
+// API response types — mirror app/api/dashboard/route.ts's exact JSON shape.
+// `chart`/`chart30` are typed directly as WaveTrendDataPoint (not a stricter
+// shape re-declared here) so they can be handed straight to WaveTrendChart
+// with no assignability friction against its own `{date:string} &
+// Record<string, number>` prop type.
+// ---------------------------------------------------------------------------
 
-function fmt(num: number): string {
-  return Math.abs(num).toLocaleString('en-PH', {
-    minimumFractionDigits: 2,
-    maximumFractionDigits: 2,
-  });
-}
-
-function fmtAbbrev(num: number): string {
-  const abs = Math.abs(num);
-  if (abs >= 1e9) return `${(abs / 1e9).toFixed(2)}B`;
-  if (abs >= 1e6) return `${(abs / 1e6).toFixed(2)}M`;
-  if (abs >= 1e3) return `${(abs / 1e3).toFixed(2)}K`;
-  return abs.toFixed(2);
-}
-
-// Drops a trailing ".00" (e.g. "20.00M" -> "20M") — only used for the Today
-// strip's quota figure, not fmtAbbrev's other call sites on this page.
-function fmtAbbrevTrimmed(num: number): string {
-  return fmtAbbrev(num).replace(/\.00(?=[A-Z]|$)/, '');
-}
-
-// 1 decimal below 100 (e.g. "99.7%"), clamped to a flat "100%" only once the
-// quota is actually met or exceeded — never rounds up to "100%" early.
-function fmtQuotaPct(pct: number): string {
-  if (pct >= 100) return '100%';
-  return `${pct.toFixed(1)}%`;
-}
-
-const WALLET_ORDER = ['BKASH', 'NAGAD', 'ROCKET', 'UPAY'];
-const WALLET_DISPLAY_NAMES: Record<string, string> = {
-  BKASH: 'Bkash',
-  NAGAD: 'Nagad',
-  ROCKET: 'Rocket',
-  UPAY: 'UPay',
-};
-// Filenames match the actual case on disk — the VPS deploy target is Linux,
-// where paths are case-sensitive, so this must match exactly (not the
-// lowercase convention used in the rest of this file).
-const WALLET_LOGOS: Record<string, string> = {
-  BKASH: '/wallets/Bkash.png',
-  NAGAD: '/wallets/Nagad.png',
-  ROCKET: '/wallets/Rocket.png',
-  UPAY: '/wallets/Upay.png',
-};
-// Brand-adjacent colors for the circle+initial fallback, used if a logo file
-// is missing or fails to load.
-const WALLET_COLORS: Record<string, string> = {
-  BKASH: '#E2136E',
-  NAGAD: '#F5821F',
-  ROCKET: '#8C3494',
-  UPAY: '#3EB549',
+type ApiWalletLedgerRow = {
+  name: string;
+  dp: number;
+  wd: number;
+  mid: number | null;
+  settlement: number | null;
+  actual: number;
+  running: number;
+  change: number;
 };
 
-function WalletLogo({ wallet, muted }: { wallet: string; muted?: boolean }) {
-  const [imgError, setImgError] = useState(false);
-  const src = WALLET_LOGOS[wallet];
+type ApiOverviewWallet = { name: string; total: number; change: number; actual: number };
+type ApiTodayWallet = { name: string; value: number; quota?: number };
 
-  if (!src || imgError) {
-    return (
-      <div
-        className={`flex h-5 w-5 shrink-0 items-center justify-center rounded-md text-[9px] font-bold text-white ${muted ? 'grayscale opacity-50' : ''}`}
-        style={{ backgroundColor: WALLET_COLORS[wallet] ?? '#94a3b8' }}
-      >
-        {wallet.charAt(0)}
-      </div>
-    );
-  }
-
-  return (
-    <div className={`relative h-5 w-5 shrink-0 overflow-hidden rounded-md ${muted ? 'grayscale opacity-50' : ''}`}>
-      <Image
-        src={src}
-        alt={WALLET_DISPLAY_NAMES[wallet] ?? wallet}
-        fill
-        sizes="20px"
-        className="object-contain"
-        onError={() => setImgError(true)}
-      />
-    </div>
-  );
-}
-
-type WalletFlow = {
-  wallet: string;
-  totalDP: number;
-  totalWD: number;
-  bdTransferIn: number;
-  stlmOut: number;
-  actualBal: number;
-  runningBal: number;
-  opening: number;
-};
-
-// "Dashboard Overview" sheet block, per row: Wallet, Total DP, Total WD(/PayOut),
-// BD-Transfer IN, STLM & BD Transfer Out, Balance Inside Wallet, Running Bal.,
-// Opening Balance. BD-Transfer IN and STLM & BD Transfer Out are each already
-// signed correctly in the raw sheet (IN positive, OUT negative) — confirmed by
-// reconciling opening + totalDP - totalWD + bdTransferIn + stlmOut against the
-// sheet's own Running Bal. column on real data, which matched exactly.
-function parseSheetBlock(text: string): WalletFlow[] {
-  const lines = text.trim().split('\n').slice(1);
-  return lines
-    .filter((line) => line.trim() !== '')
-    .map((line) => {
-      const cols = line.split(',');
-      return {
-        wallet: (cols[0] ?? '').replace(/"/g, '').trim(),
-        totalDP: clean(cols[1]),
-        totalWD: clean(cols[2]),
-        bdTransferIn: clean(cols[3]),
-        stlmOut: clean(cols[4]),
-        actualBal: clean(cols[5]),
-        runningBal: clean(cols[6]),
-        opening: clean(cols[7]),
-      };
-    });
-}
-
-const MONTH_NAMES = [
-  'january', 'february', 'march', 'april', 'may', 'june',
-  'july', 'august', 'september', 'october', 'november', 'december',
-];
-
-// "CashGo" sheet dates are formatted "June 1" (no year) — same parsing as
-// app/page.tsx's CashGo Trend, this page's Today strip source for CashOut.
-// Built via manilaMidnight, not a native `new Date(year, month, day)` —
-// that constructor is anchored to the RUNTIME's own local timezone, which
-// is Asia/Manila for a staff member's own browser but NOT for the
-// Telegram screenshot bot's headless Chromium (defaults to UTC on the
-// VPS) — confirmed as the actual cause of the Telegram capture showing
-// "yesterday" as Today: with a UTC-anchored construction, "July 18"
-// resolved to a different absolute instant than getBusinessToday()'s own
-// Manila-anchored "today", so the exact-day match silently missed and fell
-// through to matching "July 17" instead.
-function parseCashGoDate(raw: string): Date | null {
-  const match = raw.trim().match(/^([A-Za-z]+)\s+(\d{1,2})$/);
-  if (!match) return null;
-  const monthIndex = MONTH_NAMES.indexOf(match[1].toLowerCase());
-  if (monthIndex === -1) return null;
-  const day = parseInt(match[2], 10);
-  const { year } = manilaFields(new Date());
-  return manilaMidnight(year, monthIndex, day);
-}
-
-// /api/cashgo cols: [1]=date ("June 1"), [2]=Bkash quota, [3]=Nagad quota,
-// [4]=Bkash processed, [5]=Nagad processed.
-//
-// `rangeStart` lets the caller widen this from "today only" to "rangeStart
-// through today" — used when Opening hasn't refreshed yet AND no valid
-// Estimated Balance covers the gap (see fetchData's own cashoutLiveCutoff),
-// so the CashGo Today strip keeps accumulating from the stale day forward
-// instead of resetting to 0 every time the calendar rolls over. Quota is
-// summed right along with processed, so the ratio stays meaningful across
-// more than one day. Matched via getTime(), not toDateString() — the
-// latter renders using the RUNTIME's own local timezone even when the
-// underlying Date is already Manila-anchored (confirmed: this alone still
-// broke under the Telegram screenshot bot's UTC-default headless Chromium,
-// rendering a Manila-midnight instant as the previous day's date string).
-// rangeStart and `now` collapse to one entry when equal, so today-only
-// behavior is unchanged.
-function parseTodayCashGo(text: string, rangeStart: Date): { bk: number; ng: number; quotaBk: number; quotaNg: number } {
-  const now = getBusinessToday();
-  const validTimes = new Set([now.getTime(), rangeStart.getTime()]);
-  const totals = { bk: 0, ng: 0, quotaBk: 0, quotaNg: 0 };
-  const lines = text.trim().split('\n').slice(1);
-  for (const line of lines) {
-    if (!line.trim()) continue;
-    const cols = line.split(',');
-    const date = parseCashGoDate((cols[1] ?? '').replace(/"/g, '').trim());
-    if (date && validTimes.has(date.getTime())) {
-      totals.bk += clean(cols[4]);
-      totals.ng += clean(cols[5]);
-      totals.quotaBk += clean(cols[2]);
-      totals.quotaNg += clean(cols[3]);
-    }
-  }
-  return totals;
-}
-
-// "AG BD STLM + TOPUP" / "PS BD STLM + TOPUP" dates are "M/D/YYYY" — same
-// parsing as app/sendmoney/page.tsx's Bundle Transfer Trend. Built via
-// manilaMidnight, not a native `new Date(y, m, d)` — see parseCashGoDate's
-// own comment on why (runtime-local-timezone-anchored construction breaks
-// under the Telegram screenshot bot's UTC-default headless Chromium).
-function parseSlashDate(raw: string): Date | null {
-  const parts = (raw ?? '').trim().split('/');
-  if (parts.length !== 3) return null;
-  const [m, d, y] = parts.map(Number);
-  if (!m || !d || !y) return null;
-  return manilaMidnight(y, m - 1, d);
-}
-
-// Phase 10 — "YYYY-MM-DD" for the new /api/v2/ssp-line1 route's `cutoff`
-// query param. Reads back via manilaFields() (not .toISOString().slice(0,10),
-// which round-trips through UTC and can shift a Manila-midnight instant
-// back a calendar day) — round-trip safe since cashoutLiveCutoff/
-// sendMoneyLiveCutoff are themselves always built via manilaMidnight().
-function formatCutoffDateKey(date: Date): string {
-  const { year, month, day } = manilaFields(date);
-  return `${year}-${String(month + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
-}
-
-// /api/sendmoney/stlmtopup cols H-L (idx 7-11) hold this month's Settlement
-// rows; cols W-AA (idx 22-26) hold last month's archive, same field order
-// shifted +15 — both are unioned same as the Bundle Transfer Trend chart.
-// Amounts are stored negative; displayed as abs().
-//
-// `rangeStart` — same widening as parseTodayCashGo's own (see its comment):
-// "rangeStart through today" instead of "today only" when Opening is stale
-// and no valid Estimated Balance covers the gap yet. Matched via getTime(),
-// not toDateString() — see parseTodayCashGo's own comment on why.
-function parseTodayBundle(text: string, rangeStart: Date): { nagad: number; rocket: number; upay: number } {
-  const now = getBusinessToday();
-  const validTimes = new Set([now.getTime(), rangeStart.getTime()]);
-  const totals = { nagad: 0, rocket: 0, upay: 0 };
-  const addRow = (nameRaw: string, amountRaw: string, dateRaw: string, walletRaw: string, typeRaw: string) => {
-    const type = (typeRaw ?? '').replace(/"/g, '').trim().toUpperCase();
-    if (type !== 'BUNDLE TRANSFER') return;
-    const name = (nameRaw ?? '').replace(/"/g, '').trim();
-    if (!name || name === '-') return;
-    const amount = Math.abs(clean(amountRaw));
-    if (!amount) return;
-    const date = parseSlashDate((dateRaw ?? '').replace(/"/g, '').trim());
-    if (!date || !validTimes.has(date.getTime())) return;
-    const wallet = (walletRaw ?? '').replace(/"/g, '').trim().toUpperCase();
-    if (wallet === 'NAGAD') totals.nagad += amount;
-    else if (wallet === 'ROCKET') totals.rocket += amount;
-    else if (wallet === 'UPAY') totals.upay += amount;
-  };
-
-  text.trim().split('\n').slice(1).forEach((line) => {
-    if (!line.trim()) return;
-    const cols = line.split(',');
-    addRow(cols[7], cols[8], cols[9], cols[10], cols[11]);
-    addRow(cols[22], cols[23], cols[24], cols[25], cols[26]);
-  });
-
-  return totals;
-}
-
-// "Opening AG" sheet col G — Cashout's own "REPORT LAST UPDATE" card, e.g.
-// "July 14 - 8:45 AM". Used only to detect whether Opening AG has been
-// manually refreshed for today yet (Estimated Opening validity check) —
-// NOT for Top Up/Settlement gating, which is purely clock-based (see
-// computeCashoutTopUpStlm/computeSendMoneyTopUpStlm below).
-function parseCashoutReportCutoffDate(text: string): Date | null {
-  const lines = text.trim().split('\n');
-  for (const line of lines) {
-    const cols = line.split(',');
-    const cell = (cols[6] ?? '').replace(/"/g, '').trim();
-    const parsed = parseCardCutoffDate(cell);
-    if (parsed) return parsed;
-  }
-  return null;
-}
-
-// "Opening AG" sheet col I — Send Money's own "UPDATED TIME" card, side by
-// side with Cashout's own card in col G above (confirmed by the user, not
-// shared). Same validity-check purpose as parseCashoutReportCutoffDate.
-function parseSendMoneyReportCutoffDate(text: string): Date | null {
-  const lines = text.trim().split('\n');
-  for (const line of lines) {
-    const cols = line.split(',');
-    const cell = (cols[8] ?? '').replace(/"/g, '').trim();
-    const parsed = parseCardCutoffDate(cell);
-    if (parsed) return parsed;
-  }
-  return null;
-}
-
-// The "Dashboard Overview" sheet's own BD-Transfer IN / STLM columns are
-// always seeded at 0 (never manually updated) — Cashout/Send Money's own
-// Overview pages don't trust them either, patching in live totals from "AG/PS
-// BD STLM + TOPUP" instead. Mirrors app/page.tsx's exact same computation
-// (Top Up cols B-F idx 1-5 positive; Settlement cols H-L idx 7-11 stored
-// negative, abs()'d for magnitude then re-signed negative for display) so
-// this total matches Cashout Overview's own Wallet Summary Total row.
-function computeCashoutTopUpStlm(text: string, cutoff: Date | null): { topUp: number; stlm: number } {
-  let topUp = 0;
-  let stlm = 0;
-  text.trim().split('\n').slice(1).forEach((line) => {
-    if (!line.trim()) return;
-    const cols = line.split(',');
-    const topUpAgent = (cols[1] ?? '').replace(/"/g, '').trim();
-    const topUpAmount = clean(cols[2]);
-    const topUpDate = cutoff ? parseSlashDate((cols[3] ?? '').replace(/"/g, '').trim()) : null;
-    if (topUpAgent && topUpAgent !== '-' && topUpAmount && (!cutoff || (topUpDate && topUpDate >= cutoff))) {
-      topUp += topUpAmount;
-    }
-    const stlmAgent = (cols[7] ?? '').replace(/"/g, '').trim();
-    const stlmAmount = Math.abs(clean(cols[8]));
-    const stlmDate = cutoff ? parseSlashDate((cols[9] ?? '').replace(/"/g, '').trim()) : null;
-    if (stlmAgent && stlmAgent !== '-' && stlmAmount && (!cutoff || (stlmDate && stlmDate >= cutoff))) {
-      stlm += stlmAmount;
-    }
-  });
-  return { topUp, stlm: -stlm };
-}
-
-// Same source/cutoff as computeCashoutTopUpStlm, but grouped by wallet type
-// (Bkash/Nagad/Rocket/Upay — col[4] for Top Up, col[10] for Settlement, same
-// column layout app/page.tsx's own Wallet Summary table already uses)
-// instead of summed into one grand total — feeds Balance Overview's Wallet
-// Breakdown Assumed Running Balance.
-function computeCashoutWalletTopUpStlm(text: string, cutoff: Date | null): Map<string, { topUp: number; stlm: number }> {
-  const totals = new Map<string, { topUp: number; stlm: number }>();
-  const add = (wallet: string, key: 'topUp' | 'stlm', amount: number) => {
-    const existing = totals.get(wallet) ?? { topUp: 0, stlm: 0 };
-    existing[key] += amount;
-    totals.set(wallet, existing);
-  };
-
-  text.trim().split('\n').slice(1).forEach((line) => {
-    if (!line.trim()) return;
-    const cols = line.split(',');
-    const topUpAgent = (cols[1] ?? '').replace(/"/g, '').trim();
-    const topUpAmount = clean(cols[2]);
-    const topUpDate = cutoff ? parseSlashDate((cols[3] ?? '').replace(/"/g, '').trim()) : null;
-    const topUpWallet = (cols[4] ?? '').replace(/"/g, '').trim().toUpperCase();
-    if (topUpAgent && topUpAgent !== '-' && topUpAmount && topUpWallet && (!cutoff || (topUpDate && topUpDate >= cutoff))) {
-      add(topUpWallet, 'topUp', topUpAmount);
-    }
-    const stlmAgent = (cols[7] ?? '').replace(/"/g, '').trim();
-    const stlmAmount = Math.abs(clean(cols[8]));
-    const stlmDate = cutoff ? parseSlashDate((cols[9] ?? '').replace(/"/g, '').trim()) : null;
-    const stlmWallet = (cols[10] ?? '').replace(/"/g, '').trim().toUpperCase();
-    if (stlmAgent && stlmAgent !== '-' && stlmAmount && stlmWallet && (!cutoff || (stlmDate && stlmDate >= cutoff))) {
-      add(stlmWallet, 'stlm', stlmAmount);
-    }
-  });
-
-  return totals;
-}
-
-// Mirrors app/sendmoney/page.tsx's own wallet-type patch — Settlement's raw
-// sign is negative in the sheet, so it's abs()'d for magnitude then
-// re-signed negative at the end, same convention as Cashout and Send
-// Money's own /balances page (a missing abs() here previously double-
-// negated Settlement to a wrong positive sign; fixed in both places).
-function computeSendMoneyTopUpStlm(text: string, cutoff: Date | null): { topUp: number; stlm: number } {
-  let topUp = 0;
-  let stlm = 0;
-  text.trim().split('\n').slice(1).forEach((line) => {
-    if (!line.trim()) return;
-    const cols = line.split(',');
-    const topUpName = (cols[1] ?? '').replace(/"/g, '').trim();
-    const topUpAmount = clean(cols[2]);
-    const topUpDate = cutoff ? parseSlashDate((cols[3] ?? '').replace(/"/g, '').trim()) : null;
-    if (topUpName && topUpName !== '-' && topUpAmount && (!cutoff || (topUpDate && topUpDate >= cutoff))) {
-      topUp += topUpAmount;
-    }
-    const stlmName = (cols[7] ?? '').replace(/"/g, '').trim();
-    const stlmAmount = Math.abs(clean(cols[8]));
-    const stlmDate = cutoff ? parseSlashDate((cols[9] ?? '').replace(/"/g, '').trim()) : null;
-    if (stlmName && stlmName !== '-' && stlmAmount && (!cutoff || (stlmDate && stlmDate >= cutoff))) {
-      stlm += stlmAmount;
-    }
-  });
-  return { topUp, stlm: -stlm };
-}
-
-// Same source/cutoff/column layout as computeSendMoneyTopUpStlm, but grouped
-// by wallet type (col[4] for Top Up, col[10] for Settlement — identical
-// column positions to computeCashoutWalletTopUpStlm's own agstlm sheet, only
-// the Type labels are swapped between the two products) instead of summed
-// into one grand total — feeds Send Money's own Wallet Breakdown Assumed
-// Running Balance.
-function computeSendMoneyWalletTopUpStlm(text: string, cutoff: Date | null): Map<string, { topUp: number; stlm: number }> {
-  const totals = new Map<string, { topUp: number; stlm: number }>();
-  const add = (wallet: string, key: 'topUp' | 'stlm', amount: number) => {
-    const existing = totals.get(wallet) ?? { topUp: 0, stlm: 0 };
-    existing[key] += amount;
-    totals.set(wallet, existing);
-  };
-
-  text.trim().split('\n').slice(1).forEach((line) => {
-    if (!line.trim()) return;
-    const cols = line.split(',');
-    const topUpAgent = (cols[1] ?? '').replace(/"/g, '').trim();
-    const topUpAmount = clean(cols[2]);
-    const topUpDate = cutoff ? parseSlashDate((cols[3] ?? '').replace(/"/g, '').trim()) : null;
-    const topUpWallet = (cols[4] ?? '').replace(/"/g, '').trim().toUpperCase();
-    if (topUpAgent && topUpAgent !== '-' && topUpAmount && topUpWallet && (!cutoff || (topUpDate && topUpDate >= cutoff))) {
-      add(topUpWallet, 'topUp', topUpAmount);
-    }
-    const stlmAgent = (cols[7] ?? '').replace(/"/g, '').trim();
-    const stlmAmount = Math.abs(clean(cols[8]));
-    const stlmDate = cutoff ? parseSlashDate((cols[9] ?? '').replace(/"/g, '').trim()) : null;
-    const stlmWallet = (cols[10] ?? '').replace(/"/g, '').trim().toUpperCase();
-    if (stlmAgent && stlmAgent !== '-' && stlmAmount && stlmWallet && (!cutoff || (stlmDate && stlmDate >= cutoff))) {
-      add(stlmWallet, 'stlm', stlmAmount);
-    }
-  });
-
-  return totals;
-}
-
-type SspLine1Row = {
-  brand: string;
+type ApiOverview = {
   opening: number;
   deposit: number;
   withdrawal: number;
-  topUp: number;
+  topup: number;
   settlement: number;
-  total: number;
+  ending: number;
+  endingChange: number;
+  progressValue: number;
+  progressQuota?: number;
+  // "Today" in the normal case; the actual stale business day (e.g. "Sep
+  // 15") whenever the server's cutoff-widening is active, so the strip
+  // never claims a carried-forward figure is from today.
+  progressLabel: string;
+  todayWallets: ApiTodayWallet[];
+  wallets: ApiOverviewWallet[];
+  // Balance Limit's own last-upload timestamp (ISO string) — Ending
+  // Balance above is the same Company Balance figure the Balance page
+  // shows, driven by this same upload. null if Balance Limit has never
+  // been uploaded for this product yet.
+  lastUpdate: string | null;
 };
 
-// "Brand Balance!B3:G13": row 0 is the header (Brand, Opening Balance,
-// Deposit, Withdrawal, Adjustment, Total), rows 1-10 are one row per brand
-// (M1/M2/K1/B1-B5/T1/J1) — no footer row. Column D (Adjustment, index 4) is
-// intentionally not read — replaced by live per-brand Top Up/Settlement,
-// now PostgreSQL-backed (see getSspLine1TopUpSettlement), merged in by the
-// caller. Opening/Deposit/Withdrawal/Total still parsed here but render
-// blank (see BLANK_SSP_LINE1_KEYS below).
-function parseSspLine1(text: string): Omit<SspLine1Row, 'topUp' | 'settlement'>[] {
-  const toRow = (cols: string[]): Omit<SspLine1Row, 'topUp' | 'settlement'> => ({
-    brand: (cols[0] ?? '').replace(/"/g, '').trim(),
-    opening: cleanSigned(cols[1]),
-    deposit: cleanSigned(cols[2]),
-    withdrawal: cleanSigned(cols[3]),
-    total: cleanSigned(cols[5]),
-  });
+type ApiProduct = {
+  dep: number;
+  wd: number;
+  actual: number;
+  running: number;
+  changeVsOpening: number;
+  chart: WaveTrendDataPoint[];
+  chart30: WaveTrendDataPoint[];
+  openingTrend: { date: string; value: number }[];
+  wallets: ApiWalletLedgerRow[];
+  overview: ApiOverview;
+};
 
-  return text.trim().split('\n').slice(1)
-    .filter((line) => line.trim() !== '')
-    .map((line) => toRow(line.split(',')));
-}
+type ApiTopPerformer = { wallet: string; gain: number; actualBal: number };
+type ApiAgent = { agentName: string; opening: number; runningBalance: number; totalDP: number; balanceInside: number };
 
-type BrandCashRow = {
+type ApiBrandBalance = {
+  brand: string;
+  topUp: number;
+  settlement: number;
+  staticOpening: number;
+  staticDeposit: number;
+  staticWithdrawal: number;
+  staticTotal: number;
+};
+
+type ApiCashInHand = {
   brand: string;
   sspAg: number;
   sspPs: number;
   ess: number;
   autopay: number;
+  autopaySupported: boolean;
   expay: number;
   totalBrandCIH: number;
 };
 
-// "Brand Balance!B28:H40": row 0 is the header, the last row is the
-// "Total PG CIH" column-totals footer, everything between is one row per brand.
-function parseBrandCashInhand(text: string): { rows: BrandCashRow[]; total: BrandCashRow | null } {
-  const toRow = (cols: string[]): BrandCashRow => ({
-    brand: (cols[0] ?? '').replace(/"/g, '').trim(),
-    sspAg: cleanSigned(cols[1]),
-    sspPs: cleanSigned(cols[2]),
-    ess: cleanSigned(cols[3]),
-    autopay: cleanSigned(cols[4]),
-    expay: cleanSigned(cols[5]),
-    totalBrandCIH: cleanSigned(cols[6]),
-  });
-
-  const parsed = text.trim().split('\n').slice(1)
-    .filter((line) => line.trim() !== '')
-    .map((line) => toRow(line.split(',')));
-
-  const totalIndex = parsed.findIndex((r) => r.brand.toUpperCase() === 'TOTAL PG CIH');
-  if (totalIndex === -1) return { rows: parsed, total: null };
-  return { rows: parsed.filter((_, i) => i !== totalIndex), total: parsed[totalIndex] };
-}
-
-type CardWallet = {
-  wallet: string;
-  runningBal: number;
-  actualBal: number;
-  delta: number;
-  comingSoon?: boolean;
+type DashboardData = {
+  cashout: ApiProduct;
+  sendmoney: ApiProduct;
+  topPerformers: { cashout: ApiTopPerformer[]; sendmoney: ApiTopPerformer[] };
+  agents: { cashout: ApiAgent[]; sendmoney: ApiAgent[] };
+  brandBalance: { cashout: ApiBrandBalance[]; sendmoney: ApiBrandBalance[] };
+  cashInHand: { rows: ApiCashInHand[]; total: ApiCashInHand | null };
 };
 
-type TodayWallet = {
-  key: string;
-  label: string;
-  value: number;
-  // Per-wallet quota (CashGo only) — when present, the wallet chip shows
-  // "value/quota" instead of a bare value. Bundle Transfer has no quota
-  // concept, so it's left undefined there.
-  quota?: number;
-};
+type Product = 'cashout' | 'sendmoney';
 
-type TodayQuota = {
-  processed: number;
-  total: number;
-};
-
-type CardData = {
-  productLabel: string;
-  product: 'cashout' | 'sendmoney';
-  opening: number;
-  deposit: number;
-  withdrawal: number;
-  bdTransferIn: number;
-  stlmOut: number;
-  ending: number;
-  wallets: CardWallet[];
-  todayLabel: string;
-  todayWallets: TodayWallet[];
-  // CashGo-only: today's combined Bkash+Nagad quota vs. processed, as one
-  // overall figure, not per wallet. Bundle Transfer has no quota concept,
-  // so this is null there.
-  todayQuota: TodayQuota | null;
-};
-
-function buildCardData(
-  rows: WalletFlow[],
-  product: 'cashout' | 'sendmoney',
-  productLabel: string,
-  todayLabel: string,
-  todayWallets: TodayWallet[],
-  todayQuota: TodayQuota | null,
-  topUpStlm: { topUp: number; stlm: number },
-  openingOverride?: number,
-  walletRunningBalOverride?: Map<string, number>
-): CardData {
-  const total = rows.find((r) => r.wallet.toUpperCase() === 'TOTAL');
-  // Once the 2AM business-day rollover has happened and a fresh "Estimated
-  // Opening" upload is on file (see app/lib/estimatedOpening.ts), Opening
-  // Balance comes from there instead of the "Dashboard Overview" sheet's own
-  // (not-yet-updated-for-today) seed value.
-  const opening = openingOverride ?? total?.opening ?? 0;
-  // Always the real figures, always included in Ending below — the user
-  // owns keeping this sheet's own Deposit/Withdrawal cells from overlapping
-  // with whatever's baked into an active Estimated Opening upload; the code
-  // doesn't assume or exclude anything here.
-  const deposit = total?.totalDP ?? 0;
-  const withdrawal = total?.totalWD ?? 0;
-  // The sheet's own BD-Transfer IN / STLM columns are always seeded at 0 —
-  // computeCashoutTopUpStlm/computeSendMoneyTopUpStlm above patch in live
-  // totals instead, same as Cashout/Send Money's own Overview pages already
-  // do. Always live, never zeroed — even while the Assumed Balance override
-  // is active: the assumed Opening figure (see app/lib/estimatedOpening.ts's
-  // fetchLiveShopFigures/fetchLiveSendMoneyShopFigures) only bakes in the
-  // single stale calendar day Opening itself is behind on, deliberately
-  // EXCLUDING today's own Top Up/Settlement — those are tracked in exactly
-  // one place, here, live, per explicit instruction.
-  const bdTransferIn = topUpStlm.topUp;
-  const stlmOut = topUpStlm.stlm;
-  // Both already signed (IN positive, OUT negative), so Adjustment's net
-  // effect on Ending Balance is a straight sum, not a subtraction.
-  const ending = opening + deposit - withdrawal + bdTransferIn + stlmOut;
-
-  const wallets: CardWallet[] = WALLET_ORDER.map((key) => {
-    const row = rows.find((r) => r.wallet.toUpperCase() === key);
-    // Same Assumed-Balance override as the card's own Opening Balance above,
-    // applied per wallet (Bkash/Nagad/Rocket/Upay) instead of the aggregate.
-    const runningBal = walletRunningBalOverride?.get(key) ?? row?.runningBal ?? 0;
-    return {
-      wallet: key,
-      runningBal,
-      actualBal: row?.actualBal ?? 0,
-      delta: row ? runningBal - row.opening : 0,
-      comingSoon: product === 'sendmoney' && key === 'BKASH',
-    };
-  });
-
-  return { productLabel, product, opening, deposit, withdrawal, bdTransferIn, stlmOut, ending, wallets, todayLabel, todayWallets, todayQuota };
-}
-
-// Zero is neutral, not a "movement" — no +/- sign, no emerald/rose tint.
-function flowValueDisplay(num: number): { text: string; colorClass: string } {
-  if (Math.abs(num) < 0.005) {
-    return { text: fmt(num), colorClass: 'text-foreground' };
-  }
-  return {
-    text: `${num >= 0 ? '+' : '−'}${fmt(num)}`,
-    colorClass: num >= 0 ? 'text-emerald-600 dark:text-emerald-400' : 'text-rose-600 dark:text-rose-400',
-  };
-}
-
-function FlowRow({ label, value, valueClass, last }: { label: string; value: string; valueClass?: string; last?: boolean }) {
-  return (
-    <div className={`flex items-center justify-between py-2.5 ${last ? '' : 'border-b border-border'}`}>
-      <span className="text-[13px] text-muted-foreground">{label}</span>
-      <span className={`text-[13px] font-medium tabular-nums ${valueClass ?? 'text-foreground'}`}>{value}</span>
-    </div>
-  );
-}
-
-function WalletTile({ wallet }: { wallet: CardWallet }) {
-  const name = WALLET_DISPLAY_NAMES[wallet.wallet] ?? wallet.wallet;
-
-  if (wallet.comingSoon) {
-    return (
-      <div className="rounded-xl border border-border bg-muted/20 px-3 py-2.5 transition-all duration-200 hover:-translate-y-0.5 hover:bg-muted/50 hover:shadow-md">
-        <div className="flex items-center gap-1.5">
-          <WalletLogo wallet={wallet.wallet} muted />
-          <span className="text-[13px] text-muted-foreground">{name}</span>
-        </div>
-        <p className="mt-2 text-[14px] font-medium text-muted-foreground">Coming soon</p>
-      </div>
-    );
-  }
-
-  const up = wallet.delta >= 0;
-  return (
-    <div className="rounded-xl border border-border bg-white px-3 py-2.5 transition-all duration-200 hover:-translate-y-0.5 hover:bg-muted/50 hover:shadow-md dark:bg-[#2a2a2d]">
-      <div className="flex items-center gap-1.5">
-        <WalletLogo wallet={wallet.wallet} />
-        <span className="text-[13px] text-muted-foreground">{name}</span>
-      </div>
-      <p className="mt-1.5 text-[17px] font-bold tabular-nums text-foreground">{fmtAbbrev(wallet.runningBal)}</p>
-      <p className={`mt-0.5 text-[12px] font-medium ${up ? 'text-emerald-600 dark:text-emerald-400' : 'text-rose-500 dark:text-rose-400'}`}>
-        {up ? '▴' : '▾'} {fmtAbbrev(wallet.delta)}
-      </p>
-      <div className="mt-1.5 flex items-center justify-between border-t border-border pt-1.5">
-        <span className="text-[11px] text-muted-foreground">Actual Balance</span>
-        <span className="text-[11px] font-medium tabular-nums text-foreground">{fmtAbbrev(wallet.actualBal)}</span>
-      </div>
-    </div>
-  );
-}
-
-function TodayStrip({ label, wallets, quota }: { label: string; wallets: TodayWallet[]; quota: TodayQuota | null }) {
-  // A wallet stays visible once it has a posted quota, even at zero usage —
-  // only wallets with neither usage nor a quota (e.g. Bundle Transfer, which
-  // has no quota concept) are dropped from the chip row.
-  const active = wallets.filter((w) => w.value > 0 || (w.quota ?? 0) > 0).sort((a, b) => b.value - a.value);
-  const total = active.reduce((sum, w) => sum + w.value, 0);
-  const quotaPct = quota && quota.total > 0 ? (quota.processed / quota.total) * 100 : null;
-
-  return (
-    <div className="rounded-[10px] px-4 py-3" style={{ background: 'var(--product-accent-soft)' }}>
-      <div className="flex items-center justify-between gap-2">
-        <div className="flex min-w-0 items-center gap-2">
-          <div className="flex h-6 w-6 shrink-0 items-center justify-center rounded-md" style={{ background: 'var(--product-accent)' }}>
-            <ArrowLeftRight size={12} className="text-white" />
-          </div>
-          <span className="truncate text-[13px] font-bold text-foreground">{label} · Today</span>
-        </div>
-        <span className="shrink-0 text-[18px] font-medium tabular-nums text-foreground">{fmtAbbrev(total)}</span>
-      </div>
-
-      {(active.length > 0 || quotaPct !== null) && (
-        <>
-          <div className="mt-2.5 h-[6px] w-full overflow-hidden rounded-full border border-foreground/70 bg-muted shadow-[0_0_0_1px_rgba(0,0,0,0.08)]">
-            <div
-              className="h-full rounded-full"
-              style={{ width: quotaPct !== null ? `${Math.min(quotaPct, 100)}%` : '100%', background: 'var(--product-accent)' }}
-            />
-          </div>
-          <div className="mt-2 flex flex-wrap items-center justify-between gap-x-3 gap-y-1">
-            <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
-              {active.map((w) => (
-                <span key={w.key} className="text-[12px] text-muted-foreground">
-                  {w.label}{' '}
-                  <span className={`tabular-nums text-foreground ${w.key === 'ng' ? 'font-bold' : 'font-medium'}`}>
-                    {w.quota ? `${fmtAbbrevTrimmed(w.value)}/${fmtAbbrevTrimmed(w.quota)}` : fmtAbbrev(w.value)}
-                  </span>
-                </span>
-              ))}
-            </div>
-            {quotaPct !== null && (
-              <span className="shrink-0 text-[12px] font-medium tabular-nums text-foreground">
-                {fmtQuotaPct(quotaPct)}
-              </span>
-            )}
-          </div>
-        </>
-      )}
-    </div>
-  );
-}
-
-function BalanceCard({ data }: { data: CardData }) {
-  return (
-    <div data-product={data.product} className="overflow-hidden rounded-2xl border border-border bg-white shadow-sm dark:bg-[#2a2a2d]">
-      <div className="p-5">
-        <h3 className="mb-4 inline-flex items-center gap-1.5 border-b-2 pb-1 text-[15px] font-bold text-foreground" style={{ borderColor: 'var(--product-accent)' }}>
-          {data.product === 'cashout' ? (
-            <Wallet size={14} style={{ color: 'var(--product-accent)' }} />
-          ) : (
-            <Banknote size={14} style={{ color: 'var(--product-accent)' }} />
-          )}
-          {data.productLabel}
-        </h3>
-
-        <div>
-          <FlowRow label="Opening Balance" value={`${data.opening < 0 ? '−' : ''}${fmt(data.opening)}`} />
-          <FlowRow label="Deposit" value={Math.abs(data.deposit) < 0.005 ? fmt(data.deposit) : `+${fmt(data.deposit)}`} valueClass={Math.abs(data.deposit) < 0.005 ? undefined : 'text-emerald-600 dark:text-emerald-400'} />
-          <FlowRow label="Withdrawal" value={Math.abs(data.withdrawal) < 0.005 ? fmt(data.withdrawal) : `−${fmt(data.withdrawal)}`} valueClass={Math.abs(data.withdrawal) < 0.005 ? undefined : 'text-rose-600 dark:text-rose-400'} />
-          <FlowRow label="Top Up" value={flowValueDisplay(data.bdTransferIn).text} valueClass={flowValueDisplay(data.bdTransferIn).colorClass} />
-          <FlowRow label="Settlement" value={flowValueDisplay(data.stlmOut).text} valueClass={flowValueDisplay(data.stlmOut).colorClass} last />
-        </div>
-
-        <div className="mt-3 rounded-[10px] bg-muted/40 px-3.5 py-3">
-          <div className="flex items-center justify-between">
-            <span className="text-[15px] font-medium text-foreground">Ending Balance</span>
-            <span className={`text-[17px] font-bold tabular-nums ${data.ending < 0 ? 'text-rose-600 dark:text-rose-400' : 'text-foreground'}`}>
-              {data.ending < 0 ? '−' : ''}{fmt(data.ending)}
-            </span>
-          </div>
-          <div className={`mt-1 flex items-center justify-end gap-1 text-[12px] font-medium ${data.ending >= data.opening ? 'text-emerald-600 dark:text-emerald-400' : 'text-rose-500 dark:text-rose-400'}`}>
-            <span>{data.ending >= data.opening ? '▲' : '▼'}</span>
-            <span className="tabular-nums">{fmt(data.ending - data.opening)}</span>
-          </div>
-        </div>
-
-        <div className="mt-3">
-          <TodayStrip label={data.todayLabel} wallets={data.todayWallets} quota={data.todayQuota} />
-        </div>
-
-        <div className="mb-3 mt-5 flex items-center gap-3">
-          <div className="h-px flex-1 bg-border" />
-          <span className="shrink-0 text-[12px] font-medium uppercase tracking-[0.12em] text-muted-foreground">Wallet Breakdown</span>
-          <div className="h-px flex-1 bg-border" />
-        </div>
-
-        <div className="grid grid-cols-2 gap-3">
-          {data.wallets.map((wallet) => (
-            <WalletTile key={wallet.wallet} wallet={wallet} />
-          ))}
-        </div>
-      </div>
-    </div>
-  );
-}
-
-// Heights below are measured directly from the real, loaded card via a
-// headless-browser geometry dump (not eyeballed) — see git history for the
-// measurement script. Keep in sync if BalanceCard's structure changes.
-function CardSkeleton() {
-  return (
-    <div className="overflow-hidden rounded-2xl border border-border bg-white shadow-sm dark:bg-[#2a2a2d]">
-      <div className="p-5">
-        <div className="mb-4 h-[28px] w-32 animate-pulse rounded-md bg-slate-200 dark:bg-slate-700" />
-        <div>
-          {Array.from({ length: 5 }).map((_, i) => (
-            <div key={i} className={`flex items-center justify-between py-2.5 ${i < 4 ? 'border-b border-border' : ''}`}>
-              <div className="h-[20px] w-20 animate-pulse rounded-md bg-slate-200 dark:bg-slate-700" />
-              <div className="h-[20px] w-16 animate-pulse rounded-md bg-slate-200 dark:bg-slate-700" />
-            </div>
-          ))}
-        </div>
-        <div className="mt-3 h-[71px] animate-pulse rounded-[10px] bg-slate-100 dark:bg-slate-800" />
-        <div className="mt-3 h-[93px] animate-pulse rounded-[10px] bg-slate-100 dark:bg-slate-800" />
-        <div className="mb-3 mt-5 flex items-center gap-3">
-          <div className="h-px flex-1 bg-border" />
-          <div className="h-[18px] w-28 shrink-0 animate-pulse rounded-md bg-slate-200 dark:bg-slate-700" />
-          <div className="h-px flex-1 bg-border" />
-        </div>
-        <div className="grid grid-cols-2 gap-3">
-          {Array.from({ length: 4 }).map((_, i) => (
-            <div key={i} className="h-[123px] animate-pulse rounded-xl bg-slate-100 dark:bg-slate-800" />
-          ))}
-        </div>
-      </div>
-    </div>
-  );
-}
-
-const BRAND_CASH_COLUMNS: { key: keyof Omit<BrandCashRow, 'brand'>; label: string }[] = [
-  { key: 'sspAg', label: 'CashOut' },
-  { key: 'sspPs', label: 'SendMoney' },
-  { key: 'ess', label: 'ESS' },
-  { key: 'autopay', label: 'Autopay' },
-  { key: 'expay', label: 'Expay' },
-  { key: 'totalBrandCIH', label: 'Total CIH' },
+// Module-level constants — WaveTrendChart's own internal useEffect depends on
+// referential stability of the `series`/`tooltipSeries` props, so these must
+// not be recreated as inline literals on every render. The chart LINE itself
+// collapses to a single combined "Total" (colored with Bkash's blue for both
+// products, per explicit design request); the hover TOOLTIP still breaks the
+// day down by wallet, reading the original per-wallet fields withTotal below
+// preserves alongside the added `total`.
+const CASHOUT_TREND_SERIES: WaveTrendSeriesDef[] = [{ key: 'total', label: 'Total', colorVar: '--bkash' }];
+const SENDMONEY_TREND_SERIES: WaveTrendSeriesDef[] = [{ key: 'total', label: 'Total', colorVar: '--bkash' }];
+const CASHOUT_WALLET_SERIES: WaveTrendSeriesDef[] = [
+  { key: 'bkash', label: 'Bkash', colorVar: '--bkash' },
+  { key: 'nagad', label: 'Nagad', colorVar: '--nagad' },
+];
+const SENDMONEY_WALLET_SERIES: WaveTrendSeriesDef[] = [
+  { key: 'nagad', label: 'Nagad', colorVar: '--pos' },
+  { key: 'rocket', label: 'Rocket', colorVar: '--nagad' },
+  { key: 'upay', label: 'Upay', colorVar: '--upay' },
 ];
 
-// These brands don't support Autopay as a payment gateway at all — the
-// sheet shows 0 for them, but that reads as a real zero balance rather than
-// "not applicable", so the Autopay column overrides to an explicit label
-// for just these rows. The footer's Autopay total is unaffected (it's a
-// genuine sum across the brands that do support it).
-const AUTOPAY_UNSUPPORTED_BRANDS = ['B3', 'B4', 'B5', 'J1', 'T1'];
+// Adds a `total` field (sum of whatever wallet keys are present) to each
+// point alongside its original per-wallet fields — the combined line reads
+// `total`; the tooltip's per-wallet breakdown still reads the originals.
+function withTotal(points: WaveTrendDataPoint[]): WaveTrendDataPoint[] {
+  return points.map(
+    (p) =>
+      ({
+        ...p,
+        total: Object.keys(p).reduce((sum, k) => (k === 'date' ? sum : sum + (p[k] || 0)), 0),
+      }) as unknown as WaveTrendDataPoint
+  );
+}
 
+// ---------------------------------------------------------------------------
+// Formatting helpers
+// ---------------------------------------------------------------------------
+
+// Signed, 2-decimal — used wherever a real +/- sign should show through
+// naturally (no manual prefix), the "neutral unless negative" convention
+// this whole redesign uses instead of the old per-column green/red coloring.
+function fmt2(num: number): string {
+  return num.toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+}
+
+// Absolute-magnitude, 2-decimal — used where the caller adds its own sign or
+// arrow glyph rather than relying on the number's own minus sign.
+function fmt(num: number): string {
+  return Math.abs(num).toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+}
+
+// Millions, 2-decimal, absolute magnitude — matches every other "M" value on
+// this page (WalletBreakdownTile, TodayHighlight, QuotaRow all use
+// `.toFixed(2)`), used for the hero-row (Net Position/Total Deposit/Total
+// Withdrawal) ported from dashboard-demo.html's own fmtM().
+function fmtM(num: number): string {
+  return (Math.abs(num) / 1_000_000).toFixed(2);
+}
+
+// Plain unless genuinely negative (rose) — null/undefined renders a muted
+// dash. Used for the 5-metric grid and the Wallet Summary ledger's Top
+// Up/Bundle & Settlement cells (both already come back `null` from the API
+// when zero, not synthesized here).
+function neutralDisplay(value: number | null | undefined): { text: string; className: string } {
+  if (value === null || value === undefined) {
+    return { text: '−', className: 'text-muted-foreground' };
+  }
+  return { text: fmt2(value), className: value < 0 ? 'text-[color:var(--dd-neg)]' : 'text-foreground' };
+}
+
+// Same as neutralDisplay, but the magnitude only — no "-" sign, red color
+// still applies for negatives. Today's Insights' own Opening/Deposit/
+// Withdrawal/Top Up/Settlement metric boxes only, not the Wallet Summary
+// table's equivalent columns (those keep neutralDisplay's own signed text).
+function neutralDisplayRounded(value: number | null | undefined): { text: string; className: string } {
+  if (value === null || value === undefined) {
+    return { text: '−', className: 'text-muted-foreground' };
+  }
+  return { text: fmt(value), className: value < 0 ? 'text-[color:var(--dd-neg)]' : 'text-foreground' };
+}
+
+// Zero also renders a muted dash (not "0.00") — used for Running Balance by
+// Brand / Cash In Hand, matching this codebase's pre-existing convention for
+// those two specific tables (ported verbatim from the old page's own
+// cihValueDisplay).
 function cihValueDisplay(value: number): { text: string; className: string } {
   const zero = Math.abs(value) < 0.005;
   const negative = value < 0;
   return {
     text: zero ? '−' : `${negative ? '−' : ''}${fmt(value)}`,
-    className: zero ? 'text-muted-foreground' : negative ? 'text-rose-600 dark:text-rose-400' : 'text-foreground',
+    className: zero ? 'text-muted-foreground' : negative ? 'text-[color:var(--dd-neg)]' : 'text-foreground',
   };
 }
 
-function CihCell({ value, bold }: { value: number; bold?: boolean }) {
-  const display = cihValueDisplay(value);
-  return (
-    <td className={`whitespace-nowrap px-4 py-3 text-center text-[13px] tabular-nums ${bold ? 'font-bold' : 'font-medium'} ${display.className}`}>
-      {display.text}
-    </td>
-  );
+// Universal pulse (app/globals.css's .dt-skeleton) — every skeleton block
+// pulses in sync, no phase offset, per explicit instruction. Callers' own
+// `rounded-*`/sizing classes in `className` are meant to win over the bare
+// default here (matches the real content's own radius per call site) —
+// kept exactly as the existing call sites already rely on.
+function SkeletonBlock({ className }: { className: string }) {
+  return <div className={`dt-skeleton rounded-md ${className}`} />;
 }
 
-function BlankCihCell({ bold }: { bold?: boolean }) {
-  return (
-    <td className={`whitespace-nowrap px-4 py-3 text-center text-[13px] tabular-nums ${bold ? 'font-bold' : 'font-medium'} ${BLANK_CIH_DISPLAY.className}`}>
-      {BLANK_CIH_DISPLAY.text}
-    </td>
-  );
+function SectionLabel({ children }: { children: ReactNode }) {
+  return <h2 className="mb-[10px] mt-[22px] text-[11px] font-semibold uppercase tracking-[0.07em] text-muted-foreground">{children}</h2>;
 }
 
-function NotSupportedCell() {
-  return (
-    <td className="whitespace-nowrap px-4 py-3 text-center text-[13px] font-medium italic text-muted-foreground">
-      Not Supported
-    </td>
-  );
-}
-
-const SSP_LINE1_COLUMNS: { key: keyof Omit<SspLine1Row, 'brand'>; label: string }[] = [
-  { key: 'opening', label: 'Opening Balance' },
-  { key: 'deposit', label: 'Deposit' },
-  { key: 'withdrawal', label: 'Withdrawal' },
-  { key: 'topUp', label: 'Top Up' },
-  { key: 'settlement', label: 'Settlement' },
-  { key: 'total', label: 'Total' },
-];
-
-// Phase 10 — Opening/Deposit/Withdrawal/Total have no live upload system yet
-// ("I will create a dedicated tab/upload system for those later"), so their
-// cells render blank here. This is a DISPLAY-only blank: the underlying
-// parseSspLine1(sspLine1Text) values these rows carry (including `total`)
-// are left fully intact, because Brand Cash In Hand further down this page
-// deliberately reuses that same `total` as its own single source of truth.
-// Only Top Up/Settlement (now Postgres-backed, brand-attributed) render live.
-const BLANK_SSP_LINE1_KEYS = new Set<keyof Omit<SspLine1Row, 'brand'>>(['opening', 'deposit', 'withdrawal', 'total']);
-const BLANK_CIH_DISPLAY = { text: '−', className: 'text-muted-foreground' };
-
-// Same container/table/mobile-card format as BrandCashInhandSection below —
-// this section just ships first, per explicit instruction ("mauuna muna to
-// bago yung Brand Balance"). No footer row (unlike Brand Cash Inhand's
-// "Total PG CIH" row) since the confirmed sheet range (B3:G13) has none.
-type SspLine1SortKey = keyof SspLine1Row;
-
-// Chevron pair when idle, single filled chevron when this column is the
-// active sort — same visual convention as the sort arrows used elsewhere in
-// the app (e.g. app/agentbal/page.tsx's own SortIcon).
-function SspLine1SortIcon({ active, direction }: { active: boolean; direction: 'asc' | 'desc' }) {
+function SortIcon({ active, direction }: { active: boolean; direction: 'asc' | 'desc' }) {
   if (!active) {
     return (
       <span className="flex flex-col items-center justify-center leading-none text-slate-400 opacity-40">
@@ -869,26 +240,867 @@ function SspLine1SortIcon({ active, direction }: { active: boolean; direction: '
   );
 }
 
-function SspLine1Section({
+function xlsxTimestampedFilename(prefix: string): string {
+  const now = new Date();
+  const datePart = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
+  const timePart = `${String(now.getHours()).padStart(2, '0')}${String(now.getMinutes()).padStart(2, '0')}`;
+  return `${prefix}_${datePart}_${timePart}.xlsx`;
+}
+
+// ---------------------------------------------------------------------------
+// Today's Insights cards (section 2)
+// ---------------------------------------------------------------------------
+
+// Nagad/Rocket/Upay/Bkash chip-dot colors — deliberately self-contained here
+// rather than reused from WaveTrendChart's own --bkash/--nagad/--upay tokens,
+// since those are scoped to `.wtc-panel` only and not readable outside it.
+const CHIP_DOT_COLORS: Record<string, string> = {
+  Bkash: '#2F6FED',
+  Nagad: '#7C5CE0',
+  Rocket: '#22B8CF',
+  Upay: '#EC8FC0',
+};
+
+function QuotaRow({ wallet }: { wallet: ApiTodayWallet }) {
+  const hasQuota = !!wallet.quota && wallet.quota > 0;
+  if (!hasQuota) {
+    return (
+      <div className="flex items-center gap-2.5 text-[11px]">
+        <span className="w-14 shrink-0 font-semibold text-muted-foreground">{wallet.name}</span>
+        <div className="h-1 flex-1 rounded-full bg-white/50 dark:bg-black/20" />
+        <span className="shrink-0 text-right text-[10.5px] font-semibold text-muted-foreground">No Quota</span>
+      </div>
+    );
+  }
+  const pct = Math.min(Math.round((wallet.value / wallet.quota!) * 100), 100);
+  const remaining = Math.max(wallet.quota! - wallet.value, 0);
+  return (
+    <div className="flex items-center gap-2.5 text-[11px]">
+      <span className="w-14 shrink-0 font-semibold text-muted-foreground">{wallet.name}</span>
+      <div className="h-1 flex-1 overflow-hidden rounded-full bg-white/60 dark:bg-black/20">
+        <div className="h-full rounded-full" style={{ width: `${pct}%`, background: 'var(--ui-accent)' }} />
+      </div>
+      <span
+        className={`shrink-0 text-right text-[10.5px] font-bold tabular-nums ${
+          remaining <= 0 ? 'text-[color:var(--dd-pos)]' : 'text-muted-foreground'
+        }`}
+      >
+        {remaining <= 0 ? 'Quota met' : `${remaining.toFixed(2)}M left`}
+      </span>
+    </div>
+  );
+}
+
+function TodayChip({ wallet }: { wallet: ApiTodayWallet }) {
+  return (
+    <span className="inline-flex items-center gap-1.5 rounded-full border border-[#DEE1E8] dark:border-[#262B38] bg-white px-2.5 py-1 text-[11px] font-semibold text-muted-foreground dark:bg-[#12151D]">
+      <span className="h-1.5 w-1.5 shrink-0 rounded-full" style={{ background: CHIP_DOT_COLORS[wallet.name] ?? 'var(--ui-accent)' }} />
+      {wallet.name} <span className="font-bold tabular-nums text-foreground">{wallet.value.toFixed(2)}M</span>
+    </span>
+  );
+}
+
+// CashGo (Cashout) always has a quota concept (Bkash + Nagad, even when one
+// has no quota that day) so it renders progress rows; Bundle Transfer (Send
+// Money) has no quota concept in the real app at all, so it renders a plain
+// chip list instead — branching on `product`, not on the data shape (a day
+// where every cashout wallet happens to have quota:0 must still render quota
+// rows, not fall back to chips).
+function TodayHighlight({ product, progressValue, progressLabel, todayWallets }: { product: Product; progressValue: number; progressLabel: string; todayWallets: ApiTodayWallet[] }) {
+  const hasActivity = progressValue > 0;
+  const label = product === 'cashout' ? 'CashGo' : 'Bundle Transfer';
+  // "Today" in the normal case, else the actual stale business day the
+  // server carried this figure forward from (see progressLabel's own
+  // comment on ApiOverview) — per explicit instruction, the strip must
+  // never claim a carried-forward figure is from today.
+  const isToday = progressLabel === 'Today';
+
+  if (!hasActivity) {
+    return (
+      // min-h-[100px] pins this to the same height the "has activity"
+      // variant renders at with CashGo's own (always 2-row) wallet list —
+      // so Send Money's "No Activity" state doesn't leave Wallet Breakdown
+      // below it sitting at a different row than Cashout's side.
+      <div
+        className="flex min-h-[100px] flex-col items-center justify-center gap-1.5 rounded-[10px] px-[14px] py-3 text-center"
+        style={{ background: 'var(--ui-accent-soft)' }}
+      >
+        <span className="text-[11.5px] font-normal text-foreground">
+          {label} &middot; <span className="font-bold" style={{ color: 'var(--ui-accent)' }}>{progressLabel}</span>
+        </span>
+        <span className="rounded-full border border-[#DEE1E8] dark:border-[#262B38] bg-white px-2.5 py-1 text-[10px] font-bold uppercase tracking-[0.04em] text-muted-foreground dark:bg-[#12151D]">
+          No Activity
+        </span>
+        <p className="text-[11.5px] text-muted-foreground">
+          No wallet has posted a transaction yet {isToday ? 'today' : `on ${progressLabel}`}.
+        </p>
+      </div>
+    );
+  }
+
+  return (
+    <div className="rounded-[10px] px-[14px] py-3" style={{ background: 'var(--ui-accent-soft)' }}>
+      <div className="flex items-center justify-between gap-[10px]">
+        <div className="flex min-w-0 items-center gap-2">
+          <span className="truncate text-[11.5px] font-normal text-foreground">
+            {label} &middot; <span className="font-bold" style={{ color: 'var(--ui-accent)' }}>{progressLabel}</span>
+          </span>
+        </div>
+        <span className="shrink-0 text-[16px] font-bold tabular-nums" style={{ color: 'var(--ui-accent)' }}>
+          {progressValue.toFixed(2)}M
+        </span>
+      </div>
+
+      <div className="mt-2.5 border-t border-[#DEE1E8] dark:border-[#262B38] pt-2.5">
+        {product === 'cashout' ? (
+          <div className="flex flex-col gap-[7px]">
+            {todayWallets.map((w) => (
+              <QuotaRow key={w.name} wallet={w} />
+            ))}
+          </div>
+        ) : (
+          <div className="flex flex-wrap items-center gap-2">
+            {todayWallets.map((w) => (
+              <TodayChip key={w.name} wallet={w} />
+            ))}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// Real wallet logos + color-chip fallback — WalletLimitUsedPanel.tsx's own
+// WalletLogo is a local copy of this exact pattern (see its own header
+// comment), matching this codebase's convention of small per-file helpers
+// over a shared component for something this small.
+const WALLET_LOGOS: Record<string, string> = {
+  BKASH: '/wallets/Bkash.png',
+  NAGAD: '/wallets/Nagad.png',
+  ROCKET: '/wallets/Rocket.png',
+  UPAY: '/wallets/Upay-icon.png',
+};
+const WALLET_LOGO_COLORS: Record<string, string> = {
+  BKASH: '#E2136E',
+  NAGAD: '#F5821F',
+  ROCKET: '#8C3494',
+  UPAY: '#3EB549',
+};
+
+function WalletLogo({ walletName }: { walletName: string }) {
+  const [imgError, setImgError] = useState(false);
+  const key = walletName.toUpperCase();
+  const src = WALLET_LOGOS[key];
+
+  if (!src || imgError) {
+    return (
+      <div
+        className="flex h-5 w-5 shrink-0 items-center justify-center rounded-md text-[9px] font-bold text-white"
+        style={{ backgroundColor: WALLET_LOGO_COLORS[key] ?? '#94a3b8' }}
+      >
+        {walletName.charAt(0)}
+      </div>
+    );
+  }
+
+  return (
+    <div className="relative h-5 w-5 shrink-0 overflow-hidden rounded-md">
+      <Image src={src} alt={walletName} fill sizes="20px" className="object-contain" onError={() => setImgError(true)} />
+    </div>
+  );
+}
+
+function WalletBreakdownTile({ wallet }: { wallet: ApiOverviewWallet }) {
+  // How much of the Running Balance is actually inside the wallet right
+  // now — full bar at Actual == Running Balance (100%), not a comparison
+  // against the other wallet tiles' own totals.
+  const pct = wallet.total > 0 ? Math.min(Math.round((wallet.actual / wallet.total) * 100), 100) : 0;
+  const up = wallet.change >= 0;
+  return (
+    <div className="relative rounded-lg border border-[#DEE1E8] dark:border-[#262B38] bg-[#F1F2F5] dark:bg-[#1A1E29] p-[10px]">
+      <div className="absolute right-[10px] top-[10px]">
+        <WalletLogo walletName={wallet.name} />
+      </div>
+      <p className="mb-[3px] truncate pr-6 text-[11.5px] font-semibold text-foreground">{wallet.name}</p>
+      <p className="text-[15px] font-bold tabular-nums text-foreground">{wallet.total.toFixed(2)}M</p>
+      <p className={`mt-[1px] text-[10.5px] font-bold ${up ? 'text-[color:var(--dd-pos)]' : 'text-[color:var(--dd-neg)]'}`}>
+        {up ? '▲' : '▼'} {Math.abs(wallet.change).toFixed(2)}M
+      </p>
+      <div className="mt-2 mb-[6px] h-[3px] overflow-hidden rounded-full bg-muted">
+        <div className="h-full rounded-full" style={{ width: `${pct}%`, background: 'var(--ui-accent)' }} />
+      </div>
+      <p className="text-[10.5px] font-semibold leading-[1.4] text-muted-foreground">Actual {wallet.actual.toFixed(2)}M</p>
+    </div>
+  );
+}
+
+function TodaysInsightCard({ product, label, overview }: { product: Product; label: string; overview: ApiOverview }) {
+  const endingUp = overview.endingChange >= 0;
+
+  const metrics: { label: string; value: number }[] = [
+    { label: 'Opening', value: overview.opening },
+    { label: 'Deposit', value: overview.deposit },
+    { label: 'Withdrawal', value: overview.withdrawal },
+    { label: 'Top Up', value: overview.topup },
+    { label: 'Settlement', value: overview.settlement },
+  ];
+
+  return (
+    // data-product hardcoded to "cashout" (not the real `product`) — both
+    // products' Today's Insights cards intentionally share Cashout's indigo
+    // --product-accent per explicit design request, overriding this
+    // section's own teal. `product` itself still drives the real
+    // CashGo/Bundle Transfer label + layout below, untouched.
+    <div data-product="cashout" className="overflow-hidden rounded-lg border border-[#DEE1E8] dark:border-[#262B38] bg-white px-5 py-[18px] dark:bg-[#12151D]">
+      <div className="mb-4 flex items-center justify-between gap-3">
+        <h3 className="inline-flex items-center gap-2 text-[14px] font-bold text-foreground">
+          <span className="h-[7px] w-[7px] shrink-0 rounded-full" style={{ background: 'var(--ui-accent)' }} />
+          {label}
+        </h3>
+        {/* Same "Last Update" treatment as the Balance/Opening pages' own
+            header indicator (time only, with seconds, no date), positioned
+            upper-right of this card's title row per explicit instruction. */}
+        {overview.lastUpdate && (
+          <span className="text-[10.5px] text-muted-foreground">
+            Last Update: <span className="font-[500]! tabular-nums">{new Date(overview.lastUpdate).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', second: '2-digit', hour12: true })}</span>
+          </span>
+        )}
+      </div>
+
+      <div className="mb-4">
+        <p className="mb-[3px] text-[11.5px] font-normal text-muted-foreground">Ending Balance</p>
+        <p className={`text-[26px] font-bold tabular-nums ${overview.ending < 0 ? 'text-[color:var(--dd-neg)]' : 'text-foreground'}`}>
+          {overview.ending < 0 ? '−' : ''}{fmt(overview.ending)}
+        </p>
+        <p className={`mt-[7px] inline-flex items-center gap-1 text-[11.5px] font-normal ${endingUp ? 'text-[color:var(--dd-pos)]' : 'text-[color:var(--dd-neg)]'}`}>
+          <span>{endingUp ? '▲' : '▼'}</span>
+          <span className="tabular-nums">{fmt(overview.endingChange)}</span>
+          <span className="font-normal text-muted-foreground">vs opening</span>
+        </p>
+      </div>
+
+      <div className="mb-4 grid grid-cols-3 gap-2 min-[1300px]:grid-cols-5">
+        {metrics.map((m) => {
+          const disp = neutralDisplayRounded(m.value);
+          return (
+            <div key={m.label} className="min-w-0 rounded-lg border border-[#DEE1E8] dark:border-[#262B38] bg-[#F1F2F5] dark:bg-[#1A1E29] p-[10px]">
+              <p className="mb-[5px] truncate text-[9.5px] font-normal uppercase tracking-[0.03em] text-muted-foreground">{m.label}</p>
+              {/* No truncate here — unlike the label above, this is a real
+                  money figure (e.g. "180,072,878.87"); silently cutting it
+                  to "180,072,878…" with an ellipsis is actively misleading
+                  for an ops team reading it, confirmed live as the cause of
+                  clipped Opening figures in the Telegram screenshot export.
+                  Left free to wrap onto a second line instead when a tile
+                  is too narrow for it, which never happens for the other,
+                  shorter metrics here. */}
+              <p className={`text-[12.5px] font-bold leading-[1.3] tabular-nums ${disp.className}`}>{disp.text}</p>
+            </div>
+          );
+        })}
+      </div>
+
+      <div className="mb-4">
+        <TodayHighlight product={product} progressValue={overview.progressValue} progressLabel={overview.progressLabel} todayWallets={overview.todayWallets} />
+      </div>
+
+      <p className="mb-[10px] text-[10px] font-semibold uppercase tracking-[0.05em] text-muted-foreground">Wallet Breakdown</p>
+
+      <div className="grid grid-cols-2 gap-2 min-[1300px]:grid-cols-4">
+        {overview.wallets.map((w) => (
+          <WalletBreakdownTile key={w.name} wallet={w} />
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function InsightCardSkeleton() {
+  return (
+    <div className="overflow-hidden rounded-lg border border-[#DEE1E8] dark:border-[#262B38] bg-white px-5 py-[18px] dark:bg-[#12151D]">
+      <SkeletonBlock className="mb-4 h-[22px] w-32" />
+      <SkeletonBlock className="mb-1 h-3 w-24" />
+      <SkeletonBlock className="mb-3 h-8 w-40" />
+      <SkeletonBlock className="mb-4 h-4 w-36" />
+      <div className="mb-4 grid grid-cols-3 gap-2 min-[1300px]:grid-cols-5">
+        {Array.from({ length: 5 }).map((_, i) => (
+          <SkeletonBlock key={i} className="h-[52px] rounded-lg" />
+        ))}
+      </div>
+      <SkeletonBlock className="mb-4 h-[100px] rounded-[10px]" />
+      <SkeletonBlock className="mb-3 h-3 w-32" />
+      <div className="grid grid-cols-2 gap-2 min-[1300px]:grid-cols-4">
+        {Array.from({ length: 4 }).map((_, i) => (
+          <SkeletonBlock key={i} className="h-[98px] rounded-lg" />
+        ))}
+      </div>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Wallet Summary ledger (section 4)
+// ---------------------------------------------------------------------------
+
+function WalletSummaryTable({ wallets }: { wallets: ApiWalletLedgerRow[] }) {
+  const totals = wallets.reduce(
+    (acc, w) => {
+      acc.dp += w.dp;
+      acc.wd += w.wd;
+      acc.mid += w.mid ?? 0;
+      acc.settlement += w.settlement ?? 0;
+      acc.actual += w.actual;
+      acc.running += w.running;
+      acc.change += w.change;
+      return acc;
+    },
+    { dp: 0, wd: 0, mid: 0, settlement: 0, actual: 0, running: 0, change: 0 }
+  );
+
+  return (
+    <section className="overflow-hidden rounded-lg border border-[#DEE1E8] dark:border-[#262B38] bg-white dark:bg-[#12151D]">
+      <div className="border-b border-[#DEE1E8] dark:border-[#262B38] px-4 py-3">
+        <h3 className="text-[14px] font-bold text-foreground">Wallet Summary</h3>
+      </div>
+      <div className="overflow-x-auto">
+        <table className="w-full min-w-[640px]">
+          <thead>
+            <tr className="border-b border-[#DEE1E8] dark:border-[#262B38]">
+              <th className="whitespace-nowrap px-4 py-3 text-left text-[10px] font-semibold uppercase tracking-[0.04em] text-muted-foreground">Wallet</th>
+              <th className="whitespace-nowrap px-4 py-3 text-right text-[10px] font-semibold uppercase tracking-[0.04em] text-muted-foreground">Total DP</th>
+              <th className="whitespace-nowrap px-4 py-3 text-right text-[10px] font-semibold uppercase tracking-[0.04em] text-muted-foreground">Total WD</th>
+              <th className="whitespace-nowrap px-4 py-3 text-right text-[10px] font-semibold uppercase tracking-[0.04em] text-muted-foreground">Top Up / Bundle</th>
+              <th className="whitespace-nowrap px-4 py-3 text-right text-[10px] font-semibold uppercase tracking-[0.04em] text-muted-foreground">Settlement</th>
+              <th className="whitespace-nowrap px-4 py-3 text-right text-[10px] font-semibold uppercase tracking-[0.04em] text-muted-foreground">Actual Bal.</th>
+              <th className="whitespace-nowrap px-4 py-3 text-right text-[10px] font-semibold uppercase tracking-[0.04em] text-muted-foreground">Running Bal.</th>
+            </tr>
+          </thead>
+          <tbody>
+            {wallets.map((w) => {
+              const dp = neutralDisplay(w.dp);
+              const wd = neutralDisplay(w.wd);
+              const mid = neutralDisplay(w.mid);
+              const settlement = neutralDisplay(w.settlement);
+              const up = w.change >= 0;
+              return (
+                <tr key={w.name} className="border-b border-[#EEF0F3] dark:border-[#1D212B] last:border-0 transition-colors hover:bg-muted/10">
+                  <td className="whitespace-nowrap px-4 py-3 text-[12.5px] font-semibold text-foreground">{w.name}</td>
+                  <td className={`whitespace-nowrap px-4 py-3 text-right text-xs tabular-nums ${dp.className}`}>{dp.text}</td>
+                  <td className={`whitespace-nowrap px-4 py-3 text-right text-xs tabular-nums ${wd.className}`}>{wd.text}</td>
+                  <td className={`whitespace-nowrap px-4 py-3 text-right text-xs tabular-nums ${mid.className}`}>{mid.text}</td>
+                  <td className={`whitespace-nowrap px-4 py-3 text-right text-xs tabular-nums ${settlement.className}`}>{settlement.text}</td>
+                  <td className="whitespace-nowrap px-4 py-3 text-right text-xs tabular-nums text-foreground">{fmt2(w.actual)}</td>
+                  <td className="whitespace-nowrap px-4 py-3 text-right text-xs tabular-nums text-foreground">
+                    {fmt2(w.running)}
+                    <div className={`mt-0.5 text-[10px] font-normal ${up ? 'text-[color:var(--dd-pos)]' : 'text-[color:var(--dd-neg)]'}`}>
+                      {up ? '▲' : '▼'} {fmt(w.change)}
+                    </div>
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+          <tfoot>
+            <tr className="border-t border-[#DEE1E8] dark:border-[#262B38]">
+              <td className="whitespace-nowrap px-4 py-3 text-[12.5px] font-semibold text-foreground">Total</td>
+              <td className="whitespace-nowrap px-4 py-3 text-right text-xs font-bold tabular-nums text-foreground">{fmt2(totals.dp)}</td>
+              <td className="whitespace-nowrap px-4 py-3 text-right text-xs font-bold tabular-nums text-[color:var(--dd-neg)]">{fmt2(totals.wd)}</td>
+              <td className="whitespace-nowrap px-4 py-3 text-right text-xs font-bold tabular-nums text-foreground">
+                {totals.mid ? fmt2(totals.mid) : <span className="text-muted-foreground">&minus;</span>}
+              </td>
+              <td className="whitespace-nowrap px-4 py-3 text-right text-xs font-bold tabular-nums text-foreground">
+                {totals.settlement ? fmt2(totals.settlement) : <span className="text-muted-foreground">&minus;</span>}
+              </td>
+              <td className="whitespace-nowrap px-4 py-3 text-right text-xs font-bold tabular-nums text-foreground">{fmt2(totals.actual)}</td>
+              <td className="whitespace-nowrap px-4 py-3 text-right text-xs font-bold tabular-nums text-foreground">
+                {fmt2(totals.running)}
+                <div className={`mt-0.5 text-[10px] font-bold ${totals.change >= 0 ? 'text-[color:var(--dd-pos)]' : 'text-[color:var(--dd-neg)]'}`}>
+                  {totals.change >= 0 ? '▲' : '▼'} {fmt(totals.change)}
+                </div>
+              </td>
+            </tr>
+          </tfoot>
+        </table>
+      </div>
+    </section>
+  );
+}
+
+// Column widths for the 7-col ledger table below — the Wallet name column
+// reads noticeably wider than the numeric columns, same as the real table,
+// instead of 7 identical flex-1 bars.
+const LEDGER_SKELETON_COL_WIDTHS = ['flex-[1.6]', 'flex-1', 'flex-1', 'flex-1', 'flex-1', 'flex-[0.85]', 'flex-[0.85]'];
+
+// Same idea for the Running Balance / Cash In Hand tables — Brand name
+// column wider than the 6 numeric columns beside it.
+const BRAND_TABLE_SKELETON_COL_WIDTHS = ['flex-[1.3]', 'flex-1', 'flex-1', 'flex-1', 'flex-1', 'flex-1', 'flex-[0.9]'];
+
+function LedgerSkeleton() {
+  // Mirrors WalletSummaryTable's real shape: a bordered title row, then a
+  // 7-column table (Wallet/Total DP/Total WD/Top Up/Settlement/Actual/
+  // Running) — not a flat 2-value-per-row list, which read narrower than
+  // the real ledger ever renders.
+  return (
+    <div className="overflow-hidden rounded-lg border border-[#DEE1E8] dark:border-[#262B38] bg-white dark:bg-[#12151D]">
+      <div className="border-b border-[#DEE1E8] dark:border-[#262B38] px-4 py-3">
+        <SkeletonBlock className="h-4 w-32" />
+      </div>
+      <div className="flex gap-4 border-b border-[#DEE1E8] dark:border-[#262B38] px-4 py-3">
+        {LEDGER_SKELETON_COL_WIDTHS.map((w, i) => (
+          <SkeletonBlock key={i} className={`h-3 ${w}`} />
+        ))}
+      </div>
+      {Array.from({ length: 5 }).map((_, i) => (
+        <div key={i} className="flex items-center gap-4 border-b border-[#DEE1E8] dark:border-[#262B38] px-4 py-[19px] last:border-0">
+          {LEDGER_SKELETON_COL_WIDTHS.map((w, j) => (
+            <SkeletonBlock key={j} className={`h-3 ${w}`} />
+          ))}
+        </div>
+      ))}
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Top Performer Wallet + High Volume Agents (section 5)
+// ---------------------------------------------------------------------------
+
+type RankRow = { key: string; name: string; mono?: boolean; sub: string; value: number };
+
+function RankPanel({
+  title,
+  tag,
+  pill,
+  rows,
+  scrollable,
+  grow,
+  highlightFirst,
+}: {
+  title: string;
+  tag: string;
+  pill?: boolean;
+  rows: RankRow[];
+  scrollable?: boolean;
+  // Matches the demo's .rank-panel.grow — only the second (High Volume
+  // Agents) panel in the side-col flexes to fill whatever height the
+  // ResizeObserver in ProductBlock pinned the grid row to; Top Performer
+  // Wallet keeps its own natural height, same as the demo.
+  grow?: boolean;
+  highlightFirst?: boolean;
+}) {
+  const list = (
+    <div className="flex flex-col gap-1">
+      {rows.length === 0 && <p className="px-1.5 py-6 text-center text-[11px] text-muted-foreground">No data.</p>}
+      {rows.map((r, i) => {
+        const neg = r.value < 0;
+        const hi = Boolean(highlightFirst) && i === 0;
+        return (
+          <div
+            key={r.key}
+            className="flex items-center gap-2.5 rounded-lg px-1.5 py-2"
+            style={hi ? { background: 'var(--dd-neg-dim)' } : undefined}
+          >
+            <span className={`w-5 shrink-0 text-[10.5px] font-normal tabular-nums ${hi ? 'text-[color:var(--dd-neg)]' : 'text-muted-foreground'}`}>
+              {String(i + 1).padStart(2, '0')}
+            </span>
+            <div className="min-w-0 flex-1">
+              <p className={`truncate text-foreground ${r.mono ? 'text-[10.5px] font-medium' : 'text-[11.5px] font-semibold'}`}>{r.name}</p>
+              <p className="truncate text-[10px] text-muted-foreground">{r.sub}</p>
+            </div>
+            <span className={`shrink-0 text-[11px] font-semibold tabular-nums ${neg ? 'text-[color:var(--dd-neg)]' : 'text-[color:var(--dd-pos)]'}`}>
+              {neg ? '−' : '+'}{fmt(r.value)}
+            </span>
+          </div>
+        );
+      })}
+    </div>
+  );
+
+  return (
+    <div
+      className={`flex flex-col rounded-lg border border-[#DEE1E8] dark:border-[#262B38] bg-white px-[18px] py-4 dark:bg-[#12151D] ${
+        grow ? 'min-[1100px]:min-h-0 min-[1100px]:flex-1' : ''
+      }`}
+    >
+      <div className="mb-3 flex items-center justify-between">
+        <h3 className="text-[12.5px] font-semibold text-foreground">{title}</h3>
+        <span
+          className={pill ? 'rounded-full px-2 py-0.5 text-[10px] font-normal' : 'text-[10px] font-normal text-muted-foreground'}
+          style={pill ? { background: 'var(--ui-accent-soft)', color: 'var(--ui-accent)' } : undefined}
+        >
+          {tag}
+        </span>
+      </div>
+      {scrollable ? (
+        <div className={`max-h-[420px] overflow-y-auto pr-1 ${grow ? 'min-[1100px]:max-h-none min-[1100px]:min-h-0 min-[1100px]:flex-1' : ''}`}>{list}</div>
+      ) : (
+        list
+      )}
+    </div>
+  );
+}
+
+// Note: the demo's own font for rank-name.mono is Space Grotesk (--mono) —
+// this project never uses font-mono anywhere (see CLAUDE.md). Agent codes
+// (`r.mono`) render in the same Inter as everything else; the `mono` flag
+// only shrinks the size and drops the font-weight, no font-family change.
+
+function RankPanelSkeleton({ rows, className }: { rows: number; className?: string }) {
+  // max-h-[600px] (~ProductBlock's own real mainCol height once loaded, per
+  // live measurement) + overflow-hidden bound this directly on the
+  // component itself — flex-1 alone clips against nothing here, since the
+  // ResizeObserver that gives the real "grow" panel its own explicit height
+  // only exists once real content (and gridRef/mainColRef) mounts, not
+  // during the skeleton phase. Without an explicit bound, a high row count
+  // just renders at full natural height instead of being clipped, which
+  // blew the panel far taller than the rest of the page.
+  return (
+    <div className={`flex max-h-[600px] flex-col overflow-hidden rounded-lg border border-[#DEE1E8] dark:border-[#262B38] bg-white px-[18px] py-4 dark:bg-[#12151D] ${className ?? ''}`}>
+      <SkeletonBlock className="mb-3 h-4 w-36 shrink-0" />
+      <div className="flex flex-col gap-2">
+        {Array.from({ length: rows }).map((_, i) => (
+          <div key={i} className="flex shrink-0 items-center gap-2.5">
+            <SkeletonBlock className="h-3 w-5" />
+            <SkeletonBlock className="h-[42px] flex-1 rounded-lg" />
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+// Running Balance card's own compact trend — same straight-line-plus-
+// gradient-fill style as CashGo Trend/Bundle Transfer Trend (WaveTrendChart),
+// scaled down with no axis/legend/tooltip to fit the KPI card's right side.
+// #2F6FED matches WaveTrendChart's own `--bkash` token value (that CSS var
+// is scoped to `.wtc-panel`, not in scope here, hence the literal hex) — the
+// same blue every trend line on this page now uses. `idSuffix` keeps the two
+// products' gradient ids from colliding since both render on the same page.
+function OpeningTrendSparkline({ points, idSuffix }: { points: { date: string; value: number }[]; idSuffix: string }) {
+  const W = 100;
+  const H = 40;
+  const gradId = `ots-${idSuffix}`;
+
+  if (points.length < 2) {
+    return <div className="h-[46px] w-[84px] shrink-0" />;
+  }
+
+  const values = points.map((p) => p.value);
+  const min = Math.min(...values, 0);
+  const max = Math.max(...values, min + 1);
+  const range = max - min || 1;
+  const xStep = W / (points.length - 1);
+  const coords = points.map((p, i) => [i * xStep, H - ((p.value - min) / range) * H] as const);
+  const linePath = coords.reduce((d, [x, y], i) => `${d}${i === 0 ? 'M' : 'L'} ${x.toFixed(1)},${y.toFixed(1)} `, '');
+  const areaPath = `${linePath}L ${coords[coords.length - 1][0].toFixed(1)},${H} L ${coords[0][0].toFixed(1)},${H} Z`;
+
+  return (
+    <div className="h-[46px] w-[84px] shrink-0">
+      <svg viewBox={`0 0 ${W} ${H}`} preserveAspectRatio="none" className="h-full w-full overflow-visible">
+        <defs>
+          <linearGradient id={gradId} x1="0" y1="0" x2="0" y2="1">
+            <stop offset="0%" stopColor="#2F6FED" stopOpacity="0.35" />
+            <stop offset="100%" stopColor="#2F6FED" stopOpacity="0" />
+          </linearGradient>
+        </defs>
+        <path d={areaPath} fill={`url(#${gradId})`} />
+        <path d={linePath} fill="none" stroke="#2F6FED" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" />
+      </svg>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Product block — trend chart + ledger (main column) beside Top
+// Performer/High Volume Agents (side column), one per product.
+// ---------------------------------------------------------------------------
+
+function ProductBlock({
+  title,
+  product,
+  dep,
+  wd,
+  running,
+  changeVsOpening,
+  chartTitle,
+  chartSubtitle,
+  series,
+  tooltipSeries,
+  chart,
+  chart30,
+  openingTrend,
+  wallets,
+  topPerformers,
+  agents,
+}: {
+  title: string;
+  product: Product;
+  dep: number;
+  wd: number;
+  running: number;
+  changeVsOpening: number;
+  chartTitle: string;
+  chartSubtitle: string;
+  series: WaveTrendSeriesDef[];
+  tooltipSeries: WaveTrendSeriesDef[];
+  chart: WaveTrendDataPoint[];
+  chart30: WaveTrendDataPoint[];
+  openingTrend: { date: string; value: number }[];
+  wallets: ApiWalletLedgerRow[];
+  topPerformers: ApiTopPerformer[];
+  agents: ApiAgent[];
+}) {
+  const topPerformerRows: RankRow[] = topPerformers.map((p) => ({
+    key: p.wallet,
+    name: p.wallet,
+    sub: `Bal ${fmt(p.actualBal)}`,
+    value: p.gain,
+  }));
+  const agentRows: RankRow[] = agents.map((a) => ({
+    key: a.agentName,
+    name: a.agentName,
+    mono: true,
+    sub: `Inside ${fmt(a.balanceInside)}`,
+    value: a.runningBalance - a.opening,
+  }));
+
+  const heroUp = changeVsOpening >= 0;
+
+  // Memoized (not computed inline in JSX) so WaveTrendChart's own
+  // useEffect — keyed on referential identity of `data`/`data30` — doesn't
+  // see a new array on every unrelated re-render and spuriously replay its
+  // fade-in draw-in animation.
+  const totalChart = useMemo(() => withTotal(chart), [chart]);
+  const totalChart30 = useMemo(() => withTotal(chart30), [chart30]);
+
+  // Ports the demo's own syncDashGridHeight(): pins the grid row's height to
+  // main-col's natural (unstretched) height, so side-col's 50-row agents
+  // list scrolls within that bound instead of dictating a taller row than
+  // the chart+ledger column — a ResizeObserver is the React-idiomatic
+  // equivalent of the demo's manual resize-listener + re-render calls, and
+  // additionally reacts to the row-count changes a fixed max-height never
+  // could (mock vs live data, Cashout vs Send Money wallet counts differ).
+  const gridRef = useRef<HTMLDivElement>(null);
+  const mainColRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    const mainCol = mainColRef.current;
+    const grid = gridRef.current;
+    if (!mainCol || !grid) return;
+    const sync = () => {
+      if (window.innerWidth >= 1100) {
+        grid.style.gridTemplateRows = `${Math.ceil(mainCol.getBoundingClientRect().height)}px`;
+      } else {
+        grid.style.gridTemplateRows = '';
+      }
+    };
+    const observer = new ResizeObserver(sync);
+    observer.observe(mainCol);
+    window.addEventListener('resize', sync);
+    sync();
+    return () => {
+      observer.disconnect();
+      window.removeEventListener('resize', sync);
+    };
+  }, [wallets, chart, chart30]);
+
+  return (
+    <div data-product={product}>
+      <SectionLabel>{title}</SectionLabel>
+
+      <div ref={gridRef} className="grid grid-cols-1 gap-[14px] min-[1100px]:grid-cols-[2.1fr_1fr]">
+        <div ref={mainColRef} className="flex flex-col gap-[14px] min-[1100px]:self-start">
+          {/* Shares this row's top edge with the side column (Top Performer
+              Wallet) below at >=1100px, so the KPI row lives inside main-col
+              instead of spanning the full page width. 2fr/1fr/1fr keeps
+              Running Balance's width effectively unchanged from its old
+              full-width equal-third share; Total Deposit/Total Withdrawal
+              split what's left — kept from `sm` up (not gated behind 1100px)
+              since the ratio still reads correctly even while main/side
+              haven't split yet. */}
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-[2fr_1fr_1fr]">
+            <div className="flex items-center justify-between gap-3 rounded-lg border border-[#DEE1E8] dark:border-[#262B38] bg-white px-5 py-4 dark:bg-[#12151D]">
+              <div className="flex min-w-0 flex-1 flex-col justify-between self-stretch">
+                <div>
+                  <p className="text-[10.5px] font-semibold uppercase tracking-[0.06em] text-muted-foreground">Running Balance</p>
+                  <p className="mt-1.5 text-[28px] font-semibold tabular-nums text-foreground">
+                    <sup className="mr-0.5 text-[14px] font-medium text-muted-foreground">&#2547;</sup>
+                    {fmtM(running)}M
+                  </p>
+                </div>
+                <span
+                  className={`mt-2 inline-flex w-fit items-center gap-1 rounded-md px-2 py-1 text-[12px] tabular-nums ${
+                    heroUp ? 'text-[color:var(--dd-pos)]' : 'text-[color:var(--dd-neg)]'
+                  }`}
+                  style={{ background: heroUp ? 'var(--dd-pos-dim)' : 'var(--dd-neg-dim)' }}
+                >
+                  {heroUp ? '▲' : '▼'} {fmtM(changeVsOpening)}M vs opening
+                </span>
+              </div>
+              <OpeningTrendSparkline points={openingTrend} idSuffix={product} />
+            </div>
+
+            <div className="flex flex-col justify-between rounded-lg border border-[#DEE1E8] dark:border-[#262B38] bg-white px-5 py-4 dark:bg-[#12151D]">
+              <div>
+                <p className="text-[10.5px] font-semibold uppercase tracking-[0.06em] text-muted-foreground">Total Deposit</p>
+              </div>
+              <div>
+                <p className="text-[24px] font-semibold tabular-nums text-foreground">{fmtM(dep)}M</p>
+                <p className="mt-1.5 text-[11px] tabular-nums text-foreground">{fmt(dep)}</p>
+              </div>
+            </div>
+
+            <div className="flex flex-col justify-between rounded-lg border border-[#DEE1E8] dark:border-[#262B38] bg-white px-5 py-4 dark:bg-[#12151D]">
+              <div>
+                <p className="text-[10.5px] font-semibold uppercase tracking-[0.06em] text-muted-foreground">Total Withdrawal</p>
+              </div>
+              <div>
+                <p className="text-[24px] font-semibold tabular-nums text-[color:var(--dd-neg)]">{fmtM(wd)}M</p>
+                <p className="mt-1.5 text-[11px] tabular-nums text-foreground">{fmt(wd)}</p>
+              </div>
+            </div>
+          </div>
+
+          {/* data-product hardcoded to "cashout" (like TodaysInsightCard
+              above) — the trend chart's 7D/30D toggle etc. read
+              --product-accent, and both products intentionally share
+              Cashout's indigo there too. `className="contents"` (same
+              pattern as AppShell's own data-product wrapper) keeps this a
+              pure CSS-var scope with no box-model effect on the flex-col
+              layout around it. */}
+          <div data-product="cashout" className="contents">
+            <WaveTrendChart
+              data={totalChart}
+              data30={totalChart30}
+              series={series}
+              tooltipSeries={tooltipSeries}
+              title={chartTitle}
+              subtitle={chartSubtitle}
+            />
+          </div>
+          <WalletSummaryTable wallets={wallets} />
+        </div>
+        <div className="flex flex-col gap-[14px] min-[1100px]:h-full">
+          <RankPanel title="Top Performer Wallet" tag="Net P&L" rows={topPerformerRows} highlightFirst />
+          <RankPanel title="High Volume Agents" tag="TOP 50" pill rows={agentRows} scrollable grow />
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function ProductBlockSkeleton() {
+  return (
+    <div>
+      <SkeletonBlock className="mb-3 h-3 w-48" />
+      {/* Mirrors ProductBlock's real nesting: the KPI row lives inside
+          main-col (sharing the side column's top edge), not as its own
+          full-width row above the 2.1fr/1fr split — the two used to
+          disagree here, which is what threw off the loading state's sizing
+          against the real layout. */}
+      <div className="grid grid-cols-1 gap-[14px] min-[1100px]:grid-cols-[2.1fr_1fr]">
+        <div className="flex flex-col gap-[14px]">
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-[2fr_1fr_1fr]">
+            {Array.from({ length: 3 }).map((_, i) => (
+              <SkeletonBlock key={i} className="h-[118px] rounded-lg" />
+            ))}
+          </div>
+          <div className="rounded-lg border border-[#DEE1E8] dark:border-[#262B38] bg-white px-[22px] py-5 dark:bg-[#12151D]">
+            <div className="flex items-center justify-between gap-[10px]">
+              <div className="min-w-0 flex-1">
+                <SkeletonBlock className="mb-1.5 h-4 w-32" />
+                <SkeletonBlock className="h-3 w-44" />
+              </div>
+              <SkeletonBlock className="h-[26px] w-[110px] shrink-0 rounded-[7px]" />
+            </div>
+            <SkeletonBlock className="mt-3.5 h-3.5 w-28" />
+            <SkeletonBlock className="mt-[22px] h-[230px] rounded-lg" />
+          </div>
+          <LedgerSkeleton />
+        </div>
+        <div className="flex flex-col gap-[14px] min-[1100px]:h-full">
+          <RankPanelSkeleton rows={4} />
+          <RankPanelSkeleton rows={12} className="min-[1100px]:flex-1" />
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Running Balance by Brand (section 6)
+// ---------------------------------------------------------------------------
+
+type BrandBalanceColumnKey = 'staticOpening' | 'staticDeposit' | 'staticWithdrawal' | 'topUp' | 'settlement' | 'staticTotal';
+type BrandBalanceSortKey = 'brand' | BrandBalanceColumnKey;
+
+const BRAND_BALANCE_COLUMNS: { key: BrandBalanceColumnKey; label: string }[] = [
+  { key: 'staticOpening', label: 'Opening' },
+  { key: 'staticDeposit', label: 'Deposit' },
+  { key: 'staticWithdrawal', label: 'Withdrawal' },
+  { key: 'topUp', label: 'Top Up' },
+  { key: 'settlement', label: 'Settlement' },
+  { key: 'staticTotal', label: 'Total' },
+];
+
+// Opening/Deposit/Withdrawal/Total used to render blank here (Phase 10 —
+// no live upload system existed yet for them, so the sheet's own static
+// columns weren't trusted for display). Both products' brandBalance rows
+// now come from Daily Transaction Entry's own ledger cards (see
+// app/api/dashboard/route.ts's getDailyTxnLedgerBrandTotals) — a real, live
+// source, not a stale manual sheet column — so nothing needs blanking
+// anymore. Kept as empty sets (not a removed prop) so blankKeys stays
+// available if a future column ever needs the same "display-only" treatment
+// again.
+const BLANK_KEYS_CASHOUT = new Set<BrandBalanceColumnKey>();
+const BLANK_KEYS_SENDMONEY = new Set<BrandBalanceColumnKey>();
+const BLANK_DISPLAY = { text: '−', className: 'text-muted-foreground' };
+
+function BrandValueCell({
+  value,
+  blank,
+  bold,
+  totalRow,
+}: {
+  value: number;
+  blank?: boolean;
+  bold?: boolean;
+  // pt-[14px] instead of py-[11px] — matches the demo's tr.total-row td
+  // (padding-top:14px override on top of table.ledger td's own
+  // padding:11px 0 — bottom/left/right fall through unchanged).
+  totalRow?: boolean;
+}) {
+  const display = blank ? BLANK_DISPLAY : cihValueDisplay(value);
+  return (
+    <td
+      className={`whitespace-nowrap text-right text-[12px] tabular-nums ${totalRow ? 'pb-[11px] pt-[14px]' : 'py-[11px]'} ${
+        bold ? 'font-bold' : 'font-normal'
+      } ${display.className}`}
+    >
+      {display.text}
+    </td>
+  );
+}
+
+function RunningBalanceByBrandSection({
   rows,
   title,
   subtitle,
   exportFileName,
   exportSheetName,
+  blankKeys,
 }: {
-  rows: SspLine1Row[];
+  rows: ApiBrandBalance[];
   title: string;
   subtitle: string;
   exportFileName: string;
   exportSheetName: string;
+  blankKeys: Set<BrandBalanceColumnKey>;
 }) {
-  // No default sort ("default walang naka filter") — first click on a
-  // column sorts highest-to-lowest (desc), second click toggles to
-  // lowest-to-highest (asc), third click returns to the unsorted default.
-  const [sortColumn, setSortColumn] = useState<SspLine1SortKey | null>(null);
+  // No default sort — first click sorts desc, second asc, third returns to
+  // unsorted. Ported from the pre-redesign app/page.tsx's SspLine1Section.
+  const [sortColumn, setSortColumn] = useState<BrandBalanceSortKey | null>(null);
   const [sortDirection, setSortDirection] = useState<'asc' | 'desc'>('desc');
 
-  const handleHeaderClick = useCallback((key: SspLine1SortKey) => {
+  const handleHeaderClick = useCallback((key: BrandBalanceSortKey) => {
     if (sortColumn !== key) {
       setSortColumn(key);
       setSortDirection('desc');
@@ -914,284 +1126,198 @@ function SspLine1Section({
     return list;
   }, [rows, sortColumn, sortDirection]);
 
-  // Column sums across every brand — always the full unsorted set (a footer
-  // total shouldn't reorder with the rows above it), pinned at the bottom
-  // regardless of sort state, same convention as the Wallet Summary table's
-  // own Total row.
   const totals = useMemo(
-    () => SSP_LINE1_COLUMNS.reduce((acc, col) => {
+    () => BRAND_BALANCE_COLUMNS.reduce((acc, col) => {
       acc[col.key] = rows.reduce((sum, row) => sum + row[col.key], 0);
       return acc;
-    }, {} as Record<keyof Omit<SspLine1Row, 'brand'>, number>),
+    }, {} as Record<BrandBalanceColumnKey, number>),
     [rows]
   );
 
   const handleExport = useCallback(() => {
-    const headers = ['Brand', ...SSP_LINE1_COLUMNS.map((c) => c.label)];
-    const data = rows.map((row) => [row.brand, ...SSP_LINE1_COLUMNS.map((c) => row[c.key])]);
+    const headers = ['Brand', ...BRAND_BALANCE_COLUMNS.map((c) => c.label)];
+    const data = rows.map((row) => [row.brand, ...BRAND_BALANCE_COLUMNS.map((c) => row[c.key])]);
 
     const worksheet = XLSX.utils.aoa_to_sheet([headers, ...data]);
     worksheet['!cols'] = headers.map(() => ({ wch: 16 }));
     const workbook = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(workbook, worksheet, exportSheetName);
-
-    const now = new Date();
-    const datePart = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
-    const timePart = `${String(now.getHours()).padStart(2, '0')}${String(now.getMinutes()).padStart(2, '0')}`;
-    XLSX.writeFile(workbook, `${exportFileName}_${datePart}_${timePart}.xlsx`);
+    XLSX.writeFile(workbook, xlsxTimestampedFilename(exportFileName));
   }, [rows, exportFileName, exportSheetName]);
 
   return (
-    <section className="overflow-hidden rounded-xl border border-border bg-white dark:bg-[#2a2a2d]">
-      <div className="flex items-center justify-between gap-3 border-b border-border px-4 py-3">
-        <div className="flex min-w-0 items-center gap-3">
-          <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-slate-100 text-slate-900 dark:bg-white/10 dark:text-white">
-            <Wallet size={16} />
+    <section className="overflow-hidden rounded-lg border border-[#DEE1E8] dark:border-[#262B38] bg-white dark:bg-[#12151D]">
+      <div className="px-5 pb-[18px] pt-[18px] sm:pb-0">
+        <div className="mb-[14px] flex items-center gap-[10px]">
+          <div className="flex h-[28px] w-[28px] shrink-0 items-center justify-center rounded-lg border border-[#DEE1E8] dark:border-[#262B38] bg-[#F1F2F5] text-[#6B7280] dark:bg-[#1A1E29] dark:text-[#9198AC]">
+            <Wallet size={14} />
           </div>
-          <div className="min-w-0">
-            <h2 className="truncate text-[15px] font-bold text-foreground">{title}</h2>
-            <p className="truncate text-[13px] text-muted-foreground">{subtitle}</p>
+          <div className="min-w-0 flex-1">
+            <h2 className="truncate text-[13.5px] font-bold text-foreground">{title}</h2>
+            <p className="mt-[1px] truncate text-[11px] text-muted-foreground">{subtitle}</p>
           </div>
+          <button
+            type="button"
+            onClick={handleExport}
+            className="flex shrink-0 items-center gap-1.5 rounded-[7px] border border-[#DEE1E8] dark:border-[#262B38] bg-[#F1F2F5] px-3 py-1.5 text-[11.5px] font-semibold text-[#6B7280] hover:text-foreground hover:border-[var(--ui-accent)] dark:bg-[#1A1E29] dark:text-[#9198AC]"
+          >
+            <Download size={12} />
+            Export
+          </button>
         </div>
-        <button
-          type="button"
-          onClick={handleExport}
-          className="inline-flex shrink-0 items-center gap-1.5 rounded-lg bg-slate-900 px-3 py-1.5 text-[14px] font-medium text-white hover:bg-slate-800 dark:bg-white dark:text-slate-900 dark:hover:bg-slate-200"
-        >
-          <Download size={13} />
-          Export
-        </button>
-      </div>
 
-      <div className="hidden overflow-x-auto sm:block">
-        <table className="w-full min-w-[760px]">
-          <thead>
-            <tr className="border-b border-border bg-muted/10">
-              <th className="whitespace-nowrap px-4 py-3 text-left text-[12px] font-medium text-muted-foreground">
-                <button
-                  type="button"
-                  onClick={() => handleHeaderClick('brand')}
-                  className="flex items-center gap-1 hover:opacity-80"
-                >
-                  Brand
-                  <SspLine1SortIcon active={sortColumn === 'brand'} direction={sortDirection} />
-                </button>
-              </th>
-              {SSP_LINE1_COLUMNS.map((col) => (
-                <th key={col.key} className="whitespace-nowrap px-4 py-3 text-center text-[12px] font-medium text-muted-foreground">
-                  <button
-                    type="button"
-                    onClick={() => handleHeaderClick(col.key)}
-                    className="flex w-full items-center justify-center gap-1 hover:opacity-80"
-                  >
-                    {col.label}
-                    <SspLine1SortIcon active={sortColumn === col.key} direction={sortDirection} />
+        <div className="hidden overflow-x-auto pb-[18px] sm:block">
+          <table className="w-full">
+            <thead>
+              <tr className="border-b border-[#DEE1E8] dark:border-[#262B38]">
+                <th className="whitespace-nowrap pb-[10px] text-left text-[10px] font-semibold uppercase tracking-[0.04em] text-muted-foreground">
+                  <button type="button" onClick={() => handleHeaderClick('brand')} className="flex items-center gap-1 hover:opacity-80">
+                    Brand
+                    <SortIcon active={sortColumn === 'brand'} direction={sortDirection} />
                   </button>
                 </th>
-              ))}
-            </tr>
-          </thead>
-          <tbody>
-            {sortedRows.map((row) => (
-              <tr key={row.brand} className="border-b border-border last:border-0 transition-colors hover:bg-muted/10">
-                <td className="whitespace-nowrap px-4 py-3 text-left text-[13px] font-bold text-foreground">{row.brand}</td>
-                {SSP_LINE1_COLUMNS.map((col) =>
-                  BLANK_SSP_LINE1_KEYS.has(col.key) ? (
-                    <BlankCihCell key={col.key} bold={col.key === 'total'} />
-                  ) : (
-                    <CihCell key={col.key} value={row[col.key]} bold={col.key === 'total'} />
-                  )
-                )}
-              </tr>
-            ))}
-          </tbody>
-          {rows.length > 0 && (
-            <tfoot>
-              <tr className="border-t-2 border-border bg-muted/20">
-                <td className="whitespace-nowrap px-4 py-3 text-left text-[13px] font-bold text-foreground">Total</td>
-                {SSP_LINE1_COLUMNS.map((col) =>
-                  BLANK_SSP_LINE1_KEYS.has(col.key) ? (
-                    <BlankCihCell key={col.key} bold />
-                  ) : (
-                    <CihCell key={col.key} value={totals[col.key]} bold />
-                  )
-                )}
-              </tr>
-            </tfoot>
-          )}
-        </table>
-      </div>
-
-      {/* Mobile: one card per brand — same "card list" pattern as Brand
-          Cash Inhand's own mobile fallback. */}
-      <div className="flex flex-col gap-3 p-4 sm:hidden">
-        {sortedRows.map((row) => {
-          const totalDisplay = BLANK_CIH_DISPLAY;
-          return (
-            <div key={row.brand} className="rounded-xl border border-border bg-white p-4 dark:bg-[#2a2a2d]">
-              <div className="flex items-start justify-between gap-2">
-                <span className="text-[15px] font-bold text-foreground">{row.brand}</span>
-                <div className="text-right">
-                  <p className="text-[11px] text-muted-foreground">Total</p>
-                  <p className={`text-lg font-bold tabular-nums ${totalDisplay.className}`}>{totalDisplay.text}</p>
-                </div>
-              </div>
-              <div className="mt-3 grid grid-cols-2 gap-x-2 gap-y-3 border-t border-border pt-3">
-                {SSP_LINE1_COLUMNS.filter((col) => col.key !== 'total').map((col) => {
-                  const display = BLANK_SSP_LINE1_KEYS.has(col.key) ? BLANK_CIH_DISPLAY : cihValueDisplay(row[col.key]);
-                  return (
-                    <div key={col.key} className="min-w-0">
-                      <p className="text-[11px] text-muted-foreground">{col.label}</p>
-                      <p className={`mt-0.5 text-[10.5px] font-medium tabular-nums ${display.className}`}>{display.text}</p>
-                    </div>
-                  );
-                })}
-              </div>
-            </div>
-          );
-        })}
-        {rows.length > 0 && (() => {
-          const totalDisplay = BLANK_CIH_DISPLAY;
-          return (
-            <div className="rounded-xl border-2 border-border bg-muted/20 p-4">
-              <div className="flex items-start justify-between gap-2">
-                <span className="text-[15px] font-bold text-foreground">Total</span>
-                <div className="text-right">
-                  <p className="text-[11px] text-muted-foreground">Total</p>
-                  <p className={`text-lg font-bold tabular-nums ${totalDisplay.className}`}>{totalDisplay.text}</p>
-                </div>
-              </div>
-              <div className="mt-3 grid grid-cols-2 gap-x-2 gap-y-3 border-t border-border pt-3">
-                {SSP_LINE1_COLUMNS.filter((col) => col.key !== 'total').map((col) => {
-                  const display = BLANK_SSP_LINE1_KEYS.has(col.key) ? BLANK_CIH_DISPLAY : cihValueDisplay(totals[col.key]);
-                  return (
-                    <div key={col.key} className="min-w-0">
-                      <p className="text-[11px] text-muted-foreground">{col.label}</p>
-                      <p className={`mt-0.5 text-[10.5px] font-bold tabular-nums ${display.className}`}>{display.text}</p>
-                    </div>
-                  );
-                })}
-              </div>
-            </div>
-          );
-        })()}
-      </div>
-    </section>
-  );
-}
-
-// Mirrors the real table's own markup/padding (10 brand rows + header, no
-// footer) instead of a handful of generic placeholder lines — a shorter
-// fake table would cause a visible size jump when the real table pops in.
-function SspLine1Skeleton() {
-  return (
-    <section className="overflow-hidden rounded-xl border border-border bg-white dark:bg-[#2a2a2d]">
-      <div className="flex items-center justify-between gap-3 border-b border-border px-4 py-3">
-        <div className="flex min-w-0 items-center gap-3">
-          <div className="h-9 w-9 shrink-0 animate-pulse rounded-lg bg-slate-200 dark:bg-slate-700" />
-          <div>
-            <div className="h-[20px] w-48 animate-pulse rounded-md bg-slate-200 dark:bg-slate-700" />
-            <div className="mt-1.5 h-[16px] w-64 animate-pulse rounded-md bg-slate-200 dark:bg-slate-700" />
-          </div>
-        </div>
-        <div className="h-8 w-24 shrink-0 animate-pulse rounded-lg bg-slate-200 dark:bg-slate-700" />
-      </div>
-
-      <div className="hidden overflow-x-auto sm:block">
-        <table className="w-full min-w-[760px]">
-          <thead>
-            <tr className="border-b border-border bg-muted/10" style={{ height: '42.5px' }}>
-              <th className="px-4 py-3 text-left">
-                <div className="h-3 w-10 animate-pulse rounded-md bg-slate-300 dark:bg-slate-600" />
-              </th>
-              {SSP_LINE1_COLUMNS.map((col) => (
-                <th key={col.key} className="px-4 py-3">
-                  <div className="mx-auto h-3 w-14 animate-pulse rounded-md bg-slate-300 dark:bg-slate-600" />
-                </th>
-              ))}
-            </tr>
-          </thead>
-          <tbody>
-            {Array.from({ length: 10 }).map((_, i) => (
-              <tr key={i} className="border-b border-border last:border-0" style={{ height: '44.5px' }}>
-                <td className="px-4 py-3">
-                  <div className="h-3 w-10 animate-pulse rounded-md bg-slate-200 dark:bg-slate-700" />
-                </td>
-                {SSP_LINE1_COLUMNS.map((col) => (
-                  <td key={col.key} className="px-4 py-3">
-                    <div className="mx-auto h-3 w-16 animate-pulse rounded-md bg-slate-100 dark:bg-slate-800" />
-                  </td>
+                {BRAND_BALANCE_COLUMNS.map((col) => (
+                  <th key={col.key} className="whitespace-nowrap pb-[10px] text-right text-[10px] font-semibold uppercase tracking-[0.04em] text-muted-foreground">
+                    <button type="button" onClick={() => handleHeaderClick(col.key)} className="flex w-full items-center justify-end gap-1 hover:opacity-80">
+                      {col.label}
+                      <SortIcon active={sortColumn === col.key} direction={sortDirection} />
+                    </button>
+                  </th>
                 ))}
               </tr>
-            ))}
-          </tbody>
-          <tfoot>
-            <tr className="border-t-2 border-border bg-muted/20" style={{ height: '44.5px' }}>
-              <td className="px-4 py-3">
-                <div className="h-3 w-10 animate-pulse rounded-md bg-slate-300 dark:bg-slate-600" />
-              </td>
-              {SSP_LINE1_COLUMNS.map((col) => (
-                <td key={col.key} className="px-4 py-3">
-                  <div className="mx-auto h-3 w-16 animate-pulse rounded-md bg-slate-300 dark:bg-slate-600" />
-                </td>
+            </thead>
+            <tbody>
+              {sortedRows.map((row) => (
+                <tr key={row.brand} className="border-b border-[#EEF0F3] dark:border-[#1D212B] last:border-0 transition-colors hover:bg-muted/10">
+                  <td className="whitespace-nowrap py-[11px] text-left text-[12.5px] font-semibold text-foreground">{row.brand}</td>
+                  {BRAND_BALANCE_COLUMNS.map((col) => (
+                    <BrandValueCell key={col.key} value={row[col.key]} blank={blankKeys.has(col.key)} bold={col.key === 'staticTotal'} />
+                  ))}
+                </tr>
               ))}
-            </tr>
-          </tfoot>
-        </table>
+            </tbody>
+            {rows.length > 0 && (
+              <tfoot>
+                <tr className="border-t border-[#DEE1E8] dark:border-[#262B38]">
+                  <td className="whitespace-nowrap pb-[11px] pt-[14px] text-left text-[12.5px] font-bold" style={{ color: 'var(--ui-accent)' }}>Total</td>
+                  {BRAND_BALANCE_COLUMNS.map((col) => (
+                    <BrandValueCell key={col.key} value={totals[col.key]} blank={blankKeys.has(col.key)} bold totalRow />
+                  ))}
+                </tr>
+              </tfoot>
+            )}
+          </table>
+        </div>
       </div>
 
-      <div className="flex flex-col gap-3 p-4 sm:hidden">
-        {Array.from({ length: 10 }).map((_, i) => (
-          <div key={i} className="rounded-xl border border-border bg-white p-4 dark:bg-[#2a2a2d]" style={{ height: '184px' }}>
+      <div className="flex flex-col gap-3 px-5 pb-[18px] sm:hidden">
+        {sortedRows.map((row) => (
+          <div key={row.brand} className="rounded-lg border border-[#DEE1E8] dark:border-[#262B38] bg-white p-4 dark:bg-[#12151D]">
             <div className="flex items-start justify-between gap-2">
-              <div className="h-[18px] w-14 animate-pulse rounded-md bg-slate-200 dark:bg-slate-700" />
-              <div className="flex flex-col items-end gap-1.5">
-                <div className="h-3 w-16 animate-pulse rounded-md bg-slate-200 dark:bg-slate-700" />
-                <div className="h-[22px] w-24 animate-pulse rounded-md bg-slate-300 dark:bg-slate-600" />
+              <span className="text-[15px] font-bold text-foreground">{row.brand}</span>
+              <div className="text-right">
+                <p className="text-[11px] text-muted-foreground">Total</p>
+                {(() => {
+                  const display = blankKeys.has('staticTotal') ? BLANK_DISPLAY : cihValueDisplay(row.staticTotal);
+                  return <p className={`text-lg font-bold tabular-nums ${display.className}`}>{display.text}</p>;
+                })()}
               </div>
             </div>
-            <div className="mt-3 grid grid-cols-2 gap-x-2 gap-y-3 border-t border-border pt-3">
-              {Array.from({ length: 4 }).map((__, j) => (
-                <div key={j} className="min-w-0">
-                  <div className="h-2.5 w-16 animate-pulse rounded-md bg-slate-200 dark:bg-slate-700" />
-                  <div className="mt-1.5 h-3 w-14 animate-pulse rounded-md bg-slate-100 dark:bg-slate-800" />
-                </div>
-              ))}
+            <div className="mt-3 grid grid-cols-2 gap-x-2 gap-y-3 border-t border-[#DEE1E8] dark:border-[#262B38] pt-3">
+              {BRAND_BALANCE_COLUMNS.filter((col) => col.key !== 'staticTotal').map((col) => {
+                const display = blankKeys.has(col.key) ? BLANK_DISPLAY : cihValueDisplay(row[col.key]);
+                return (
+                  <div key={col.key} className="min-w-0">
+                    <p className="text-[11px] text-muted-foreground">{col.label}</p>
+                    <p className={`mt-0.5 text-[10.5px] font-medium tabular-nums ${display.className}`}>{display.text}</p>
+                  </div>
+                );
+              })}
             </div>
           </div>
         ))}
-        <div className="rounded-xl border-2 border-border bg-muted/20 p-4" style={{ height: '186px' }}>
-          <div className="flex items-start justify-between gap-2">
-            <div className="h-[18px] w-20 animate-pulse rounded-md bg-slate-300 dark:bg-slate-600" />
-            <div className="flex flex-col items-end gap-1.5">
-              <div className="h-3 w-16 animate-pulse rounded-md bg-slate-300 dark:bg-slate-600" />
-              <div className="h-[22px] w-24 animate-pulse rounded-md bg-slate-400 dark:bg-slate-500" />
-            </div>
+      </div>
+    </section>
+  );
+}
+
+function RunningBalanceSkeleton() {
+  // Mirrors the real section's own shape: no border under the icon/title/
+  // Export header (unlike CashInHandSkeleton below, which does have one),
+  // then a 7-column table (Brand + 6 BRAND_BALANCE_COLUMNS) with 10 brand
+  // rows + a Total row — not a flat 2-value list, which read far narrower/
+  // shorter than the real table ever renders.
+  return (
+    <section className="overflow-hidden rounded-lg border border-[#DEE1E8] dark:border-[#262B38] bg-white dark:bg-[#12151D]">
+      <div className="px-5 pb-[18px] pt-[18px]">
+        <div className="mb-[14px] flex items-center gap-[10px]">
+          <SkeletonBlock className="h-[28px] w-[28px] shrink-0 rounded-lg" />
+          <div className="min-w-0 flex-1">
+            <SkeletonBlock className="h-4 w-40" />
+            <SkeletonBlock className="mt-1.5 h-3 w-56" />
           </div>
-          <div className="mt-3 grid grid-cols-2 gap-x-2 gap-y-3 border-t border-border pt-3">
-            {Array.from({ length: 4 }).map((__, j) => (
-              <div key={j} className="min-w-0">
-                <div className="h-2.5 w-16 animate-pulse rounded-md bg-slate-300 dark:bg-slate-600" />
-                <div className="mt-1.5 h-3 w-14 animate-pulse rounded-md bg-slate-300 dark:bg-slate-600" />
-              </div>
+          <SkeletonBlock className="h-8 w-24 shrink-0 rounded-[7px]" />
+        </div>
+        <div className="flex gap-4 border-b border-[#DEE1E8] pb-[10px] dark:border-[#262B38]">
+          {BRAND_TABLE_SKELETON_COL_WIDTHS.map((w, i) => (
+            <SkeletonBlock key={i} className={`h-3 ${w}`} />
+          ))}
+        </div>
+        {Array.from({ length: 10 }).map((_, i) => (
+          <div key={i} className="flex items-center gap-4 border-b border-[#EEF0F3] py-[11px] dark:border-[#1D212B]">
+            {BRAND_TABLE_SKELETON_COL_WIDTHS.map((w, j) => (
+              <SkeletonBlock key={j} className={`h-3 ${w}`} />
             ))}
           </div>
+        ))}
+        <div className="flex items-center gap-4 pb-[11px] pt-[14px]">
+          {BRAND_TABLE_SKELETON_COL_WIDTHS.map((w, i) => (
+            <SkeletonBlock key={i} className={`h-3 ${w}`} />
+          ))}
         </div>
       </div>
     </section>
   );
 }
 
-type BrandCashSortKey = keyof BrandCashRow;
+// ---------------------------------------------------------------------------
+// Cash In Hand (section 7)
+// ---------------------------------------------------------------------------
 
-function BrandCashInhandSection({ rows, total }: { rows: BrandCashRow[]; total: BrandCashRow | null }) {
-  // No default sort, same 3-click cycle (desc -> asc -> unsorted) as the SSP
-  // Line 1/2 tables above. The footer Total row is never part of the sort —
-  // it always stays pinned at the bottom as a fixed summary.
-  const [sortColumn, setSortColumn] = useState<BrandCashSortKey | null>(null);
+type CihColumnKey = 'sspAg' | 'sspPs' | 'ess' | 'autopay' | 'expay' | 'totalBrandCIH';
+type CihSortKey = 'brand' | CihColumnKey;
+
+const CIH_COLUMNS: { key: CihColumnKey; label: string }[] = [
+  { key: 'sspAg', label: 'CashOut' },
+  { key: 'sspPs', label: 'SendMoney' },
+  { key: 'ess', label: 'ESS' },
+  { key: 'autopay', label: 'Autopay' },
+  { key: 'expay', label: 'Expay' },
+  { key: 'totalBrandCIH', label: 'Total CIH' },
+];
+
+function NotSupportedCell() {
+  return (
+    <td className="whitespace-nowrap px-4 py-3 text-center text-[12px] font-normal italic text-muted-foreground">
+      Not Supported
+    </td>
+  );
+}
+
+function CihCell({ value, bold }: { value: number; bold?: boolean }) {
+  const display = cihValueDisplay(value);
+  return (
+    <td className={`whitespace-nowrap px-4 py-3 text-center text-[12px] tabular-nums ${bold ? 'font-bold' : 'font-normal'} ${display.className}`}>
+      {display.text}
+    </td>
+  );
+}
+
+function CashInHandSection({ rows, total }: { rows: ApiCashInHand[]; total: ApiCashInHand | null }) {
+  const [sortColumn, setSortColumn] = useState<CihSortKey | null>(null);
   const [sortDirection, setSortDirection] = useState<'asc' | 'desc'>('desc');
 
-  const handleHeaderClick = useCallback((key: BrandCashSortKey) => {
+  const handleHeaderClick = useCallback((key: CihSortKey) => {
     if (sortColumn !== key) {
       setSortColumn(key);
       setSortDirection('desc');
@@ -1218,41 +1344,37 @@ function BrandCashInhandSection({ rows, total }: { rows: BrandCashRow[]; total: 
   }, [rows, sortColumn, sortDirection]);
 
   const handleExport = useCallback(() => {
-    const getExportValue = (row: BrandCashRow, key: keyof Omit<BrandCashRow, 'brand'>) => {
-      if (key === 'autopay' && AUTOPAY_UNSUPPORTED_BRANDS.includes(row.brand.toUpperCase())) return 'Not Supported';
+    const getExportValue = (row: ApiCashInHand, key: CihColumnKey) => {
+      if (key === 'autopay' && !row.autopaySupported) return 'Not Supported';
       return row[key];
     };
-    const headers = ['Brand', ...BRAND_CASH_COLUMNS.map((c) => c.label)];
-    const data = rows.map((row) => [row.brand, ...BRAND_CASH_COLUMNS.map((c) => getExportValue(row, c.key))]);
-    if (total) data.push([total.brand, ...BRAND_CASH_COLUMNS.map((c) => total[c.key])]);
+    const headers = ['Brand', ...CIH_COLUMNS.map((c) => c.label)];
+    const data = rows.map((row) => [row.brand, ...CIH_COLUMNS.map((c) => getExportValue(row, c.key))]);
+    if (total) data.push([total.brand, ...CIH_COLUMNS.map((c) => total[c.key])]);
 
     const worksheet = XLSX.utils.aoa_to_sheet([headers, ...data]);
     worksheet['!cols'] = headers.map(() => ({ wch: 16 }));
     const workbook = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(workbook, worksheet, 'Brand Balance');
-
-    const now = new Date();
-    const datePart = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
-    const timePart = `${String(now.getHours()).padStart(2, '0')}${String(now.getMinutes()).padStart(2, '0')}`;
-    XLSX.writeFile(workbook, `BRAND_BALANCE_${datePart}_${timePart}.xlsx`);
+    XLSX.writeFile(workbook, xlsxTimestampedFilename('BRAND_BALANCE'));
   }, [rows, total]);
 
   return (
-    <section data-telegram-capture="brand" className="overflow-hidden rounded-xl border border-border bg-white dark:bg-[#2a2a2d]">
-      <div className="flex items-center justify-between gap-3 border-b border-border px-4 py-3">
+    <section className="overflow-hidden rounded-lg border border-[#DEE1E8] dark:border-[#262B38] bg-white dark:bg-[#12151D]">
+      <div className="flex items-center justify-between gap-3 border-b border-[#DEE1E8] dark:border-[#262B38] px-4 py-3">
         <div className="flex min-w-0 items-center gap-3">
-          <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-slate-100 text-slate-900 dark:bg-white/10 dark:text-white">
+          <div className="flex h-[28px] w-[28px] shrink-0 items-center justify-center rounded-lg border border-[#DEE1E8] dark:border-[#262B38] bg-[#F1F2F5] text-[#6B7280] dark:bg-[#1A1E29] dark:text-[#9198AC]">
             <Building2 size={16} />
           </div>
           <div className="min-w-0">
-            <h2 className="truncate text-[15px] font-bold text-foreground">Brand Balance</h2>
-            <p className="truncate text-[13px] text-muted-foreground">Summary of cash in hand by brand and payment gateway</p>
+            <h2 className="truncate text-[13.5px] font-bold text-foreground">Brand Balance</h2>
+            <p className="truncate text-[11px] text-muted-foreground">Summary of cash in hand by brand and payment gateway</p>
           </div>
         </div>
         <button
           type="button"
           onClick={handleExport}
-          className="inline-flex shrink-0 items-center gap-1.5 rounded-lg bg-slate-900 px-3 py-1.5 text-[14px] font-medium text-white hover:bg-slate-800 dark:bg-white dark:text-slate-900 dark:hover:bg-slate-200"
+          className="inline-flex shrink-0 items-center gap-1.5 rounded-lg bg-slate-900 px-3 py-1.5 text-[11.5px] font-semibold text-white hover:bg-slate-800 dark:bg-white dark:text-slate-900 dark:hover:bg-slate-200"
         >
           <Download size={13} />
           Export
@@ -1262,26 +1384,18 @@ function BrandCashInhandSection({ rows, total }: { rows: BrandCashRow[]; total: 
       <div className="hidden overflow-x-auto sm:block">
         <table className="w-full min-w-[760px]">
           <thead>
-            <tr className="border-b border-border bg-muted/10">
-              <th className="whitespace-nowrap px-4 py-3 text-left text-[12px] font-medium text-muted-foreground">
-                <button
-                  type="button"
-                  onClick={() => handleHeaderClick('brand')}
-                  className="flex items-center gap-1 hover:opacity-80"
-                >
+            <tr className="border-b border-[#DEE1E8] dark:border-[#262B38]">
+              <th className="whitespace-nowrap px-4 py-3 text-left text-[10px] font-semibold uppercase tracking-[0.04em] text-muted-foreground">
+                <button type="button" onClick={() => handleHeaderClick('brand')} className="flex items-center gap-1 hover:opacity-80">
                   Brand
-                  <SspLine1SortIcon active={sortColumn === 'brand'} direction={sortDirection} />
+                  <SortIcon active={sortColumn === 'brand'} direction={sortDirection} />
                 </button>
               </th>
-              {BRAND_CASH_COLUMNS.map((col) => (
-                <th key={col.key} className="whitespace-nowrap px-4 py-3 text-center text-[12px] font-medium text-muted-foreground">
-                  <button
-                    type="button"
-                    onClick={() => handleHeaderClick(col.key)}
-                    className="flex w-full items-center justify-center gap-1 hover:opacity-80"
-                  >
+              {CIH_COLUMNS.map((col) => (
+                <th key={col.key} className="whitespace-nowrap px-4 py-3 text-center text-[10px] font-semibold uppercase tracking-[0.04em] text-muted-foreground">
+                  <button type="button" onClick={() => handleHeaderClick(col.key)} className="flex w-full items-center justify-center gap-1 hover:opacity-80">
                     {col.label}
-                    <SspLine1SortIcon active={sortColumn === col.key} direction={sortDirection} />
+                    <SortIcon active={sortColumn === col.key} direction={sortDirection} />
                   </button>
                 </th>
               ))}
@@ -1289,10 +1403,10 @@ function BrandCashInhandSection({ rows, total }: { rows: BrandCashRow[]; total: 
           </thead>
           <tbody>
             {sortedRows.map((row) => (
-              <tr key={row.brand} className="border-b border-border last:border-0 transition-colors hover:bg-muted/10">
-                <td className="whitespace-nowrap px-4 py-3 text-left text-[13px] font-bold text-foreground">{row.brand}</td>
-                {BRAND_CASH_COLUMNS.map((col) =>
-                  col.key === 'autopay' && AUTOPAY_UNSUPPORTED_BRANDS.includes(row.brand.toUpperCase()) ? (
+              <tr key={row.brand} className="border-b border-[#EEF0F3] dark:border-[#1D212B] last:border-0 transition-colors hover:bg-muted/10">
+                <td className="whitespace-nowrap px-4 py-3 text-left text-[12.5px] font-semibold text-foreground">{row.brand}</td>
+                {CIH_COLUMNS.map((col) =>
+                  col.key === 'autopay' && !row.autopaySupported ? (
                     <NotSupportedCell key={col.key} />
                   ) : (
                     <CihCell key={col.key} value={row[col.key]} bold={col.key === 'totalBrandCIH'} />
@@ -1303,9 +1417,9 @@ function BrandCashInhandSection({ rows, total }: { rows: BrandCashRow[]; total: 
           </tbody>
           {total && (
             <tfoot>
-              <tr className="border-t-2 border-border bg-muted/20">
-                <td className="whitespace-nowrap px-4 py-3 text-left text-[13px] font-bold text-foreground">{total.brand}</td>
-                {BRAND_CASH_COLUMNS.map((col) => (
+              <tr className="border-t border-[#DEE1E8] dark:border-[#262B38]">
+                <td className="whitespace-nowrap px-4 py-3 text-left text-[12.5px] font-semibold text-foreground">{total.brand}</td>
+                {CIH_COLUMNS.map((col) => (
                   <CihCell key={col.key} value={total[col.key]} bold />
                 ))}
               </tr>
@@ -1314,14 +1428,11 @@ function BrandCashInhandSection({ rows, total }: { rows: BrandCashRow[]; total: 
         </table>
       </div>
 
-      {/* Mobile: one card per brand — the 7-column table forces horizontal
-          scroll on narrow screens, same "card list" pattern already used for
-          Wallet Summary tables elsewhere in the app. */}
       <div className="flex flex-col gap-3 p-4 sm:hidden">
         {sortedRows.map((row) => {
           const totalDisplay = cihValueDisplay(row.totalBrandCIH);
           return (
-            <div key={row.brand} className="rounded-xl border border-border bg-white p-4 dark:bg-[#2a2a2d]">
+            <div key={row.brand} className="rounded-lg border border-[#DEE1E8] dark:border-[#262B38] bg-white p-4 dark:bg-[#12151D]">
               <div className="flex items-start justify-between gap-2">
                 <span className="text-[15px] font-bold text-foreground">{row.brand}</span>
                 <div className="text-right">
@@ -1329,9 +1440,9 @@ function BrandCashInhandSection({ rows, total }: { rows: BrandCashRow[]; total: 
                   <p className={`text-lg font-bold tabular-nums ${totalDisplay.className}`}>{totalDisplay.text}</p>
                 </div>
               </div>
-              <div className="mt-3 grid grid-cols-3 gap-x-2 gap-y-3 border-t border-border pt-3">
-                {BRAND_CASH_COLUMNS.filter((col) => col.key !== 'totalBrandCIH').map((col) => {
-                  const notSupported = col.key === 'autopay' && AUTOPAY_UNSUPPORTED_BRANDS.includes(row.brand.toUpperCase());
+              <div className="mt-3 grid grid-cols-3 gap-x-2 gap-y-3 border-t border-[#DEE1E8] dark:border-[#262B38] pt-3">
+                {CIH_COLUMNS.filter((col) => col.key !== 'totalBrandCIH').map((col) => {
+                  const notSupported = col.key === 'autopay' && !row.autopaySupported;
                   const display = cihValueDisplay(row[col.key]);
                   return (
                     <div key={col.key} className="min-w-0">
@@ -1351,7 +1462,7 @@ function BrandCashInhandSection({ rows, total }: { rows: BrandCashRow[]; total: 
         {total && (() => {
           const totalDisplay = cihValueDisplay(total.totalBrandCIH);
           return (
-            <div className="rounded-xl border-2 border-border bg-muted/20 p-4">
+            <div className="rounded-lg border-2 border-[#DEE1E8] dark:border-[#262B38] bg-[#F1F2F5] dark:bg-[#1A1E29] p-4">
               <div className="flex items-start justify-between gap-2">
                 <span className="text-[15px] font-bold text-foreground">{total.brand}</span>
                 <div className="text-right">
@@ -1359,8 +1470,8 @@ function BrandCashInhandSection({ rows, total }: { rows: BrandCashRow[]; total: 
                   <p className={`text-lg font-bold tabular-nums ${totalDisplay.className}`}>{totalDisplay.text}</p>
                 </div>
               </div>
-              <div className="mt-3 grid grid-cols-3 gap-x-2 gap-y-3 border-t border-border pt-3">
-                {BRAND_CASH_COLUMNS.filter((col) => col.key !== 'totalBrandCIH').map((col) => {
+              <div className="mt-3 grid grid-cols-3 gap-x-2 gap-y-3 border-t border-[#DEE1E8] dark:border-[#262B38] pt-3">
+                {CIH_COLUMNS.filter((col) => col.key !== 'totalBrandCIH').map((col) => {
                   const display = cihValueDisplay(total[col.key]);
                   return (
                     <div key={col.key} className="min-w-0">
@@ -1378,119 +1489,52 @@ function BrandCashInhandSection({ rows, total }: { rows: BrandCashRow[]; total: 
   );
 }
 
-// Mirrors the real table's own <table>/<thead>/<tbody>/<tfoot> markup and
-// padding (same 10 brand rows + header + footer as the live sheet) instead
-// of a handful of generic placeholder lines — a shorter fake table was
-// causing a visible size jump when the real ~600px-tall table popped in.
-function BrandCashInhandSkeleton() {
+function CashInHandSkeleton() {
+  // 7-column table (Brand + 6 CIH_COLUMNS) with 10 brand rows + a Total
+  // row, matching the real CashInHandSection — same fix as
+  // RunningBalanceSkeleton above, just keeping this section's own header
+  // border (the real header here does have a border-b, unlike Running
+  // Balance's).
   return (
-    <section className="overflow-hidden rounded-xl border border-border bg-white dark:bg-[#2a2a2d]">
-      <div className="flex items-center justify-between gap-3 border-b border-border px-4 py-3">
+    <section className="overflow-hidden rounded-lg border border-[#DEE1E8] dark:border-[#262B38] bg-white dark:bg-[#12151D]">
+      <div className="flex items-center justify-between gap-3 border-b border-[#DEE1E8] dark:border-[#262B38] px-4 py-3">
         <div className="flex min-w-0 items-center gap-3">
-          <div className="h-9 w-9 shrink-0 animate-pulse rounded-lg bg-slate-200 dark:bg-slate-700" />
+          <SkeletonBlock className="h-[28px] w-[28px] shrink-0 rounded-lg" />
           <div>
-            <div className="h-[20px] w-40 animate-pulse rounded-md bg-slate-200 dark:bg-slate-700" />
-            <div className="mt-1.5 h-[16px] w-56 animate-pulse rounded-md bg-slate-200 dark:bg-slate-700" />
+            <SkeletonBlock className="h-4 w-40" />
+            <SkeletonBlock className="mt-1.5 h-3 w-56" />
           </div>
         </div>
-        <div className="h-8 w-24 shrink-0 animate-pulse rounded-lg bg-slate-200 dark:bg-slate-700" />
+        <SkeletonBlock className="h-8 w-24 shrink-0 rounded-lg" />
       </div>
-
-      <div className="hidden overflow-x-auto sm:block">
-        <table className="w-full min-w-[760px]">
-          <thead>
-            <tr className="border-b border-border bg-muted/10" style={{ height: '42.5px' }}>
-              <th className="px-4 py-3 text-left">
-                <div className="h-3 w-10 animate-pulse rounded-md bg-slate-300 dark:bg-slate-600" />
-              </th>
-              {BRAND_CASH_COLUMNS.map((col) => (
-                <th key={col.key} className="px-4 py-3">
-                  <div className="mx-auto h-3 w-14 animate-pulse rounded-md bg-slate-300 dark:bg-slate-600" />
-                </th>
-              ))}
-            </tr>
-          </thead>
-          <tbody>
-            {Array.from({ length: 10 }).map((_, i) => (
-              <tr key={i} className="border-b border-border last:border-0" style={{ height: '44.5px' }}>
-                <td className="px-4 py-3">
-                  <div className="h-3 w-10 animate-pulse rounded-md bg-slate-200 dark:bg-slate-700" />
-                </td>
-                {BRAND_CASH_COLUMNS.map((col) => (
-                  <td key={col.key} className="px-4 py-3">
-                    <div className="mx-auto h-3 w-16 animate-pulse rounded-md bg-slate-100 dark:bg-slate-800" />
-                  </td>
-                ))}
-              </tr>
-            ))}
-          </tbody>
-          <tfoot>
-            <tr className="border-t-2 border-border bg-muted/20" style={{ height: '44.5px' }}>
-              <td className="px-4 py-3">
-                <div className="h-3 w-10 animate-pulse rounded-md bg-slate-300 dark:bg-slate-600" />
-              </td>
-              {BRAND_CASH_COLUMNS.map((col) => (
-                <td key={col.key} className="px-4 py-3">
-                  <div className="mx-auto h-3 w-16 animate-pulse rounded-md bg-slate-300 dark:bg-slate-600" />
-                </td>
-              ))}
-            </tr>
-          </tfoot>
-        </table>
-      </div>
-
-      {/* Mobile skeleton — mirrors the real card list's own height (184px per
-          brand card, 186px for the bordered Total card) so nothing jumps in
-          size once live data replaces this. */}
-      <div className="flex flex-col gap-3 p-4 sm:hidden">
-        {Array.from({ length: 10 }).map((_, i) => (
-          <div key={i} className="rounded-xl border border-border bg-white p-4 dark:bg-[#2a2a2d]" style={{ height: '184px' }}>
-            <div className="flex items-start justify-between gap-2">
-              <div className="h-[18px] w-14 animate-pulse rounded-md bg-slate-200 dark:bg-slate-700" />
-              <div className="flex flex-col items-end gap-1.5">
-                <div className="h-3 w-16 animate-pulse rounded-md bg-slate-200 dark:bg-slate-700" />
-                <div className="h-[22px] w-24 animate-pulse rounded-md bg-slate-300 dark:bg-slate-600" />
-              </div>
-            </div>
-            <div className="mt-3 grid grid-cols-3 gap-x-2 gap-y-3 border-t border-border pt-3">
-              {BRAND_CASH_COLUMNS.filter((col) => col.key !== 'totalBrandCIH').map((col) => (
-                <div key={col.key} className="min-w-0">
-                  <div className="h-3 w-10 animate-pulse rounded-md bg-slate-200 dark:bg-slate-700" />
-                  <div className="mt-1 h-3 w-14 animate-pulse rounded-md bg-slate-100 dark:bg-slate-800" />
-                </div>
-              ))}
-            </div>
-          </div>
+      <div className="flex gap-4 border-b border-[#DEE1E8] px-4 py-3 dark:border-[#262B38]">
+        {BRAND_TABLE_SKELETON_COL_WIDTHS.map((w, i) => (
+          <SkeletonBlock key={i} className={`h-3 ${w}`} />
         ))}
-        <div className="rounded-xl border-2 border-border bg-muted/20 p-4" style={{ height: '186px' }}>
-          <div className="flex items-start justify-between gap-2">
-            <div className="h-[18px] w-20 animate-pulse rounded-md bg-slate-300 dark:bg-slate-600" />
-            <div className="flex flex-col items-end gap-1.5">
-              <div className="h-3 w-16 animate-pulse rounded-md bg-slate-300 dark:bg-slate-600" />
-              <div className="h-[22px] w-24 animate-pulse rounded-md bg-slate-400 dark:bg-slate-500" />
-            </div>
-          </div>
-          <div className="mt-3 grid grid-cols-3 gap-x-2 gap-y-3 border-t border-border pt-3">
-            {BRAND_CASH_COLUMNS.filter((col) => col.key !== 'totalBrandCIH').map((col) => (
-              <div key={col.key} className="min-w-0">
-                <div className="h-3 w-10 animate-pulse rounded-md bg-slate-300 dark:bg-slate-600" />
-                <div className="mt-1 h-3 w-14 animate-pulse rounded-md bg-slate-300 dark:bg-slate-600" />
-              </div>
-            ))}
-          </div>
+      </div>
+      {Array.from({ length: 10 }).map((_, i) => (
+        <div key={i} className="flex items-center gap-4 border-b border-[#EEF0F3] px-4 py-3 dark:border-[#1D212B]">
+          {BRAND_TABLE_SKELETON_COL_WIDTHS.map((w, j) => (
+            <SkeletonBlock key={j} className={`h-3 ${w}`} />
+          ))}
         </div>
+      ))}
+      <div className="flex items-center gap-4 px-4 py-3">
+        {BRAND_TABLE_SKELETON_COL_WIDTHS.map((w, i) => (
+          <SkeletonBlock key={i} className={`h-3 ${w}`} />
+        ))}
       </div>
     </section>
   );
 }
 
-export default function BalanceOverviewPage() {
-  const [cashoutCard, setCashoutCard] = useState<CardData | null>(null);
-  const [sendMoneyCard, setSendMoneyCard] = useState<CardData | null>(null);
-  const [sspLine1Rows, setSspLine1Rows] = useState<SspLine1Row[]>([]);
-  const [sspLine1SendMoneyRows, setSspLine1SendMoneyRows] = useState<SspLine1Row[]>([]);
-  const [brandCashRows, setBrandCashRows] = useState<BrandCashRow[]>([]);
-  const [brandCashTotal, setBrandCashTotal] = useState<BrandCashRow | null>(null);
+// ---------------------------------------------------------------------------
+// Page
+// ---------------------------------------------------------------------------
+
+export default function DashboardPage() {
+  const { theme, toggleTheme } = useTheme();
+  const [data, setData] = useState<DashboardData | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<ClassifiedError | null>(null);
   const [spinning, setSpinning] = useState(false);
@@ -1503,259 +1547,14 @@ export default function BalanceOverviewPage() {
       setLoading(true);
       setError(null);
 
-      const [cashoutRes, sendMoneyRes, cashGoRes, bundleRes, sspLine1Res, sspLine1SendMoneyRes, brandCashRes, agstlmRes, openingRes, estimatedRes, estimatedSendMoneyRes] = await Promise.all([
-        fetch(`/api/sheet?t=${Date.now()}`),
-        fetch(`/api/sendmoney/sheet?t=${Date.now()}`),
-        fetch(`/api/cashgo?t=${Date.now()}`),
-        fetch(`/api/sendmoney/stlmtopup?t=${Date.now()}`),
-        fetch(`/api/brand-ssp-line1?t=${Date.now()}`),
-        fetch(`/api/brand-ssp-line1-sendmoney?t=${Date.now()}`),
-        fetch(`/api/brand-cash-inhand?t=${Date.now()}`),
-        fetch(`/api/agstlmtopup?t=${Date.now()}`),
-        fetch(`/api/opening?t=${Date.now()}`),
-        fetch(`/api/opening/estimated-balance?t=${Date.now()}`),
-        fetch(`/api/sendmoney/opening/estimated-balance?t=${Date.now()}`),
-      ]);
-      await assertAllOk([cashoutRes, sendMoneyRes, cashGoRes, bundleRes, sspLine1Res, sspLine1SendMoneyRes, brandCashRes, agstlmRes, openingRes, estimatedRes, estimatedSendMoneyRes]);
-      const cashoutText = await cashoutRes.text();
-      const sendMoneyText = await sendMoneyRes.text();
-      const cashGoText = await cashGoRes.text();
-      const bundleText = await bundleRes.text();
-      const sspLine1Text = await sspLine1Res.text();
-      const sspLine1SendMoneyText = await sspLine1SendMoneyRes.text();
-      const brandCashText = await brandCashRes.text();
-      const agstlmText = await agstlmRes.text();
-      const openingText = await openingRes.text();
-      const estimatedData: {
-        balances: Record<string, number>;
-        balancesWithFallback: Record<string, number>;
-        walletTotals: Record<string, { totalDP: number; totalWD: number }>;
-        uploadedAt: string | null;
-      } = await estimatedRes.json();
-      const estimatedSendMoneyData: {
-        balances: Record<string, number>;
-        balancesWithFallback: Record<string, number>;
-        walletTotals: Record<string, { totalDP: number; totalWD: number }>;
-        uploadedAt: string | null;
-      } = await estimatedSendMoneyRes.json();
-
-      // Cashout's Opening Balance card figure switches to the sum of
-      // "Estimated Opening" (Assumed Balance) once BOTH hold — same rule as
-      // the Balance tab (app/agentbal/page.tsx):
-      // 1. Opening AG's own "Updated Time" card is still showing the
-      //    PREVIOUS business day (the real reset for today hasn't happened).
-      // 2. The upload's own "Last Updated" timestamp is itself from TODAY's
-      //    business day (a stale, un-refreshed upload must not keep being
-      //    used just because Opening's own reset is also running late).
-      // Otherwise it falls back to the "Dashboard Overview" sheet's own
-      // Opening figure, unchanged. Per explicit instruction, kept as the
-      // original dual-condition check for Cashout specifically — Send
-      // Money's own version below dropped requirement 1 (see its comment).
-      const cashoutCutoffDate = parseCashoutReportCutoffDate(openingText);
-      const estimatedUploadedAt = estimatedData.uploadedAt ? new Date(estimatedData.uploadedAt) : null;
-      const estimatedOpeningValid =
-        cashoutCutoffDate !== null &&
-        cashoutCutoffDate.getTime() < getBusinessToday().getTime() &&
-        estimatedUploadedAt !== null &&
-        toBusinessDate(estimatedUploadedAt).getTime() === getBusinessToday().getTime();
-      const cashoutOpeningOverride = estimatedOpeningValid
-        ? Object.values(estimatedData.balancesWithFallback ?? {}).reduce((sum, v) => sum + v, 0)
-        : undefined;
-
-      // Send Money's own Opening Balance card figure. Per explicit
-      // instruction, this now matches Cashout's exact dual-condition rule
-      // again: BOTH (1) Opening's own "Updated Time" card is still showing
-      // the PREVIOUS business day, AND (2) the upload's own "Last Updated"
-      // timestamp is itself from TODAY's business day. Once Opening's card
-      // refreshes for today, the override turns off and the live "Dashboard
-      // Overview" figure wins even if a same-day Estimated upload still
-      // exists — confirmed live on 2026-08-02: Opening PS refreshed to
-      // 142,446,292.84 (matching Dashboard Overview) at 9:20 AM, but an
-      // earlier 3:26 AM upload's stale Estimated sum (160,584,473.94) kept
-      // overriding it under the single-condition rule, a ~18.14M mismatch.
-      // (The single-condition rule was introduced to fix the OPPOSITE
-      // failure — Opening's card ticking to "today" before its own numbers
-      // were ready — but that only matters while Opening is still stale;
-      // once it's genuinely refreshed, the live figure must win.)
-      const sendMoneyCutoffDate = parseSendMoneyReportCutoffDate(openingText);
-      const estimatedSendMoneyUploadedAt = estimatedSendMoneyData.uploadedAt ? new Date(estimatedSendMoneyData.uploadedAt) : null;
-      const estimatedSendMoneyOpeningValid =
-        sendMoneyCutoffDate !== null &&
-        sendMoneyCutoffDate.getTime() < getBusinessToday().getTime() &&
-        estimatedSendMoneyUploadedAt !== null &&
-        toBusinessDate(estimatedSendMoneyUploadedAt).getTime() === getBusinessToday().getTime();
-      const sendMoneyOpeningOverride = estimatedSendMoneyOpeningValid
-        ? Object.values(estimatedSendMoneyData.balancesWithFallback ?? {}).reduce((sum, v) => sum + v, 0)
-        : undefined;
-
-      // Top Up/Settlement totals reset at the 2AM business-day rollover (see
-      // app/lib/businessDate.ts) — clock-based ("today"), UNLESS Opening is
-      // still stale (hasn't refreshed for today) AND no valid Estimated
-      // Balance covers that gap yet — then these widen to sum from
-      // Opening's own last-refresh day through today, so Settlement/TopUp
-      // posted "yesterday" (while waiting for either Opening or an upload)
-      // doesn't disappear once the calendar rolls over. Once a valid
-      // Estimated Balance exists, it already bakes that stale day in (see
-      // app/lib/estimatedOpening.ts), so this goes back to today-only to
-      // avoid counting it twice. Per explicit instruction, the CashGo/
-      // Bundle Transfer "Today" strip widens the same way.
-      //
-      // Per explicit instruction, Cashout's own cutoff is back to this
-      // original two-condition rule (Opening genuinely stale AND Estimated
-      // not valid) — no "already ticked to today but unconfirmed" fallback.
-      // Send Money's own version below now matches this same formula (see
-      // its own comment) — the two are intentionally symmetric again.
-      const cutoff = getBusinessToday();
-      const cashoutLiveCutoff = (cashoutCutoffDate !== null && cashoutCutoffDate.getTime() < cutoff.getTime() && !estimatedOpeningValid)
-        ? cashoutCutoffDate
-        : cutoff;
-      // Per explicit instruction, Send Money's own cutoff now matches
-      // Cashout's cashoutLiveCutoff formula exactly (same two-condition
-      // rule, own data source) — no "already ticked to today but
-      // unconfirmed" fallback. This re-admits the gap the oneBusinessDayBack
-      // fallback (30765ed) had closed — Send Money's Opening card can flip
-      // to "today" on its own before that day's Settlement/Top Up are
-      // folded in — but per instruction, consistency with Cashout's rule
-      // takes priority.
-      const sendMoneyLiveCutoff = (sendMoneyCutoffDate !== null && sendMoneyCutoffDate.getTime() < cutoff.getTime() && !estimatedSendMoneyOpeningValid)
-        ? sendMoneyCutoffDate
-        : cutoff;
-      const cashoutTopUpStlm = computeCashoutTopUpStlm(agstlmText, cashoutLiveCutoff);
-      const sendMoneyTopUpStlm = computeSendMoneyTopUpStlm(bundleText, sendMoneyLiveCutoff);
-
-      const todayCashGo = parseTodayCashGo(cashGoText, cashoutLiveCutoff);
-      const todayBundle = parseTodayBundle(bundleText, sendMoneyLiveCutoff);
-
-      // Overall (not per-wallet) today's combined quota vs. processed —
-      // Bundle Transfer has no quota concept, so it's null there.
-      const cashGoQuotaTotal = todayCashGo.quotaBk + todayCashGo.quotaNg;
-      const cashGoQuota = cashGoQuotaTotal > 0 ? { processed: todayCashGo.bk + todayCashGo.ng, total: cashGoQuotaTotal } : null;
-
-      const cashoutRows = parseSheetBlock(cashoutText);
-
-      // Same validity gate as the Opening Balance override above, applied
-      // per wallet (Bkash/Nagad/Rocket/Upay) for the Wallet Breakdown tiles:
-      //   Assumed Running Balance = Dashboard Running Balance − Settlement
-      //     (live) + Top Up (live) − Uploaded Total WD + Uploaded Total DP
-      const cashoutWalletRunningBalOverride = estimatedOpeningValid
-        ? (() => {
-            const liveWalletTopUpStlm = computeCashoutWalletTopUpStlm(agstlmText, cutoff);
-            const overrideMap = new Map<string, number>();
-            Object.entries(estimatedData.walletTotals ?? {}).forEach(([wallet, uploaded]) => {
-              const dashboardRow = cashoutRows.find((r) => r.wallet.toUpperCase() === wallet);
-              const dashboardRunningBal = dashboardRow?.runningBal ?? 0;
-              const live = liveWalletTopUpStlm.get(wallet) ?? { topUp: 0, stlm: 0 };
-              const assumedRunningBal = dashboardRunningBal - live.stlm + live.topUp - uploaded.totalWD + uploaded.totalDP;
-              overrideMap.set(wallet, assumedRunningBal);
-            });
-            return overrideMap;
-          })()
-        : undefined;
-
-      const sendMoneyRows = parseSheetBlock(sendMoneyText);
-
-      // Same validity gate as the Opening Balance override above, applied
-      // per wallet (Nagad/Rocket/Upay) for Send Money's own Wallet
-      // Breakdown tiles.
-      const sendMoneyWalletRunningBalOverride = estimatedSendMoneyOpeningValid
-        ? (() => {
-            const liveWalletTopUpStlm = computeSendMoneyWalletTopUpStlm(bundleText, cutoff);
-            const overrideMap = new Map<string, number>();
-            Object.entries(estimatedSendMoneyData.walletTotals ?? {}).forEach(([wallet, uploaded]) => {
-              const dashboardRow = sendMoneyRows.find((r) => r.wallet.toUpperCase() === wallet);
-              const dashboardRunningBal = dashboardRow?.runningBal ?? 0;
-              const live = liveWalletTopUpStlm.get(wallet) ?? { topUp: 0, stlm: 0 };
-              const assumedRunningBal = dashboardRunningBal - live.stlm + live.topUp - uploaded.totalWD + uploaded.totalDP;
-              overrideMap.set(wallet, assumedRunningBal);
-            });
-            return overrideMap;
-          })()
-        : undefined;
-
-      setCashoutCard(buildCardData(cashoutRows, 'cashout', 'Cashout', 'CashGo', [
-        { key: 'bk', label: 'Bkash', value: todayCashGo.bk, quota: todayCashGo.quotaBk },
-        { key: 'ng', label: 'Nagad', value: todayCashGo.ng, quota: todayCashGo.quotaNg },
-      ], cashGoQuota, cashoutTopUpStlm, cashoutOpeningOverride, cashoutWalletRunningBalOverride));
-      setSendMoneyCard(buildCardData(sendMoneyRows, 'sendmoney', 'Send Money', 'Bundle Transfer', [
-        { key: 'nagad', label: 'Nagad', value: todayBundle.nagad },
-        { key: 'rocket', label: 'Rocket', value: todayBundle.rocket },
-        { key: 'upay', label: 'UPay', value: todayBundle.upay },
-      ], null, sendMoneyTopUpStlm, sendMoneyOpeningOverride, sendMoneyWalletRunningBalOverride));
-
-      // Phase 10 — Top Up/Settlement now come from PostgreSQL, grouped by
-      // each transaction's own stored brand_id (never agents.brand_id,
-      // never the agent-name-parsing formulas this replaces). Fetched here
-      // rather than in the initial Promise.all above because it needs
-      // cashoutLiveCutoff/sendMoneyLiveCutoff, which aren't known until
-      // Opening/Estimated Opening (fetched above) have been resolved — same
-      // widened-cutoff rule as the KPI cards/Today strip, reused unchanged,
-      // not re-derived. Opening Balance/Deposit/Withdrawal/Adjustment/Total
-      // (the "static" fields) are deliberately left reading the existing
-      // "Brand Balance" sheet exactly as before, UNCHANGED — the SSP Line 1
-      // table blanks them at render time only (see SspLine1Section), so
-      // Brand Cash In Hand's own cross-reference onto this same `total`
-      // value further down is not affected by this phase.
-      const [sspTopUpStlmRes, sspTopUpStlmSendMoneyRes] = await Promise.all([
-        fetch(`/api/v2/ssp-line1?product=cashout&cutoff=${formatCutoffDateKey(cashoutLiveCutoff)}`),
-        fetch(`/api/v2/ssp-line1?product=sendmoney&cutoff=${formatCutoffDateKey(sendMoneyLiveCutoff)}`),
-      ]);
-      await assertAllOk([sspTopUpStlmRes, sspTopUpStlmSendMoneyRes]);
-      const sspTopUpStlmRows: { brand: string; topUp: number; settlement: number }[] = await sspTopUpStlmRes.json();
-      const sspTopUpStlmSendMoneyRows: { brand: string; topUp: number; settlement: number }[] = await sspTopUpStlmSendMoneyRes.json();
-      const sspLine1BrandTopUpStlm = new Map(sspTopUpStlmRows.map((r) => [r.brand.toUpperCase(), { topUp: r.topUp, stlm: r.settlement }]));
-      const sspLine1SendMoneyBrandTopUpStlm = new Map(sspTopUpStlmSendMoneyRows.map((r) => [r.brand.toUpperCase(), { topUp: r.topUp, stlm: r.settlement }]));
-
-      const sspLine1CashoutComputed = parseSspLine1(sspLine1Text).map((row) => {
-        const brandTotals = sspLine1BrandTopUpStlm.get(row.brand.toUpperCase()) ?? { topUp: 0, stlm: 0 };
-        return { ...row, topUp: brandTotals.topUp, settlement: -brandTotals.stlm };
-      });
-      setSspLine1Rows(sspLine1CashoutComputed);
-
-      // Send Money's own SSP Line 1 table — same PostgreSQL source, grouped
-      // by the same stored brand_id (Send Money's own upload flow resolves
-      // Brand the identical way, no separate logic needed here either).
-      const sspLine1SendMoneyComputed = parseSspLine1(sspLine1SendMoneyText).map((row) => {
-        const brandTotals = sspLine1SendMoneyBrandTopUpStlm.get(row.brand.toUpperCase()) ?? { topUp: 0, stlm: 0 };
-        const settlement = -brandTotals.stlm;
-        // Total is computed live here (Cashout's own Total, above, is left
-        // reading the "Brand Balance" sheet's own static column — its
-        // brand attribution never changed, so it still reconciles). Send
-        // Money's static Total predates the brand-basis fix (rightmost-
-        // segment) and no longer agrees with the live per-brand Top Up/
-        // Settlement split it produces.
-        return { ...row, topUp: brandTotals.topUp, settlement, total: row.opening + row.deposit - row.withdrawal + brandTotals.topUp + settlement };
-      });
-      setSspLine1SendMoneyRows(sspLine1SendMoneyComputed);
-
-      // Brand Balance's own CashOut/SendMoney columns used to read a
-      // separate static "SSP AG"/"SSP PS" pair straight off the sheet —
-      // a second, independent source for the same figures SSP Line 1/Line 2
-      // (above) already compute live. Per explicit instruction, there must
-      // be exactly one source: CashOut/SendMoney here are now the SAME
-      // per-brand Total this page already computed for SSP Line 1/Line 2,
-      // keyed by brand, never re-derived from the sheet. Total CIH is
-      // likewise recomputed from these (now-live) CashOut/SendMoney values
-      // plus ESS/Autopay/Expay, instead of trusting the sheet's own
-      // "Total Brand CIH" column, so it can't silently drift from its own
-      // inputs the way Send Money's old static Total did.
-      const cashoutTotalByBrand = new Map(sspLine1CashoutComputed.map((row) => [row.brand.toUpperCase(), row.total]));
-      const sendMoneyTotalByBrand = new Map(sspLine1SendMoneyComputed.map((row) => [row.brand.toUpperCase(), row.total]));
-      const brandCash = parseBrandCashInhand(brandCashText);
-      const brandCashRowsMerged = brandCash.rows.map((row) => {
-        const key = row.brand.toUpperCase();
-        const sspAg = cashoutTotalByBrand.get(key) ?? row.sspAg;
-        const sspPs = sendMoneyTotalByBrand.get(key) ?? row.sspPs;
-        return { ...row, sspAg, sspPs, totalBrandCIH: sspAg + sspPs + row.ess + row.autopay + row.expay };
-      });
-      setBrandCashRows(brandCashRowsMerged);
-      setBrandCashTotal(
-        brandCash.total && {
-          ...brandCash.total,
-          sspAg: brandCashRowsMerged.reduce((sum, row) => sum + row.sspAg, 0),
-          sspPs: brandCashRowsMerged.reduce((sum, row) => sum + row.sspPs, 0),
-          totalBrandCIH: brandCashRowsMerged.reduce((sum, row) => sum + row.totalBrandCIH, 0),
-        }
-      );
+      const res = await fetch(`/api/dashboard?t=${Date.now()}`);
+      if (!res.ok) {
+        const text = await res.text().catch(() => '');
+        throw new Error(text || `Request failed with status ${res.status}`);
+      }
+      const json = (await res.json()) as DashboardData & { error?: string };
+      if (json.error) throw new Error(json.error);
+      setData(json);
     } catch (err) {
       setError(classifyFetchError(err instanceof Error ? err.message : String(err)));
     } finally {
@@ -1765,14 +1564,21 @@ export default function BalanceOverviewPage() {
   }, []);
 
   useEffect(() => {
+    // Fetch-on-mount, same pattern every fetching page in this codebase uses
+    // (see e.g. app/balance-overview/page.tsx, app/agentbal/page.tsx) — the
+    // new react-hooks `set-state-in-effect` rule flags this app-wide, not
+    // something specific to this page; not restructured here to stay
+    // consistent with the rest of the app.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     fetchData();
   }, [fetchData]);
 
-  // Sends both cards (Cashout + Send Money) and the Brand Balance table as
-  // two photos in a single Telegram album — one trigger, one message, both
-  // images — rather than the two separate per-dashboard "Send to Telegram"
-  // buttons this replaces.
-  const handleSendToTelegram = async () => {
+  // Sends Today's Insights (both product cards) and Brand Balance as one
+  // grouped Telegram album — same /api/telegram/screenshot + `[data-
+  // telegram-capture]` selector mechanism already proven on
+  // app/shadcn-demo/balance-overview/page.tsx, just pointed at this page's
+  // own two sections instead.
+  const handleSendToTelegram = useCallback(async () => {
     setTelegramSending(true);
     try {
       const res = await fetch('/api/telegram/screenshot', {
@@ -1780,7 +1586,7 @@ export default function BalanceOverviewPage() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           path: '/',
-          label: 'Brand Balance | CashOut & SendMoney',
+          label: 'Operations Overview',
           captures: ['[data-telegram-capture="cards"]', '[data-telegram-capture="brand"]'],
         }),
       });
@@ -1794,93 +1600,221 @@ export default function BalanceOverviewPage() {
     } finally {
       setTelegramSending(false);
     }
-  };
+  }, []);
 
   return (
-    <div className="min-h-screen bg-[#f5f5f7] text-[#1a1a1a] transition-colors duration-300 dark:bg-[#1c1c1e] dark:text-white">
-      <PageHeader
-        title="Balance Overview"
-        description="Real-time view of balances and transactions"
-        containerless
-        actions={
-          <>
-            <button
-              onClick={handleSendToTelegram}
-              disabled={telegramSending || loading}
-              aria-label="Send to Telegram"
-              title="Send to Telegram"
-              className="flex h-8 w-8 items-center justify-center rounded-lg border border-border bg-muted/60 text-foreground hover:bg-muted disabled:cursor-not-allowed disabled:opacity-40"
-            >
-              <Send size={13} className={telegramSending ? 'animate-spin' : ''} />
-            </button>
-            {/* Refresh stays in the header here — this is an analytics page
-                with no page-level Toolbar to relocate it into (each section
-                below has its own Export-only mini-header, not a search/
-                filter/refresh bar), so the usual "Refresh belongs in
-                Toolbar" rule doesn't have anywhere to apply. Documented
-                exception, not an oversight. */}
-            <button
-              onClick={fetchData}
-              disabled={spinning}
-              aria-label="Refresh"
-              title="Refresh"
-              className="flex h-8 w-8 items-center justify-center rounded-lg border border-border bg-muted/60 text-foreground hover:bg-muted disabled:opacity-50"
-            >
-              <RefreshCw size={13} className={spinning ? 'animate-spin' : ''} />
-            </button>
-            <AccountMenu />
-          </>
+    <div className="dd-page min-h-screen bg-[#F7F8FA] text-[#1a1a1a] transition-colors duration-300 dark:bg-[#0A0C11] dark:text-white">
+      {/* Tailwind's Preflight sets an ambient line-height:1.5 on <html>, which
+          every text-[Npx] arbitrary-size class in this file inherits (they
+          don't bundle their own line-height the way named sizes like
+          text-sm do). The demo never had this — its text renders at the
+          browser/font's natural "normal" line-height, which is visibly
+          tighter. That mismatch compounds across every stacked text block
+          (a wallet tile alone has 4 lines) into real, cumulative excess
+          height — this is the actual "spacing" issue, not a padding/margin
+          error. Resetting to line-height:normal here (0-specificity :where,
+          so any element that DOES want an explicit leading-* still wins)
+          reproduces the demo's metrics without touching Tailwind's global
+          preflight, which every other page in the app still relies on. */}
+      {/* Exact demo positive/negative tokens — Tailwind's emerald-600/rose-600
+          only approximate the demo's --pos/--neg (green-600 #16A34A and a
+          custom red #E23D3D in light mode; the dark-mode values happen to
+          equal emerald-400/an off-rose red). Defining them exactly here
+          (same pattern WaveTrendChart's own .wtc-panel scope already uses)
+          means every text-[color:var(--dd-pos)]/--dd-neg below renders the
+          demo's literal hex in both themes instead of a close approximation. */}
+      <style>{`
+        .dd-page :where(h1, h2, h3, p, span, td, th) { line-height: normal; }
+        .dd-page {
+          --dd-pos: #16A34A; --dd-neg: #E23D3D; --dd-pos-dim: rgba(22,163,74,.10); --dd-neg-dim: rgba(226,61,61,.10);
+          --ink-0: #F7F8FA; --ink-1: #FFFFFF; --ink-2: #F1F2F5; --hair: #DDE0E7;
+          --text-hi: #1A1D23; --text-mid: #6B7280; --text-low: #9CA3AF;
         }
-      />
+        .dark .dd-page {
+          --dd-pos: #34D399; --dd-neg: #F4665A; --dd-pos-dim: rgba(52,211,153,.12); --dd-neg-dim: rgba(244,102,90,.12);
+          --ink-0: #0A0C11; --ink-1: #12151D; --ink-2: #1A1E29; --hair: #262B38;
+          --text-hi: #F3F4F7; --text-mid: #9198AC; --text-low: #565C70;
+        }
+      `}</style>
       <Toast toast={toast} onDismiss={() => setToast(null)} />
-
-      <main className="space-y-6 px-4 pt-6 pb-6 md:px-8 md:pb-8">
+      {/* Demo's own .content/.wrap split: outer padding is edge-to-edge,
+          but the content itself caps at 1400px and centers — without this,
+          every card stretches to the full viewport width on a wide monitor
+          and reads noticeably larger/looser than the demo. */}
+      <main className="px-4 pb-6 md:px-[28px] md:pb-8">
+        {/* PageHeader (containerless/sticky) lives INSIDE this same
+            max-w-[1400px] wrapper, as the first child — not as a separate
+            sibling above <main> the way every other page's header is. See
+            the long comment on ContainerlessHeader in PageHeader.tsx for
+            why: position:sticky needs its own direct parent to be as tall
+            as the whole scrollable page, not just the header's own height,
+            or it stops sticking the moment you scroll past the header. */}
+        <div className="mx-auto max-w-[1400px]">
+        <PageHeader
+          title="Operations Overview"
+          containerless
+          actions={
+            <>
+              <button
+                onClick={handleSendToTelegram}
+                disabled={telegramSending || loading}
+                aria-label="Send to Telegram"
+                title="Send to Telegram"
+                className={`flex h-[22px] w-[22px] items-center justify-center rounded-md border border-[#DEE1E8] dark:border-[#262B38] bg-[#F1F2F5] dark:bg-[#1A1E29] text-[#6B7280] hover:text-[var(--ui-accent)] hover:border-[var(--ui-accent)] disabled:opacity-50 dark:text-[#9198AC] ${
+                  // Pulse (not spin) while sending — same dt-skeleton-pulse
+                  // rhythm used for every other loading placeholder in the
+                  // app, per explicit instruction: the icon shouldn't
+                  // rotate, the whole button should shimmer in place.
+                  telegramSending ? 'pointer-events-none animate-[dt-skeleton-pulse_1.3s_ease-in-out_infinite]' : ''
+                }`}
+              >
+                <Send size={11} />
+              </button>
+              <button
+                onClick={fetchData}
+                disabled={spinning}
+                aria-label="Refresh"
+                title="Refresh"
+                className="flex h-[22px] w-[22px] items-center justify-center rounded-md border border-[#DEE1E8] dark:border-[#262B38] bg-[#F1F2F5] dark:bg-[#1A1E29] text-[#6B7280] hover:text-[var(--ui-accent)] hover:border-[var(--ui-accent)] disabled:opacity-50 dark:text-[#9198AC]"
+              >
+                {/* Same hand-drawn icon as WaveTrendChart's own "Replay
+                    animation" button (not a lucide icon) — explicit design
+                    reference, kept pixel-identical rather than swapped for
+                    a lucide equivalent, idle color included (#6B7280 /
+                    dark:#9198AC on the button itself above). Spins in
+                    place while loading. */}
+                <svg
+                  viewBox="0 0 16 16"
+                  width="11"
+                  height="11"
+                  fill="none"
+                  className={spinning ? 'animate-spin' : ''}
+                  style={{ color: spinning ? 'var(--ui-accent)' : undefined }}
+                >
+                  <path d="M13.5 8a5.5 5.5 0 1 1-1.6-3.9" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" />
+                  <path d="M13.5 2.3V6h-3.7" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round" />
+                </svg>
+              </button>
+              <button
+                onClick={toggleTheme}
+                aria-label="Toggle light and dark mode"
+                title="Toggle light and dark mode"
+                className="flex h-[22px] w-[22px] items-center justify-center rounded-md border border-[#DEE1E8] dark:border-[#262B38] bg-[#F1F2F5] dark:bg-[#1A1E29] text-[#6B7280] hover:text-[var(--ui-accent)] hover:border-[var(--ui-accent)] dark:text-[#9198AC]"
+              >
+                {theme === 'dark' ? <Sun size={11} /> : <Moon size={11} />}
+              </button>
+              <AccountMenu compact />
+            </>
+          }
+        />
+        {/* No space-y gutter — every section starts with SectionLabel, whose
+            own margin:22px 0 10px (matching the demo) is the sole spacer
+            between sections. Stacking a wrapper gutter on top would double
+            it. */}
         {loading && (
           <>
-            <section className="grid grid-cols-1 gap-4 lg:grid-cols-2">
-              <CardSkeleton />
-              <CardSkeleton />
+            <section>
+              <SkeletonBlock className="mb-3 h-3 w-32" />
+              <div className="grid grid-cols-1 gap-[14px] min-[1100px]:grid-cols-2">
+                <InsightCardSkeleton />
+                <InsightCardSkeleton />
+              </div>
             </section>
-            <SspLine1Skeleton />
-            <SspLine1Skeleton />
-            <BrandCashInhandSkeleton />
+            <ProductBlockSkeleton />
+            <ProductBlockSkeleton />
+            <section>
+              <SkeletonBlock className="mb-3 h-3 w-56" />
+              <div className="grid grid-cols-1 gap-[14px] min-[1100px]:grid-cols-2">
+                <RunningBalanceSkeleton />
+                <RunningBalanceSkeleton />
+              </div>
+            </section>
+            <section>
+              <SkeletonBlock className="mb-3 h-3 w-56" />
+              <CashInHandSkeleton />
+            </section>
           </>
         )}
 
         {!loading && error && <ConnectionErrorState error={error} onRetry={fetchData} />}
 
-        {!loading && !error && cashoutCard && sendMoneyCard && (
-          <section data-telegram-capture="cards" className="grid grid-cols-1 gap-4 lg:grid-cols-2">
-            <BalanceCard data={cashoutCard} />
-            <BalanceCard data={sendMoneyCard} />
-          </section>
-        )}
+        {!loading && !error && data && (
+          <>
+            <section data-telegram-capture="cards">
+              <SectionLabel>Today&rsquo;s Insights</SectionLabel>
+              <div className="grid grid-cols-1 gap-[14px] min-[1100px]:grid-cols-2">
+                <TodaysInsightCard product="cashout" label="Cashout" overview={data.cashout.overview} />
+                <TodaysInsightCard product="sendmoney" label="Send Money" overview={data.sendmoney.overview} />
+              </div>
+            </section>
 
-        {!loading && !error && (
-          <SspLine1Section
-            rows={sspLine1Rows}
-            title="SSP Line 1: Cashout"
-            subtitle="Smart Solution Running Balance by Brand"
-            exportFileName="SSP_LINE1_AGENT_CASHOUT"
-            exportSheetName="SSP Line 1 Cashout"
-          />
-        )}
+            <ProductBlock
+              title="SSP Line 1 &middot; Cashout"
+              product="cashout"
+              dep={data.cashout.dep}
+              wd={data.cashout.wd}
+              running={data.cashout.running}
+              changeVsOpening={data.cashout.changeVsOpening}
+              chartTitle="CashGo Trend"
+              chartSubtitle="Daily CashGo volume"
+              series={CASHOUT_TREND_SERIES}
+              tooltipSeries={CASHOUT_WALLET_SERIES}
+              chart={data.cashout.chart}
+              chart30={data.cashout.chart30}
+              openingTrend={data.cashout.openingTrend}
+              wallets={data.cashout.wallets}
+              topPerformers={data.topPerformers.cashout}
+              agents={data.agents.cashout}
+            />
 
-        {!loading && !error && (
-          <SspLine1Section
-            rows={sspLine1SendMoneyRows}
-            title="SSP Line 2: Send Money"
-            subtitle="Smart Solution Running Balance by Brand"
-            exportFileName="SSP_LINE1_SENDMONEY"
-            exportSheetName="SSP Line 1 Send Money"
-          />
-        )}
+            <ProductBlock
+              title="SSP Line 2 &middot; Send Money"
+              product="sendmoney"
+              dep={data.sendmoney.dep}
+              wd={data.sendmoney.wd}
+              running={data.sendmoney.running}
+              changeVsOpening={data.sendmoney.changeVsOpening}
+              chartTitle="Bundle Transfer Trend"
+              chartSubtitle="Daily bundle volume"
+              series={SENDMONEY_TREND_SERIES}
+              tooltipSeries={SENDMONEY_WALLET_SERIES}
+              chart={data.sendmoney.chart}
+              chart30={data.sendmoney.chart30}
+              openingTrend={data.sendmoney.openingTrend}
+              wallets={data.sendmoney.wallets}
+              topPerformers={data.topPerformers.sendmoney}
+              agents={data.agents.sendmoney}
+            />
 
-        {!loading && !error && (
-          <BrandCashInhandSection rows={brandCashRows} total={brandCashTotal} />
-        )}
+            <section>
+              <SectionLabel>Running Balance by Brand</SectionLabel>
+              <div className="grid grid-cols-1 gap-[14px] min-[1100px]:grid-cols-2">
+                <RunningBalanceByBrandSection
+                  rows={data.brandBalance.cashout}
+                  title="SSP Line 1: Cashout"
+                  subtitle="Smart Solution Running Balance by Brand"
+                  exportFileName="SSP_LINE1_AGENT_CASHOUT"
+                  exportSheetName="SSP Line 1 Cashout"
+                  blankKeys={BLANK_KEYS_CASHOUT}
+                />
+                <RunningBalanceByBrandSection
+                  rows={data.brandBalance.sendmoney}
+                  title="SSP Line 2: Send Money"
+                  subtitle="Smart Solution Running Balance by Brand"
+                  exportFileName="SSP_LINE1_SENDMONEY"
+                  exportSheetName="SSP Line 1 Send Money"
+                  blankKeys={BLANK_KEYS_SENDMONEY}
+                />
+              </div>
+            </section>
 
-        {/* Future Balance Overview sections append below this line */}
+            <section data-telegram-capture="brand">
+              <SectionLabel>Brand Balance &middot; Cash In Hand</SectionLabel>
+              <CashInHandSection rows={data.cashInHand.rows} total={data.cashInHand.total} />
+            </section>
+          </>
+        )}
+        </div>
       </main>
     </div>
   );

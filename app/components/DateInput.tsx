@@ -156,7 +156,7 @@ export default function DateInput({ id, value, onChange, onBlur, error }: DateIn
             setOpen(false);
           }
         }}
-        className={`flex h-10 w-full items-center justify-between rounded-[10px] border bg-white px-3.5 text-left text-[13px] transition-colors focus:border-[color:var(--product-accent)] focus:ring-2 focus:ring-[color:var(--product-accent-soft)] dark:bg-[#1c1c1e] ${
+        className={`flex h-10 w-full items-center justify-between rounded-[10px] border bg-white px-3.5 text-left text-[13px] transition-colors focus:border-[color:var(--ui-accent)] focus:ring-2 focus:ring-[color:var(--ui-accent-soft)] dark:bg-[#1c1c1e] ${
           error ? 'border-rose-400' : 'border-border'
         } ${value ? 'text-foreground' : 'text-muted-foreground'}`}
       >
@@ -209,9 +209,9 @@ export default function DateInput({ id, value, onChange, onBlur, error }: DateIn
                       : isFutureDay(day)
                         ? 'cursor-not-allowed text-muted-foreground/40'
                         : isSelected(day)
-                          ? 'bg-[color:var(--product-accent)] text-white'
+                          ? 'bg-[color:var(--ui-accent)] text-white'
                           : isToday(day)
-                            ? 'border border-[color:var(--product-accent)] text-[color:var(--product-accent)]'
+                            ? 'border border-[color:var(--ui-accent)] text-[color:var(--ui-accent)]'
                             : 'text-foreground hover:bg-muted'
                   }`}
                 >

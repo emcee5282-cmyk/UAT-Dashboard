@@ -14,7 +14,14 @@ import { useTheme } from './ThemeProvider';
 // it's placed in, not read as a separately-floating element the way the
 // old dedicated TopBar did. Positioning is entirely the caller's
 // responsibility (via `className`).
-export default function AccountMenu({ className = '' }: { className?: string }) {
+export default function AccountMenu({
+  className = '',
+  // Opt-in, matches dashboard-demo.html's .admin-avatar/.admin-name/
+  // .admin-role exactly (28px avatar, 10.5px initials/role vs the default
+  // 32px/10px) — only the Dashboard page's header passes this; every other
+  // AccountMenu consumer keeps its existing 32px sizing unchanged.
+  compact = false,
+}: { className?: string; compact?: boolean }) {
   const { theme } = useTheme();
   const [username, setUsername] = useState<string | null>(null);
   const [open, setOpen] = useState(false);
@@ -77,19 +84,21 @@ export default function AccountMenu({ className = '' }: { className?: string }) 
         onClick={() => setOpen((v) => !v)}
         aria-haspopup="menu"
         aria-expanded={open}
-        className={`flex h-8 items-center gap-2 rounded-lg py-1 pl-1 pr-2 text-left transition-colors hover:bg-muted ${className}`}
+        className={`flex items-center rounded-lg py-1 pl-1 pr-2 text-left transition-colors hover:bg-muted ${compact ? 'h-7 gap-[9px]' : 'h-8 gap-2'} ${className}`}
       >
-        {/* Fixed indigo, not var(--product-accent) — explicit per spec, stays
+        {/* Fixed indigo, not var(--ui-accent) — explicit per spec, stays
             the same regardless of active product (Cashout/Send Money). */}
         <span
-          className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-[10px] font-bold text-white"
+          className={`flex shrink-0 items-center justify-center rounded-full font-bold text-white ${
+            compact ? 'h-[28px] w-[28px] text-[10.5px]' : 'h-8 w-8 text-[10px]'
+          }`}
           style={{ background: '#4F46E5' }}
         >
           {initials}
         </span>
         <span className="hidden min-w-0 sm:block">
           <span className="block truncate text-[12px] font-semibold leading-tight text-foreground">{displayName}</span>
-          <span className="block truncate text-[10px] leading-snug text-muted-foreground">Administrator</span>
+          <span className={`block truncate leading-snug text-muted-foreground ${compact ? 'text-[10.5px]' : 'text-[10px]'}`}>Administrator</span>
         </span>
         <ChevronDown size={13} className={`shrink-0 text-muted-foreground transition-transform ${open ? 'rotate-180' : ''}`} />
       </button>

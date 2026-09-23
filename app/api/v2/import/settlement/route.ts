@@ -1,13 +1,14 @@
 import { NextResponse } from 'next/server';
 import { importSettlementFile, type Product } from '@/app/lib/services/importService';
 
-// LOCAL/FOUNDATION ONLY — not linked from any existing page. Protected by
-// the same session-cookie middleware as every other /api/* route (see
-// middleware.ts) — no separate auth needed for local testing.
+// Live upload path for Settlement's real Upload button — wired via
+// BulkImportModal's importApiBasePath on app/stlm/page.tsx and
+// app/sendmoney/settlement/page.tsx. Protected by the same session-cookie
+// middleware as every other /api/* route (see middleware.ts) — no separate
+// auth needed.
 //
-// Writes to PostgreSQL only. Never touches Google Sheets — this is a new,
-// independent write path, not a replacement for the existing (real)
-// Sheets-based Settlement flow, which remains completely untouched.
+// Writes to PostgreSQL only. Never touches Google Sheets — the old
+// Sheets-based Settlement flow this replaced is gone.
 export async function POST(request: Request) {
   try {
     const formData = await request.formData();

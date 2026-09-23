@@ -6,6 +6,7 @@ export async function GET(request: NextRequest) {
   if (!session) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
-  // Only the username — the signed token itself never leaves the server.
-  return NextResponse.json({ username: session.username });
+  // Just the fields callers actually need — the signed token itself never
+  // leaves the server.
+  return NextResponse.json({ username: session.username, role: session.role });
 }

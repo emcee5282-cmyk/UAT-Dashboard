@@ -1,0 +1,281 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Settlement – Date Range Filter (reference)</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700&family=Space+Grotesk:wght@500;600&display=swap">
+<style>
+  :root{
+    --bg:#f6f7f9; --card:#fff; --line:#e6e8ec; --line-soft:#eef0f3;
+    --text:#111827; --text-2:#374151; --muted:#6b7280; --disabled:#c9cdd4;
+    --accent:#4f46e5; --accent-ink:#4338ca; --accent-soft:#eef0ff; --accent-faint:#f5f6ff;
+    --neg:#dc2626; --neg-soft:#fef2f2;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);font-family:Manrope,"Segoe UI",system-ui,sans-serif;color:var(--text)}
+  button{font-family:inherit}
+  button:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+  .page{max-width:1400px;margin:0 auto;padding:28px 48px}
+  .page-head{display:flex;justify-content:space-between;align-items:center;padding-bottom:16px;border-bottom:1px solid var(--line)}
+  .page-head h1{margin:0;font-size:22px;font-weight:700}
+  .tabs{display:flex;gap:8px;margin:18px 0}
+  .tab{font-size:12px;padding:7px 14px;border-radius:8px;border:1px solid var(--line);background:#fff;color:var(--text-2);cursor:pointer}
+  .tab[aria-selected="true"]{border-color:#c7cbff;background:var(--accent-soft);color:var(--accent);font-weight:600}
+  .card{background:var(--card);border:1px solid var(--line);border-radius:12px}
+
+  /* ---------- summary strip ---------- */
+  .summary{position:relative;display:flex;align-items:center;gap:14px;padding:12px 14px;border-bottom:1px solid var(--line-soft)}
+  .stat{display:flex;align-items:baseline;gap:8px}
+  .stat-label{font-size:10px;font-weight:600;letter-spacing:.08em;color:#4b5563;text-transform:uppercase}
+  .stat-value{font-family:"Space Grotesk",Manrope,sans-serif;font-size:18px;font-weight:600}
+  .stat-sub{font-size:11px;color:var(--muted)}
+  .delta{font-size:10px;font-weight:600;color:var(--neg);background:var(--neg-soft);padding:3px 7px;border-radius:5px}
+  .vsep{width:1px;height:22px;background:var(--line)}
+  .spacer{flex:1}
+
+  /* ---------- date filter trigger ---------- */
+  .df{display:flex;align-items:center;gap:8px}
+  .df-chip{font-size:11px;font-weight:600;color:var(--accent);background:var(--accent-soft);padding:3px 8px;border-radius:6px;white-space:nowrap}
+  .df-btn{width:30px;height:30px;padding:0;border-radius:8px;border:1px solid var(--line);background:#fff;color:var(--text-2);display:grid;place-items:center;cursor:pointer}
+  .df-btn[aria-expanded="true"]{border-color:var(--accent);background:var(--accent-soft);color:var(--accent)}
+  .df.locked .df-chip{color:#4b5563;background:#f3f4f6}
+  .df.locked .df-btn{border-style:dashed;border-color:#d1d5db;background:#f9fafb;color:#9ca3af;cursor:default}
+
+  /* ---------- popover ---------- */
+  .pop{position:absolute;top:50px;right:12px;z-index:20;width:560px;max-width:calc(100vw - 32px);background:#fff;border:1px solid var(--line);border-radius:12px;box-shadow:0 14px 32px rgba(17,24,39,.12),0 2px 6px rgba(17,24,39,.06)}
+  .pop[hidden]{display:none}
+  .pop-body{display:flex}
+  .quick{width:180px;padding:8px 6px;border-right:1px solid var(--line-soft);display:flex;flex-direction:column;gap:2px}
+  .quick-title{font-size:10px;font-weight:600;letter-spacing:.08em;color:var(--muted);padding:6px 8px 4px;text-transform:uppercase}
+  .q{text-align:left;border:0;border-radius:7px;padding:8px 10px;background:#fff;color:var(--text);display:flex;align-items:center;justify-content:space-between;cursor:pointer}
+  .q:hover{background:#f7f7fb}
+  .q[aria-pressed="true"]{background:var(--accent-soft);color:var(--accent-ink)}
+  .q[disabled]{color:var(--disabled);cursor:not-allowed;background:#fff}
+  .q-l{font-size:12px;font-weight:600;display:block}
+  .q-s{font-size:11px;color:var(--muted);display:block;margin-top:2px}
+  .q .check{visibility:hidden}
+  .q[aria-pressed="true"] .check{visibility:visible}
+
+  .cal{flex:1;padding:12px 16px;display:flex;flex-direction:column;gap:8px}
+  .cal-head{display:flex;align-items:center;justify-content:space-between}
+  .cal-title{font-size:13px;font-weight:700}
+  .nav{width:28px;height:28px;padding:0;border-radius:7px;border:1px solid var(--line);background:#fff;color:var(--text-2);display:grid;place-items:center;cursor:pointer}
+  .nav[disabled]{border-color:var(--line-soft);background:#f9fafb;color:var(--disabled);cursor:not-allowed}
+  .grid{display:grid;grid-template-columns:repeat(7,minmax(0,1fr));gap:2px}
+  .wd{font-size:10px;font-weight:600;color:var(--muted);text-align:center;padding:4px 0}
+  .day{height:32px;padding:0;font-size:12px;font-weight:500;border-radius:7px;border:1px solid transparent;background:#fff;color:var(--text);cursor:pointer}
+  .day:hover:not([disabled]){background:#f3f4f8}
+  .day[disabled]{color:var(--disabled);text-decoration:line-through;cursor:not-allowed}
+  .day.blank{visibility:hidden}
+  .day.today{border-color:var(--accent);font-weight:700}
+  .day.in{background:var(--accent-soft);color:var(--accent-ink);border-color:var(--accent-soft)}
+  .day.in[disabled]{background:var(--accent-faint);border-color:var(--accent-faint);color:var(--disabled)}
+  .day.edge{background:var(--accent);color:#fff;border-color:var(--accent);font-weight:700}
+  .legend{display:flex;gap:14px;font-size:10px;color:var(--muted)}
+  .legend span{display:flex;align-items:center;gap:5px}
+  .sw{width:8px;height:8px;border-radius:2px;display:inline-block}
+  .pop-foot{display:flex;align-items:center;justify-content:space-between;padding:10px 14px;border-top:1px solid var(--line-soft)}
+  .pop-foot .sel{font-size:12px;color:#4b5563}
+  .pop-foot .sel b{color:var(--text)}
+  .btn{font-size:12px;padding:7px 14px;border-radius:8px;border:1px solid var(--line);background:#fff;color:var(--text-2);cursor:pointer}
+  .btn.primary{background:var(--accent);border-color:var(--accent);color:#fff;font-weight:600}
+
+  .toolbar{display:flex;align-items:center;gap:8px;padding:12px 14px}
+  .tb{font-size:11px;padding:7px 12px;border-radius:8px;border:1px solid var(--line);background:#fff;color:var(--text-2)}
+  .search{flex:1;font-size:11px;color:var(--muted);padding:8px 14px;border-radius:999px;border:1px solid var(--line)}
+  .table-ph{height:200px;border-top:1px solid var(--line-soft);display:grid;place-items:center;color:var(--muted);font-size:12px}
+</style>
+</head>
+<body>
+<div class="page">
+  <div class="page-head"><h1 id="pageTitle">Settlement</h1></div>
+
+  <div class="tabs" role="tablist">
+    <button class="tab" role="tab" aria-selected="true">Cashout</button>
+    <button class="tab" role="tab" aria-selected="false">Send Money</button>
+  </div>
+
+  <div class="card">
+    <div class="summary">
+      <div class="stat">
+        <span class="stat-label">Total amount</span>
+        <span class="stat-value" id="total">13.81M</span>
+        <span class="stat-sub" id="totalFull">(13,808,000.00)</span>
+        <span class="delta" id="delta">▼ 900,032.21 vs yesterday</span>
+      </div>
+      <div class="vsep"></div>
+      <div class="stat">
+        <span class="stat-label" id="countLabel">Today's count</span>
+        <span class="stat-value" style="font-size:15px" id="count">183</span>
+      </div>
+      <div class="spacer"></div>
+
+      <!-- DATE FILTER: mode = "picker" (Settlement, Topup) | "locked" (CashGo) -->
+      <div class="df" id="df" data-mode="picker">
+        <span class="df-chip" id="dfChip">Today</span>
+        <button class="df-btn" id="dfBtn" aria-label="Date range" aria-haspopup="dialog" aria-expanded="false">
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4.5" width="18" height="16.5" rx="2.5"/><path d="M16 2.5v4M8 2.5v4M3 10h18"/></svg>
+        </button>
+      </div>
+
+      <div class="pop" id="pop" role="dialog" aria-label="Choose date range" hidden>
+        <div class="pop-body">
+          <div class="quick">
+            <span class="quick-title">Quick select</span>
+            <button class="q" data-preset="today" aria-pressed="false"><span><span class="q-l">Today</span><span class="q-s" data-sub></span></span><svg class="check" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg></button>
+            <button class="q" data-preset="week" aria-pressed="false"><span><span class="q-l">Last 7 days</span><span class="q-s" data-sub></span></span><svg class="check" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg></button>
+            <button class="q" data-preset="month" aria-pressed="false"><span><span class="q-l">This month</span><span class="q-s" data-sub></span></span><svg class="check" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg></button>
+          </div>
+          <div class="cal">
+            <div class="cal-head">
+              <button class="nav" id="prev" aria-label="Previous month"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 6l-6 6 6 6"/></svg></button>
+              <span class="cal-title" id="calTitle"></span>
+              <button class="nav" id="next" aria-label="Next month"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 6l6 6-6 6"/></svg></button>
+            </div>
+            <div class="grid" id="grid"></div>
+            <div class="legend">
+              <span><i class="sw" style="background:#111827"></i>Has data</span>
+              <span><i class="sw" style="background:#d7dade"></i>No data (disabled)</span>
+            </div>
+          </div>
+        </div>
+        <div class="pop-foot">
+          <span class="sel">Selected: <b id="draftLabel"></b></span>
+          <div style="display:flex;gap:8px">
+            <button class="btn" id="cancel">Cancel</button>
+            <button class="btn primary" id="apply">Apply</button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="toolbar">
+      <span class="tb">Brand ▾</span><span class="tb">Leader ▾</span><span class="tb">Wallet ▾</span>
+      <span class="search">Search agent, wallet, or brand…</span>
+      <span class="tb" style="color:var(--accent)">+ New</span><span class="tb">Upload</span><span class="tb">Export</span>
+    </div>
+    <div class="table-ph" id="tablePh">Table rows filtered by the selected range</div>
+  </div>
+</div>
+
+<script>
+/* =========================================================================
+   Reference behaviour. In the real app:
+   - TODAY comes from the server in Asia/Manila (VPS runs UTC).
+   - AVAILABLE comes from GET /api/<page>/available-dates (distinct Manila dates with rows).
+   - onApply() refetches totals + table for {from, to}.
+   ========================================================================= */
+const TODAY = "2026-09-23";                       // Asia/Manila business date
+const AVAILABLE = new Set([                        // sample: dates that have rows
+  ...range("2026-08-01", "2026-08-31").filter(d => !["2026-08-09","2026-08-16"].includes(d)),
+  ...range("2026-09-01", TODAY).filter(d => !["2026-09-06","2026-09-13"].includes(d)),
+]);
+
+/* ---------- date helpers (YYYY-MM-DD strings, no timezone drift) ---------- */
+function parse(s){ const [y,m,d]=s.split("-").map(Number); return new Date(Date.UTC(y,m-1,d)); }
+function iso(dt){ return dt.toISOString().slice(0,10); }
+function addDays(s,n){ const d=parse(s); d.setUTCDate(d.getUTCDate()+n); return iso(d); }
+function range(a,b){ const out=[]; for(let d=a; d<=b; d=addDays(d,1)) out.push(d); return out; }
+const MON=["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
+const MONTH_FULL=["January","February","March","April","May","June","July","August","September","October","November","December"];
+function short(s){ const d=parse(s); return MON[d.getUTCMonth()]+" "+d.getUTCDate(); }
+function label(a,b){ return a===b ? short(a) : short(a)+" – "+short(b); }
+function monthStart(s){ return s.slice(0,8)+"01"; }
+
+const PRESETS = {
+  today: { from: TODAY, to: TODAY },
+  week:  { from: addDays(TODAY,-6), to: TODAY },
+  month: { from: monthStart(TODAY), to: TODAY },
+};
+const PRESET_NAME = { today:"Today", week:"Last 7 days", month:"This month" };
+function presetOf(from,to){ for(const k in PRESETS) if(PRESETS[k].from===from && PRESETS[k].to===to) return k; return null; }
+
+/* ---------- state ---------- */
+const df = document.getElementById("df");
+const MODE = df.dataset.mode;                      // "picker" | "locked"
+let value = MODE==="locked" ? {...PRESETS.month} : {...PRESETS.today};   // applied
+let draft = {...value};                            // being edited in popover
+let view  = monthStart(value.to);                  // month shown in calendar
+let picking = false;                               // true after first click of a range
+
+const $ = id => document.getElementById(id);
+const pop=$("pop"), btn=$("dfBtn");
+
+/* ---------- summary strip ---------- */
+function renderSummary(){
+  const k = presetOf(value.from, value.to);
+  $("dfChip").textContent = MODE==="locked" ? "This month · "+label(value.from,value.to) : (k ? PRESET_NAME[k] : label(value.from,value.to));
+  $("countLabel").textContent = k==="today" ? "Today's count" : "Count";
+  const vs = k==="today" ? "vs yesterday" : k==="month" ? "vs same days last month" : "vs previous "+(range(value.from,value.to).length)+" days";
+  // placeholder numbers — real app fetches these
+  if(k==="today"){ $("total").textContent="13.81M"; $("totalFull").textContent="(13,808,000.00)"; $("delta").textContent="▼ 900,032.21 "+vs; $("count").textContent="183"; }
+  else { $("total").textContent="—"; $("totalFull").textContent=""; $("delta").textContent="▼ — "+vs; $("count").textContent="—"; }
+  $("tablePh").textContent = "Table rows for "+label(value.from,value.to);
+}
+
+/* ---------- popover ---------- */
+function renderPop(){
+  document.querySelectorAll(".q").forEach(q=>{
+    const p=PRESETS[q.dataset.preset];
+    q.querySelector("[data-sub]").textContent = label(p.from,p.to);
+    q.setAttribute("aria-pressed", String(presetOf(draft.from,draft.to)===q.dataset.preset));
+    // preset disabled if no data at all inside it
+    q.disabled = !range(p.from,p.to).some(d=>AVAILABLE.has(d));
+  });
+
+  const d0=parse(view), y=d0.getUTCFullYear(), m=d0.getUTCMonth();
+  $("calTitle").textContent = MONTH_FULL[m]+" "+y;
+  const prevMonth = iso(new Date(Date.UTC(y,m-1,1))), nextMonth = iso(new Date(Date.UTC(y,m+1,1)));
+  const hasDataIn = ms => range(ms, addDays(iso(new Date(Date.UTC(+ms.slice(0,4), +ms.slice(5,7), 1))),-1)).some(d=>AVAILABLE.has(d));
+  $("prev").disabled = !hasDataIn(prevMonth);
+  $("next").disabled = nextMonth > TODAY || !hasDataIn(nextMonth);
+
+  const grid=$("grid"); grid.innerHTML="";
+  ["Su","Mo","Tu","We","Th","Fr","Sa"].forEach(w=>{ const s=document.createElement("span"); s.className="wd"; s.textContent=w; grid.appendChild(s); });
+  const lead=d0.getUTCDay(), days=new Date(Date.UTC(y,m+1,0)).getUTCDate();
+  for(let i=0;i<lead;i++){ const b=document.createElement("span"); b.className="day blank"; grid.appendChild(b); }
+  for(let n=1;n<=days;n++){
+    const ds=iso(new Date(Date.UTC(y,m,n)));
+    const b=document.createElement("button");
+    b.className="day"; b.textContent=n;
+    const ok=AVAILABLE.has(ds) && ds<=TODAY;
+    b.disabled=!ok;
+    b.setAttribute("aria-label", short(ds)+(ok?"":", no data"));
+    if(ds===TODAY) b.classList.add("today");
+    if(ds>draft.from && ds<draft.to) b.classList.add("in");
+    if(ds===draft.from || ds===draft.to) b.classList.add("edge");
+    b.addEventListener("click",()=>pickDay(ds));
+    grid.appendChild(b);
+  }
+  $("draftLabel").textContent = label(draft.from,draft.to)+", "+draft.to.slice(0,4);
+}
+
+function pickDay(ds){
+  if(!picking){ draft={from:ds,to:ds}; picking=true; }
+  else if(ds>=draft.from){ draft.to=ds; picking=false; }
+  else { draft={from:ds,to:ds}; }
+  renderPop();
+}
+
+function openPop(){ draft={...value}; view=monthStart(value.to); picking=false; pop.hidden=false; btn.setAttribute("aria-expanded","true"); renderPop(); }
+function closePop(){ pop.hidden=true; btn.setAttribute("aria-expanded","false"); btn.focus(); }
+
+if(MODE==="picker"){
+  btn.addEventListener("click",()=> pop.hidden ? openPop() : closePop());
+  document.querySelectorAll(".q").forEach(q=>q.addEventListener("click",()=>{ draft={...PRESETS[q.dataset.preset]}; view=monthStart(draft.to); picking=false; renderPop(); }));
+  $("prev").addEventListener("click",()=>{ const d=parse(view); view=iso(new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth()-1, 1))); renderPop(); });
+  $("next").addEventListener("click",()=>{ const d=parse(view); view=iso(new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth()+1, 1))); renderPop(); });
+  $("cancel").addEventListener("click",closePop);
+  $("apply").addEventListener("click",()=>{ value={...draft}; closePop(); renderSummary(); /* onApply(value) → refetch */ });
+  document.addEventListener("keydown",e=>{ if(e.key==="Escape" && !pop.hidden) closePop(); });
+  document.addEventListener("mousedown",e=>{ if(!pop.hidden && !pop.contains(e.target) && !btn.contains(e.target)) closePop(); });
+} else {
+  df.classList.add("locked"); btn.disabled=true; btn.setAttribute("aria-label","Date range fixed to this month");
+  $("pageTitle").textContent="CashGo";
+}
+
+renderSummary();
+</script>
+</body>
+</html>

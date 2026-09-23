@@ -36,7 +36,7 @@
 // 47). See scripts/migrate-data.ts's shadow-agent reconciliation notes for
 // the full incident writeup.
 const KNOWN_BRAND_NAMES =
-  '(AEGIS|AEROX|ASTRA|BRIM|KONAN|BREACH|CLOVE|CYPHER|DOOM|FADE|GARNET|GEKKO|GREED|GROCK|HAYA|HYPER|ISO|JETT|KAYO|KJ|MARBLE|NEON|OBSIDIAN|OMEN|OWL|PHOENIX|PINGU|RAZE|REYNA|RONY|RYUMEN|SAGE|SATAN|SKYE|SOVA|TEJO|VALE|VIPER|VYSE|WAYLAY|WISE|YORU|CALAMARI|ZARA|SUPER|YUJI|SERPENT|SHAKER|TOXIC|EGYPT|DAGON|BLUESTONE|SMOKER|BLITZ|MOONSTONE|SANGE|DRAGON|REAVER|URN|KAIDO|DIAMOND|FRANCH|GENTEL|AGHANIMS|KNIGHT|ATOS|TARRASQUE|EULS|YASHA|DECEIT|SALVE|BLOOD|GRANDI|PROFESSOR|ALFA|QOP|WAND|RADIANCE|CLINKZ|DAGGER|VLADS|DRUID|PALERMO|SIREN|TOKYO|TREADS|DAZZLE|AGATE|GENIE|CLOAK|PUGNA|AVENT|ABYSSAL|ALADDIN|WARD|DOGG|WOOD|MEODONI|FAMAN|PEARL|EORO|DIOR|DENVER|HAITI|ITALY|BURMA|BEAST|MAYA|LUFFY|GHOST|GOJO|BEARD|JINBE|SWORD|PULSE|RIDON|SAPPHIRE|TURQ|TOME|AZURITE|MOSCOW|CODEX|GRANITE|RIO)';
+  '(AEGIS|AEROX|ASTRA|BRIM|KONAN|BREACH|CLOVE|CYPHER|DOOM|FADE|GARNET|GEKKO|GREED|GROCK|HAYA|HYPER|ISO|JETT|KAYO|KJ|MARBLE|NEON|OBSIDIAN|OMEN|OWL|PHOENIX|PINGU|RAZE|REYNA|RONY|RYUMEN|SAGE|SATAN|SKYE|SOVA|TEJO|VALE|VIPER|VYSE|WAYLAY|WISE|YORU|CALAMARI|ZARA|SUPER|YUJI|SERPENT|SHAKER|TOXIC|EGYPT|DAGON|BLUESTONE|SMOKER|BLITZ|MOONSTONE|SANGE|DRAGON|REAVER|URN|KAIDO|DIAMOND|FRANCH|GENTEL|AGHANIMS|KNIGHT|ATOS|TARRASQUE|EULS|YASHA|DECEIT|SALVE|BLOOD|GRANDI|PROFESSOR|ALFA|QOP|WAND|RADIANCE|CLINKZ|DAGGER|VLADS|DRUID|PALERMO|SIREN|TOKYO|TREADS|DAZZLE|AGATE|GENIE|CLOAK|PUGNA|AVENT|ABYSSAL|ALADDIN|WARD|DOGG|WOOD|MEODONI|FAMAN|PEARL|EORO|DIOR|DENVER|HAITI|ITALY|BURMA|BEAST|MAYA|LUFFY|GHOST|GOJO|BEARD|JINBE|SWORD|PULSE|RIDON|SAPPHIRE|TURQ|TOME|AZURITE|MOSCOW|CODEX|GRANITE|RIO|RIAN)';
 
 // Case-insensitive (/i) on all four — the sheets these get read from mix
 // casing inconsistently (e.g. "Clove003" next to "SATAN002"), which the
@@ -159,17 +159,104 @@ const KNOWN_BRAND_SET = new Set(
   KNOWN_BRAND_NAMES.slice(1, -1).split('|').map((b) => b.toUpperCase())
 );
 
+// Shared Pattern-B detection — both normalizeOpeningAgentName (the bare
+// code) and extractOpeningWalletTypeSuffix (the BK/NG/RK/UP part that code
+// stripped off) need the exact same match, so there's only one place this
+// logic can drift. Returns null for Pattern A (already bare) or anything
+// unrecognized — both callers already have their own "return the input
+// unchanged"/"return null" fallback for that case.
+function detectOpeningPatternB(trimmed: string): { bareCode: string; suffix: string } | null {
+  const suffixMatch = WALLET_SUFFIX_STRIP.exec(trimmed);
+  if (!suffixMatch) return null;
+  const brandMatch = BRAND_PLUS_NUMBER_AT_END.exec(suffixMatch[1]);
+  if (!brandMatch || !KNOWN_BRAND_SET.has(brandMatch[1].toUpperCase())) return null;
+  return { bareCode: (brandMatch[1] + brandMatch[2]).toUpperCase(), suffix: suffixMatch[2].toUpperCase() };
+}
+
 export function normalizeOpeningAgentName(raw: string | number | undefined | null): string {
   const trimmed = String(raw ?? '').trim();
   if (!trimmed) return trimmed;
+  return detectOpeningPatternB(trimmed)?.bareCode ?? trimmed;
+}
 
-  const suffixMatch = WALLET_SUFFIX_STRIP.exec(trimmed);
-  const withoutSuffix = suffixMatch ? suffixMatch[1] : trimmed;
+// Companion to normalizeOpeningAgentName — for a Pattern B raw Opening
+// "Agent Name" (a Sheet-side data-entry inconsistency where a per-WALLET
+// account string like "N-M1AG-R5-SHAKER068-BK" appears in what's normally a
+// per-SHOP roster column), returns the wallet-type suffix that string
+// carries ("BK"), so callers who need PER-WALLET matching against Balance
+// Limit data (not the shop-level aggregate every normal bare-code row gets)
+// know which specific wallet this row is actually about. null for Pattern A
+// (already bare — this row IS the whole shop, not one of its wallets) or
+// anything unrecognized.
+export function extractOpeningWalletTypeSuffix(raw: string | number | undefined | null): string | null {
+  const trimmed = String(raw ?? '').trim();
+  if (!trimmed) return null;
+  return detectOpeningPatternB(trimmed)?.suffix ?? null;
+}
 
-  const brandMatch = BRAND_PLUS_NUMBER_AT_END.exec(withoutSuffix);
-  if (brandMatch && KNOWN_BRAND_SET.has(brandMatch[1].toUpperCase())) {
-    return (brandMatch[1] + brandMatch[2]).toUpperCase();
-  }
+// Brand-agnostic sibling key for an agent_code that's a full raw string
+// (e.g. "N-B2PS2-ARCANE040-BK") because its brand isn't in KNOWN_BRAND_NAMES
+// — detectOpeningPatternB (and so normalizeOpeningAgentName/
+// extractOpeningWalletTypeSuffix above) require a recognized brand before
+// stripping anything, so an unrecognized-brand shop's two wallet lines
+// (e.g. "...-ARCANE040-BK" and "...-ARCANE040-NG") end up as two totally
+// separate `agents` rows with no shared identity at all — confirmed live as
+// the cause of sibling wallet-lines for the same real shop getting
+// DIFFERENT Leaders (one row's own Leader cell resolves fine, the other
+// falls back to a placeholder). This reuses the same WALLET_SUFFIX_STRIP
+// shape-matching (raw text ending in digit(s) + optional "-" + BK/NG/RK/UP)
+// but WITHOUT the brand-whitelist gate, specifically so an unrecognized
+// brand's own raw agentCode can still be recognized as sharing a family
+// with its sibling wallet line. Never used for identity/merging (that stays
+// governed by the brand whitelist, deliberately conservative after a past
+// incident — see this file's own header) — only for inferring things a
+// sibling already knows, like its real Leader.
+export function extractRawWalletFamily(agentCode: string | undefined | null): string {
+  const trimmed = String(agentCode ?? '').trim().toUpperCase();
+  const m = WALLET_SUFFIX_STRIP.exec(trimmed);
+  return m ? m[1] : trimmed;
+}
 
-  return trimmed;
+// Broader sibling key, one level up from extractRawWalletFamily: instead of
+// linking only the exact same shop's two wallet lines (e.g. "...-ARCANE040-BK"
+// / "...-ARCANE040-NG"), this links an entire sequential-numbered SERIES of
+// otherwise-distinct shops (e.g. "N-B3PS1-YUSSOP031-NG" through
+// "N-B3PS1-YUSSOP039-NG", even a "N-J1PS1-YUSSOP030-NG" outlier under a
+// different site code) by the alphabetic prefix of their shop-name segment
+// alone — site code and sequence number both ignored. Confirmed safe against
+// the live Send Money roster before use: grouping every active agent this
+// way produced zero series where two DIFFERENT real (non-placeholder)
+// Leaders appeared together — so within a series, a real Leader found on any
+// member is trustworthy for every other member. Strictly a fallback,
+// deliberately looser than extractRawWalletFamily — try that one first, only
+// consult this one if it finds nothing (see buildFamilyLeaderMap). Returns
+// null (not a same-as-input fallback) when the shop-name segment isn't a
+// clean letters+digits series, so an unmatched code never silently becomes
+// its own one-member "family".
+export function extractShopSeriesFamily(agentCode: string | undefined | null): string | null {
+  const trimmed = String(agentCode ?? '').trim().toUpperCase();
+  const withoutWalletSuffix = WALLET_SUFFIX_STRIP.exec(trimmed)?.[1] ?? trimmed;
+  const lastSegment = withoutWalletSuffix.split('-').pop() ?? '';
+  const m = /^([A-Z]+)(\d+)$/.exec(lastSegment);
+  return m ? m[1] : null;
+}
+
+// A bare shop code's own "family" — the brand-name letters with the
+// per-shop number stripped off (e.g. "AVENT500" -> "AVENT"), so a brand-new
+// shop code that isn't in the roster yet (no Opening row for it) can still
+// be matched against its OWN sibling shops (AVENT001, AVENT002, ...) that
+// already ARE, for inferring things those siblings already know (their real
+// Leader — see balanceLimitService.ts's own auto-create path) instead of
+// falling back to a placeholder. Deliberately strict — the ENTIRE code must
+// be letters-then-digits, nothing else — so a still-raw Pattern B leftover
+// (e.g. "N-B1AG-C2-MEODONI001-BK", never meant to reach agents.agent_code
+// but present historically) never gets treated as its own family and
+// silently pollutes a real one; that shape returns null, same as any other
+// unrecognized input.
+const BARE_SHOP_CODE_FAMILY = /^([A-Z]+)[0-9]+$/;
+
+export function extractShopFamily(agentCode: string | undefined | null): string | null {
+  const trimmed = String(agentCode ?? '').trim().toUpperCase();
+  if (!trimmed) return null;
+  return BARE_SHOP_CODE_FAMILY.exec(trimmed)?.[1] ?? null;
 }

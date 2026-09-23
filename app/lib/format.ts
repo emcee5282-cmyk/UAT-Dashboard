@@ -29,6 +29,24 @@ export function displayNum(val: string | number): string {
   });
 }
 
+// Excel/XLSX export only — every other helper above returns a formatted
+// DISPLAY string ("1,234.56", "−" for blank/zero), which XLSX.utils.aoa_to_sheet
+// writes as literal TEXT (left-aligned in Excel, not summable). Per explicit
+// instruction: an exported "figure" column must be a genuine number cell,
+// and whatever shows on-screen as "-"/"−" (blank/zero/not-applicable) must
+// export as the number 0, never that dash text. Accepts the SAME raw
+// string/number inputs the on-screen formatters above already take (a
+// comma-formatted string, a bare number, or null/undefined) so a getExportValue
+// switch can drop this in as a straight replacement for fmt()/displayNum()/
+// numOrBlank() without reshaping its own row data first.
+export function exportNum(val: string | number | null | undefined): number {
+  if (val === null || val === undefined) return 0;
+  const str = String(val).replace(/"/g, '').replace(/,/g, '').trim();
+  if (str === '' || str === '-' || str === '−') return 0;
+  const num = parseFloat(str);
+  return isNaN(num) ? 0 : num;
+}
+
 // Confirmed byte-identical across app/agentbal, app/sendmoney/balances,
 // app/balance-overview and app/sendmoney (page.tsx) before extraction —
 // summary/page.tsx has its OWN, subtly different fmt (zero renders as '—')

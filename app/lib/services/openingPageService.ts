@@ -10,9 +10,10 @@
 // instead, matching the same "new function alongside the existing one"
 // pattern already used for roster_sync_log and Estimated Opening's
 // display contract.
-import { eq } from 'drizzle-orm';
+import { and, eq, inArray } from 'drizzle-orm';
 import { getDb } from '../db/client';
 import * as schema from '../db/schema';
+import { extractOpeningWalletTypeSuffix } from '../realShopName';
 
 function n(val: string | null): number {
   return val === null ? 0 : parseFloat(val);
@@ -39,6 +40,16 @@ export type CashoutOpeningRow = {
   // wizard's Missing Shops review ("Last updated: ...").
   isActive: boolean;
   lastImportMatchedAt: string | null;
+  // Per-wallet Opening Balance breakdown (opening_wallet_lines — one row
+  // per FILE ROW that carried a wallet suffix, e.g. "-BK"/"-NG"), each
+  // genuinely a separate entry, never merged. openingBal above stays the
+  // shop-level SUM (needed for Company Balance elsewhere). rawAgentName is
+  // the file's own literal cell text for that specific row (whitespace-
+  // cleaned only, never brand/suffix-stripped) — per explicit instruction,
+  // the page displays THIS, not the normalized agentCode, for any shop
+  // that has one. walletTypeSuffix (BK/NG/RK/UP) is derived from that same
+  // raw text, purely for the page's own Wallet Type column.
+  walletOpening: { id: number; rawAgentName: string; amount: number; sdp: number; walletTypeSuffix: string | null }[];
 };
 
 export async function getCashoutOpeningRows(): Promise<CashoutOpeningRow[]> {
@@ -58,7 +69,7 @@ export async function getCashoutOpeningRows(): Promise<CashoutOpeningRow[]> {
     .from(schema.agents)
     .leftJoin(schema.leaders, eq(schema.agents.leaderId, schema.leaders.id))
     .leftJoin(schema.brands, eq(schema.agents.brandId, schema.brands.id))
-    .where(eq(schema.agents.product, 'cashout'));
+    .where(and(eq(schema.agents.product, 'cashout'), eq(schema.agents.isActive, true)));
 
   const walletRows = await db
     .select({
@@ -73,9 +84,29 @@ export async function getCashoutOpeningRows(): Promise<CashoutOpeningRow[]> {
 
   const walletTypesByAgentId = new Map<number, Set<string>>();
   for (const w of walletRows) {
-    if (!w.isLoggedIn || !w.walletTypeCode) continue;
-    if (!walletTypesByAgentId.has(w.agentId)) walletTypesByAgentId.set(w.agentId, new Set());
-    walletTypesByAgentId.get(w.agentId)!.add(w.walletTypeCode);
+    if (w.isLoggedIn && w.walletTypeCode) {
+      if (!walletTypesByAgentId.has(w.agentId)) walletTypesByAgentId.set(w.agentId, new Set());
+      walletTypesByAgentId.get(w.agentId)!.add(w.walletTypeCode);
+    }
+  }
+
+  const agentIds = agentRows.map((a) => a.id);
+  const openingLineRows = agentIds.length > 0
+    ? await db
+        .select({ id: schema.openingWalletLines.id, agentId: schema.openingWalletLines.agentId, rawAgentName: schema.openingWalletLines.rawAgentName, openingBalance: schema.openingWalletLines.openingBalance, sdp: schema.openingWalletLines.sdp })
+        .from(schema.openingWalletLines)
+        .where(inArray(schema.openingWalletLines.agentId, agentIds))
+    : [];
+  const walletOpeningByAgentId = new Map<number, { id: number; rawAgentName: string; amount: number; sdp: number; walletTypeSuffix: string | null }[]>();
+  for (const line of openingLineRows) {
+    if (!walletOpeningByAgentId.has(line.agentId)) walletOpeningByAgentId.set(line.agentId, []);
+    walletOpeningByAgentId.get(line.agentId)!.push({
+      id: line.id,
+      rawAgentName: line.rawAgentName,
+      amount: parseFloat(line.openingBalance),
+      sdp: parseFloat(line.sdp),
+      walletTypeSuffix: extractOpeningWalletTypeSuffix(line.rawAgentName),
+    });
   }
 
   return agentRows.map((a) => ({
@@ -87,6 +118,7 @@ export async function getCashoutOpeningRows(): Promise<CashoutOpeningRow[]> {
     walletTypes: Array.from(walletTypesByAgentId.get(a.id) ?? []),
     isActive: a.isActive,
     lastImportMatchedAt: a.lastImportMatchedAt ? a.lastImportMatchedAt.toISOString() : null,
+    walletOpening: walletOpeningByAgentId.get(a.id) ?? [],
   }));
 }
 
@@ -121,7 +153,7 @@ export async function getSendMoneyOpeningPgRows(): Promise<SendMoneyOpeningPgRow
     .from(schema.agents)
     .leftJoin(schema.leaders, eq(schema.agents.leaderId, schema.leaders.id))
     .leftJoin(schema.brands, eq(schema.agents.brandId, schema.brands.id))
-    .where(eq(schema.agents.product, 'sendmoney'));
+    .where(and(eq(schema.agents.product, 'sendmoney'), eq(schema.agents.isActive, true)));
 
   return agentRows.map((a) => ({
     agentCode: a.agentCode,

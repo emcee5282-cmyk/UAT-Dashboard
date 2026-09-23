@@ -69,6 +69,14 @@ export function getBusinessToday(): Date {
   return toBusinessDate(new Date());
 }
 
+// Midnight (Manila time) of the 1st of the current Manila business month —
+// "This month" preset (Settlement/Top Up) and CashGo's month-to-date chip
+// both derive "start of Manila business month" from this one function.
+export function getBusinessMonthStart(): Date {
+  const { year, month } = manilaFields(getBusinessToday());
+  return manilaMidnight(year, month, 1);
+}
+
 // Parses a sheet "Updated Time" card like "July 15 - 8:25 AM" (month name +
 // day, no year — Cashout's own col G, Send Money's own col I) into a
 // business-date-comparable Date, using the SAME Manila-midnight convention

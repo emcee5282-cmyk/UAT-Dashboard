@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import type { Browser, Page } from 'puppeteer-core';
+import { SESSION_COOKIE_NAME } from '@/app/lib/auth/session';
 
 export const runtime = 'nodejs';
 export const maxDuration = 60;
@@ -125,6 +126,19 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ ok: false, error: 'Telegram is not configured on this deployment.' }, { status: 500 });
   }
 
+  // The caller (whoever clicked "Send to Telegram") already has a valid
+  // session — middleware.ts wouldn't have let this request reach here
+  // otherwise. Puppeteer's own internal page has no cookies at all though,
+  // so its navigation to the target dashboard path used to hit the login
+  // redirect instead of the real page, and every capture selector then
+  // failed with "Capture target not found" — confirmed live (reproduced
+  // the exact Puppeteer navigation cold: it lands on /login, and
+  // `[data-telegram-capture="cards"]` isn't there). Forwarding the same
+  // session cookie onto the Puppeteer page below fixes this without
+  // opening any new unauthenticated path — it's the literal cookie the
+  // browser that clicked the button already sent.
+  const sessionToken = request.cookies.get(SESSION_COOKIE_NAME)?.value;
+
   let path: string;
   let label: string;
   let captures: string[];
@@ -156,6 +170,18 @@ export async function POST(request: NextRequest) {
     // .env.local) routes this internal navigation straight to the local
     // Next.js server instead, bypassing nginx entirely.
     const origin = process.env.INTERNAL_BASE_URL || request.nextUrl.origin;
+    if (sessionToken) {
+      const originUrl = new URL(origin);
+      await page.setCookie({
+        name: SESSION_COOKIE_NAME,
+        value: sessionToken,
+        domain: originUrl.hostname,
+        path: '/',
+        httpOnly: true,
+        secure: originUrl.protocol === 'https:',
+        sameSite: 'Lax',
+      });
+    }
     const targetUrl = new URL(path, origin).toString();
     await page.goto(targetUrl, { waitUntil: 'networkidle0', timeout: 30000 });
     await waitForRealData(page);

@@ -18,22 +18,94 @@
 // fingerprint FLAGS a row for review — it never silently merges or drops
 // it. Both rows are always inserted and preserved.
 import { createHash } from 'node:crypto';
-import { eq, and, inArray, desc, sql } from 'drizzle-orm';
+import { eq, and, or, gt, inArray, notInArray, desc, sql } from 'drizzle-orm';
 import { getDb } from '../db/client';
 import * as schema from '../db/schema';
 import { parseWorkbookFile, mapSettlementRows, mapTopUpRows, mapOpeningRows, type SettlementImportRow, type TopUpImportRow, type OpeningImportRow } from '../xlsxParser';
 import { validateSettlementRows, parseImportDate, type ValidationEntry, type ValidationConfig } from '../settlementValidation';
 import { validateTopUpRows, type TopUpValidationConfig } from '../topupValidation';
-import { validateOpeningRows } from '../openingValidation';
+import { validateOpeningRows, normalizeShopNameForMatch } from '../openingValidation';
 import { resolveOrCreateLeaderId } from './openingActionsService';
 import { detectDuplicatesWithinFile, detectDuplicateAgentNames } from '../duplicateDetector';
 import { classifyRow, calculateImportSummary, calculateOpeningImportSummary } from '../importSummary';
 import { parseAmount } from '../format';
 import { TOPUP_TYPE_OPTIONS } from '../topupOptions';
 import { getBrandsForProduct } from '../db/read/brands';
+import { getBusinessToday, manilaFields } from '../businessDate';
+import { extractRawWalletFamily, extractShopSeriesFamily } from '../realShopName';
+import { buildGhostAgentMap, reconcileGhostsForImport } from './shopIdentityReconciliation';
 
 export type Product = 'cashout' | 'sendmoney';
 const WALLET_OPTIONS = ['BKASH', 'NAGAD', 'ROCKET', 'UPAY'];
+
+// "Placeholder" Leader names — a row whose own Leader cell is one of these
+// (or blank) hasn't really been assigned a real Leader yet, so a same-family
+// sibling's real Leader (see buildFamilyLeaderMap below) should be preferred
+// over reusing/creating a leader literally named this. Confirmed live: 1,275
+// Send Money shops currently carry "New-TempAutoPlot" as their Leader, 631
+// of which have a same-family sibling wallet line (e.g. "...-ARCANE040-BK"
+// vs "...-ARCANE040-NG") whose OWN Leader cell already has the real answer
+// ("JEWEL") — this never got applied because their shared brand ("ARCANE")
+// isn't in KNOWN_BRAND_NAMES, so each wallet line becomes its own totally
+// separate `agents` row with no identity link between them at all (see
+// extractRawWalletFamily's own comment). 'NEW SHOP' included too — the same
+// placeholder balanceLimitService.ts's own auto-create path uses; harmless
+// for Opening rows since its own Leader column would only ever say this if
+// someone typed it, but kept for consistency.
+const PLACEHOLDER_LEADER_NAMES = new Set(['NEW SHOP', 'NEW-TEMPAUTOPLOT']);
+
+export function isPlaceholderLeaderName(name: string): boolean {
+  const trimmed = name.trim().toUpperCase();
+  return trimmed === '' || trimmed === '-' || PLACEHOLDER_LEADER_NAMES.has(trimmed);
+}
+
+// Family -> real Leader name, brand-agnostic (extractRawWalletFamily, not
+// extractShopFamily — this must also work for an unrecognized-brand shop
+// whose agentCode is still a full raw string). Built once per import
+// (product-scoped, read-only), same shape/reasoning as
+// balanceLimitService.ts's own leaderNameByFamily: first-wins on a genuine
+// same-family disagreement between two already-real Leaders (not something
+// this map can safely arbitrate), placeholder-leader agents excluded from
+// ever seeding an answer.
+export async function buildFamilyLeaderMap(db: Tx | ReturnType<typeof getDb>, product: Product): Promise<Map<string, string>> {
+  const rows = await db
+    .select({ agentCode: schema.agents.agentCode, leaderName: schema.leaders.name })
+    .from(schema.agents)
+    .innerJoin(schema.leaders, eq(schema.agents.leaderId, schema.leaders.id))
+    .where(and(eq(schema.agents.product, product), eq(schema.agents.isActive, true)));
+
+  const map = new Map<string, string>();
+  for (const r of rows) {
+    if (isPlaceholderLeaderName(r.leaderName)) continue;
+    const fam = extractRawWalletFamily(r.agentCode);
+    if (!map.has(fam)) map.set(fam, r.leaderName);
+  }
+  return map;
+}
+
+// Broader fallback map, one level looser than buildFamilyLeaderMap: keyed by
+// extractShopSeriesFamily (whole sequential-numbered shop series, e.g. every
+// "YUSSOP0xx" shop, not just one shop's own two wallet lines) instead of
+// extractRawWalletFamily. Confirmed safe against the live roster — zero
+// series ever contain two different real Leaders — but still strictly a
+// fallback: consult buildFamilyLeaderMap's tighter map first, only fall
+// through to this one when that finds nothing (see its call sites).
+export async function buildSeriesFamilyLeaderMap(db: Tx | ReturnType<typeof getDb>, product: Product): Promise<Map<string, string>> {
+  const rows = await db
+    .select({ agentCode: schema.agents.agentCode, leaderName: schema.leaders.name })
+    .from(schema.agents)
+    .innerJoin(schema.leaders, eq(schema.agents.leaderId, schema.leaders.id))
+    .where(and(eq(schema.agents.product, product), eq(schema.agents.isActive, true)));
+
+  const map = new Map<string, string>();
+  for (const r of rows) {
+    if (isPlaceholderLeaderName(r.leaderName)) continue;
+    const series = extractShopSeriesFamily(r.agentCode);
+    if (!series || map.has(series)) continue;
+    map.set(series, r.leaderName);
+  }
+  return map;
+}
 
 // Phase 10 — real brands table, replacing the old hardcoded
 // CASHOUT_BRAND_CODES+'SH' array. Returns both the plain code list (for
@@ -100,7 +172,7 @@ function assertNoBrandErrors(issues: ValidationEntry[]): void {
 export async function importSettlementFile(params: { product: Product; file: File; fileName: string; uploadedBy: string; excludedRows?: Set<number> }): Promise<ImportOutcome> {
   const db = getDb();
   const parsed = await parseWorkbookFile(params.file);
-  const rows = mapSettlementRows(parsed);
+  const rows = mapSettlementRows(parsed, params.product);
   const agentIdByCode = await loadAgentMap(params.product);
   const brandIdByCode = await loadBrandMap(params.product);
 
@@ -147,7 +219,7 @@ export async function importSettlementFile(params: { product: Product; file: Fil
 export async function importTopUpFile(params: { product: Product; file: File; fileName: string; uploadedBy: string; excludedRows?: Set<number> }): Promise<ImportOutcome> {
   const db = getDb();
   const parsed = await parseWorkbookFile(params.file);
-  const rows = mapTopUpRows(parsed);
+  const rows = mapTopUpRows(parsed, params.product);
   const agentIdByCode = await loadAgentMap(params.product);
   const brandIdByCode = await loadBrandMap(params.product);
 
@@ -309,6 +381,31 @@ const BULK_UPDATE_CHUNK_SIZE = 500;
 type OpeningUpdateWithSdp = { id: number; openingBalance: string; sdp: string };
 type OpeningUpdateSkipSdp = { id: number; openingBalance: string };
 
+type OpeningWalletLine = { agentId: number; rawAgentName: string; openingBalance: string; sdp: string };
+
+// Fully replaces (delete, then insert fresh) each touched agent's own
+// opening_wallet_lines rows — same replace pattern Balance Limit's own
+// import uses for agent_wallets, but on its OWN dedicated table so the two
+// upload flows never step on each other's data (see schema.ts's own
+// comment on opening_wallet_lines for why this couldn't live on
+// agent_wallets). agentIds always covers every agent this upload touched,
+// even ones with zero line items this time — a shop that used to be
+// multi-wallet but no longer is in this file should lose its stale
+// breakdown too.
+async function replaceOpeningWalletLines(tx: Tx, agentIds: number[], lines: OpeningWalletLine[]): Promise<void> {
+  if (agentIds.length === 0) return;
+  const uniqueAgentIds = Array.from(new Set(agentIds));
+  for (let i = 0; i < uniqueAgentIds.length; i += BULK_UPDATE_CHUNK_SIZE) {
+    const chunk = uniqueAgentIds.slice(i, i + BULK_UPDATE_CHUNK_SIZE);
+    await tx.delete(schema.openingWalletLines).where(inArray(schema.openingWalletLines.agentId, chunk));
+  }
+  for (let i = 0; i < lines.length; i += BULK_UPDATE_CHUNK_SIZE) {
+    const chunk = lines.slice(i, i + BULK_UPDATE_CHUNK_SIZE);
+    if (chunk.length === 0) continue;
+    await tx.insert(schema.openingWalletLines).values(chunk);
+  }
+}
+
 async function bulkUpdateOpeningAgentsWithSdp(tx: Tx, updates: OpeningUpdateWithSdp[], now: Date): Promise<void> {
   for (let i = 0; i < updates.length; i += BULK_UPDATE_CHUNK_SIZE) {
     const chunk = updates.slice(i, i + BULK_UPDATE_CHUNK_SIZE);
@@ -316,7 +413,7 @@ async function bulkUpdateOpeningAgentsWithSdp(tx: Tx, updates: OpeningUpdateWith
     const values = sql.join(chunk.map((u) => sql`(${u.id}::int, ${u.openingBalance}::numeric, ${u.sdp}::numeric)`), sql`, `);
     await tx.execute(sql`
       UPDATE agents AS a
-      SET opening_balance = v.opening_balance, sdp = v.sdp, last_import_matched_at = ${now}, updated_at = ${now}
+      SET opening_balance = v.opening_balance, sdp = v.sdp, is_active = true, last_import_matched_at = ${now}, updated_at = ${now}
       FROM (VALUES ${values}) AS v(id, opening_balance, sdp)
       WHERE a.id = v.id
     `);
@@ -330,7 +427,7 @@ async function bulkUpdateOpeningAgentsSkipSdp(tx: Tx, updates: OpeningUpdateSkip
     const values = sql.join(chunk.map((u) => sql`(${u.id}::int, ${u.openingBalance}::numeric)`), sql`, `);
     await tx.execute(sql`
       UPDATE agents AS a
-      SET opening_balance = v.opening_balance, last_import_matched_at = ${now}, updated_at = ${now}
+      SET opening_balance = v.opening_balance, is_active = true, last_import_matched_at = ${now}, updated_at = ${now}
       FROM (VALUES ${values}) AS v(id, opening_balance)
       WHERE a.id = v.id
     `);
@@ -377,7 +474,44 @@ export async function importOpeningFile(params: { product: Product; file: File; 
 
   console.time('[Opening] fetch roster');
   const agentIdByCode = await loadAgentMap(params.product);
+  // Opening-scoped, whitespace-tolerant view over the same roster data —
+  // loadAgentMap's own keys (shared with importSettlementFile/
+  // importTopUpFile) are left untouched; this re-keys a local copy so a
+  // roster agentCode with a stray/non-breaking/double space still matches
+  // an uploaded Agent Name that differs only in that whitespace.
+  const normalizedAgentIdByCode = new Map<string, number>();
+  for (const [code, id] of agentIdByCode) {
+    normalizedAgentIdByCode.set(normalizeShopNameForMatch(code), id);
+  }
+
   console.timeEnd('[Opening] fetch roster');
+
+  // Opening = source of truth for shop identity — see buildGhostAgentMap's
+  // own header comment. Built once here (not per row), product-scoped,
+  // read-only.
+  const ghostAgentMap = await buildGhostAgentMap(db, params.product);
+  // See buildFamilyLeaderMap's own header comment — used below whenever a
+  // brand-new shop's own Leader cell is blank/placeholder, so it inherits
+  // its real Leader from a same-family sibling instead. seriesFamilyLeaderMap
+  // is the looser fallback (buildSeriesFamilyLeaderMap's own header comment)
+  // — whole shop-name series (e.g. every "YUSSOP0xx"), consulted only when
+  // the tighter wallet-family map finds nothing.
+  const familyLeaderMap = await buildFamilyLeaderMap(db, params.product);
+  const seriesFamilyLeaderMap = await buildSeriesFamilyLeaderMap(db, params.product);
+  // A same-family sibling's real Leader can also live elsewhere in THIS
+  // SAME upload (e.g. "...-ARCANE040-BK" carrying the placeholder while
+  // "...-ARCANE040-NG" — a few rows down in the same file — already has the
+  // real one) — the file's own row order must not matter, so this scans
+  // every row up front (no DB access) before the insert loop runs, rather
+  // than only registering a new shop's family the moment IT gets inserted.
+  for (const row of rows) {
+    const leaderNameRaw = row.leader ?? '';
+    if (isPlaceholderLeaderName(leaderNameRaw)) continue;
+    const fam = extractRawWalletFamily(row.agentName);
+    if (!familyLeaderMap.has(fam)) familyLeaderMap.set(fam, leaderNameRaw);
+    const series = extractShopSeriesFamily(row.agentName);
+    if (series && !seriesFamilyLeaderMap.has(series)) seriesFamilyLeaderMap.set(series, leaderNameRaw);
+  }
 
   const newShopDecisions = params.newShopDecisions ?? {};
   const sdpSkipRows = params.sdpSkipRows ?? new Set<number>();
@@ -396,8 +530,32 @@ export async function importOpeningFile(params: { product: Product; file: File; 
   try {
     let validCount = 0, duplicateCount = 0, errorCount = 0;
     const updatedAgentIds: number[] = [];
-    const matchedWithSdp: OpeningUpdateWithSdp[] = [];
-    const matchedSkipSdp: OpeningUpdateSkipSdp[] = [];
+    // A shop can appear on multiple rows in the same file (per-wallet
+    // rows) — reconciliation is per-SHOP, not per-row, so this guards
+    // against redundantly re-collecting the same agentId's ghosts within
+    // one import. Collected here (pure in-memory Map lookups against the
+    // one ghostAgentMap already fetched above, no extra queries) and
+    // reconciled in a single batched pass after the row loop — see
+    // reconcileGhostsForImport's own header comment for why (was ~2 DB
+    // round trips PER GHOST, ~2.7+ minutes of pure query latency on a
+    // typical upload; batching cut that to a handful of queries total).
+    const reconciledAgentIds = new Set<number>();
+    const pendingGhostToTarget = new Map<number, number>();
+    // Keyed by agentId (not a plain array) — a shop can legitimately appear
+    // on multiple rows in the same file (e.g. one row per wallet, same bare
+    // Agent Name repeated with a different Opening Balance each time,
+    // confirmed against real uploaded data). Opening Balance is SUMMED
+    // across every such row for that shop so none of them get silently
+    // discarded; SDP is kept as-is (repeats the same figure every row in
+    // practice — shop-level, not per-wallet — so the last one read wins,
+    // same as before).
+    const matchedWithSdp = new Map<number, OpeningUpdateWithSdp>();
+    const matchedSkipSdp = new Map<number, OpeningUpdateSkipSdp>();
+    // One opening_wallet_lines row PER FILE ROW that carries a wallet-type
+    // suffix (e.g. "-BK") — never deduped/merged, kept completely separate
+    // from the shop-level sum above, per explicit instruction ("kada isang
+    // row isang opening lang"). No dependency on agent_wallets existing.
+    const openingWalletLineInserts: OpeningWalletLine[] = [];
 
     await db.transaction(async (tx) => {
       console.time('[Opening] row loop (classify + new-shop inserts)');
@@ -413,7 +571,7 @@ export async function importOpeningFile(params: { product: Product; file: File; 
         // variant case) — everything else still matches by the row's own
         // Agent Name, same as always.
         const targetCode = decision?.action === 'link' ? decision.agentCode : row.agentName;
-        const agentId = agentIdByCode.get(targetCode.trim().toLowerCase());
+        const agentId = normalizedAgentIdByCode.get(normalizeShopNameForMatch(targetCode));
 
         // Blank -> "0.00", not null. Deliberate: for Send Money specifically,
         // this trades away the null-vs-zero distinction
@@ -426,7 +584,20 @@ export async function importOpeningFile(params: { product: Product; file: File; 
         const openingBalance = row.openingBalance.trim() === '' ? '0.00' : parseAmount(row.openingBalance).toFixed(2);
         const sdp = row.sdp.trim() === '' ? '0.00' : parseAmount(row.sdp).toFixed(2);
 
+        // A row with genuinely nothing in it (both Opening Balance and SDP
+        // are 0) is skipped entirely — no match, no insert, no wallet
+        // write. Either figure being non-zero still posts normally, per
+        // explicit instruction ("kapag may SDP need mo i-posted").
+        if (parseFloat(openingBalance) === 0 && parseFloat(sdp) === 0) continue;
+
         if (agentId) {
+          if (!reconciledAgentIds.has(agentId)) {
+            reconciledAgentIds.add(agentId);
+            const ghosts = ghostAgentMap.get(targetCode.trim().toUpperCase()) ?? [];
+            for (const ghostId of ghosts) {
+              if (ghostId !== agentId) pendingGhostToTarget.set(ghostId, agentId);
+            }
+          }
           if (status === 'duplicate') duplicateCount++; else validCount++;
           // sdpSkipRows (SDP-change confirmation, Phase 2) — the user chose
           // Skip on a large SDP jump for this row: the rest of the row
@@ -438,22 +609,50 @@ export async function importOpeningFile(params: { product: Product; file: File; 
           // against the real DB, ~264s extrapolated across Cashout's 3,718
           // agents), now a single chunked VALUES-join UPDATE per group.
           if (sdpSkipRows.has(row.row)) {
-            matchedSkipSdp.push({ id: agentId, openingBalance });
+            const existing = matchedSkipSdp.get(agentId);
+            const total = (existing ? parseFloat(existing.openingBalance) : 0) + parseFloat(openingBalance);
+            matchedSkipSdp.set(agentId, { id: agentId, openingBalance: total.toFixed(2) });
           } else {
-            matchedWithSdp.push({ id: agentId, openingBalance, sdp });
+            const existing = matchedWithSdp.get(agentId);
+            const total = (existing ? parseFloat(existing.openingBalance) : 0) + parseFloat(openingBalance);
+            // SDP is SUMMED across every row for the shop, same treatment
+            // as Opening Balance — per explicit instruction, no row gets
+            // resolved away or merged, each row's own figure is counted.
+            const sdpTotal = (existing ? parseFloat(existing.sdp) : 0) + parseFloat(sdp);
+            matchedWithSdp.set(agentId, { id: agentId, openingBalance: total.toFixed(2), sdp: sdpTotal.toFixed(2) });
+          }
+          // Per-wallet Opening Balance line — if this row's raw Agent Name
+          // carried a wallet suffix (captured by mapOpeningRows before
+          // normalizeOpeningAgentName stripped it off row.agentName — that
+          // field is already bare by the time it reaches here), its OWN
+          // figure is recorded as its own line, no existing agent_wallets
+          // row required.
+          if (row.walletTypeSuffix) {
+            openingWalletLineInserts.push({ agentId, rawAgentName: row.rawAgentName, openingBalance, sdp });
           }
           updatedAgentIds.push(agentId);
           continue;
         }
 
-        // No match — only a confirmed 'insert' decision creates a real new
-        // shop; anything else here means the client's own New Shops gate
-        // didn't actually resolve this row, which shouldn't happen. Left
-        // as a real per-row insert (not batched) — new shops are a small,
-        // bounded count per upload, not worth the added complexity.
-        if (decision?.action !== 'insert') { errorCount++; continue; }
-
-        const leaderId = await resolveOrCreateLeaderId(tx, decision.leader);
+        // No match — auto-inserted as a new shop directly, no manual
+        // per-row decision required. A 'link' decision (if the client still
+        // sends one) supplies its own Leader; otherwise the row's own
+        // Leader column is used, same find-or-create resolution either way.
+        // Left as a real per-row insert (not batched) — new shops are a
+        // small, bounded count per upload, not worth the added complexity.
+        const rawLeaderName = decision?.action === 'insert' ? decision.leader : row.leader;
+        // Placeholder ("New-TempAutoPlot"/"NEW SHOP"/blank) defers to a
+        // same-family sibling's real Leader when one exists — see
+        // buildFamilyLeaderMap's own header comment. Falls through to the
+        // looser shop-series map (buildSeriesFamilyLeaderMap) only when the
+        // tighter wallet-family match finds nothing. A genuinely different
+        // real Leader value the row itself carries is never second-guessed.
+        const leaderName = isPlaceholderLeaderName(rawLeaderName)
+          ? (familyLeaderMap.get(extractRawWalletFamily(row.agentName))
+            ?? seriesFamilyLeaderMap.get(extractShopSeriesFamily(row.agentName) ?? '')
+            ?? rawLeaderName)
+          : rawLeaderName;
+        const leaderId = await resolveOrCreateLeaderId(tx, leaderName);
         const [inserted] = await tx.insert(schema.agents).values({
           product: params.product,
           agentCode: row.agentName,
@@ -466,23 +665,100 @@ export async function importOpeningFile(params: { product: Product; file: File; 
 
         if (status === 'duplicate') duplicateCount++; else validCount++;
         updatedAgentIds.push(inserted.id);
+        if (row.walletTypeSuffix) {
+          openingWalletLineInserts.push({ agentId: inserted.id, rawAgentName: row.rawAgentName, openingBalance, sdp });
+        }
         // Registered so a LATER row in this same file can still 'link' onto
         // the shop this row just created.
-        agentIdByCode.set(row.agentName.trim().toLowerCase(), inserted.id);
+        normalizedAgentIdByCode.set(normalizeShopNameForMatch(row.agentName), inserted.id);
+
+        if (!reconciledAgentIds.has(inserted.id)) {
+          reconciledAgentIds.add(inserted.id);
+          const ghosts = ghostAgentMap.get(row.agentName.trim().toUpperCase()) ?? [];
+          for (const ghostId of ghosts) {
+            if (ghostId !== inserted.id) pendingGhostToTarget.set(ghostId, inserted.id);
+          }
+        }
       }
       console.timeEnd('[Opening] row loop (classify + new-shop inserts)');
 
+      console.time('[Opening] ghost reconciliation (batched)');
+      await reconcileGhostsForImport(tx, pendingGhostToTarget);
+      console.timeEnd('[Opening] ghost reconciliation (batched)');
+
       console.time('[Opening] bulk update matched rows');
       const matchedAt = new Date();
-      await bulkUpdateOpeningAgentsWithSdp(tx, matchedWithSdp, matchedAt);
-      await bulkUpdateOpeningAgentsSkipSdp(tx, matchedSkipSdp, matchedAt);
+      await bulkUpdateOpeningAgentsWithSdp(tx, Array.from(matchedWithSdp.values()), matchedAt);
+      await bulkUpdateOpeningAgentsSkipSdp(tx, Array.from(matchedSkipSdp.values()), matchedAt);
+      await replaceOpeningWalletLines(tx, updatedAgentIds, openingWalletLineInserts);
       console.timeEnd('[Opening] bulk update matched rows');
+
+      // The file is the source of truth: any existing shop this upload
+      // never touched (not matched, not freshly inserted) is marked
+      // inactive and drops out of the Opening page's display — no manual
+      // per-shop "Keep"/"Mark Inactive" review required. Guarded on a
+      // non-empty touched set so a file that somehow resolved zero rows
+      // can't wipe out the whole roster.
+      //
+      // Exception (general rule, not a per-shop special case) — a shop
+      // absent from THIS Opening file but carrying real DP or WD activity
+      // from Balance Limit must stay active: Opening not knowing about a
+      // shop yet is not the same as the shop being unreal, and Balance
+      // Limit's own auto-create already proved it real. Confirmed live via
+      // PHANTOM008/RIAN006 — every Opening re-upload was silently
+      // deactivating shops Balance Limit had just (re)confirmed had real
+      // money moving through them, hiding them from both Opening and
+      // Balance (both pages read the same isActive=true agents set).
+      const agentsWithRealActivity = await tx
+        .select({ agentId: schema.agentWallets.agentId })
+        .from(schema.agentWallets)
+        .innerJoin(schema.agents, eq(schema.agentWallets.agentId, schema.agents.id))
+        .where(and(
+          eq(schema.agents.product, params.product),
+          or(gt(schema.agentWallets.totalDp, '0'), gt(schema.agentWallets.totalWd, '0'))
+        ));
+      // Guard stays keyed on updatedAgentIds specifically (not the wider
+      // keepActiveIds union below) — a file that resolved zero real rows
+      // must still be blocked from wiping the roster, exactly as before;
+      // the wallet-activity exclusion only narrows what a GENUINE upload
+      // is allowed to deactivate, it must never be what allows the
+      // deactivation step to run in the first place.
+      if (updatedAgentIds.length > 0) {
+        const keepActiveIds = Array.from(new Set([...updatedAgentIds, ...agentsWithRealActivity.map((r) => r.agentId)]));
+        await tx
+          .update(schema.agents)
+          .set({ isActive: false, updatedAt: new Date() })
+          .where(and(
+            eq(schema.agents.product, params.product),
+            notInArray(schema.agents.id, keepActiveIds),
+            eq(schema.agents.isActive, true)
+          ));
+      }
     });
 
     await db.update(schema.importBatches).set({
       status: 'completed', completedAt: new Date(), validCount, duplicateCount, errorCount,
       errorSummary: JSON.stringify(allIssues.filter((e) => e.type === 'error')),
     }).where(eq(schema.importBatches.id, batch.id));
+
+    // Running Balance card's trend sparkline — snapshot today's Opening
+    // total right after a completed upload (upsert: a same-day re-upload
+    // replaces the day's figure rather than duplicating it). Not scoped to
+    // isActive — nothing else in the app filters Opening totals by that
+    // flag yet either (see agents.is_active's own schema comment).
+    const { year, month, day } = manilaFields(getBusinessToday());
+    const trendDate = `${year}-${String(month + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+    const [{ total: openingTotal }] = await db
+      .select({ total: sql<string>`coalesce(sum(${schema.agents.openingBalance}), 0)` })
+      .from(schema.agents)
+      .where(eq(schema.agents.product, params.product));
+    await db
+      .insert(schema.openingBalanceDaily)
+      .values({ product: params.product, trendDate, totalAmount: openingTotal })
+      .onConflictDoUpdate({
+        target: [schema.openingBalanceDaily.product, schema.openingBalanceDaily.trendDate],
+        set: { totalAmount: openingTotal },
+      });
 
     console.timeEnd('[Opening] TOTAL');
     return { batchId: batch.id, status: 'completed', rowCount: rows.length, validCount, duplicateCount, errorCount, insertedIds: updatedAgentIds, flaggedDuplicateIds: [], errors: allIssues };

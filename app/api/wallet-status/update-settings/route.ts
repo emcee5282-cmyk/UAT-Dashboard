@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server';
-import { updateCashoutWalletSettings, type MainReason, type ClosureType, type AffectedService, type ScheduleOverride } from '@/app/lib/walletStatus';
+import { updateCashoutWalletSettings, type MainReason, type ClosureType, type AffectedService } from '@/app/lib/walletStatus';
 import { updateWalletSettingsPg } from '@/app/lib/services/walletStatusConfigService';
 
 // Cashout-only flag — see app/api/wallet-status/route.ts's own comment.
@@ -11,12 +11,14 @@ const MAX_REMARK_LENGTH = 500;
 const VALID_MAIN_REASONS: MainReason[] = ['', 'Closed by Operations', 'High Running Balance', 'Reduce as per Leader', 'Wallet Issue', 'Blocked by Wallet Office', 'Others'];
 const VALID_CLOSURE_TYPES: ClosureType[] = ['', 'Temporary Close', 'Permanent Close'];
 const VALID_AFFECTED_SERVICES: AffectedService[] = ['Deposit', 'Withdrawal'];
-const VALID_SCHEDULE_OVERRIDES: ScheduleOverride[] = ['', 'Day', 'Extended', 'Early Ext.', '24/7'];
 
 // Single-wallet save for the unified Edit Wallet Settings modal — one
 // request for all fields (Remarks, Main Reason, Closure Type, Affected
-// Services, Minimum Amount Can Take, Balance Limit, Schedule). Priority is
-// NOT part of this route — the modal no longer edits it.
+// Services, Minimum Amount Can Take). Priority, Balance Limit, and
+// Schedule are NOT part of this route — the modal no longer edits any of
+// the three (Balance Limit/Daily Limit is now always the Balance Limit
+// upload's own real per-wallet "DP Limit" value, and Schedule is derived
+// from that same upload's own Group text — neither is staff-editable).
 export async function POST(request: Request) {
   try {
     const body = await request.json();
@@ -24,7 +26,6 @@ export async function POST(request: Request) {
     const remark = String(body?.remark ?? '').trim();
     const mainReason = String(body?.mainReason ?? '') as MainReason;
     const closureType = String(body?.closureType ?? '') as ClosureType;
-    const scheduleOverride = String(body?.scheduleOverride ?? '') as ScheduleOverride;
     const rawAffectedServices = Array.isArray(body?.affectedServices) ? body.affectedServices : [];
     const affectedServices = rawAffectedServices.filter((s: unknown): s is AffectedService => VALID_AFFECTED_SERVICES.includes(s as AffectedService));
 
@@ -34,19 +35,18 @@ export async function POST(request: Request) {
       return isNaN(num) ? undefined : num;
     };
     const minimumAmountCanTake = parseAmount(body?.minimumAmountCanTake);
-    const balanceLimitOverride = parseAmount(body?.balanceLimitOverride);
 
     if (!shopName || remark.length > MAX_REMARK_LENGTH) {
       return NextResponse.json({ error: 'Missing or invalid shopName/remark.' }, { status: 400 });
     }
-    if (!VALID_MAIN_REASONS.includes(mainReason) || !VALID_CLOSURE_TYPES.includes(closureType) || !VALID_SCHEDULE_OVERRIDES.includes(scheduleOverride)) {
-      return NextResponse.json({ error: 'Invalid mainReason/closureType/scheduleOverride.' }, { status: 400 });
+    if (!VALID_MAIN_REASONS.includes(mainReason) || !VALID_CLOSURE_TYPES.includes(closureType)) {
+      return NextResponse.json({ error: 'Invalid mainReason/closureType.' }, { status: 400 });
     }
-    if (minimumAmountCanTake === undefined || balanceLimitOverride === undefined) {
-      return NextResponse.json({ error: 'Invalid minimumAmountCanTake/balanceLimitOverride.' }, { status: 400 });
+    if (minimumAmountCanTake === undefined) {
+      return NextResponse.json({ error: 'Invalid minimumAmountCanTake.' }, { status: 400 });
     }
 
-    const update = { remark, mainReason, closureType, affectedServices, minimumAmountCanTake, balanceLimitOverride, scheduleOverride };
+    const update = { remark, mainReason, closureType, affectedServices, minimumAmountCanTake };
     const { updatedBy, updatedAt } = isPostgresSourceEnabled()
       ? await updateWalletSettingsPg('cashout', shopName, update)
       : await updateCashoutWalletSettings(shopName, update);

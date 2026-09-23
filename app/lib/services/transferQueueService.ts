@@ -49,14 +49,27 @@ import { getAgentBalances, type Product } from './balanceService';
 import { readTransferQueueRulesPg, readLinkedAccountsPg, readMetaConfigPg } from '../db/read/transferQueue';
 import { DEFAULT_RULES } from '../transferQueueSettings';
 
+// raw_account stores the Balance Limit upload's "Account" cell verbatim,
+// phone number and all (e.g. "01402636932 - N-M1AG-M1-JETT013-NG") — the
+// phone number is real data worth keeping in the DB, but Transfer Queue's
+// own Shop Name column only wants the part after it. Same split Cashout's
+// own (now-unused-on-this-path) stripAccountPrefix() in app/transfer-queue/
+// page.tsx already used for the old Sheets-sourced flow — matched here so
+// both paths would agree if the Sheets fallback were ever live again.
+function stripPhonePrefix(raw: string): string {
+  const idx = raw.indexOf(' - ');
+  return idx === -1 ? raw : raw.slice(idx + 3).trim();
+}
+
 export type TransferQueueRow = {
   agentId: number;
   walletId: number;
   agentCode: string;
-  // Display-only wallet identifier (the raw Balance Limit sheet's "Account"
-  // column, e.g. "01402636932 - N-M1AG-M1-JETT013-NG") — not persisted
-  // anywhere in Postgres, so this falls back to agentCode for now. Cosmetic
-  // gap only, not blocking: confirmed via explicit instruction.
+  // Display-only wallet identifier — the raw Balance Limit upload's own
+  // "Account" cell with its phone-number prefix stripped (e.g.
+  // "N-M1AG-M1-JETT013-NG"), read from agent_wallets.raw_account. Falls
+  // back to agentCode only for wallet rows written before that column
+  // existed (null until their next Balance Limit re-upload).
   account: string;
   brand: string;
   currentGroup: string;
@@ -112,7 +125,7 @@ function computeSdpVsBalanceRaw(sdpNum: number, companyBalance: number): number 
   return sdpNum === 0 ? companyBalance : companyBalance - sdpNum;
 }
 
-type WalletGroupRow = { walletId: number; agentId: number; groupCode: string | null };
+type WalletGroupRow = { walletId: number; agentId: number; groupCode: string | null; rawAccount: string | null };
 
 async function loadWalletGroups(product: Product): Promise<WalletGroupRow[]> {
   const db = getDb();
@@ -121,6 +134,7 @@ async function loadWalletGroups(product: Product): Promise<WalletGroupRow[]> {
       walletId: schema.agentWallets.id,
       agentId: schema.agentWallets.agentId,
       groupCode: schema.agentWallets.groupCode,
+      rawAccount: schema.agentWallets.rawAccount,
     })
     .from(schema.agentWallets)
     .innerJoin(schema.agents, eq(schema.agentWallets.agentId, schema.agents.id))
@@ -168,7 +182,7 @@ export async function getCashoutTransferQueueRows(): Promise<TransferQueueRow[]>
     if (normalizeGroup(currentGroup) === normalizeGroup(resolved.groupName)) continue;
 
     rows.push({
-      agentId: b.agentId, walletId: w.walletId, agentCode: b.agentCode, account: b.agentCode, brand: b.brand,
+      agentId: b.agentId, walletId: w.walletId, agentCode: b.agentCode, account: w.rawAccount ? stripPhonePrefix(w.rawAccount) : b.agentCode, brand: b.brand,
       currentGroup, correctGroup: resolved.groupName,
       companyBalance: b.companyBalance, discrepancy, sdpVsBalance, balanceInside: b.balanceInside,
       remarks: resolved.remarks, walletStatus,
@@ -224,7 +238,7 @@ export async function getSendMoneyTransferQueueRows(): Promise<TransferQueueRow[
     if (normalizeGroup(currentGroup) === normalizeGroup(resolved.groupName)) continue;
 
     rows.push({
-      agentId: b.agentId, walletId: w.walletId, agentCode: b.agentCode, account: b.agentCode, brand: b.brand,
+      agentId: b.agentId, walletId: w.walletId, agentCode: b.agentCode, account: w.rawAccount ? stripPhonePrefix(w.rawAccount) : b.agentCode, brand: b.brand,
       currentGroup, correctGroup: resolved.groupName,
       companyBalance: b.companyBalance, discrepancy, sdpVsBalance, balanceInside: b.balanceInside,
       remarks: resolved.remarks, walletStatus,

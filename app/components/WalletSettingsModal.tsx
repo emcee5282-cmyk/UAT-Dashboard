@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { X, Loader2, Shield, Settings as SettingsIcon, Clock, Lock, Check, Info, Calendar } from 'lucide-react';
+import { X, Loader2, Shield, Settings as SettingsIcon, Clock, Lock, Check, Info } from 'lucide-react';
 import AmountInput from './AmountInput';
 import SearchableCombobox from './SearchableCombobox';
 
@@ -28,20 +28,21 @@ import SearchableCombobox from './SearchableCombobox';
 export type MainReason = '' | 'Closed by Operations' | 'High Running Balance' | 'Reduce as per Leader' | 'Wallet Issue' | 'Blocked by Wallet Office' | 'Others';
 export type ClosureType = '' | 'Temporary Close' | 'Permanent Close';
 export type AffectedService = 'Deposit' | 'Withdrawal';
-export type ScheduleOverride = '' | 'Day' | 'Extended' | 'Early Ext.' | '24/7';
 
-// minimumAmountCanTake/balanceLimitOverride are raw digit strings
-// (AmountInput's own value shape) — '' means "unset", matching the sheet/
-// API's own null-means-unset convention. Converted to number | null right
-// before the API call.
+// minimumAmountCanTake is a raw digit string (AmountInput's own value
+// shape) — '' means "unset", matching the sheet/API's own null-means-unset
+// convention. Converted to number | null right before the API call.
+// Daily Limit and Schedule are NOT fields here — neither is editable at
+// all, per explicit instruction; Daily Limit always reads directly from
+// the Balance Limit upload's own real per-wallet "DP Limit" cell, and
+// Schedule is derived from that same upload's own Group text (see both
+// Wallet Status pages' own dailyLimit/schedule computation).
 export type WalletSettingsValues = {
   mainReason: MainReason;
   closureType: ClosureType;
   affectedServices: AffectedService[];
   remark: string;
   minimumAmountCanTake: string;
-  balanceLimitOverride: string;
-  scheduleOverride: ScheduleOverride;
 };
 
 export const DEFAULT_WALLET_SETTINGS_VALUES: WalletSettingsValues = {
@@ -50,8 +51,6 @@ export const DEFAULT_WALLET_SETTINGS_VALUES: WalletSettingsValues = {
   affectedServices: [],
   remark: '',
   minimumAmountCanTake: '',
-  balanceLimitOverride: '',
-  scheduleOverride: '',
 };
 
 // Kept as the earlier, confirmed 5-option list — the newer 7-option
@@ -66,15 +65,7 @@ const AFFECTED_SERVICE_OPTIONS: { value: AffectedService; label: string }[] = [
   { value: 'Deposit', label: 'Deposit' },
   { value: 'Withdrawal', label: 'Withdrawal' },
 ];
-const SCHEDULE_OPTIONS: { value: ScheduleOverride; label: string }[] = [
-  { value: '', label: 'Auto (based on Leader)' },
-  { value: 'Day', label: 'Day Shift (7:00 AM – 10:00 PM)' },
-  { value: 'Extended', label: 'Extended (7:00 AM – 11:00 PM)' },
-  { value: 'Early Ext.', label: 'Early Ext. (6:00 AM – 12:00 AM)' },
-  { value: '24/7', label: '24/7 (Open 24 Hours)' },
-];
 
-const INPUT_CLASS = 'h-12 w-full rounded-xl border border-[#E5E7EB] bg-white px-3.5 text-[13px] text-foreground outline-none transition-colors focus:border-[#2563EB] focus:ring-2 focus:ring-[#2563EB]/20 disabled:cursor-not-allowed disabled:opacity-50 dark:border-[#3a3a3d] dark:bg-[#1c1c1e]';
 const HELP_TEXT_CLASS = 'mt-1.5 text-[11px] text-muted-foreground';
 
 // Reusable enterprise card shell — icon in a tinted circle, title, subtitle,
@@ -106,7 +97,7 @@ function SettingsCard({ icon: Icon, iconBg, iconColor, title, subtitle, children
 }
 
 type FieldKey = keyof WalletSettingsValues;
-const ALL_FIELD_KEYS: FieldKey[] = ['mainReason', 'closureType', 'affectedServices', 'remark', 'minimumAmountCanTake', 'balanceLimitOverride', 'scheduleOverride'];
+const ALL_FIELD_KEYS: FieldKey[] = ['mainReason', 'closureType', 'affectedServices', 'remark', 'minimumAmountCanTake'];
 
 // Single mode: plain label + control, no checkbox. Bulk mode: checkbox +
 // "Update {label}" — control only renders once checked, matching
@@ -290,8 +281,6 @@ export default function WalletSettingsModal(props: WalletSettingsModalProps) {
     if (enabled.affectedServices) updates.affectedServices = values.affectedServices;
     if (enabled.remark) updates.remark = values.remark;
     if (enabled.minimumAmountCanTake) updates.minimumAmountCanTake = values.minimumAmountCanTake;
-    if (enabled.balanceLimitOverride) updates.balanceLimitOverride = values.balanceLimitOverride;
-    if (enabled.scheduleOverride) updates.scheduleOverride = values.scheduleOverride;
     if (enabled.mainReason && values.mainReason === '' && !enabled.remark) updates.remark = '';
     props.onSaveBulk(updates);
   };
@@ -372,7 +361,7 @@ export default function WalletSettingsModal(props: WalletSettingsModalProps) {
                           onClick={() => setValues((c) => ({ ...c, closureType: opt.value }))}
                           className={`flex h-12 items-center justify-center gap-2 rounded-xl border-2 text-[13px] font-semibold transition-all duration-150 disabled:cursor-not-allowed ${
                             selected
-                              ? 'border-[#2563EB] bg-[#EFF6FF] text-[#2563EB] dark:bg-[#1e2a3d]'
+                              ? 'border-[var(--ui-accent)] bg-[#EFF6FF] text-[var(--ui-accent)] dark:bg-[#1e2a3d]'
                               : 'border-[#E5E7EB] bg-white text-foreground hover:-translate-y-px hover:shadow-sm dark:border-[#3a3a3d] dark:bg-[#232326]'
                           }`}
                         >
@@ -396,7 +385,7 @@ export default function WalletSettingsModal(props: WalletSettingsModalProps) {
                           onClick={() => toggleAffectedService(opt.value, !selected)}
                           className={`flex h-12 items-center justify-center gap-1.5 rounded-xl border-2 text-[13px] font-semibold transition-all duration-150 disabled:cursor-not-allowed ${
                             selected
-                              ? 'border-[#2563EB] bg-[#EFF6FF] text-[#2563EB] dark:bg-[#1e2a3d]'
+                              ? 'border-[var(--ui-accent)] bg-[#EFF6FF] text-[var(--ui-accent)] dark:bg-[#1e2a3d]'
                               : 'border-[#E5E7EB] bg-white text-foreground hover:-translate-y-px hover:shadow-sm dark:border-[#3a3a3d] dark:bg-[#232326]'
                           }`}
                         >
@@ -416,7 +405,7 @@ export default function WalletSettingsModal(props: WalletSettingsModalProps) {
                     value={values.remark}
                     onChange={(event) => setValues((c) => ({ ...c, remark: event.target.value }))}
                     placeholder="Enter the reason for this change..."
-                    className={`min-h-[120px] w-full resize-none rounded-xl border border-[#E5E7EB] bg-white px-3.5 py-2.5 text-[13px] text-foreground outline-none transition-colors focus:border-[#2563EB] focus:ring-2 focus:ring-[#2563EB]/20 disabled:cursor-not-allowed disabled:opacity-50 dark:border-[#3a3a3d] dark:bg-[#1c1c1e]`}
+                    className={`min-h-[120px] w-full resize-none rounded-xl border border-[#E5E7EB] bg-white px-3.5 py-2.5 text-[13px] text-foreground outline-none transition-colors focus:border-[var(--ui-accent)] focus:ring-2 focus:ring-[var(--ui-accent)]/20 disabled:cursor-not-allowed disabled:opacity-50 dark:border-[#3a3a3d] dark:bg-[#1c1c1e]`}
                   />
                   <div className="mt-1.5 flex items-center justify-between">
                     <p className="text-[11px] text-muted-foreground">500 character limit</p>
@@ -438,7 +427,7 @@ export default function WalletSettingsModal(props: WalletSettingsModalProps) {
               iconBg="bg-emerald-50 dark:bg-emerald-500/10"
               iconColor="text-emerald-600 dark:text-emerald-400"
               title="Wallet Configuration"
-              subtitle="Configure wallet operating limits and availability."
+              subtitle="Configure wallet transaction limits."
             >
               <FieldRow label="Minimum Amount Can Take" bulk={isBulk} enabled={enabled.minimumAmountCanTake} onToggle={(next) => setEnabled((c) => ({ ...c, minimumAmountCanTake: next }))}>
                 <AmountInput
@@ -447,29 +436,6 @@ export default function WalletSettingsModal(props: WalletSettingsModalProps) {
                   placeholder="0.00"
                 />
                 <p className={HELP_TEXT_CLASS}>Minimum transaction amount allowed.</p>
-              </FieldRow>
-
-              <FieldRow label="Balance Limit" bulk={isBulk} enabled={enabled.balanceLimitOverride} onToggle={(next) => setEnabled((c) => ({ ...c, balanceLimitOverride: next }))}>
-                <AmountInput
-                  value={values.balanceLimitOverride}
-                  onChange={(next) => setValues((c) => ({ ...c, balanceLimitOverride: next }))}
-                  placeholder="Auto (leave blank)"
-                />
-                <p className={HELP_TEXT_CLASS}>Leave blank to use the default limit.</p>
-              </FieldRow>
-
-              <FieldRow label="Schedule" bulk={isBulk} enabled={enabled.scheduleOverride} onToggle={(next) => setEnabled((c) => ({ ...c, scheduleOverride: next }))}>
-                <div className="relative">
-                  <Calendar size={16} className="pointer-events-none absolute left-3.5 top-1/2 -translate-y-1/2 text-muted-foreground" />
-                  <select
-                    value={values.scheduleOverride}
-                    onChange={(event) => setValues((c) => ({ ...c, scheduleOverride: event.target.value as ScheduleOverride }))}
-                    className={`${INPUT_CLASS} pl-10`}
-                  >
-                    {SCHEDULE_OPTIONS.map((opt) => <option key={opt.value} value={opt.value}>{opt.label}</option>)}
-                  </select>
-                </div>
-                <p className={HELP_TEXT_CLASS}>Operating hours for this wallet.</p>
               </FieldRow>
             </SettingsCard>
           </div>
@@ -493,7 +459,7 @@ export default function WalletSettingsModal(props: WalletSettingsModalProps) {
             type="button"
             onClick={handleSaveClick}
             disabled={!canSave}
-            className="flex items-center gap-2 rounded-xl bg-[#2563EB] px-5 py-2.5 text-[13px] font-semibold text-white transition-colors hover:bg-[#1D4ED8] disabled:cursor-not-allowed disabled:opacity-50"
+            className="flex items-center gap-2 rounded-xl bg-[var(--ui-accent)] px-5 py-2.5 text-[13px] font-semibold text-white transition-colors hover:bg-[#1D4ED8] disabled:cursor-not-allowed disabled:opacity-50"
           >
             {saving ? (
               <>

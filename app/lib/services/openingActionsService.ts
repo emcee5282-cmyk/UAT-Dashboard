@@ -20,6 +20,7 @@ import { getDb } from '../db/client';
 import * as schema from '../db/schema';
 import { checkOptionalAmountField } from '../openingValidation';
 import { parseAmount } from '../format';
+import { buildGhostAgentMap, reconcileGhostsOntoAgent } from './shopIdentityReconciliation';
 
 export type Product = 'cashout' | 'sendmoney';
 
@@ -181,7 +182,14 @@ export async function createOpeningAgent(product: Product, input: NewOpeningAgen
     const openingBalance = input.openingBalance !== undefined && input.openingBalance.trim() !== '' ? parseAmount(input.openingBalance).toFixed(2) : null;
     const sdp = input.sdp !== undefined && input.sdp.trim() !== '' ? parseAmount(input.sdp).toFixed(2) : null;
 
-    await tx.insert(schema.agents).values({
+    // Ghost map built inside this same transaction — see
+    // shopIdentityReconciliation.ts's own header comment. Opening's manual
+    // "Add Shop" action gets the exact same identity rule as the bulk
+    // import path: a lower-volume, but still real, second way Opening can
+    // define a shop.
+    const ghostAgentMap = await buildGhostAgentMap(tx, product);
+
+    const [inserted] = await tx.insert(schema.agents).values({
       product,
       agentCode,
       leaderId,
@@ -189,7 +197,10 @@ export async function createOpeningAgent(product: Product, input: NewOpeningAgen
       openingBalance,
       sdp,
       updatedAt: new Date(),
-    });
+    }).returning({ id: schema.agents.id });
+
+    const ghosts = ghostAgentMap.get(agentCode.trim().toUpperCase()) ?? [];
+    if (ghosts.length > 0) await reconcileGhostsOntoAgent(tx, ghosts, inserted.id);
   });
 
   return { agentCode };
@@ -239,4 +250,67 @@ export async function deleteOpeningAgent(product: Product, agentCode: string): P
   });
 
   return { deleted: true };
+}
+
+// Recomputes a shop's agents.opening_balance AND agents.sdp as the sum of
+// its own opening_wallet_lines — the exact same aggregation
+// importOpeningFile() already does at upload time for both fields — so
+// editing or deleting one wallet's line here keeps the shop-level totals
+// (what Company Balance / the Opening page's own KPI bar read) correct
+// without a separate reconciliation step.
+async function recomputeAgentOpeningFromLines(tx: Parameters<Parameters<ReturnType<typeof getDb>['transaction']>[0]>[0], agentId: number): Promise<void> {
+  const [{ openingTotal, sdpTotal }] = await tx
+    .select({
+      openingTotal: sql<string>`coalesce(sum(${schema.openingWalletLines.openingBalance}), 0)::text`,
+      sdpTotal: sql<string>`coalesce(sum(${schema.openingWalletLines.sdp}), 0)::text`,
+    })
+    .from(schema.openingWalletLines)
+    .where(eq(schema.openingWalletLines.agentId, agentId));
+  await tx.update(schema.agents).set({ openingBalance: openingTotal, sdp: sdpTotal, updatedAt: new Date() }).where(eq(schema.agents.id, agentId));
+}
+
+// Editing a per-wallet Opening Balance/SDP line — each opening_wallet_lines
+// row is its own real entry (one per file row that carried a wallet
+// suffix), so this is a real, single-row edit, not routed through the
+// shop-level agentCode update path at all. Either field is optional —
+// Single Edit sends both, Bulk Edit may send just one.
+export async function updateOpeningWalletLine(lineId: number, updates: { openingBalance?: string; sdp?: string }): Promise<{ agentId: number }> {
+  if (updates.openingBalance !== undefined) validateAmountField('Opening Balance', updates.openingBalance);
+  if (updates.sdp !== undefined) validateAmountField('SDP', updates.sdp);
+  const db = getDb();
+  let agentId = 0;
+
+  await db.transaction(async (tx) => {
+    const [line] = await tx.select({ agentId: schema.openingWalletLines.agentId }).from(schema.openingWalletLines).where(eq(schema.openingWalletLines.id, lineId));
+    if (!line) throw new OpeningActionError('Wallet line not found.', 404);
+    agentId = line.agentId;
+
+    const setValues: Partial<typeof schema.openingWalletLines.$inferInsert> = { updatedAt: new Date() };
+    if (updates.openingBalance !== undefined) {
+      setValues.openingBalance = updates.openingBalance.trim() === '' ? '0.00' : parseAmount(updates.openingBalance).toFixed(2);
+    }
+    if (updates.sdp !== undefined) {
+      setValues.sdp = updates.sdp.trim() === '' ? '0.00' : parseAmount(updates.sdp).toFixed(2);
+    }
+    await tx.update(schema.openingWalletLines).set(setValues).where(eq(schema.openingWalletLines.id, lineId));
+    await recomputeAgentOpeningFromLines(tx, agentId);
+  });
+
+  return { agentId };
+}
+
+export async function deleteOpeningWalletLine(lineId: number): Promise<{ agentId: number }> {
+  const db = getDb();
+  let agentId = 0;
+
+  await db.transaction(async (tx) => {
+    const [line] = await tx.select({ agentId: schema.openingWalletLines.agentId }).from(schema.openingWalletLines).where(eq(schema.openingWalletLines.id, lineId));
+    if (!line) throw new OpeningActionError('Wallet line not found.', 404);
+    agentId = line.agentId;
+
+    await tx.delete(schema.openingWalletLines).where(eq(schema.openingWalletLines.id, lineId));
+    await recomputeAgentOpeningFromLines(tx, agentId);
+  });
+
+  return { agentId };
 }

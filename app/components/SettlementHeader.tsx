@@ -1,80 +1,173 @@
 'use client';
 
+import type { ReactNode } from 'react';
 import type { LucideIcon } from 'lucide-react';
-import { RefreshCw } from 'lucide-react';
+import { Moon, Sun } from 'lucide-react';
+import { usePathname } from 'next/navigation';
 import ProductSwitchTabs from './ProductSwitchTabs';
 import AccountMenu from './AccountMenu';
-import HeaderFadeEdge from './HeaderFadeEdge';
+import { useTheme } from './ThemeProvider';
+import { isProductSwitchRoute } from '../lib/productRoutes';
 
 type SettlementHeaderProps = {
+  // Kept in the prop type so every existing call site (which all still pass
+  // an icon) keeps compiling — no longer rendered, see below.
   icon: LucideIcon;
   title: string;
   isRefreshing: boolean;
   onRefresh: () => void;
+  // Optional page-specific content rendered before Refresh (e.g. Balance's
+  // own "Updated {time}" Bulk Import Balance Limit indicator) — undefined
+  // renders nothing, so every other page using this shared header is
+  // unaffected.
+  extra?: ReactNode;
+  // Optional page-specific content rendered on the LEFT, right after the
+  // title (e.g. Opening/Balance's own "Last update {Opening upload date}"
+  // indicator) — per explicit instruction, distinct from `extra` above
+  // (which stays on the right, next to Refresh) since this one belongs on
+  // the same side as the title instead. undefined renders nothing, so
+  // every other page using this shared header is unaffected.
+  titleExtra?: ReactNode;
 };
 
 // Settlement-only replacement for the shared PageHeader's floating pill
-// (sticky top-4, mx-4/mx-8, rounded-xl, translucent backdrop-blur) — this is
-// a flush, edge-to-edge, solid-bg header per the redesign spec ("Linear/
-// Stripe/GitHub dashboard" feel, no floating margins/rounded container).
+// (sticky top-4, mx-4/mx-8, rounded-xl, translucent backdrop-blur).
 // PageHeader itself is untouched; the other ~12 pages that still use it are
 // unaffected, since this is a separate component, not a PageHeader variant.
 //
-// Owns no bottom border/shadow of its own — SettlementSummary (the KPI row
-// directly below) owns the header REGION's true bottom edge, so title +
-// switcher + KPI read as one continuous block instead of two stacked boxes
-// with a seam between them.
+// Restyled to match Daily Txn Entry's own header (app/daily-txn-entry/
+// page.tsx's PageHeader `containerless` usage) universally, across every
+// page this component appears on, per explicit instruction: no icon badge,
+// larger plain title, title+Refresh+AccountMenu in the top row only — the
+// Cashout/Send Money switcher moves to its own row below, left-aligned,
+// exactly like that page's Operations/Report/CashGo tabs sit below its own
+// title (pill style copied from those same tabs — see ProductSwitchTabs'
+// 'pills' variant). No "Last Updated" timestamp, and no "Live" indicator
+// either — dropped per explicit instruction to match that reference header
+// exactly (neither row carries a status badge there).
 //
-// AccountMenu (theme toggle lives inside its dropdown) sits inline as the
-// last item in this same right-side cluster — no separate floating header
-// band for it anymore.
-export default function SettlementHeader({ icon: Icon, title, isRefreshing, onRefresh }: SettlementHeaderProps) {
+// Two more things pulled from that same reference, per explicit follow-up:
+// (1) no distinct fill — that page's title sits directly on the page's own
+// background (ContainerlessHeader's `background: var(--ink-0)`), not a
+// separate solid-white bar; `bg-white` here was visibly different from
+// every page's own light-mode bg (`#f4f6fb`), which is exactly why this
+// read as a distinct bar. Light mode uses `bg-background` (matches every
+// consuming page's own root exactly); dark mode is an explicit
+// `dark:bg-[#0A0C11]` override, NOT the app's generic dark `--background`
+// (`#020617`) — per later explicit instruction, these ~13 pages (this
+// header plus DataTable/SettlementSummary, its two other shared pieces)
+// adopt Daily Txn Entry's own dark palette specifically (page `#0A0C11`,
+// card `#12151D`, table header strip `#0E1119`, border `#262B38`/
+// `#1A1E29`) rather than the rest of the app's normal dark mode — every
+// page OUTSIDE this group (tickets, staff, login, dashboard, etc.) keeps
+// the app's standard dark mode untouched. (2) same content column as the
+// page body — padding lives on the OUTER full-width sticky div
+// (px-4 md:px-[28px], the exact classes Daily Txn Entry's own <main> uses),
+// with a bare `mx-auto max-w-[1400px]` div inside it — matching that page's
+// own padding-then-maxwidth order exactly (getting this backwards, e.g.
+// padding on the inner maxw'd div instead, changes the mx-auto centering
+// math and throws off the final left edge by a few pixels — confirmed via
+// getBoundingClientRect() diffing against that page's own header). The
+// border-b lives on this inner div too, so it only spans the 1400px content
+// column like that page's own PageHeader border — not the full viewport
+// width, which is what made it look "over-extended" per explicit bug
+// report.
+//
+// The switcher row only renders on routes that actually have a Send Money
+// counterpart (same `isProductSwitchRoute` check ProductSwitchTabs uses
+// internally to render nothing) — otherwise every non-switch page (there
+// are several) would grow an empty bordered strip under its title for no
+// reason.
+export default function SettlementHeader({ title, isRefreshing, onRefresh, extra, titleExtra }: SettlementHeaderProps) {
+  const pathname = usePathname();
+  const showSwitcher = isProductSwitchRoute(pathname);
+  const { theme, toggleTheme } = useTheme();
+
   return (
-    <div className="sticky top-0 z-[60] w-full bg-white dark:bg-[#1c1c1e]">
-      {/* grid grid-cols-3 (not flex justify-between) so the switcher can sit
-          truly centered in the row regardless of how wide the title/right
-          clusters are — a flex-justify-between placement would center it
-          relative to the leftover space between those two, not the row. */}
-      <div className="grid min-h-[52px] grid-cols-3 items-center px-4 py-3 md:px-6">
-        <div className="flex min-w-0 items-center gap-2.5">
-          {/* Same indigo regardless of active product (was --product-accent,
-              flipping indigo/teal per product) — kept as one consistent
-              color across Cashout and Send Money per explicit instruction. */}
-          <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-[#4f46e5] text-white">
-            <Icon size={15} />
-          </div>
-          <h1 className="truncate text-[15px] font-semibold leading-tight tracking-[-0.01em] text-foreground">
-            {title}
-          </h1>
-        </div>
+    <div className="sticky top-0 z-[60] w-full bg-background px-4 dark:bg-[#0A0C11] md:px-[28px]">
+      {/* pt-[30px]/pb-[14px] matches Daily Txn Entry's own total top/bottom
+          spacing exactly: that page's title sits 30px down (its shared
+          content wrapper's own pt-4/16px + PageHeader's own pt-[14px]) and
+          14px above its border-b (PageHeader's own pb-[14px]) — confirmed
+          via getBoundingClientRect() diffing, not eyeballed. Was py-3 (12px
+          both sides), which sat flush near the very top per explicit bug
+          report. */}
+      <div className="mx-auto flex min-h-[56px] max-w-[1400px] items-center justify-between gap-3 border-b border-border pb-[14px] pt-[30px]">
+        {/* text-[22px] matches Daily Txn Entry's own title exactly (that
+            page's PageHeader `containerless` usage — see
+            ContainerlessHeader in app/components/PageHeader.tsx) — pulled
+            from its actual class, not eyeballed. */}
+        <h1 className="min-w-0 truncate text-[22px] font-semibold leading-tight tracking-[-0.01em] text-foreground">
+          {title}
+        </h1>
+        {/* titleExtra renders here (next to the title) only when there's no
+            switcher row below to carry it instead — see that row further
+            down, where it actually lives for every page that has one. */}
+        {!showSwitcher && titleExtra}
 
-        <div className="flex justify-center">
-          <ProductSwitchTabs variant="segmented" />
-        </div>
-
-        <div className="flex shrink-0 items-center justify-end gap-3">
-          {/* No "Last Updated" timestamp per explicit request — the Live
-              dot is the only status indicator now. */}
-          <span className="flex items-center gap-1.5 text-[12px] font-medium text-emerald-600 dark:text-emerald-400">
-            {/* animate-pulse is Tailwind's built-in opacity-only pulse (1 ->
-                .5 -> 1, 2s infinite) — exactly the "subtle, opacity only, no
-                scaling" spec, so no custom keyframes needed. */}
-            <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-emerald-500" />
-            Live
-          </span>
+        {/* Refresh + theme toggle + avatar — pixel-identical to Daily Txn
+            Entry's own header actions (app/daily-txn-entry/page.tsx's
+            PageHeader `actions`), copied verbatim per explicit instruction:
+            same 22x22 button chrome/colors, same hand-drawn refresh SVG
+            (not a lucide icon — that page keeps it pixel-identical to
+            Operations Overview's own Refresh button on purpose), same
+            11px Sun/Moon size, same `compact` AccountMenu variant. */}
+        <div className="flex shrink-0 items-center gap-3">
+          {extra}
           <button
             type="button"
             onClick={onRefresh}
+            disabled={isRefreshing}
             aria-label="Refresh"
             title="Refresh"
-            className="flex h-8 w-8 items-center justify-center rounded-lg border border-border bg-muted/60 text-indigo-600 transition-colors hover:bg-muted dark:text-indigo-400"
+            className="flex h-[22px] w-[22px] items-center justify-center rounded-md border border-[#DEE1E8] bg-[#F1F2F5] text-[#6B7280] hover:border-[var(--ui-accent)] hover:text-[var(--ui-accent)] disabled:opacity-50 dark:border-[#262B38] dark:bg-[#1A1E29] dark:text-[#9198AC]"
           >
-            <RefreshCw size={14} strokeWidth={1.75} className={isRefreshing ? 'animate-spin' : ''} />
+            <svg
+              viewBox="0 0 16 16"
+              width="11"
+              height="11"
+              fill="none"
+              className={isRefreshing ? 'animate-spin' : ''}
+              style={{ color: isRefreshing ? 'var(--ui-accent)' : undefined }}
+            >
+              <path d="M13.5 8a5.5 5.5 0 1 1-1.6-3.9" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" />
+              <path d="M13.5 2.3V6h-3.7" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round" />
+            </svg>
           </button>
-          <AccountMenu />
+          <button
+            type="button"
+            onClick={toggleTheme}
+            aria-label="Toggle light and dark mode"
+            title="Toggle light and dark mode"
+            className="flex h-[22px] w-[22px] items-center justify-center rounded-md border border-[#DEE1E8] bg-[#F1F2F5] text-[#6B7280] hover:border-[var(--ui-accent)] hover:text-[var(--ui-accent)] dark:border-[#262B38] dark:bg-[#1A1E29] dark:text-[#9198AC]"
+          >
+            {theme === 'dark' ? <Sun size={11} /> : <Moon size={11} />}
+          </button>
+          <AccountMenu compact />
         </div>
       </div>
-      <HeaderFadeEdge bgClassName="from-white dark:from-[#1c1c1e]" />
+
+      {/* No border on this row at all — matches Daily Txn Entry's own tabs
+          row exactly (app/daily-txn-entry/page.tsx's `<div className="mb-4
+          flex items-center gap-2">`), which sits below PageHeader's single
+          border-b with no divider of its own. Two borders this close
+          together (this row's own border-t stacked right under the title
+          row's border-b) read as one doubled/stray line, per explicit
+          bug report.
+
+          py-4 (16px, both sides) is a deliberate, symmetric value per
+          explicit follow-up — the space from the title row's border-b down
+          to the pills must equal the space from the pills down to
+          whatever's next. Consuming pages (Top Up's own `<main>`) drop
+          their own extra top padding in favor of this row's pb-4 doing that
+          job, so the two sides land equal instead of the pills sitting
+          closer to the line above them than to the content below. */}
+      {showSwitcher && (
+        <div className="mx-auto flex max-w-[1400px] items-center justify-between gap-2 py-4">
+          <ProductSwitchTabs variant="pills" />
+          {titleExtra}
+        </div>
+      )}
     </div>
   );
 }

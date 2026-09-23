@@ -46,18 +46,22 @@ type TableFooterProps = {
 // extracting Settlement's own footer verbatim (first consumer); nothing
 // else wired up to it yet.
 export default function TableFooter({ recordCountText, currentPage, totalPages, onPageChange, pageSize, pageSizeOptions, onPageSizeChange, totalRecords, variant = 'default' }: TableFooterProps) {
+  // --ui-accent (not --product-accent) throughout this component,
+  // deliberately — pagination/footer chrome is universal UI, not product
+  // branding, so it must stay indigo/gold on every page, never pick up Send
+  // Money's teal. Same fix as ProductSwitchTabs' own pills.
   const showSelector = pageSizeOptions && onPageSizeChange && totalRecords !== undefined;
   if (variant === 'premium') {
     return (
       <div className="shrink-0 flex h-[60px] items-center justify-between gap-3 border-t border-[#E5E7EB] px-4 dark:border-[#3a3a3d]">
         {showSelector ? (
           <div className="flex items-center gap-2 whitespace-nowrap text-[13px] font-medium text-[#64748B]">
-            <span className="font-semibold text-[#2563EB]">Show</span>
+            <span className="font-semibold text-[var(--ui-accent)]">Show</span>
             <select
               value={pageSize}
               onChange={(event) => onPageSizeChange!(Number(event.target.value))}
               aria-label="Rows per page"
-              className="h-8 rounded-[8px] border border-[#E5E7EB] bg-white px-2 text-[12px] font-medium text-[#475569] outline-none transition-colors focus-visible:border-[#2563EB] dark:border-[#3a3a3d] dark:bg-[#2a2a2d] dark:text-[#9CA3AF]"
+              className="h-8 rounded-[8px] border border-[#E5E7EB] bg-white px-2 text-[12px] font-medium text-[#475569] outline-none transition-colors focus-visible:border-[var(--ui-accent)] dark:border-[#3a3a3d] dark:bg-[#2a2a2d] dark:text-[#9CA3AF]"
             >
               {pageSizeOptions!.map((n) => (
                 <option key={n} value={n}>{n}</option>
@@ -93,7 +97,7 @@ export default function TableFooter({ recordCountText, currentPage, totalPages, 
                   aria-current={p === currentPage ? 'page' : undefined}
                   className={`flex h-8 w-8 items-center justify-center rounded-full text-[13px] font-medium transition-colors duration-150 ease-out ${
                     p === currentPage
-                      ? 'bg-[#4f46e5] text-white shadow-[0_2px_8px_-1px_rgba(79,70,229,0.5)]'
+                      ? 'bg-[var(--ui-accent)] text-white'
                       : 'text-muted-foreground hover:bg-white dark:hover:bg-white/10'
                   }`}
                 >
@@ -119,12 +123,12 @@ export default function TableFooter({ recordCountText, currentPage, totalPages, 
     <div className="shrink-0 flex h-[60px] items-center justify-between gap-3 border-t border-[#E5E7EB] px-4 dark:border-[#3a3a3d]">
       {showSelector ? (
         <div className="flex items-center gap-2 whitespace-nowrap text-[13px] font-medium text-[#64748B]">
-          <span className="font-semibold text-[#2563EB]">Show</span>
+          <span className="font-semibold text-[var(--ui-accent)]">Show</span>
           <select
             value={pageSize}
             onChange={(event) => onPageSizeChange!(Number(event.target.value))}
             aria-label="Rows per page"
-            className="h-8 rounded-[8px] border border-[#E5E7EB] bg-white px-2 text-[12px] font-medium text-[#475569] outline-none transition-colors focus-visible:border-[#2563EB] dark:border-[#3a3a3d] dark:bg-[#2a2a2d] dark:text-[#9CA3AF]"
+            className="h-8 rounded-[8px] border border-[#E5E7EB] bg-white px-2 text-[12px] font-medium text-[#475569] outline-none transition-colors focus-visible:border-[var(--ui-accent)] dark:border-[#3a3a3d] dark:bg-[#2a2a2d] dark:text-[#9CA3AF]"
           >
             {pageSizeOptions!.map((n) => (
               <option key={n} value={n}>{n}</option>
@@ -143,7 +147,7 @@ export default function TableFooter({ recordCountText, currentPage, totalPages, 
               onClick={() => onPageChange(Math.max(1, currentPage - 1))}
               disabled={currentPage === 1}
               aria-label="Previous page"
-              className="flex h-9 w-9 items-center justify-center rounded-[8px] border border-[#E5E7EB] text-[#475569] transition-colors duration-200 ease-out hover:bg-[#EFF6FF] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#2563EB] disabled:cursor-not-allowed disabled:opacity-40 dark:border-[#3a3a3d] dark:text-[#9CA3AF] dark:hover:bg-white/5"
+              className="flex h-9 w-9 items-center justify-center rounded-[8px] border border-[#E5E7EB] text-[#475569] transition-colors duration-200 ease-out hover:bg-[#EFF6FF] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--ui-accent)] disabled:cursor-not-allowed disabled:opacity-40 dark:border-[#3a3a3d] dark:text-[#9CA3AF] dark:hover:bg-white/5"
             >
               <ChevronLeft size={16} />
             </button>
@@ -159,9 +163,9 @@ export default function TableFooter({ recordCountText, currentPage, totalPages, 
                   onClick={() => onPageChange(p)}
                   aria-label={`Page ${p}`}
                   aria-current={p === currentPage ? 'page' : undefined}
-                  className={`flex h-9 w-9 items-center justify-center rounded-[8px] text-[13px] font-medium transition-colors duration-200 ease-out focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#2563EB] ${
+                  className={`flex h-9 w-9 items-center justify-center rounded-[8px] text-[13px] font-medium transition-colors duration-200 ease-out focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--ui-accent)] ${
                     p === currentPage
-                      ? 'bg-[#2563EB] text-white'
+                      ? 'bg-[var(--ui-accent)] text-white'
                       : 'text-[#475569] hover:bg-[#EFF6FF] dark:text-[#9CA3AF] dark:hover:bg-white/5'
                   }`}
                 >
@@ -174,7 +178,7 @@ export default function TableFooter({ recordCountText, currentPage, totalPages, 
               onClick={() => onPageChange(Math.min(totalPages, currentPage + 1))}
               disabled={currentPage === totalPages}
               aria-label="Next page"
-              className="flex h-9 w-9 items-center justify-center rounded-[8px] border border-[#E5E7EB] text-[#475569] transition-colors duration-200 ease-out hover:bg-[#EFF6FF] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#2563EB] disabled:cursor-not-allowed disabled:opacity-40 dark:border-[#3a3a3d] dark:text-[#9CA3AF] dark:hover:bg-white/5"
+              className="flex h-9 w-9 items-center justify-center rounded-[8px] border border-[#E5E7EB] text-[#475569] transition-colors duration-200 ease-out hover:bg-[#EFF6FF] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--ui-accent)] disabled:cursor-not-allowed disabled:opacity-40 dark:border-[#3a3a3d] dark:text-[#9CA3AF] dark:hover:bg-white/5"
             >
               <ChevronRight size={16} />
             </button>

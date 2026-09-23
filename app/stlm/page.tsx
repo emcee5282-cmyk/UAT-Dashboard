@@ -17,8 +17,6 @@ import {
   Eye,
   Trash2,
   Inbox,
-  Hash,
-  Banknote,
   Tag,
   User,
   Wallet as WalletIcon,
@@ -29,12 +27,14 @@ import {
   X,
 } from 'lucide-react';
 import * as XLSX from 'xlsx';
+import { Manrope, Space_Grotesk } from 'next/font/google';
 import SettlementHeader from '../components/SettlementHeader';
 import ConnectionErrorState from '../components/ConnectionErrorState';
-import TableFooter from '../components/TableFooter';
+import CompactTableFooter from '../components/CompactTableFooter';
 import FilterDropdown from '../components/FilterDropdown';
 import ColumnsDropdown from '../components/ColumnsDropdown';
 import EmptyState from '../components/EmptyState';
+import TableLoadingSpinner from '../components/TableLoadingSpinner';
 import DataTable from '../components/DataTable';
 import RecordFormModal, { type RecordFormField } from '../components/RecordFormModal';
 import ConfirmDeleteModal from '../components/ConfirmDeleteModal';
@@ -42,29 +42,42 @@ import { SETTLEMENT_BRAND_OPTIONS, CASHOUT_WALLET_OPTIONS, SETTLEMENT_REMARKS_SU
 import BulkImportModal from '../components/BulkImportModal';
 import BulkEditModal, { type BulkEditUpdates } from '../components/BulkEditModal';
 import { classifyFetchError, type ClassifiedError } from '../lib/errors';
-import { displayNum, parseAmount, fmt, fmtAbbrev } from '@/app/lib/format';
-import { isToday, isYesterday } from '../lib/businessDate';
+import { displayNum, parseAmount, fmt, fmtAbbrev, exportNum } from '@/app/lib/format';
 import { getPreference, setPreference } from '../lib/preferences';
+import DateRangeFilter, { presetOf, daysInRange, type DateRangeValue } from '../components/DateRangeFilter';
 import { calculateColumnLayout, type ColumnLayout } from '../lib/columnLayout';
+
+// Page-scoped font override (Manrope for body/labels, Space Grotesk for
+// tabular-nums), matching Daily Txn Entry's own treatment and Top Up's port
+// of it (app/topup/page.tsx) — per explicit instruction, Settlement now
+// matches Top Up's typeface exactly, not just its font SIZE. Every other
+// page keeps Inter.
+const manrope = Manrope({ subsets: ['latin'], variable: '--font-manrope', display: 'swap' });
+const spaceGrotesk = Space_Grotesk({ subsets: ['latin'], variable: '--font-space-grotesk', display: 'swap' });
 
 // Responsive action buttons (Refresh/Export/Columns) — icon+text when the
 // viewport has room, collapsing to icon-only (40x40, no padding) once space
 // gets tight. Copied verbatim from Balance (app/agentbal/page.tsx) so this
 // page's toolbar matches its style/arrangement exactly, per explicit
 // instruction.
+// Compact sizing (matches Wallet Status/Transfer Queue/Top Up's own
+// density): h-10/rounded-[12px]/text-[13px] scaled down to h-8/
+// rounded-[10px]/text-[11px], gap-1.5 -> gap-[5px] — was left over at the
+// old full size while those other pages had already migrated, per
+// explicit instruction.
 const ICON_BUTTON =
-  'flex h-10 w-10 xl:w-auto shrink-0 items-center justify-center xl:justify-start gap-1.5 rounded-[12px] border border-[#E2E8F0] bg-white px-0 xl:px-3 text-[13px] font-medium text-[#475569] transition-[color,background-color,border-color,box-shadow,transform] duration-150 ease-[var(--ease-out-strong)] hover:border-[#2563EB] hover:bg-[#F1F5F9] hover:ring-2 hover:ring-[#2563EB]/20 active:scale-[0.97] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#2563EB] dark:border-[#3a3a3d] dark:bg-[#2a2a2d] dark:text-[#9CA3AF] dark:hover:bg-white/5';
+  'flex h-8 w-8 xl:w-auto shrink-0 items-center justify-center xl:justify-start gap-[5px] rounded-[10px] border border-[#E2E8F0] bg-white px-0 xl:px-[10px] text-[11px] font-medium text-[#475569] transition-[color,background-color,border-color,box-shadow,transform] duration-150 ease-[var(--ease-out-strong)] hover:border-[var(--ui-accent)] hover:bg-[#F1F5F9] active:scale-[0.97] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--ui-accent)] dark:border-[#262B38] dark:bg-[#12151D] dark:text-[#9CA3AF] dark:hover:bg-white/5';
 
 // Always-icon-only variant (never shows a text label, unlike ICON_BUTTON's
 // xl: breakpoint reveal) — Refresh/Columns per explicit instruction, tooltip
 // carries the label instead.
 const ICON_ONLY_BUTTON =
-  'flex h-10 w-10 shrink-0 items-center justify-center rounded-[12px] border border-[#E2E8F0] bg-white text-[13px] font-medium text-[#475569] transition-[color,background-color,border-color,box-shadow,transform] duration-150 ease-[var(--ease-out-strong)] hover:border-[#2563EB] hover:bg-[#F1F5F9] hover:ring-2 hover:ring-[#2563EB]/20 active:scale-[0.97] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#2563EB] dark:border-[#3a3a3d] dark:bg-[#2a2a2d] dark:text-[#9CA3AF] dark:hover:bg-white/5';
+  'flex h-8 w-8 shrink-0 items-center justify-center rounded-[10px] border border-[#E2E8F0] bg-white text-[11px] font-medium text-[#475569] transition-[color,background-color,border-color,box-shadow,transform] duration-150 ease-[var(--ease-out-strong)] hover:border-[var(--ui-accent)] hover:bg-[#F1F5F9] active:scale-[0.97] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--ui-accent)] dark:border-[#262B38] dark:bg-[#12151D] dark:text-[#9CA3AF] dark:hover:bg-white/5';
 
 // Same shell as ICON_ONLY_BUTTON, indigo text/icon instead of slate —
 // Refresh only, per explicit instruction; Columns stays neutral.
 const REFRESH_ICON_BUTTON =
-  'flex h-10 w-10 shrink-0 items-center justify-center rounded-[12px] border border-[#E2E8F0] bg-white text-[13px] font-medium text-indigo-600 transition-[color,background-color,border-color,box-shadow,transform] duration-150 ease-[var(--ease-out-strong)] hover:border-[#2563EB] hover:bg-[#F1F5F9] hover:ring-2 hover:ring-[#2563EB]/20 active:scale-[0.97] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#2563EB] dark:border-[#3a3a3d] dark:bg-[#2a2a2d] dark:text-indigo-400 dark:hover:bg-white/5';
+  'flex h-8 w-8 shrink-0 items-center justify-center rounded-[10px] border border-[#E2E8F0] bg-white text-[11px] font-medium text-indigo-600 transition-[color,background-color,border-color,box-shadow,transform] duration-150 ease-[var(--ease-out-strong)] hover:border-[var(--ui-accent)] hover:bg-[#F1F5F9] active:scale-[0.97] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--ui-accent)] dark:border-[#262B38] dark:bg-[#12151D] dark:text-indigo-400 dark:hover:bg-white/5';
 
 // Same shell as ICON_BUTTON — border, white bg, hover/active treatment all
 // identical — with only the text/icon color swapped to indigo. Replaces the
@@ -72,7 +85,7 @@ const REFRESH_ICON_BUTTON =
 // filled CTA, just a colored label on the same neutral button shell as
 // Refresh/Export/Columns.
 const NEW_BUTTON =
-  'flex h-10 w-10 xl:w-auto shrink-0 items-center justify-center xl:justify-start gap-1.5 rounded-[12px] border border-[#E2E8F0] bg-white px-0 xl:px-3 text-[13px] font-medium text-indigo-600 transition-[color,background-color,border-color,box-shadow,transform] duration-150 ease-[var(--ease-out-strong)] hover:border-[#2563EB] hover:bg-[#F1F5F9] hover:ring-2 hover:ring-[#2563EB]/20 active:scale-[0.97] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#2563EB] dark:border-[#3a3a3d] dark:bg-[#2a2a2d] dark:text-indigo-400 dark:hover:bg-white/5';
+  'flex h-8 w-8 xl:w-auto shrink-0 items-center justify-center xl:justify-start gap-[5px] rounded-[10px] border border-[#E2E8F0] bg-white px-0 xl:px-[10px] text-[11px] font-medium text-indigo-600 transition-[color,background-color,border-color,box-shadow,transform] duration-150 ease-[var(--ease-out-strong)] hover:border-[var(--ui-accent)] hover:bg-[#F1F5F9] active:scale-[0.97] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--ui-accent)] dark:border-[#262B38] dark:bg-[#12151D] dark:text-indigo-400 dark:hover:bg-white/5';
 
 // Shared hover/focus-driven tooltip state — portal-rendered so it's never
 // clipped by the toolbar's overflow-x-auto. Copied verbatim from Balance
@@ -165,17 +178,17 @@ function FilterTriggerButton({
         onClick={onClick}
         aria-label={label}
         {...tooltip.handlers}
-        className="inline-flex h-10 w-10 xl:w-auto shrink-0 items-center justify-center xl:justify-start gap-1.5 rounded-[12px] border border-[#E2E8F0] bg-white px-0 xl:px-3 text-[13px] font-medium text-[#475569] transition-[color,background-color,border-color,box-shadow,transform] duration-150 ease-[var(--ease-out-strong)] hover:border-[#2563EB] hover:bg-[#F1F5F9] hover:ring-2 hover:ring-[#2563EB]/20 active:scale-[0.97] dark:border-[#3a3a3d] dark:bg-[#2a2a2d] dark:text-[#9CA3AF] dark:hover:bg-white/5"
+        className="inline-flex h-8 w-8 xl:w-auto shrink-0 items-center justify-center xl:justify-start gap-[5px] rounded-[10px] border border-[#E2E8F0] bg-white px-0 xl:px-[10px] text-[11px] font-medium text-[#475569] transition-[color,background-color,border-color,box-shadow,transform] duration-150 ease-[var(--ease-out-strong)] hover:border-[var(--ui-accent)] hover:bg-[#F1F5F9] active:scale-[0.97] dark:border-[#262B38] dark:bg-[#12151D] dark:text-[#9CA3AF] dark:hover:bg-white/5"
       >
-        <Icon size={15} className="text-[#475569] dark:text-[#9CA3AF]" />
+        <Icon size={12} className="text-[#475569] dark:text-[#9CA3AF]" />
         <span className="hidden xl:inline">{label}</span>
         {anyUnchecked && (
-          <span className="flex h-4 min-w-[16px] animate-[dt-badge-pop_150ms_var(--ease-out-strong)] items-center justify-center rounded-full bg-indigo-600 px-1 text-[10px] font-semibold text-white">
+          <span className="flex h-[13px] min-w-[13px] animate-[dt-badge-pop_150ms_var(--ease-out-strong)] items-center justify-center rounded-full bg-indigo-600 px-[3px] text-[9px] font-semibold text-white">
             {selectedCount}
           </span>
         )}
         <ChevronDown
-          size={14}
+          size={11}
           className={`hidden text-[#475569] transition-transform duration-150 ease-[var(--ease-in-out-strong)] dark:text-[#9CA3AF] xl:inline ${menuOpen ? 'rotate-180' : ''}`}
         />
       </button>
@@ -199,13 +212,13 @@ function ResetFiltersButton({ anyFilterActive, onClick }: { anyFilterActive: boo
         {...tooltip.handlers}
         aria-label="Reset all filters"
         aria-disabled={!anyFilterActive}
-        className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-[12px] border transition-[color,background-color,border-color,transform] duration-150 ease-[var(--ease-out-strong)] ${
+        className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-[10px] border transition-[color,background-color,border-color,transform] duration-150 ease-[var(--ease-out-strong)] ${
           anyFilterActive
-            ? 'cursor-pointer border-[#E2E8F0] bg-white text-indigo-600 hover:border-[#FCA5A5] hover:bg-[#FEF2F2] hover:text-[#DC2626] active:scale-[0.97] active:border-[#FCA5A5] active:bg-[#FEF2F2] active:text-[#DC2626] dark:border-[#3a3a3d] dark:bg-[#2a2a2d] dark:text-indigo-400'
-            : 'cursor-default border-[#E2E8F0] bg-white text-[#475569] opacity-40 dark:border-[#3a3a3d] dark:bg-[#2a2a2d] dark:text-[#9CA3AF]'
+            ? 'cursor-pointer border-[#E2E8F0] bg-white text-indigo-600 hover:border-[#FCA5A5] hover:bg-[#FEF2F2] hover:text-[#DC2626] active:scale-[0.97] active:border-[#FCA5A5] active:bg-[#FEF2F2] active:text-[#DC2626] dark:border-[#262B38] dark:bg-[#12151D] dark:text-indigo-400'
+            : 'cursor-default border-[#E2E8F0] bg-white text-[#475569] opacity-40 dark:border-[#262B38] dark:bg-[#12151D] dark:text-[#9CA3AF]'
         }`}
       >
-        <FilterX size={20} fill={anyFilterActive ? 'currentColor' : 'none'} />
+        <FilterX size={16} fill={anyFilterActive ? 'currentColor' : 'none'} />
       </button>
       {tooltip.rendered && <Tooltip label="Reset all filters" open={tooltip.open} pos={tooltip.pos} />}
     </div>
@@ -250,8 +263,11 @@ function BulkActionsMenu({
 
   return (
     <div className="flex items-center gap-2 dt-bar-fade-in">
-      <span className="flex items-center gap-1.5 text-[13px] font-medium text-foreground">
-        <CheckSquare size={15} className="text-indigo-600 dark:text-indigo-400" />
+      {/* Compact outlined chip — matches the rest of the toolbar's h-8/
+          text-[11px]/bordered convention instead of an unbounded 13px
+          label, per explicit instruction. */}
+      <span className="flex h-8 shrink-0 items-center gap-1.5 rounded-[10px] border border-[#E2E8F0] bg-white px-[10px] text-[11px] font-medium text-[#475569] dark:border-[#262B38] dark:bg-[#12151D] dark:text-[#9CA3AF]">
+        <CheckSquare size={12} className="text-[var(--ui-accent)]" />
         {count} Selected
       </span>
       <div className="relative">
@@ -265,16 +281,16 @@ function BulkActionsMenu({
           }}
           aria-haspopup="true"
           aria-expanded={open}
-          className="inline-flex h-9 items-center gap-1.5 rounded-[8px] bg-indigo-600 px-3 text-[13px] font-medium text-white transition-colors hover:bg-indigo-700 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#2563EB]"
+          className="inline-flex h-8 shrink-0 items-center gap-1.5 rounded-[10px] bg-[var(--ui-accent)] px-[10px] text-[11px] font-medium text-white transition-[filter,transform] duration-150 ease-[var(--ease-out-strong)] hover:brightness-95 active:scale-[0.97] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--ui-accent)]"
         >
           Bulk Actions
-          <ChevronDown size={14} className={`transition-transform duration-150 ease-[var(--ease-in-out-strong)] ${open ? 'rotate-180' : ''}`} />
+          <ChevronDown size={12} className={`transition-transform duration-150 ease-[var(--ease-in-out-strong)] ${open ? 'rotate-180' : ''}`} />
         </button>
         {open && typeof document !== 'undefined' && createPortal(
           <div
             ref={menuRef}
             style={{ position: 'fixed', top: pos.top, left: pos.left }}
-            className="z-[9999] w-48 rounded-xl border border-[#e5e5e7] bg-white p-1 shadow-xl dark:border-[#3a3a3d] dark:bg-[#2a2a2d]"
+            className="z-[9999] w-48 rounded-xl border border-[#e5e5e7] bg-white p-1 shadow-xl dark:border-[#262B38] dark:bg-[#12151D]"
             onClick={(event) => event.stopPropagation()}
           >
             <button
@@ -302,7 +318,7 @@ function BulkActionsMenu({
               <Trash2 size={13} />
               Delete Selected
             </button>
-            <div className="my-1 border-t border-[#F1F5F9] dark:border-[#2f2f32]" />
+            <div className="my-1 border-t border-[#F1F5F9] dark:border-[#1A1E29]" />
             <button
               type="button"
               onClick={() => { setOpen(false); onClearSelection(); }}
@@ -323,7 +339,7 @@ function BulkActionsMenu({
 // EmptyState takes a generic `action` node instead of a hardcoded
 // Clear-Filters/Refresh pair.
 const EMPTY_STATE_ACTION_BUTTON =
-  'inline-flex h-9 items-center rounded-[8px] border border-[#E5E7EB] px-3 text-[13px] font-medium text-[#475569] transition-colors hover:bg-[#F1F5F9] dark:border-[#3a3a3d] dark:text-[#9CA3AF] dark:hover:bg-white/5';
+  'inline-flex h-9 items-center rounded-[8px] border border-[#E5E7EB] px-3 text-[13px] font-medium text-[#475569] transition-colors hover:bg-[#F1F5F9] dark:border-[#262B38] dark:text-[#9CA3AF] dark:hover:bg-white/5';
 
 // The genuinely-no-data empty state's "Add Record" is the one primary
 // action on that screen (opens the same New Record modal as the toolbar's
@@ -334,14 +350,27 @@ const EMPTY_STATE_PRIMARY_BUTTON =
 
 const PAGE_SIZE_OPTIONS = [50, 100, 250, 500];
 
+// Range-based, not today/yesterday — the server resolves total/count for
+// whatever [from, to] was requested (default: Effective Today, see
+// transactionPageService.ts's getSettlementPageData) plus the equal-length
+// prior period's total/count for the delta badge's comparison baseline.
 type SettlementKpiStats = {
-  todayCount: number;
-  todayAmount: number;
-  yesterdayCount: number;
-  yesterdayAmount: number;
+  total: number;
+  count: number;
+  previousPeriodTotal: number;
+  previousPeriodCount: number;
 };
 
-const EMPTY_KPI_STATS: SettlementKpiStats = { todayCount: 0, todayAmount: 0, yesterdayCount: 0, yesterdayAmount: 0 };
+const EMPTY_KPI_STATS: SettlementKpiStats = { total: 0, count: 0, previousPeriodTotal: 0, previousPeriodCount: 0 };
+
+// "vs yesterday" only when the applied range IS today; otherwise "vs
+// previous N days" (custom/week) or "vs same days last month" (month).
+function deltaVsLabel(range: DateRangeValue, today: string): string {
+  const preset = presetOf(range, today);
+  if (preset === 'today') return 'vs yesterday';
+  if (preset === 'month') return 'vs same days last month';
+  return `vs previous ${daysInRange(range.from, range.to).length} days`;
+}
 
 // Wraps the matched portion of `text` in <mark> — case-insensitive, every
 // occurrence (not just the first). Row height never changes since <mark>
@@ -548,7 +577,7 @@ const DEFAULT_COLUMNS: ColumnDef[] = [
   { id: COLUMN_IDS.LEADER, label: 'Leader', visible: true, sortable: true, hideable: true, align: 'left', minWidth: 100, preferredWidth: 150, grow: 1 },
   { id: COLUMN_IDS.AGENT_NAME, label: 'Agent Name', visible: true, sortable: true, hideable: true, align: 'left', minWidth: 140, preferredWidth: 216, grow: 1 },
   { id: COLUMN_IDS.WALLET, label: 'Wallet', visible: true, sortable: true, hideable: true, align: 'center', minWidth: 90, preferredWidth: 208, grow: 0 },
-  { id: COLUMN_IDS.AMOUNT, label: 'Amount', visible: true, sortable: true, hideable: true, align: 'center', minWidth: 115, preferredWidth: 244, grow: 0 },
+  { id: COLUMN_IDS.AMOUNT, label: 'Amount', visible: true, sortable: true, hideable: true, align: 'right', minWidth: 115, preferredWidth: 244, grow: 0 },
   { id: COLUMN_IDS.REMARKS, label: 'Type', visible: true, sortable: true, hideable: true, align: 'center', minWidth: 160, preferredWidth: 243, grow: 1 },
   { id: COLUMN_IDS.DATE, label: 'Date', visible: true, sortable: true, hideable: true, align: 'right', minWidth: 110, preferredWidth: 149, grow: 0 },
   { id: COLUMN_IDS.ACTIONS, label: 'Action', visible: true, sortable: false, hideable: false, align: 'center', minWidth: 56, preferredWidth: 109, grow: 0 },
@@ -617,20 +646,18 @@ function toFlexColumnStyle(layout: ColumnLayout<ColumnKey>): CSSProperties {
 // Alignment rule: text left, numbers/currency/dates right, actions center.
 // Brand reads as a text label (not a colored status badge), so it stays
 // left. Derived from DEFAULT_COLUMNS (single source of truth) rather than
-// duplicated here — renderCell/renderSkeletonCell only ever see a bare
-// ColumnKey, not the full column def, so this lookup stays as their access
-// point to alignment.
+// duplicated here — renderCell only ever sees a bare ColumnKey, not the
+// full column def, so this lookup stays as its access point to alignment.
 const COLUMN_ALIGN: Record<ColumnKey, 'left' | 'right' | 'center'> = Object.fromEntries(
   DEFAULT_COLUMNS.map((col) => [col.id, col.align])
 ) as Record<ColumnKey, 'left' | 'right' | 'center'>;
 
-// Column header text is always Title Case, never uppercase — including
-// Brand (earlier drafts shouted brand codes in caps; corrected per the v3
-// spec's explicit "never FULL UPPERCASE" rule). Header should not shout —
-// 14px/600/#475569 on a #FAFAFB band, not 16px/bold/black; it's a label,
-// the data is the hero.
-function headerCellClasses(_active: boolean, _isBrand: boolean, align: 'left' | 'right' | 'center', paddingCls: string = 'px-4') {
-  return `group flex items-center text-${align} ${paddingCls} text-[14px] leading-[20px] font-semibold text-[#475569] dark:text-[#9CA3AF] whitespace-nowrap ${
+// Size/weight/case matched to Top Up's own table header cells
+// (app/topup/page.tsx: text-[11.5px] font-bold uppercase tracking-[0.03em])
+// per explicit instruction — Top Up and Settlement now share identical
+// header typography, not just column layout.
+function headerCellClasses(_active: boolean, _isBrand: boolean, align: 'left' | 'right' | 'center', paddingCls: string = 'px-[8px]') {
+  return `group flex items-center text-${align} ${paddingCls} text-[11.5px] leading-[20px] font-bold uppercase tracking-[0.03em] text-[#475569] dark:text-[#9CA3AF] whitespace-nowrap ${
     align === 'right' ? 'justify-end' : align === 'center' ? 'justify-center' : 'justify-start'
   }`;
 }
@@ -642,13 +669,13 @@ function headerCellClasses(_active: boolean, _isBrand: boolean, align: 'left' | 
 // states — only the icon glyph changes, the reserved width doesn't.
 function SortIcon({ active, direction }: { active: boolean; direction: 'asc' | 'desc' }) {
   return (
-    <span className="flex w-3.5 shrink-0 items-center justify-center transition-colors duration-150 ease-out">
+    <span className="flex w-[11px] shrink-0 items-center justify-center transition-colors duration-150 ease-out">
       {!active ? (
-        <ChevronsUpDown size={14} className="text-[#94A3B8]" />
+        <ChevronsUpDown size={11} className="text-[#94A3B8]" />
       ) : direction === 'asc' ? (
-        <ChevronUp size={14} className="text-[#2563EB]" />
+        <ChevronUp size={11} className="text-[var(--ui-accent)]" />
       ) : (
-        <ChevronDown size={14} className="text-[#2563EB]" />
+        <ChevronDown size={11} className="text-[var(--ui-accent)]" />
       )}
     </span>
   );
@@ -677,46 +704,12 @@ function toProperCase(str: string): string {
     .join('');
 }
 
-// Per-code tint map — same scheme as Balance's own BrandBadge
-// (app/agentbal/page.tsx), applied here too. Unknown codes fall back to the
-// same neutral slate this badge used exclusively before.
-const BRAND_BADGE_TINTS: Record<string, string> = {
-  M1: 'bg-blue-50 text-blue-700 border-blue-200 dark:bg-blue-500/10 dark:text-blue-400 dark:border-blue-900/50',
-  M2: 'bg-cyan-50 text-cyan-700 border-cyan-200 dark:bg-cyan-500/10 dark:text-cyan-400 dark:border-cyan-900/50',
-  B1: 'bg-purple-50 text-purple-700 border-purple-200 dark:bg-purple-500/10 dark:text-purple-400 dark:border-purple-900/50',
-  B2: 'bg-violet-50 text-violet-700 border-violet-200 dark:bg-violet-500/10 dark:text-violet-400 dark:border-violet-900/50',
-  B3: 'bg-fuchsia-50 text-fuchsia-700 border-fuchsia-200 dark:bg-fuchsia-500/10 dark:text-fuchsia-400 dark:border-fuchsia-900/50',
-  B4: 'bg-indigo-50 text-indigo-700 border-indigo-200 dark:bg-indigo-500/10 dark:text-indigo-400 dark:border-indigo-900/50',
-  B5: 'bg-sky-50 text-sky-700 border-sky-200 dark:bg-sky-500/10 dark:text-sky-400 dark:border-sky-900/50',
-  K1: 'bg-orange-50 text-orange-700 border-orange-200 dark:bg-orange-500/10 dark:text-orange-400 dark:border-orange-900/50',
-  J1: 'bg-amber-50 text-amber-700 border-amber-200 dark:bg-amber-500/10 dark:text-amber-400 dark:border-amber-900/50',
-  T1: 'bg-teal-50 text-teal-700 border-teal-200 dark:bg-teal-500/10 dark:text-teal-400 dark:border-teal-900/50',
-};
-
-function brandBadgeClasses(brand: string): string {
-  return BRAND_BADGE_TINTS[brand] ?? 'bg-slate-100 text-slate-600 border-slate-200 dark:bg-slate-500/10 dark:text-slate-400 dark:border-slate-700';
-}
-
-// Brand: 999px radius, 28px tall, 0/10px padding, 12px/600 — reads as a
-// proper identifying tag. Fixed height (not vertical padding) keeps every
-// badge the same size regardless of glyph ascenders/descenders in the brand
-// code. `brand` carries the raw code for the color lookup — `children` is
-// the (possibly search-highlighted) display content, which can differ from
-// the raw string.
-function BrandBadge({ children, brand }: { children: React.ReactNode; brand: string }) {
-  return (
-    <span className={`inline-flex h-[28px] items-center rounded-[999px] border px-[10px] text-[12px] font-semibold transition-[filter] duration-150 hover:brightness-95 dark:hover:brightness-110 ${brandBadgeClasses(brand)}`}>
-      {children}
-    </span>
-  );
-}
-
 // Wallet: a subtler pill — #F8FAFC bg, 1px #E5E7EB border, 999px radius,
 // 24px tall, 4px/8px padding, 12px/500.
 // Per-wallet tint map — each wallet's own real brand color (Nagad orange,
-// Rocket purple, Bkash pink, Upay red), same light-bg/border/text pattern as
-// BrandBadge's tint map. Unknown values fall back to the same neutral slate
-// this badge used exclusively before.
+// Rocket purple, Bkash pink, Upay red), same light-bg/border/text pattern
+// used across this file's other badges. Unknown values fall back to the
+// same neutral slate this badge used exclusively before.
 const WALLET_BADGE_TINTS: Record<string, string> = {
   // Was orange, same hue as K1's own Brand badge — changed to yellow, a
   // color not used anywhere in the Brand tint palette, so a Nagad wallet
@@ -829,7 +822,7 @@ function RowActionsCell({ row, onEdit, onDelete }: { row: StlmRow; onEdit: (row:
           if (rect) setPos({ top: rect.bottom + 4, left: rect.right - 144 });
           setOpen((current) => !current);
         }}
-        className="flex h-8 w-8 items-center justify-center rounded-[8px] text-[#94A3B8] transition-[color,background-color,transform] duration-150 ease-[var(--ease-out-strong)] hover:bg-[#F1F5F9] hover:text-[#475569] active:scale-[0.97] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#2563EB] dark:hover:bg-white/5"
+        className="flex h-8 w-8 items-center justify-center rounded-[8px] text-[#94A3B8] transition-[color,background-color,transform] duration-150 ease-[var(--ease-out-strong)] hover:bg-[#F1F5F9] hover:text-[#475569] active:scale-[0.97] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--ui-accent)] dark:hover:bg-white/5"
       >
         <MoreVertical size={16} />
       </button>
@@ -837,7 +830,7 @@ function RowActionsCell({ row, onEdit, onDelete }: { row: StlmRow; onEdit: (row:
         <div
           ref={menuRef}
           style={{ position: 'fixed', top: pos.top, left: pos.left, transformOrigin: 'top right' }}
-          className={`z-[9999] w-36 rounded-xl border border-[#e5e5e7] bg-white p-1 shadow-xl transition-[transform,opacity] duration-150 ease-[var(--ease-out-strong)] dark:border-[#3a3a3d] dark:bg-[#2a2a2d] ${
+          className={`z-[9999] w-36 rounded-xl border border-[#e5e5e7] bg-white p-1 shadow-xl transition-[transform,opacity] duration-150 ease-[var(--ease-out-strong)] dark:border-[#262B38] dark:bg-[#12151D] ${
             open ? 'opacity-100 scale-100' : 'opacity-0 scale-95'
           }`}
           onClick={(event) => event.stopPropagation()}
@@ -858,7 +851,7 @@ function RowActionsCell({ row, onEdit, onDelete }: { row: StlmRow; onEdit: (row:
             <Copy size={13} />
             Copy row
           </button>
-          <div className="my-1 border-t border-[#F1F5F9] dark:border-[#2f2f32]" />
+          <div className="my-1 border-t border-[#F1F5F9] dark:border-[#1A1E29]" />
           <button
             type="button"
             disabled
@@ -883,118 +876,24 @@ function RowActionsCell({ row, onEdit, onDelete }: { row: StlmRow; onEdit: (row:
   );
 }
 
-// Widths chosen from measuring the REAL rendered table (Puppeteer, Range-
-// based text-width against each cell's own box), not guessed:
-//   Agent Name: real short agent codes measure ~30-35%, real long ones up to
-//     ~69% — 55/70/85 spans that spread realistically.
-//   Amount: real 5-6 digit values measure a stable ~25-28% — tight variation
-//     around that, not spec's original wide range, since real amounts don't
-//     actually vary much in digit count.
-//   Remarks: real values measure ~34-56% here — 50/65/80 covers that plus
-//     headroom for longer remarks text not seen in this sample.
-//   Date: Cashout's own formatted "Jul 23, 2026" measures a near-constant
-//     ~50-52% — a single close value, not a rotating range, since the
-//     format's length barely varies row to row (unlike Send Money's own
-//     shorter "7/23/2026", which gets its own tighter value).
-//   Wallet: real badges measure 48-61px — fixed px (not %), since badge
-//     content (Nagad/Upay/Bkash/Rocket) is short, fixed-ish text, not
-//     proportional to column width.
-const AGENT_NAME_SKELETON_WIDTHS = [55, 70, 85];
-const REMARKS_SKELETON_WIDTHS = [50, 65, 80];
-const AMOUNT_SKELETON_WIDTHS = [26, 30, 24, 28];
-const WALLET_SKELETON_WIDTHS = [48, 60, 52, 56];
-
-// Skeleton mirrors renderCell's own shapes per column (badge → pill, pill
-// → pill, number/date → short right-aligned bar) instead of one generic bar
-// repeated across every column, so the loading state reads as a blurred
-// version of the real table rather than a placeholder grid. Header labels
-// are NEVER part of this — only body/data cells shimmer.
-function renderSkeletonCell(col: ColumnDef, rowIndex: number, style: CSSProperties) {
-  const key = col.id;
-  const base = 'flex items-center px-4 py-[14px]';
-  switch (key) {
-    case COLUMN_IDS.BRAND:
-      // Pill (h-[28px] w-9 rounded-full), not a circle — matches the real
-      // BrandBadge's own height exactly and its typical rendered width
-      // (measured ~30-38px for real 2-char codes).
-      return (
-        <div key={key} role="cell" style={style} className={base}>
-          <div className="dt-skeleton h-[28px] w-9 rounded-full" />
-        </div>
-      );
-    case COLUMN_IDS.LEADER:
-      return (
-        <div key={key} role="cell" style={style} className={base}>
-          <div className="dt-skeleton h-3 w-2/3 rounded-md" />
-        </div>
-      );
-    case COLUMN_IDS.AGENT_NAME:
-      return (
-        <div key={key} role="cell" style={style} className={base}>
-          <div
-            className="dt-skeleton h-3 rounded-md"
-            style={{ width: `${AGENT_NAME_SKELETON_WIDTHS[rowIndex % AGENT_NAME_SKELETON_WIDTHS.length]}%` }}
-          />
-        </div>
-      );
-    case COLUMN_IDS.WALLET:
-      return (
-        <div key={key} role="cell" style={style} className={`${base} justify-center`}>
-          <div
-            className="dt-skeleton h-6 rounded-full"
-            style={{ width: WALLET_SKELETON_WIDTHS[rowIndex % WALLET_SKELETON_WIDTHS.length] }}
-          />
-        </div>
-      );
-    case COLUMN_IDS.AMOUNT:
-      return (
-        <div key={key} role="cell" style={style} className={`${base} justify-center`}>
-          <div className="dt-skeleton h-3 rounded-md" style={{ width: `${AMOUNT_SKELETON_WIDTHS[rowIndex % AMOUNT_SKELETON_WIDTHS.length]}%` }} />
-        </div>
-      );
-    case COLUMN_IDS.REMARKS:
-      return (
-        <div key={key} role="cell" style={style} className={base}>
-          <div
-            className="dt-skeleton h-3 rounded-md"
-            style={{ width: `${REMARKS_SKELETON_WIDTHS[rowIndex % REMARKS_SKELETON_WIDTHS.length]}%` }}
-          />
-        </div>
-      );
-    case COLUMN_IDS.DATE:
-      return (
-        <div key={key} role="cell" style={style} className={`${base} justify-end`}>
-          <div className="dt-skeleton h-3 rounded-md" style={{ width: '50%' }} />
-        </div>
-      );
-    case COLUMN_IDS.ACTIONS:
-      // h-8 w-8 rounded-[8px] — matches RowActionsCell's real button exactly
-      // (was h-7 rounded-full, a different size/shape from the real kebab
-      // button it's standing in for).
-      return (
-        <div key={key} role="cell" style={style} className={`${base} justify-center`}>
-          <div className="dt-skeleton h-8 w-8 rounded-[8px]" />
-        </div>
-      );
-    default:
-      return null;
-  }
-}
-
-// Body text is dark enough to read, not pure black — #111827/#E5E7EB,
-// 13px/400/20px line-height uniformly across every column (no muted-vs-
-// foreground split; that hierarchy now comes from the header/body contrast
-// itself, not per-column dimming). Cell padding is 14px vertical/16px
-// horizontal per spec.
+// Size AND row density matched to Top Up's own table body cells
+// (app/topup/page.tsx: text-[12.5px], py-1.5 = 6px) per explicit
+// instruction — color kept as this page's own established token (font
+// style/size only, not color). leading-[16px] (down from 20px) keeps
+// text+padding comfortably inside the shrunk fixed-height rows without
+// clipping, same as Top Up.
 function renderCell(row: StlmRow, col: ColumnDef, style: CSSProperties, onEdit: (row: StlmRow) => void, onDelete: (row: StlmRow) => void, searchTerm: string) {
   const key = col.id;
-  // Amount is now center-aligned like Wallet/Remarks (was right-aligned
-  // with its own pl-4 pr-28 breathing-room padding) — plain px-4 for every
-  // column, matching the other center columns.
-  const base = `whitespace-nowrap overflow-hidden text-ellipsis px-4 py-[14px] text-${COLUMN_ALIGN[key]} text-[13px] leading-[20px] font-normal text-[#111827] dark:text-[#E5E7EB]`;
+  // 'right'-aligned columns (Amount, Date) get extra right padding (28px
+  // vs the usual 8px) mirroring the header's own reserved space — the
+  // header word's own edge lands at this same inset boundary, so this
+  // padding keeps the data's edge matching it, rather than data extending
+  // further right to the column's raw edge. Matches Top Up exactly.
+  const rightPad = COLUMN_ALIGN[key] === 'right' ? 'pl-[8px] pr-[28px]' : 'px-[8px]';
+  const base = `whitespace-nowrap overflow-hidden text-ellipsis ${rightPad} py-[6px] text-${COLUMN_ALIGN[key]} text-[12.5px] leading-[16px] font-normal text-[#111827] dark:text-[#E5E7EB]`;
   switch (key) {
     case COLUMN_IDS.BRAND:
-      return <div key={key} role="cell" style={style} className={base}><BrandBadge brand={row.brand}>{highlightMatch(row.brand, searchTerm)}</BrandBadge></div>;
+      return <div key={key} role="cell" style={style} title={row.brand} className={base}>{highlightMatch(row.brand, searchTerm)}</div>;
     case COLUMN_IDS.LEADER: {
       const leaderText = row.leader && row.leader !== '-' ? toProperCase(row.leader) : '−';
       return <div key={key} role="cell" style={style} title={leaderText} className={base}>{highlightMatch(leaderText, searchTerm)}</div>;
@@ -1008,11 +907,10 @@ function renderCell(row: StlmRow, col: ColumnDef, style: CSSProperties, onEdit: 
     case COLUMN_IDS.WALLET:
       return <div key={key} role="cell" style={style} className={base}><WalletBadge wallet={row.wallet}>{highlightMatch(toProperCase(row.wallet), searchTerm)}</WalletBadge></div>;
     case COLUMN_IDS.AMOUNT:
-      // Numbers get their own smaller size (12px) per spec, overriding the
-      // table body's 13px base — !important since both are arbitrary
-      // text-size values and would otherwise fight over CSS output order.
-      // Amount is bolded (600) to stand out as the primary figure.
-      return <div key={key} role="cell" style={style} className={`${base} !text-[12px] font-semibold tabular-nums`}>{highlightMatch(displayNum(row.amount), searchTerm)}</div>;
+      // Normal weight, not bold — this is a single row's own amount, not a
+      // total/sum. Bold is reserved for genuine totals (e.g. the stat bar's
+      // Total Amount above), per explicit instruction.
+      return <div key={key} role="cell" style={style} className={`${base} tabular-nums`}>{highlightMatch(displayNum(row.amount), searchTerm)}</div>;
     case COLUMN_IDS.REMARKS: {
       // rawVal() never returns '' — blanks come through as '-', which reads
       // like a typo next to real remarks. Normalize to the project's own
@@ -1042,12 +940,25 @@ export default function StlmPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<ClassifiedError | null>(null);
   const [spinning, setSpinning] = useState(false);
-  // SettlementSummary's KPI row — real counts/totals computed in fetchData
-  // from the SAME "AG BD STLM + TOPUP" sheet the table itself reads (it
-  // carries several weeks of rows, not just today's; isToday()/isYesterday()
-  // narrow it down). Not derived from stlmRows itself, since that's already
-  // narrowed to today only — see fetchData for the actual computation.
+  // KPI row's total/count/previous-period-baseline — resolved server-side
+  // by transactionPageService.ts's getSettlementPageData for whichever
+  // [from, to] range is currently applied (see dateRange below).
   const [kpiStats, setKpiStats] = useState<SettlementKpiStats>(EMPTY_KPI_STATS);
+  // null until the first fetch resolves — server always returns its own
+  // resolved {from, to, today} (Effective Today-anchored, see
+  // getEffectiveBusinessToday), which becomes the source of truth here
+  // rather than this page computing "today" itself.
+  const [dateRange, setDateRange] = useState<DateRangeValue | null>(null);
+  const [today, setToday] = useState<string>('');
+  const [availableDates, setAvailableDates] = useState<string[]>([]);
+  // fetchData stays a stable (deps: []) callback like every other handler
+  // on this page, but still needs the LATEST applied range on every call
+  // (Refresh re-fetches the CURRENT range, not always "today") — a ref
+  // avoids the stale-closure problem without making fetchData's identity
+  // churn on every range change (which would otherwise re-trigger the
+  // mount effect below).
+  const dateRangeRef = useRef<DateRangeValue | null>(null);
+  useEffect(() => { dateRangeRef.current = dateRange; }, [dateRange]);
   const [searchTerm, setSearchTerm] = useState('');
   const [sortColumn, setSortColumn] = useState<SortColumn>('');
   const [sortDirection, setSortDirection] = useState<'asc' | 'desc'>('asc');
@@ -1177,29 +1088,40 @@ export default function StlmPage() {
     return () => clearTimeout(timer);
   }, [loading]);
 
-  // Phase 7 — PostgreSQL is now the unconditional runtime source. Brand and
+  // Phase 7 — PostgreSQL is the unconditional runtime source. Brand and
   // Leader arrive already resolved (agents.brand_id/leader_id, the same
   // canonical join Today's Opening/Agent Balance use) — no more SSP
   // AG BalanceLimit cross-reference or per-row suffix-override scanning
   // needed client-side; transactionPageService.ts already did that server-
-  // side via a plain join. isToday()/isYesterday() are untouched: the
-  // service bounds the query to yesterday-onward, these two just narrow
-  // that down exactly as they always did against the old CSV rows.
-  const fetchData = useCallback(async () => {
+  // side via a plain join. The server now resolves the whole [from, to]
+  // range server-side (getSettlementPageData) — rows/total/count/
+  // previousPeriodTotal/previousPeriodCount/today/from/to all come back
+  // pre-computed; this page no longer filters by isToday()/isYesterday()
+  // itself, it just renders what the server already scoped to the applied
+  // range (default: Effective Today when dateRangeRef is still null).
+  const fetchData = useCallback(async (rangeOverride?: DateRangeValue) => {
     try {
       setSpinning(true);
       setLoading(true);
       setError(null);
 
-      const [res, openingRes] = await Promise.all([
-        fetch(`/api/v2/settlement?t=${Date.now()}`),
+      const range = rangeOverride ?? dateRangeRef.current;
+      const rangeParams = range ? `&from=${range.from}&to=${range.to}` : '';
+      const [res, openingRes, availableRes] = await Promise.all([
+        fetch(`/api/v2/settlement?t=${Date.now()}${rangeParams}`),
         fetch(`/api/v2/opening?t=${Date.now()}`),
+        fetch(`/api/v2/settlement/available-dates?t=${Date.now()}`),
       ]);
       if (!res.ok) {
         const body = await res.json().catch(() => null);
         throw new Error(body?.error || `Request failed with status ${res.status}`);
       }
-      const stlm: StlmRow[] = (await res.json()).map((r: { id: number; agentName: string; amount: string; remarks: string; date: string; wallet: string; brand: string; leader: string }) => ({
+      const data: {
+        rows: { id: number; agentName: string; amount: string; remarks: string; date: string; wallet: string; brand: string; leader: string }[];
+        total: number; count: number; previousPeriodTotal: number; previousPeriodCount: number;
+        today: string; from: string; to: string;
+      } = await res.json();
+      const stlm: StlmRow[] = data.rows.map((r) => ({
         agentName: r.agentName,
         amount: r.amount,
         remarks: r.remarks,
@@ -1223,27 +1145,26 @@ export default function StlmPage() {
         });
         setOpeningAgentNames(Array.from(names).sort((a, b) => a.localeCompare(b)));
       }
+      if (availableRes.ok) {
+        const { dates } = await availableRes.json();
+        setAvailableDates(dates);
+      }
 
-      // Same validity filter as before, split out so both the table's
-      // "today only" rows and the KPI row's "today vs yesterday" comparison
-      // can be computed from one pass, instead of the table's own isToday()
-      // filter discarding yesterday's rows before the KPI row ever gets a
-      // chance to see them.
       const validStlm = stlm.filter(row => row.agentName && row.agentName !== '-' && row.agentName !== '0');
-      const todayStlm = validStlm.filter(row => isToday(row.date));
-      const yesterdayStlm = validStlm.filter(row => isYesterday(row.date));
 
-      setStlmRows(todayStlm);
+      setStlmRows(validStlm);
       // A fresh fetch means brand-new row objects — any previous selection
       // may point at ids no longer present (e.g. after a Delete), so it
       // clears here rather than silently pointing at the wrong rows.
       setSelectedIds(new Set());
       setKpiStats({
-        todayCount: todayStlm.length,
-        todayAmount: todayStlm.reduce((sum, row) => sum + parseAmount(row.amount), 0),
-        yesterdayCount: yesterdayStlm.length,
-        yesterdayAmount: yesterdayStlm.reduce((sum, row) => sum + parseAmount(row.amount), 0),
+        total: data.total,
+        count: data.count,
+        previousPeriodTotal: data.previousPeriodTotal,
+        previousPeriodCount: data.previousPeriodCount,
       });
+      setToday(data.today);
+      setDateRange({ from: data.from, to: data.to });
     } catch (err) {
       setError(classifyFetchError(err instanceof Error ? err.message : String(err)));
     } finally {
@@ -1574,7 +1495,7 @@ export default function StlmPage() {
         case COLUMN_IDS.WALLET:
           return row.wallet;
         case COLUMN_IDS.AMOUNT:
-          return displayNum(row.amount);
+          return exportNum(row.amount);
         case COLUMN_IDS.REMARKS:
           return row.remarks;
         case COLUMN_IDS.DATE:
@@ -1622,33 +1543,25 @@ export default function StlmPage() {
   // stlmRows (the unfiltered set), not sortedRows, so an active search that
   // returns zero rows out of a real dataset never gets mistaken for "no
   // records exist at all."
-  // Balance-style KPI cards (bespoke, not SettlementSummary — that component
-  // is shared with the 3 Send Money equivalent pages, which weren't part of
-  // this redesign). Count metrics have no subtitle (would just duplicate the
-  // big value); amount metrics get an abbreviated big value + full-figure
-  // subtitle, matching Balance's Total DP/Total WD pattern exactly.
-  const kpis = useMemo(() => [
-    {
-      label: "Today's Total Count", icon: Hash,
-      accent: 'text-indigo-600 dark:text-indigo-400', iconBg: 'bg-indigo-50 dark:bg-indigo-500/10',
-      bigValue: kpiStats.todayCount.toLocaleString('en-US'), subtitle: undefined as string | undefined,
-    },
-    {
-      label: "Today's Total Amount", icon: Banknote,
-      accent: 'text-emerald-600 dark:text-emerald-400', iconBg: 'bg-emerald-50 dark:bg-emerald-500/10',
-      bigValue: fmtAbbrev(kpiStats.todayAmount), subtitle: fmt(kpiStats.todayAmount) as string | undefined,
-    },
-    {
-      label: "Yesterday's Total Count", icon: Hash,
-      accent: 'text-slate-500 dark:text-slate-400', iconBg: 'bg-slate-100 dark:bg-slate-500/10',
-      bigValue: kpiStats.yesterdayCount.toLocaleString('en-US'), subtitle: undefined as string | undefined,
-    },
-    {
-      label: "Yesterday's Total Amount", icon: Banknote,
-      accent: 'text-orange-500 dark:text-orange-400', iconBg: 'bg-orange-50 dark:bg-orange-500/10',
-      bigValue: fmtAbbrev(kpiStats.yesterdayAmount), subtitle: fmt(kpiStats.yesterdayAmount) as string | undefined,
-    },
-  ], [kpiStats]);
+  // Compact horizontal stat bar — replaces the earlier 4-card icon KPI row
+  // (too much empty space for how little each one held), matching Top Up's
+  // own redesign (app/topup/page.tsx) exactly. One hero stat (Total Amount
+  // + full-figure subtitle + a trend chip comparing to yesterday) plus
+  // Today's Count, inline in one thin row. Yesterday's Total Amount is no
+  // longer shown at all — its value only surfaces inside the delta chip.
+  // Yesterday's Count was dropped too (explicit instruction).
+  const amountChange = kpiStats.total - kpiStats.previousPeriodTotal;
+  const amountTrend: 'up' | 'down' | 'flat' = amountChange > 0 ? 'up' : amountChange < 0 ? 'down' : 'flat';
+  const isTodayRange = !!dateRange && !!today && presetOf(dateRange, today) === 'today';
+  const heroKpi = useMemo(() => ({
+    label: 'Total Amount',
+    bigValue: fmtAbbrev(kpiStats.total),
+    subtitle: fmt(kpiStats.total),
+  }), [kpiStats]);
+  const todayCountKpi = useMemo(() => ({
+    label: isTodayRange ? "Today's Count" : 'Count',
+    bigValue: kpiStats.count.toLocaleString('en-US'),
+  }), [kpiStats, isTodayRange]);
 
   const hasAnyRecords = stlmRows.length > 0;
   const emptyStateNode = !hasAnyRecords ? (
@@ -1675,77 +1588,112 @@ export default function StlmPage() {
   );
 
   return (
-    <div
-      className="h-screen w-full flex flex-col overflow-hidden bg-background text-foreground transition-colors duration-300 dark:bg-[#1c1c1e]"
-      style={{ fontFamily: 'var(--font-inter), ui-sans-serif, system-ui, sans-serif' }}
-    >
+    <div className={`settlement-page h-screen w-full flex flex-col overflow-hidden bg-background text-foreground transition-colors duration-300 dark:bg-[#0A0C11] ${manrope.variable} ${spaceGrotesk.variable}`}>
+      {/* Page-scoped font override (Manrope/Space Grotesk, matching Daily
+          Txn Entry's own treatment) — cascades down through SettlementHeader
+          too even though that component is shared/universal, since it sets
+          no font-family of its own. Every other page using SettlementHeader
+          stays on Inter, unaffected. */}
+      <style>{`
+        .settlement-page {
+          font-family: var(--font-manrope), ui-sans-serif, system-ui, sans-serif;
+        }
+        .settlement-page .tabular-nums {
+          font-family: var(--font-space-grotesk), ui-monospace, monospace;
+        }
+      `}</style>
       <SettlementHeader
         icon={ArrowLeftRight}
         title="Settlement"
         isRefreshing={spinning}
         onRefresh={fetchData}
       />
-      <div className="w-full border-t border-border bg-[#f4f6fb] px-4 py-3 dark:bg-[#1c1c1e] md:px-6">
-        <div className="flex gap-2">
-          {loading ? (
-            Array.from({ length: 4 }).map((_, i) => (
-              <div key={i} className="h-[80.5px] flex-1 min-w-[200px] rounded-xl border border-border bg-white p-2.5 dark:bg-[#2a2a2d]">
-                <div className="flex h-full items-center gap-3">
-                  <div className="h-8 w-8 shrink-0 animate-pulse rounded-full bg-slate-200 dark:bg-slate-700" />
-                  <div className="min-w-0 flex-1">
-                    <div className="h-3 w-20 animate-pulse rounded-md bg-slate-200 dark:bg-slate-700" />
-                    <div className="mt-1.5 h-6 w-24 animate-pulse rounded-md bg-slate-200 dark:bg-slate-700" />
-                  </div>
-                </div>
-              </div>
-            ))
-          ) : (
-            kpis.map((kpi) => (
-              <div
-                key={kpi.label}
-                className="h-[80.5px] flex-1 min-w-[200px] rounded-xl border border-border bg-white p-2.5 transition-[transform,box-shadow,border-color] duration-150 ease-out hover:-translate-y-px hover:border-foreground/20 hover:shadow-sm dark:bg-[#2a2a2d]"
-              >
-                <div className="flex h-full items-center gap-3">
-                  <div className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-full ${kpi.iconBg}`}>
-                    <kpi.icon size={16} className={kpi.accent} />
-                  </div>
-                  <div className="min-w-0 flex-1">
-                    <p className="text-[11px] font-medium leading-snug text-muted-foreground truncate">{kpi.label}</p>
-                    <FadeValue value={kpi.bigValue} className={`font-bold leading-tight text-foreground ${kpi.subtitle ? 'text-[21px]' : 'text-[28px]'}`} />
-                    {kpi.subtitle && (
-                      <p className="mt-0.5 text-[11px] leading-snug text-muted-foreground truncate">{kpi.subtitle}</p>
-                    )}
-                  </div>
-                </div>
-              </div>
-            ))
-          )}
-        </div>
-      </div>
-
-      {/* pt-4 (16px) instead of the uniform p-6's 24px top — explicit
-          breathing room between SettlementSummary and the toolbar below,
-          tuned to spec (12-16px) rather than left at the larger default. */}
-      <main className="flex-1 flex flex-col overflow-hidden px-6 pb-6 pt-1">
+      {/* px-4 md:px-[28px] + the inner mx-auto max-w-[1400px] wrapper (no
+          padding of its own) copies Daily Txn Entry's own <main> classes
+          and nesting order exactly (app/daily-txn-entry/page.tsx), matching
+          Top Up (app/topup/page.tsx) — same container size/placement. */}
+      <main className="flex-1 flex flex-col overflow-hidden px-4 pb-6 md:px-[28px] md:pb-8">
+        <div className="mx-auto flex w-full max-w-[1400px] flex-1 flex-col min-h-0">
 
         {error && <ConnectionErrorState error={error} onRetry={fetchData} />}
 
         {!error && (
           <DataTable>
+            {/* Compact horizontal stat bar — now lives INSIDE the same
+                bordered card as the toolbar/table (was previously a
+                separate full-width band above <main>), matching Top Up's
+                own merged-container pattern (app/topup/page.tsx) exactly.
+                One hero stat (Total Amount + full-figure subtitle + a trend
+                chip comparing to yesterday) plus Today's Count, inline in
+                one thin row. Yesterday's Total Amount no longer shown at
+                all — its value only surfaces inside the delta chip.
+                Yesterday's Count dropped too (explicit instruction). */}
+            <div className="flex shrink-0 flex-wrap items-center gap-x-6 gap-y-1.5 border-b border-[#E5E7EB] px-[13px] py-[10px] dark:border-[#262B38]">
+              {loading ? (
+                <>
+                  <div className="flex items-center gap-2">
+                    <div className="h-2.5 w-20 dt-skeleton rounded-md" />
+                    <div className="h-4 w-16 dt-skeleton rounded-md" />
+                    <div className="h-4 w-24 dt-skeleton rounded-md" />
+                  </div>
+                  <div className="flex items-center gap-2 border-l border-border pl-6">
+                    <div className="h-2.5 w-16 dt-skeleton rounded-md" />
+                    <div className="h-4 w-8 dt-skeleton rounded-md" />
+                  </div>
+                  <div className="flex-1" />
+                  <div className="h-6 w-24 dt-skeleton rounded-md" />
+                </>
+              ) : (
+                <>
+                  <div className="flex min-w-0 items-baseline gap-2">
+                    <span className="shrink-0 text-[10px] font-semibold uppercase tracking-[0.06em] text-muted-foreground">{heroKpi.label}</span>
+                    <FadeValue value={heroKpi.bigValue} className="shrink-0 text-[17px] font-semibold tabular-nums text-foreground" />
+                    <span className="truncate text-[11px] tabular-nums text-muted-foreground">({heroKpi.subtitle})</span>
+                    {amountTrend === 'flat' ? (
+                      <span className="inline-flex w-fit shrink-0 items-center gap-1 rounded-md bg-muted px-1.5 py-[3px] text-[10.5px] tabular-nums text-muted-foreground">
+                        No change
+                      </span>
+                    ) : (
+                      <span className={`inline-flex w-fit shrink-0 items-center gap-1 rounded-md px-1.5 py-[3px] text-[10.5px] tabular-nums ${
+                        amountTrend === 'up'
+                          ? 'bg-emerald-50 text-emerald-600 dark:bg-emerald-500/10 dark:text-emerald-400'
+                          : 'bg-rose-50 text-rose-600 dark:bg-rose-500/10 dark:text-rose-400'
+                      }`}>
+                        {amountTrend === 'up' ? '▲' : '▼'} {fmt(Math.abs(amountChange))} {dateRange && today ? deltaVsLabel(dateRange, today) : 'vs yesterday'}
+                      </span>
+                    )}
+                  </div>
+                  <div className="flex shrink-0 items-baseline gap-2 border-l border-border pl-6">
+                    <span className="text-[10px] font-semibold uppercase tracking-[0.06em] text-muted-foreground">{todayCountKpi.label}</span>
+                    <FadeValue value={todayCountKpi.bigValue} className="text-[14px] font-semibold tabular-nums text-foreground" />
+                  </div>
+                  <div className="flex-1" />
+                  {dateRange && today && (
+                    <DateRangeFilter
+                      mode="picker"
+                      value={dateRange}
+                      availableDates={availableDates}
+                      today={today}
+                      onApply={(next) => fetchData(next)}
+                    />
+                  )}
+                </>
+              )}
+            </div>
             {/* Same style/arrangement as Balance (app/agentbal/page.tsx):
                 Filters (mr-3) -> Search (flex-1, rounded-full) -> Actions
                 (ml-3), replacing the old Toolbar/Toolbar.Left/Toolbar.Right
                 layout. */}
-            <div className="flex shrink-0 flex-nowrap items-center overflow-x-auto border-b border-[#E5E7EB] px-4 py-3 dark:border-[#3a3a3d]">
+            <div className="flex shrink-0 flex-nowrap items-center overflow-x-auto border-b border-[#E5E7EB] px-[13px] py-[10px] dark:border-[#262B38]">
               {loading ? (
-                <div className="mr-3 flex shrink-0 items-center gap-3">
-                  <div className="h-10 w-10 shrink-0 dt-skeleton rounded-[12px] xl:w-[92px]" />
-                  <div className="h-10 w-10 shrink-0 dt-skeleton rounded-[12px] xl:w-[98px]" />
-                  <div className="h-10 w-10 shrink-0 dt-skeleton rounded-[12px] xl:w-[100px]" />
-                  <div className="h-10 w-10 shrink-0 dt-skeleton rounded-[12px]" />
+                <div className="mr-[10px] flex shrink-0 items-center gap-[10px]">
+                  <div className="h-8 w-8 shrink-0 dt-skeleton rounded-[10px] xl:w-[74px]" />
+                  <div className="h-8 w-8 shrink-0 dt-skeleton rounded-[10px] xl:w-[80px]" />
+                  <div className="h-8 w-8 shrink-0 dt-skeleton rounded-[10px] xl:w-[83px]" />
+                  <div className="h-8 w-8 shrink-0 dt-skeleton rounded-[10px]" />
                 </div>
               ) : (
-                <div className="mr-3 flex shrink-0 items-center gap-3">
+                <div className="mr-[10px] flex shrink-0 items-center gap-[10px]">
                   <div className="relative">
                     <FilterTriggerButton
                       label="Brand"
@@ -1807,17 +1755,17 @@ export default function StlmPage() {
                 </div>
               )}
 
-              <div className="flex h-10 flex-1 min-w-[200px] items-center gap-2 rounded-full border border-[#E5E7EB] bg-white px-[16px] transition-colors focus-within:border-[#2563EB] focus-within:ring-2 focus-within:ring-[#2563EB]/20 dark:border-[#3a3a3d] dark:bg-[#2a2a2d]">
+              <div className="flex h-8 flex-1 min-w-[200px] items-center gap-[6px] rounded-full border border-[#E5E7EB] bg-white px-[13px] transition-colors focus-within:border-[var(--ui-accent)] focus-within:ring-2 focus-within:ring-[var(--ui-accent)]/20 dark:border-[#262B38] dark:bg-[#12151D]">
                 {loading ? (
-                  <div className="h-3 w-32 dt-skeleton rounded-md" />
+                  <div className="dt-skeleton h-[10px] w-32 rounded-md" />
                 ) : (
                   <>
-                    <Search size={16} className="shrink-0 text-[#475569] dark:text-[#9CA3AF]" />
+                    <Search size={13} className="shrink-0 text-[#475569] dark:text-[#9CA3AF]" />
                     <input
                       aria-label="Search agent, wallet, or brand"
                       value={searchTerm}
                       onChange={(event) => setSearchTerm(event.target.value)}
-                      className="flex-1 bg-transparent text-[13px] font-normal text-[#111827] placeholder:text-[#94A3B8] outline-none border-none dark:text-[#E5E7EB]"
+                      className="flex-1 bg-transparent text-[11px] font-normal text-[#111827] placeholder:text-[#94A3B8] outline-none border-none dark:text-[#E5E7EB]"
                       placeholder="Search agent, wallet, or brand..."
                     />
                   </>
@@ -1830,7 +1778,7 @@ export default function StlmPage() {
                   per the standard bulk-selection toolbar spec (no layout
                   shift, no hidden primary actions). */}
               {!loading && selectionBarRendered && (
-                <div className="ml-3 flex shrink-0 items-center">
+                <div className="ml-[10px] flex shrink-0 items-center">
                   <BulkActionsMenu
                     count={selectedIds.size}
                     onBulkEdit={() => setBulkEditOpen(true)}
@@ -1841,39 +1789,39 @@ export default function StlmPage() {
               )}
 
               {loading ? (
-                <div className="ml-3 flex shrink-0 items-center gap-3">
-                  <div className="h-10 w-10 shrink-0 dt-skeleton rounded-[12px] xl:w-[92px]" />
-                  <div className="h-10 w-10 shrink-0 dt-skeleton rounded-[12px] xl:w-[92px]" />
-                  <div className="h-10 w-10 shrink-0 dt-skeleton rounded-[12px] xl:w-[88px]" />
-                  <div className="h-10 w-10 shrink-0 dt-skeleton rounded-[12px]" />
-                  <div className="h-10 w-10 shrink-0 dt-skeleton rounded-[12px]" />
+                <div className="ml-[10px] flex shrink-0 items-center gap-[10px]">
+                  <div className="h-8 w-8 shrink-0 dt-skeleton rounded-[10px] xl:w-[70px]" />
+                  <div className="h-8 w-8 shrink-0 dt-skeleton rounded-[10px] xl:w-[82px]" />
+                  <div className="h-8 w-8 shrink-0 dt-skeleton rounded-[10px] xl:w-[74px]" />
+                  <div className="h-8 w-8 shrink-0 dt-skeleton rounded-[10px]" />
+                  <div className="h-8 w-8 shrink-0 dt-skeleton rounded-[10px]" />
                 </div>
               ) : (
-                <div className="ml-3 flex shrink-0 items-center gap-3">
+                <div className="ml-[10px] flex shrink-0 items-center gap-[10px]">
                   <div className="relative">
                     <button type="button" ref={newButtonRef} onClick={() => setNewRecordOpen(true)} aria-label="New" {...newTooltip.handlers} className={NEW_BUTTON}>
-                      <Plus size={16} />
+                      <Plus size={13} />
                       <span className="hidden xl:inline">New</span>
                     </button>
                     {newTooltip.rendered && <Tooltip label="New" open={newTooltip.open} pos={newTooltip.pos} onlyWhenCompact />}
                   </div>
                   <div className="relative">
                     <button type="button" ref={uploadButtonRef} onClick={() => setBulkImportOpen(true)} aria-label="Upload" {...uploadTooltip.handlers} className={ICON_BUTTON}>
-                      <Upload size={16} />
+                      <Upload size={13} />
                       <span className="hidden xl:inline">Upload</span>
                     </button>
                     {uploadTooltip.rendered && <Tooltip label="Upload" open={uploadTooltip.open} pos={uploadTooltip.pos} onlyWhenCompact />}
                   </div>
                   <div className="relative">
                     <button type="button" ref={exportButtonRef} onClick={() => handleExport()} aria-label="Export to Excel" {...exportTooltip.handlers} className={ICON_BUTTON}>
-                      <Download size={16} />
+                      <Download size={13} />
                       <span className="hidden xl:inline">Export</span>
                     </button>
                     {exportTooltip.rendered && <Tooltip label="Export" open={exportTooltip.open} pos={exportTooltip.pos} onlyWhenCompact />}
                   </div>
                   <div className="relative">
-                    <button type="button" ref={refreshButtonRef} onClick={fetchData} aria-label="Refresh Data" {...refreshTooltip.handlers} className={REFRESH_ICON_BUTTON}>
-                      <RefreshCw size={16} className={spinning ? 'animate-spin' : ''} />
+                    <button type="button" ref={refreshButtonRef} onClick={() => fetchData()} aria-label="Refresh Data" {...refreshTooltip.handlers} className={REFRESH_ICON_BUTTON}>
+                      <RefreshCw size={13} className={spinning ? 'animate-spin' : ''} />
                     </button>
                     {refreshTooltip.rendered && <Tooltip label="Refresh Data" open={refreshTooltip.open} pos={refreshTooltip.pos} />}
                   </div>
@@ -1889,7 +1837,7 @@ export default function StlmPage() {
                       {...columnsTooltip.handlers}
                       className={ICON_ONLY_BUTTON}
                     >
-                      <Columns3 size={16} />
+                      <Columns3 size={13} />
                     </button>
                     {columnsTooltip.rendered && <Tooltip label="Customize Columns" open={columnsTooltip.open} pos={columnsTooltip.pos} />}
                     <ColumnsDropdown
@@ -1912,21 +1860,21 @@ export default function StlmPage() {
                 separating from; the mobile card list below has no such
                 header to separate from. */}
             <div className="hidden h-1.5 shrink-0 sm:block" />
-            <DataTable.ScrollArea className="hidden sm:block">
+            <DataTable.ScrollArea className="hidden sm:block" loading={loading}>
               {(isScrolled) => (
                 <>
                   <DataTable.StickyHeader isScrolled={isScrolled}>
-                  <div role="row" className="flex h-[48px] items-center">
+                  <div role="row" className="flex h-[32px] items-center">
                     <div role="columnheader" className="flex h-full w-[44px] shrink-0 items-center justify-center">
                       {loading ? (
-                        <div className="h-3.5 w-3.5 dt-skeleton rounded" />
+                        <div className="h-[11px] w-[11px] dt-skeleton rounded" />
                       ) : (
                         <input
                           type="checkbox"
                           aria-label="Select all rows on this page"
                           checked={allOnPageSelected}
                           onChange={toggleSelectAllOnPage}
-                          className="h-3.5 w-3.5 cursor-pointer"
+                          className="h-[11px] w-[11px] cursor-pointer"
                         />
                       )}
                     </div>
@@ -1936,18 +1884,27 @@ export default function StlmPage() {
                         role="columnheader"
                         style={flexStyleById[col.id]}
                         aria-sort={!col.sortable ? undefined : sortColumn === col.id ? (sortDirection === 'asc' ? 'ascending' : 'descending') : 'none'}
-                        className={headerCellClasses(col.id !== COLUMN_IDS.BRAND && sortColumn === col.id, col.id === COLUMN_IDS.BRAND, COLUMN_ALIGN[col.id], 'px-4')}>
+                        className={headerCellClasses(col.id !== COLUMN_IDS.BRAND && sortColumn === col.id, col.id === COLUMN_IDS.BRAND, COLUMN_ALIGN[col.id], COLUMN_ALIGN[col.id] === 'right' ? 'pl-[8px] pr-[28px]' : 'px-[8px]')}>
                         {/* Header shimmers along with the body during
                             loading, per explicit instruction — reverses the
                             earlier "headers are never placeholders" spec. */}
                         {loading ? (
                           <div
-                            className={`h-3 w-3/5 max-w-[72px] dt-skeleton rounded-md ${
+                            className={`h-[10px] w-3/5 max-w-[58px] dt-skeleton rounded-md ${
                               COLUMN_ALIGN[col.id] === 'right' ? 'ml-auto' : COLUMN_ALIGN[col.id] === 'center' ? 'mx-auto' : ''
                             }`}
                           />
                         ) : !col.sortable ? (
-                          <span>{col.label}</span>
+                          // normal-case override: browsers reset
+                          // text-transform to none on <button> by default,
+                          // so every OTHER (sortable) header already loses
+                          // the inherited `uppercase` from headerCellClasses
+                          // and falls back to its label's own literal case
+                          // ("Brand", not "BRAND"). This plain <span> has no
+                          // such reset, so it would otherwise be the only
+                          // header actually rendering uppercase ("ACTION")
+                          // — this keeps it visually matching the rest.
+                          <span className="normal-case">{col.label}</span>
                         ) : (
                           <button
                             type="button"
@@ -1960,23 +1917,26 @@ export default function StlmPage() {
                                 setSortDirection('asc');
                               }
                             }}
-                            className={`relative flex w-full items-center gap-1.5 text-${COLUMN_ALIGN[col.id]} transition-[color,transform] duration-150 ease-[var(--ease-out-strong)] hover:text-[#111827] active:scale-[0.98] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#2563EB] dark:hover:text-white ${
+                            className={`relative flex w-full items-center gap-1.5 text-${COLUMN_ALIGN[col.id]} transition-[color,transform] duration-150 ease-[var(--ease-out-strong)] hover:text-[#111827] active:scale-[0.98] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--ui-accent)] dark:hover:text-white ${
                               COLUMN_ALIGN[col.id] === 'right' ? 'justify-end' : COLUMN_ALIGN[col.id] === 'center' ? 'justify-center' : 'justify-start'
                             }`}
                           >
-                            {COLUMN_ALIGN[col.id] === 'center' ? (
-                              // Any center-aligned column (Brand, as of
-                              // Sprint 3.4 — was Wallet before its
-                              // alignment moved to left) needs this same
-                              // treatment: the label sits in its own
-                              // relatively-positioned wrapper sized to its
-                              // own text only, so the button's
-                              // justify-center centers that wrapper (i.e.
-                              // the label alone). The icon is pulled out
-                              // with position:absolute so it never
-                              // contributes to the wrapper's width — it
-                              // can't drag the centered label off-center no
-                              // matter what glyph it shows. Keyed on
+                            {COLUMN_ALIGN[col.id] === 'center' || COLUMN_ALIGN[col.id] === 'right' ? (
+                              // Any center- or right-aligned column needs
+                              // this same treatment: the label sits in its
+                              // own relatively-positioned wrapper sized to
+                              // its own text only, so the button's
+                              // justify-center/justify-end packs that
+                              // wrapper (i.e. the label alone) against the
+                              // edge. The icon is pulled out with
+                              // position:absolute so it never contributes to
+                              // the wrapper's width — for 'right' columns
+                              // this puts the word's own last letter at the
+                              // column's true right edge (matching the data
+                              // below it, via the same reserved pr-[28px]
+                              // padding mirrored on the data cell), with the
+                              // icon floating into that reserved space
+                              // rather than at the edge itself. Keyed on
                               // alignment rather than a specific column id
                               // so this keeps working if alignment is
                               // retuned again.
@@ -1988,14 +1948,6 @@ export default function StlmPage() {
                               </span>
                             ) : (
                               <>
-                                {/* Icon always trails the label, on the
-                                    right — reads as "Date ↕", never "↕
-                                    Date". Remarks is already icon-
-                                    independent this way: the label anchors
-                                    to the container's start, so a trailing
-                                    sibling never moves
-                                    it — verified, no absolute positioning
-                                    needed here. */}
                                 <span>{col.label}</span>
                                 <SortIcon active={sortColumn === col.id} direction={sortDirection} />
                               </>
@@ -2006,52 +1958,35 @@ export default function StlmPage() {
                     ))}
                   </div>
                   </DataTable.StickyHeader>
-                <div
-                  key={rowsPhase === 'table' ? 'data' : 'skeleton'}
-                  role="rowgroup"
-                  className={rowsPhase === 'fadingOut' ? 'dt-fade-out' : 'dt-fade-in'}
-                >
-                  {rowsPhase !== 'table' ? Array.from({ length: 11 }).map((_, i) => (
-                    <div
-                      key={i}
-                      role="row"
-                      className="flex h-[52px] items-center border-b border-[#ECEFF3] last:border-0 dark:border-[#2f2f32]"
-                    >
-                      <div className="h-full w-[44px] shrink-0" />
-                      {visibleColumns.map((col) => renderSkeletonCell(col, i, flexStyleById[col.id]))}
-                    </div>
-                  )) : pagedRows.length > 0 ? pagedRows.map((row, i) => {
+                <div key={rowsPhase === 'table' ? 'data' : 'skeleton'} role="rowgroup">
+                  {rowsPhase !== 'table' ? (
+                    // Empty — the loading indicator is DataTable.ScrollArea's
+                    // own overlay spinner, not row content here.
+                    null
+                  ) : pagedRows.length > 0 ? pagedRows.map((row, i) => {
                     const isChecked = selectedIds.has(row._id);
                     return (
                       <div
                         key={i}
-                        tabIndex={0}
                         role="row"
-                        onClick={() => toggleRowSelection(row._id)}
-                        onKeyDown={(event) => {
-                          if (event.key === 'Enter' || event.key === ' ') {
-                            event.preventDefault();
-                            toggleRowSelection(row._id);
-                          }
-                        }}
                         aria-selected={isChecked}
-                        className={`flex h-[52px] items-center cursor-pointer border-b border-[#ECEFF3] last:border-0 dark:border-[#2f2f32] transition-colors duration-150 ease-out focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-[#2563EB] ${
+                        className={`dt-row-stagger-in flex h-[36px] items-center border-b border-[#ECEFF3] last:border-0 dark:border-[#1A1E29] transition-colors duration-150 ease-out ${
                           isChecked
-                            ? 'bg-[color:var(--product-accent-soft)]'
+                            ? 'bg-[color:var(--ui-accent-soft)]'
                             : 'hover:bg-black/[0.02] dark:hover:bg-white/[0.025]'
                         }`}
+                        style={{ '--stagger-delay': `${Math.min(i, 12) * 30}ms` } as CSSProperties}
                       >
                         <div
                           role="cell"
                           className="flex h-full w-[44px] shrink-0 items-center justify-center"
-                          onClick={(event) => event.stopPropagation()}
                         >
                           <input
                             type="checkbox"
                             aria-label={`Select row for ${row.agentName}`}
                             checked={isChecked}
                             onChange={() => toggleRowSelection(row._id)}
-                            className="h-3.5 w-3.5 cursor-pointer"
+                            className="h-[11px] w-[11px] cursor-pointer"
                           />
                         </div>
                         {visibleColumns.map((col) => renderCell(row, col, flexStyleById[col.id], setEditingRow, setDeletingRow, searchTerm))}
@@ -2072,16 +2007,14 @@ export default function StlmPage() {
             <div className="flex-1 min-h-0 overflow-y-auto sm:hidden">
               <div className="flex flex-col gap-2 p-3">
                 {loading ? (
-                  Array.from({ length: 8 }).map((_, i) => (
-                    <div key={i} className="rounded-xl border border-border bg-white p-3.5 dark:bg-[#2a2a2d]">
-                      <div className="h-4 w-2/3 animate-pulse rounded-md bg-slate-200 dark:bg-slate-700" />
-                      <div className="mt-2 h-3 w-1/3 animate-pulse rounded-md bg-slate-200 dark:bg-slate-700" />
-                      <div className="mt-3 h-6 w-1/2 animate-pulse rounded-md bg-slate-200 dark:bg-slate-700" />
-                    </div>
-                  ))
+                  <TableLoadingSpinner minHeight={8 * 78} />
                 ) : pagedRows.length > 0 ? (
                   pagedRows.map((row, i) => (
-                    <div key={i} className="rounded-xl border border-border bg-white p-3.5 dark:bg-[#2a2a2d]">
+                    <div
+                      key={i}
+                      className="dt-row-stagger-in rounded-xl border border-border bg-white p-3.5 dark:bg-[#12151D]"
+                      style={{ '--stagger-delay': `${Math.min(i, 12) * 30}ms` } as CSSProperties}
+                    >
                       <div className="flex items-start justify-between gap-2">
                         <div className="min-w-0">
                           <p className="truncate text-sm font-bold text-foreground">{row.agentName.toUpperCase()}</p>
@@ -2103,7 +2036,7 @@ export default function StlmPage() {
             </div>
 
             {!loading && (
-              <TableFooter
+              <CompactTableFooter
                 recordCountText={
                   sortedRows.length === 0
                     ? 'Showing 0 of 0 Records'
@@ -2121,6 +2054,7 @@ export default function StlmPage() {
             )}
           </DataTable>
         )}
+        </div>
       </main>
 
       <RecordFormModal

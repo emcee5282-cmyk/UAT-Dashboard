@@ -2,8 +2,7 @@
 
 import { useCallback, useEffect, useState } from 'react';
 import { SlidersHorizontal, Check, X, Loader2 } from 'lucide-react';
-import PageHeader from '../components/PageHeader';
-import AccountMenu from '../components/AccountMenu';
+import SettlementHeader from '../components/SettlementHeader';
 import ConnectionErrorState from '../components/ConnectionErrorState';
 import { classifyFetchError, type ClassifiedError, assertAllOk } from '../lib/errors';
 
@@ -15,20 +14,15 @@ import { classifyFetchError, type ClassifiedError, assertAllOk } from '../lib/er
 // Plain-word form, not symbols — per explicit instruction, so staff reading
 // either the dropdown or the raw sheet cell understand it immediately.
 type Operator = 'Greater Than' | 'Greater Than or Equal' | 'Less Than' | 'Less Than or Equal' | 'Between' | 'Equal';
-// cashout_sh_* and sendmoney_sh_* are the REAL, LIVE sections today —
-// app/lib/transferQueueRules.ts's resolvers treat SH-prefixed Current Group
-// labels as the primary path (confirmed live: 5,173 of 5,174 real Cashout
-// Balance Limit rows are SH-prefixed), with the legacy per-brand sections
-// below as a fallback only reached by the last non-SH holdout. This was the
-// other way around when originally written — the SH sections started as
-// admin-only draft, and cashout_day/cashout_extended/cashout_247 +
-// sendmoney_247/sendmoney_bd were the real ones — but the resolver cutover
-// happened without this file's own comments or SECTION_META descriptions
-// (below) being updated to match. Fixed here: descriptions no longer claim
-// "draft only, not yet applied." Legacy sections are kept in the union for
-// type accuracy and are still real fallback logic, but deliberately never
-// rendered below (nothing to configure there day-to-day; SH is what an
-// admin actually needs to edit).
+// cashout_day/cashout_extended/cashout_247 and sendmoney_247/sendmoney_bd
+// are the REAL, LIVE sections (app/lib/transferQueueRules.ts reads these
+// to assign real shops to real queue groups) — kept in the union for type
+// accuracy but deliberately never rendered below anymore (see "Do not
+// display them anymore" in the SH-restructure spec). cashout_sh_* and
+// sendmoney_sh_* are the new SH-based, schedule-driven admin config —
+// draft only, not yet wired to the live Transfer Queue (Send Money's
+// Bundle rows additionally need a "linked Cashout account" lookup that
+// doesn't exist anywhere yet).
 type RuleSection =
   | 'cashout_day' | 'cashout_extended' | 'cashout_247'
   | 'cashout_sh_day' | 'cashout_sh_early_extended' | 'cashout_sh_extended' | 'cashout_sh_247'
@@ -60,47 +54,45 @@ type MetaConfig = { mode: TransferQueueMode; version: number; updatedBy: string;
 const OPERATORS: Operator[] = ['Greater Than', 'Greater Than or Equal', 'Less Than', 'Less Than or Equal', 'Between', 'Equal'];
 
 const SECTION_META: Record<RuleSection, { emoji: string; title: string; description: string }> = {
-  // Legacy per-brand sections — never rendered (see RuleSectionCard usage
+  // Real, live sections — no longer rendered (see RuleSectionCard usage
   // below), kept here only so SECTION_META still satisfies
-  // Record<RuleSection, ...> for every value in the type. Still real
-  // fallback logic (the last non-SH holdout shop), just not something an
-  // admin edits day-to-day.
+  // Record<RuleSection, ...> for every value in the type.
   cashout_day: { emoji: '☀️', title: 'Day Configuration', description: '' },
   cashout_extended: { emoji: '🌇', title: 'Extended Configuration', description: '' },
   cashout_247: { emoji: '🌙', title: '24/7 Configuration', description: '' },
   cashout_sh_day: {
     emoji: '☀️',
     title: 'Day Configuration',
-    description: 'SH — one shared configuration applied to every Cashout shop on the Day schedule. This is the live configuration used by the real Transfer Queue today.',
+    description: 'SH — one shared configuration applied to every Cashout shop on the Day schedule. Draft only — not yet applied to the live Transfer Queue.',
   },
   cashout_sh_early_extended: {
     emoji: '🌅',
     title: 'Early Extended Configuration',
-    description: 'SH — one shared configuration applied to every Cashout shop on the Early Extended schedule. This is the live configuration used by the real Transfer Queue today.',
+    description: 'SH — one shared configuration applied to every Cashout shop on the Early Extended schedule. Draft only — not yet applied to the live Transfer Queue.',
   },
   cashout_sh_extended: {
     emoji: '🌇',
     title: 'Extended Configuration',
-    description: 'SH — one shared configuration applied to every Cashout shop on the Extended schedule. This is the live configuration used by the real Transfer Queue today.',
+    description: 'SH — one shared configuration applied to every Cashout shop on the Extended schedule. Draft only — not yet applied to the live Transfer Queue.',
   },
   cashout_sh_247: {
     emoji: '🌙',
     title: '24/7 Configuration',
-    description: 'SH — one shared configuration applied to every Cashout shop on the 24/7 schedule. This is the live configuration used by the real Transfer Queue today.',
+    description: 'SH — one shared configuration applied to every Cashout shop on the 24/7 schedule. Draft only — not yet applied to the live Transfer Queue.',
   },
-  // Legacy per-brand sections — never rendered, kept only for type
+  // Real, live sections — no longer rendered, kept only for type
   // completeness (same reasoning as the Cashout ones above).
   sendmoney_247: { emoji: '🌙', title: '24/7 Configuration', description: '' },
   sendmoney_bd: { emoji: '🏷️', title: 'BD Limit', description: '' },
   sendmoney_sh_247: {
     emoji: '🌙',
     title: '24/7',
-    description: 'SH — one shared configuration applied to every SH Send Money account on the 24/7 schedule. Bundle rows use the linked Cashout account\'s balance. This is the live configuration used by the real Transfer Queue today.',
+    description: 'SH — one shared configuration applied to every SH Send Money account on the 24/7 schedule. Bundle rows use the linked Cashout account\'s balance. Draft only — not yet applied to the live Transfer Queue.',
   },
   sendmoney_sh_day: {
     emoji: '☀️',
     title: 'Day',
-    description: 'SH — one shared configuration applied to every SH Send Money account on the Day schedule. Bundle rows use the linked Cashout account\'s balance. This is the live configuration used by the real Transfer Queue today.',
+    description: 'SH — one shared configuration applied to every SH Send Money account on the Day schedule. Bundle rows use the linked Cashout account\'s balance. Draft only — not yet applied to the live Transfer Queue.',
   },
 };
 
@@ -122,7 +114,7 @@ function rowIsDirty(saved: RuleRow, draft: RuleRow): boolean {
   return saved.operator !== draft.operator || saved.value1 !== draft.value1 || saved.value2 !== draft.value2 || saved.queueResult !== draft.queueResult || saved.enabled !== draft.enabled;
 }
 
-const INPUT_CLASS = 'h-8 w-full rounded-md border border-border bg-white px-2 text-[12px] text-foreground outline-none focus:border-[#2563EB] dark:bg-[#1c1c1e]';
+const INPUT_CLASS = 'h-8 w-full rounded-md border border-border bg-white px-2 text-[12px] text-foreground outline-none focus:border-[var(--ui-accent)] dark:bg-[#0A0C11]';
 
 function RuleSectionCard({
   section,
@@ -153,7 +145,7 @@ function RuleSectionCard({
   const hasChanges = indices.some((i) => rowIsDirty(rules[i], drafts[i]));
 
   return (
-    <div className="mb-6 rounded-xl border border-border bg-white p-5 dark:bg-[#2a2a2d]">
+    <div className="mb-6 rounded-xl border border-border bg-white p-5 dark:bg-[#12151D]">
       <div className="mb-1 flex items-center gap-2 text-[15px] font-semibold text-foreground">
         <span>{meta.emoji}</span> {meta.title}
       </div>
@@ -238,7 +230,7 @@ function RuleSectionCard({
             type="button"
             onClick={() => onCancel(section)}
             disabled={!hasChanges || saving}
-            className="flex h-8 items-center gap-1 rounded-[8px] border border-[#E5E7EB] bg-white px-2.5 text-[12px] font-medium text-slate-500 transition-colors duration-150 ease-out hover:border-rose-300 hover:bg-rose-50 hover:text-rose-600 disabled:opacity-50 dark:border-[#3a3a3d] dark:bg-[#2a2a2d] dark:text-[#9CA3AF] dark:hover:border-rose-900/60 dark:hover:bg-rose-500/10 dark:hover:text-rose-400"
+            className="flex h-8 items-center gap-1 rounded-[8px] border border-[#E5E7EB] bg-white px-2.5 text-[12px] font-medium text-slate-500 transition-colors duration-150 ease-out hover:border-rose-300 hover:bg-rose-50 hover:text-rose-600 disabled:opacity-50 dark:border-[#262B38] dark:bg-[#12151D] dark:text-[#9CA3AF] dark:hover:border-rose-900/60 dark:hover:bg-rose-500/10 dark:hover:text-rose-400"
           >
             <X size={13} /> Cancel
           </button>
@@ -288,7 +280,7 @@ function BundleTypeCard({
   onCancelRow: (index: number) => void;
 }) {
   return (
-    <div className="mb-6 rounded-xl border border-border bg-white p-5 dark:bg-[#2a2a2d]">
+    <div className="mb-6 rounded-xl border border-border bg-white p-5 dark:bg-[#12151D]">
       <div className="mb-1 flex items-center gap-2 text-[15px] font-semibold text-foreground">
         <span>📦</span> {title}
       </div>
@@ -356,7 +348,7 @@ function BundleTypeCard({
                     type="button"
                     onClick={() => onCancelRow(index)}
                     disabled={!hasChanges || saving}
-                    className="flex h-7 items-center gap-1 rounded-[8px] border border-[#E5E7EB] bg-white px-2 text-[11px] font-medium text-slate-500 transition-colors duration-150 ease-out hover:border-rose-300 hover:bg-rose-50 hover:text-rose-600 disabled:opacity-50 dark:border-[#3a3a3d] dark:bg-[#2a2a2d] dark:text-[#9CA3AF] dark:hover:border-rose-900/60 dark:hover:bg-rose-500/10 dark:hover:text-rose-400"
+                    className="flex h-7 items-center gap-1 rounded-[8px] border border-[#E5E7EB] bg-white px-2 text-[11px] font-medium text-slate-500 transition-colors duration-150 ease-out hover:border-rose-300 hover:bg-rose-50 hover:text-rose-600 disabled:opacity-50 dark:border-[#262B38] dark:bg-[#12151D] dark:text-[#9CA3AF] dark:hover:border-rose-900/60 dark:hover:bg-rose-500/10 dark:hover:text-rose-400"
                   >
                     <X size={12} /> Cancel
                   </button>
@@ -396,7 +388,7 @@ function BundleSectionCard({
   const hasChanges = drafts.some((d, i) => d.value !== saved[i]?.value);
 
   return (
-    <div className="mb-6 rounded-xl border border-border bg-white p-5 dark:bg-[#2a2a2d]">
+    <div className="mb-6 rounded-xl border border-border bg-white p-5 dark:bg-[#12151D]">
       <div className="mb-1 flex items-center gap-2 text-[15px] font-semibold text-foreground">
         <span>📦</span> Bundle Configuration
       </div>
@@ -441,7 +433,7 @@ function BundleSectionCard({
             type="button"
             onClick={onCancel}
             disabled={!hasChanges || saving}
-            className="flex h-8 items-center gap-1 rounded-[8px] border border-[#E5E7EB] bg-white px-2.5 text-[12px] font-medium text-slate-500 transition-colors duration-150 ease-out hover:border-rose-300 hover:bg-rose-50 hover:text-rose-600 disabled:opacity-50 dark:border-[#3a3a3d] dark:bg-[#2a2a2d] dark:text-[#9CA3AF] dark:hover:border-rose-900/60 dark:hover:bg-rose-500/10 dark:hover:text-rose-400"
+            className="flex h-8 items-center gap-1 rounded-[8px] border border-[#E5E7EB] bg-white px-2.5 text-[12px] font-medium text-slate-500 transition-colors duration-150 ease-out hover:border-rose-300 hover:bg-rose-50 hover:text-rose-600 disabled:opacity-50 dark:border-[#262B38] dark:bg-[#12151D] dark:text-[#9CA3AF] dark:hover:border-rose-900/60 dark:hover:bg-rose-500/10 dark:hover:text-rose-400"
           >
             <X size={13} /> Cancel
           </button>
@@ -465,7 +457,7 @@ function BundleSectionCard({
 // and Send Money's DC Account / Wallet with Issue "Special Groups").
 function StaticGroupsCard({ emoji, title, rows }: { emoji: string; title: string; rows: string[] }) {
   return (
-    <div className="mb-6 rounded-xl border border-border bg-white p-5 dark:bg-[#2a2a2d]">
+    <div className="mb-6 rounded-xl border border-border bg-white p-5 dark:bg-[#12151D]">
       <div className="mb-1 flex items-center gap-2 text-[15px] font-semibold text-foreground">
         <span>{emoji}</span> {title}
       </div>
@@ -734,22 +726,34 @@ export default function SettingsPage() {
   }, [bundle, bundleDraft, fetchData]);
 
   return (
-    <div className="min-h-screen w-full bg-background pb-24 font-[Inter,sans-serif] text-foreground transition-colors duration-300 dark:bg-[#1c1c1e]">
+    <div className="min-h-screen w-full bg-background pb-24 font-[Inter,sans-serif] text-foreground transition-colors duration-300 dark:bg-[#0A0C11]">
       {toast && (
-        <div className="fixed right-5 top-5 z-[100] flex items-center gap-2 rounded-lg border border-emerald-200 bg-white px-3.5 py-2.5 text-[12px] font-medium text-foreground shadow-lg dark:border-emerald-900/50 dark:bg-[#2a2a2d]">
+        <div className="fixed right-5 top-5 z-[100] flex items-center gap-2 rounded-lg border border-emerald-200 bg-white px-3.5 py-2.5 text-[12px] font-medium text-foreground shadow-lg dark:border-emerald-900/50 dark:bg-[#12151D]">
           <Check size={15} className="shrink-0 text-emerald-500" />
           {toast}
         </div>
       )}
 
-      <PageHeader
+      {/* Switched from PageHeader (floating pill) to SettlementHeader (flush
+          bar, Daily Txn Entry's own header style/placement/dark palette),
+          per explicit instruction — this page has no Cashout/Send Money
+          counterpart route, so SettlementHeader's switcher row simply never
+          renders (same as any other non-switch page using it). The
+          description text PageHeader used to show has no equivalent slot
+          on SettlementHeader; it's dropped rather than force-fit somewhere
+          that would look bolted-on — the page's own copy below the header
+          already explains each section. */}
+      <SettlementHeader
         icon={SlidersHorizontal}
-        title="Transfer Queue Settings"
-        description="Configure the threshold that determines when a shop becomes eligible for Transfer Queue. Changes take effect on the live Transfer Queue."
-        actions={<AccountMenu />}
+        title="TRANSFER QUEUE SETTINGS"
+        isRefreshing={loading}
+        onRefresh={fetchData}
       />
 
-      <main className="mx-auto max-w-4xl px-4 pb-10 pt-24 md:px-8">
+      {/* pt-24 was specifically to clear PageHeader's floating pill — no
+          longer needed now that SettlementHeader is a flush, non-floating
+          bar (own border-b, own spacing) sitting directly above this. */}
+      <main className="mx-auto max-w-4xl px-4 pb-10 pt-6 md:px-8">
         <ModeStatusCard meta={meta} saving={savingMode} onToggle={toggleMode} />
 
         {error && <ConnectionErrorState error={error} onRetry={fetchData} />}
@@ -780,7 +784,7 @@ export default function SettingsPage() {
         )}
       </main>
 
-      <div className="fixed inset-x-0 bottom-0 z-40 border-t border-border bg-white px-4 py-2.5 text-center text-[12px] text-muted-foreground dark:bg-[#2a2a2d]">
+      <div className="fixed inset-x-0 bottom-0 z-40 border-t border-border bg-white px-4 py-2.5 text-center text-[12px] text-muted-foreground dark:bg-[#12151D]">
         <span className="font-semibold text-foreground">Live Configuration</span> — Saved changes take effect on the real Transfer Queue (Cashout, Send Money, and the Sidebar badge counts) within about a minute. Use the Production/Configuration switch above for an instant rollback.
       </div>
     </div>

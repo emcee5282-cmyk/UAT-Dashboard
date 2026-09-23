@@ -29,6 +29,18 @@ export type BalanceLimitWalletRow = {
   totalWD: number;
   balance: number;
   isLoggedIn: boolean;
+  // The Balance Limit upload's own raw "Account" cell, phone number and all
+  // (e.g. "01402636932 - N-M1AG-M1-JETT013-NG") — '' for wallet rows written
+  // before this column existed (null until their next Balance Limit
+  // re-upload). Callers that want just the shop-name part (no phone number)
+  // strip it themselves — see transferQueueService.ts's stripPhonePrefix().
+  rawAccount: string;
+  // The Balance Limit upload's own real "DP Limit" cell — Wallet Status's
+  // Daily Limit reads this directly now (no staff override/flat default),
+  // per explicit instruction that Daily Limit isn't editable. 0 for wallet
+  // rows written before this column existed (null until their next
+  // Balance Limit re-upload).
+  dpLimit: number;
 };
 
 export async function getBalanceLimitRows(product: Product): Promise<BalanceLimitWalletRow[]> {
@@ -43,6 +55,8 @@ export async function getBalanceLimitRows(product: Product): Promise<BalanceLimi
       totalWD: schema.agentWallets.totalWd,
       balance: schema.agentWallets.balance,
       isLoggedIn: schema.agentWallets.isLoggedIn,
+      rawAccount: schema.agentWallets.rawAccount,
+      dpLimit: schema.agentWallets.dpLimit,
     })
     .from(schema.agentWallets)
     .innerJoin(schema.agents, eq(schema.agentWallets.agentId, schema.agents.id))
@@ -58,6 +72,8 @@ export async function getBalanceLimitRows(product: Product): Promise<BalanceLimi
     totalWD: r.totalWD === null ? 0 : parseFloat(r.totalWD),
     balance: r.balance === null ? 0 : parseFloat(r.balance),
     isLoggedIn: r.isLoggedIn,
+    rawAccount: r.rawAccount ?? '',
+    dpLimit: r.dpLimit === null ? 0 : parseFloat(r.dpLimit),
   }));
 }
 

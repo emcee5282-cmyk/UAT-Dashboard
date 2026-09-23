@@ -830,10 +830,10 @@ function TodayStrip({ label, wallets, quota }: { label: string; wallets: TodayWa
   const quotaPct = quota && quota.total > 0 ? (quota.processed / quota.total) * 100 : null;
 
   return (
-    <div className="rounded-[10px] px-4 py-3" style={{ background: 'var(--product-accent-soft)' }}>
+    <div className="rounded-[10px] px-4 py-3" style={{ background: 'var(--ui-accent-soft)' }}>
       <div className="flex items-center justify-between gap-2">
         <div className="flex min-w-0 items-center gap-2">
-          <div className="flex h-6 w-6 shrink-0 items-center justify-center rounded-md" style={{ background: 'var(--product-accent)' }}>
+          <div className="flex h-6 w-6 shrink-0 items-center justify-center rounded-md" style={{ background: 'var(--ui-accent)' }}>
             <ArrowLeftRight size={12} className="text-white" />
           </div>
           <span className="truncate text-[13px] font-semibold text-foreground">{label} · Today</span>
@@ -846,7 +846,7 @@ function TodayStrip({ label, wallets, quota }: { label: string; wallets: TodayWa
           <div className="mt-2.5 h-[6px] w-full overflow-hidden rounded-full border border-foreground/70 bg-muted shadow-[0_0_0_1px_rgba(0,0,0,0.08)]">
             <div
               className="h-full rounded-full"
-              style={{ width: quotaPct !== null ? `${Math.min(quotaPct, 100)}%` : '100%', background: 'var(--product-accent)' }}
+              style={{ width: quotaPct !== null ? `${Math.min(quotaPct, 100)}%` : '100%', background: 'var(--ui-accent)' }}
             />
           </div>
           <div className="mt-2 flex flex-wrap items-center justify-between gap-x-3 gap-y-1">
@@ -876,11 +876,11 @@ function BalanceCard({ data }: { data: CardData }) {
   return (
     <div data-product={data.product} className="overflow-hidden rounded-2xl border border-border bg-white shadow-sm dark:bg-[#2a2a2d]">
       <div className="p-5">
-        <h3 className="mb-4 inline-flex items-center gap-1.5 border-b-2 pb-1 text-[15px] font-semibold text-foreground" style={{ borderColor: 'var(--product-accent)' }}>
+        <h3 className="mb-4 inline-flex items-center gap-1.5 border-b-2 pb-1 text-[15px] font-semibold text-foreground" style={{ borderColor: 'var(--ui-accent)' }}>
           {data.product === 'cashout' ? (
-            <Wallet size={14} style={{ color: 'var(--product-accent)' }} />
+            <Wallet size={14} style={{ color: 'var(--ui-accent)' }} />
           ) : (
-            <Banknote size={14} style={{ color: 'var(--product-accent)' }} />
+            <Banknote size={14} style={{ color: 'var(--ui-accent)' }} />
           )}
           {data.productLabel}
         </h3>

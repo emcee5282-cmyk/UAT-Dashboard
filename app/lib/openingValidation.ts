@@ -19,6 +19,16 @@ export type OpeningValidationConfig = {
   agentRoster: string[];
 };
 
+// Match-only normalization for Agent Name/agentCode comparisons during
+// Opening upload roster matching (both the client's New Shops/Missing Shops
+// classification and the server's importOpeningFile match) — collapses any
+// run of whitespace (regular spaces, non-breaking spaces, tabs, etc. — all
+// covered by \s) down to a single space, trims the ends, then lowercases.
+// Never used to alter a stored/displayed Agent Name, only the comparison.
+export function normalizeShopNameForMatch(value: string): string {
+  return value.trim().replace(/\s+/g, ' ').toLowerCase();
+}
+
 // Required-only — same message text as settlementValidation.ts's
 // checkAgentNameField uses for a blank value ("Agent Name is required."),
 // so issueLabel()'s own "missing" detection (a regex on that exact phrase)

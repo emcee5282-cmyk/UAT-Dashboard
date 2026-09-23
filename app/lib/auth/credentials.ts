@@ -1,12 +1,28 @@
-// Temporary local-development credential check — the ONLY piece of the auth
-// flow meant to be swapped out once real user/role storage (a DB or a
-// Users sheet, per the roles/permissions plan) replaces it. Nothing else
-// (session.ts, middleware.ts, the login route) needs to change when that
-// happens — they only care about "is this username/password valid," not
-// where the answer came from.
-export const DEV_USERNAME = 'admin';
-export const DEV_PASSWORD = 'admin123';
+import { eq } from 'drizzle-orm';
+import { getDb } from '@/app/lib/db/client';
+import { users } from '@/app/lib/db/schema';
+import { verifyPassword } from './password';
 
-export function verifyCredentials(username: string, password: string): boolean {
-  return username === DEV_USERNAME && password === DEV_PASSWORD;
+export type VerifiedUser = {
+  id: number;
+  username: string;
+  name: string | null;
+  role: string;
+  leaderId: number | null;
+};
+
+// Real, DB-backed check — replaces the previous hardcoded admin/admin123
+// comparison now that the users table (see schema.ts) is actually wired
+// in. The admin account itself still works with the same credentials;
+// it's just a real row now (see scripts/seed-auth-users.ts), not a string
+// comparison.
+export async function verifyCredentials(username: string, password: string): Promise<VerifiedUser | null> {
+  const db = getDb();
+  const [user] = await db.select().from(users).where(eq(users.username, username)).limit(1);
+  if (!user || user.status !== 'active') return null;
+
+  const valid = await verifyPassword(password, user.passwordHash);
+  if (!valid) return null;
+
+  return { id: user.id, username: user.username, name: user.name, role: user.role, leaderId: user.leaderId };
 }

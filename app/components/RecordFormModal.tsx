@@ -66,7 +66,7 @@ type RecordFormModalProps = {
   // against the field's current value, so fixing it clears the warning
   // instantly — no separate "revalidate" step needed.
   getFieldHint?: (key: string, value: string) => { message: string; details?: string[] } | null;
-  // Send Money's primaryButtonClassName resolves var(--product-accent),
+  // Send Money's primaryButtonClassName resolves var(--ui-accent),
   // scoped to [data-product="sendmoney"] on AppShell's own wrapper —
   // createPortal renders this modal straight onto document.body, outside
   // that wrapper, so the variable silently fails to resolve and the button
@@ -111,10 +111,22 @@ export default function RecordFormModal({
   const [rendered, setRendered] = useState(isOpen);
   const [closing, setClosing] = useState(false);
   const cardRef = useRef<HTMLDivElement>(null);
+  // Stable snapshot of what each field looked like when the modal opened —
+  // NOT the live `initialValues` prop, which the caller may re-render with
+  // fresh (but unrelated) content while the modal is still open. Used so an
+  // untouched field that already had a stale/invalid value on a real row
+  // (e.g. an Agent Name whose shop has since left the current roster) never
+  // blocks Save for an edit to a completely different field — only fields
+  // the user actually changed need to pass validation. Generalizes the
+  // narrower one-off fix already applied to Brand ("Brand itself is never
+  // submitted... this only prevents a real, valid value from wrongly
+  // blocking Save") into the general rule.
+  const openedWithRef = useRef<Record<string, string>>(initialValues);
 
   useEffect(() => {
     if (isOpen) {
       setValues(initialValues);
+      openedWithRef.current = initialValues;
       setTouched({});
       setSaving(false);
       setSaveError(null);
@@ -219,9 +231,19 @@ export default function RecordFormModal({
     return null;
   };
   // A business-rule hint (when supplied) always wins over the generic
-  // check — it's the actual reason the field is invalid, not a fallback.
+  // check — it's the actual reason the field is invalid, not a fallback,
+  // and always enforced regardless of whether the field changed (a caller
+  // that supplies getFieldHint, e.g. Bulk Import's per-row fix dialog,
+  // relies on every flagged field genuinely getting fixed before Save —
+  // this must never let a real, current problem through untouched).
+  // Only once there's no real hint does an unchanged field get exempted
+  // from the generic closed-set/required check below — see openedWithRef's
+  // own comment above. Edit mode only: on a New Record form every field
+  // opens blank, so "unchanged" would otherwise mean "still empty" and
+  // wrongly exempt every untouched required field.
   const isFormValid = fields.every((field) => {
     if (getFieldHint?.(field.key, values[field.key] ?? '')) return false;
+    if (!isCreateMode && (values[field.key] ?? '') === (openedWithRef.current[field.key] ?? '')) return true;
     return getFieldError(field) === null;
   });
 
@@ -366,7 +388,7 @@ export default function RecordFormModal({
                     onChange={(event) => setValues((current) => ({ ...current, [field.key]: event.target.value }))}
                     onBlur={() => markTouched(field.key)}
                     placeholder={field.placeholder}
-                    className={`h-10 w-full rounded-[10px] border bg-white px-3.5 text-[13px] text-foreground outline-none transition-colors focus:border-[color:var(--product-accent)] focus:ring-2 focus:ring-[color:var(--product-accent-soft)] dark:bg-[#1c1c1e] ${
+                    className={`h-10 w-full rounded-[10px] border bg-white px-3.5 text-[13px] text-foreground outline-none transition-colors focus:border-[color:var(--ui-accent)] focus:ring-2 focus:ring-[color:var(--ui-accent-soft)] dark:bg-[#1c1c1e] ${
                       error ? 'border-rose-400' : 'border-border'
                     }`}
                   />

@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server';
-import { updateSendMoneyWalletStatusBulk, type Priority, type MainReason, type ClosureType, type AffectedService, type ScheduleOverride, type WalletStatusBulkUpdate } from '@/app/lib/walletStatus';
+import { updateSendMoneyWalletStatusBulk, type Priority, type MainReason, type ClosureType, type AffectedService, type WalletStatusBulkUpdate } from '@/app/lib/walletStatus';
 import { bulkUpdateWalletSettingsPg } from '@/app/lib/services/walletStatusConfigService';
 
 // Send Money-only flag — see app/api/sendmoney/wallet-status/route.ts's
@@ -12,7 +12,6 @@ const VALID_PRIORITIES: Priority[] = ['Low', 'Normal', 'High'];
 const VALID_MAIN_REASONS: MainReason[] = ['', 'Closed by Operations', 'High Running Balance', 'Reduce as per Leader', 'Wallet Issue', 'Blocked by Wallet Office', 'Others'];
 const VALID_CLOSURE_TYPES: ClosureType[] = ['', 'Temporary Close', 'Permanent Close'];
 const VALID_AFFECTED_SERVICES: AffectedService[] = ['Deposit', 'Withdrawal'];
-const VALID_SCHEDULE_OVERRIDES: ScheduleOverride[] = ['', 'Day', 'Extended', 'Early Ext.', '24/7'];
 
 export async function POST(request: Request) {
   try {
@@ -24,7 +23,7 @@ export async function POST(request: Request) {
         const entry = u as {
           shopName?: unknown; priority?: unknown; remark?: unknown;
           mainReason?: unknown; closureType?: unknown; affectedServices?: unknown;
-          minimumAmountCanTake?: unknown; balanceLimitOverride?: unknown; scheduleOverride?: unknown;
+          minimumAmountCanTake?: unknown;
         };
         const shopName = String(entry?.shopName ?? '').trim();
         const priorityRaw = entry?.priority !== undefined ? String(entry.priority).trim() : undefined;
@@ -39,8 +38,6 @@ export async function POST(request: Request) {
         const affectedServices = Array.isArray(entry?.affectedServices)
           ? (entry.affectedServices as unknown[]).filter((s): s is AffectedService => VALID_AFFECTED_SERVICES.includes(s as AffectedService))
           : undefined;
-        const scheduleOverrideRaw = entry?.scheduleOverride !== undefined ? String(entry.scheduleOverride).trim() : undefined;
-        const scheduleOverride = scheduleOverrideRaw !== undefined && VALID_SCHEDULE_OVERRIDES.includes(scheduleOverrideRaw as ScheduleOverride) ? (scheduleOverrideRaw as ScheduleOverride) : undefined;
 
         // null is a legitimate, intentional "clear the value" — only
         // `undefined` (the key never sent) means "not part of this edit".
@@ -51,14 +48,13 @@ export async function POST(request: Request) {
           return isNaN(num) ? undefined : num;
         };
         const minimumAmountCanTake = parseAmount(entry?.minimumAmountCanTake);
-        const balanceLimitOverride = parseAmount(entry?.balanceLimitOverride);
 
-        return { shopName, priority, remark, mainReason, closureType, affectedServices, minimumAmountCanTake, balanceLimitOverride, scheduleOverride };
+        return { shopName, priority, remark, mainReason, closureType, affectedServices, minimumAmountCanTake };
       })
       .filter((u: WalletStatusBulkUpdate) =>
         u.shopName && (
           u.priority !== undefined || u.remark !== undefined || u.mainReason !== undefined || u.closureType !== undefined
-          || u.affectedServices !== undefined || u.minimumAmountCanTake !== undefined || u.balanceLimitOverride !== undefined || u.scheduleOverride !== undefined
+          || u.affectedServices !== undefined || u.minimumAmountCanTake !== undefined
         )
       );
 

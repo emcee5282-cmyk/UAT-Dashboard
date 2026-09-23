@@ -1,14 +1,14 @@
-import { config } from 'dotenv';
 import { defineConfig } from 'drizzle-kit';
 
 // drizzle-kit is a standalone CLI (not run through Next.js), so it needs its
 // own .env.local load — Next.js's automatic env loading doesn't apply here.
-// Plain `dotenv/config` defaults to `.env`, not `.env.local` — must be
-// pointed at it explicitly or DATABASE_URL silently resolves to nothing.
-config({ path: '.env.local' });
-
+// Loaded via Node's built-in --env-file flag (Node 20.6+, see the
+// db:generate/db:migrate/db:studio scripts in package.json) rather than the
+// dotenv package — this file no longer has any env-loading code of its own,
+// it just expects DATABASE_URL to already be in process.env by the time it
+// runs.
 if (!process.env.DATABASE_URL) {
-  throw new Error('Missing DATABASE_URL in .env.local');
+  throw new Error('Missing DATABASE_URL — run via the db:generate/db:migrate/db:studio npm scripts (they pass --env-file=.env.local), not drizzle-kit directly.');
 }
 
 export default defineConfig({

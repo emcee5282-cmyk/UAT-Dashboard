@@ -1,12 +1,17 @@
 import { NextResponse } from 'next/server';
-import { getTopUpRows } from '@/app/lib/services/transactionPageService';
+import { getTopUpPageData } from '@/app/lib/services/transactionPageService';
 import { updateTransactions, deleteTransaction, createTransaction, TransactionActionError, type TransactionFieldUpdates, type NewTransaction } from '@/app/lib/services/transactionActionsService';
+import { parseDateRangeParams } from '@/app/lib/api/dateRangeParams';
 
 // Phase 7 — Postgres-backed Top Up for Send Money (app/sendmoney/topup).
-export async function GET() {
+// ?from=&to= (both, 'YYYY-MM-DD') filters to that Manila date range;
+// omitted defaults to Effective Today (see getEffectiveBusinessToday).
+export async function GET(request: Request) {
   try {
-    const rows = await getTopUpRows('sendmoney');
-    return NextResponse.json(rows, { headers: { 'Cache-Control': 'no-store' } });
+    const { range, error } = parseDateRangeParams(new URL(request.url));
+    if (error) return NextResponse.json({ error }, { status: 400 });
+    const data = await getTopUpPageData('sendmoney', range);
+    return NextResponse.json(data, { headers: { 'Cache-Control': 'no-store' } });
   } catch (err) {
     const message = err instanceof Error ? err.message : 'Failed to load Top Up data';
     return NextResponse.json({ error: message }, { status: 500 });

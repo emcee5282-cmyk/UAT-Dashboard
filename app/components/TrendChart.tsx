@@ -61,17 +61,26 @@ function TrendXAxisTick({ x, y, payload }: { x?: number; y?: number; payload?: {
 function TrendTooltip({ active, payload, seriesDefs }: { active?: boolean; payload?: Array<{ payload: PlotPoint }>; seriesDefs: TrendSeriesDef[] }) {
   if (!active || !payload || payload.length === 0) return null;
   const point = payload[0].payload;
+  // A wallet with no quota that day shows as 0 — dropped from the tooltip
+  // entirely rather than a "—" line (per explicit instruction). When every
+  // series is 0, the whole breakdown collapses into one "No Quota" line
+  // instead of a header + a stack of dropped rows.
+  const activeSeries = seriesDefs.filter((def) => (point.series[def.key] ?? 0) > 0);
+  if (activeSeries.length === 0) {
+    return (
+      <div className="rounded-lg border border-[#e5e5e7] bg-white px-3 py-2 text-[11px] shadow-md dark:border-[#3a3a3d] dark:bg-[#2a2a2d]">
+        <p className="font-bold text-slate-900 dark:text-white">{point.tooltipLabel} — No Quota</p>
+      </div>
+    );
+  }
   return (
     <div className="rounded-lg border border-[#e5e5e7] bg-white px-3 py-2 text-[11px] shadow-md dark:border-[#3a3a3d] dark:bg-[#2a2a2d]">
       <p className="mb-1.5 font-bold text-slate-900 dark:text-white">{point.tooltipLabel} · {fmtAmount(point.visibleTotal)}</p>
-      {seriesDefs.map((def) => {
-        const value = point.series[def.key] ?? 0;
-        return (
-          <p key={def.key} className="text-slate-600 dark:text-slate-300">
-            {def.label} {value > 0 ? fmtAmount(value) : '—'}
-          </p>
-        );
-      })}
+      {activeSeries.map((def) => (
+        <p key={def.key} className="text-slate-600 dark:text-slate-300">
+          {def.label} {fmtAmount(point.series[def.key])}
+        </p>
+      ))}
     </div>
   );
 }
@@ -176,7 +185,7 @@ export default function TrendChart({ title, seriesDefs, weekData, monthData, cha
             <button
               onClick={() => setPeriod('week')}
               className={`whitespace-nowrap rounded-md px-3 py-1 text-[10px] font-medium ${
-                period === 'week' ? 'bg-[color:var(--product-accent)] text-white' : 'text-muted-foreground hover:text-foreground'
+                period === 'week' ? 'bg-[color:var(--ui-accent)] text-white' : 'text-muted-foreground hover:text-foreground'
               }`}
             >
               7D
@@ -184,7 +193,7 @@ export default function TrendChart({ title, seriesDefs, weekData, monthData, cha
             <button
               onClick={() => setPeriod('month')}
               className={`whitespace-nowrap rounded-md px-3 py-1 text-[10px] font-medium ${
-                period === 'month' ? 'bg-[color:var(--product-accent)] text-white' : 'text-muted-foreground hover:text-foreground'
+                period === 'month' ? 'bg-[color:var(--ui-accent)] text-white' : 'text-muted-foreground hover:text-foreground'
               }`}
             >
               30D
@@ -210,7 +219,7 @@ export default function TrendChart({ title, seriesDefs, weekData, monthData, cha
                   className="h-2 w-2 rounded-full"
                   style={
                     isOn
-                      ? { background: 'var(--product-accent)', opacity: rampOpacity }
+                      ? { background: 'var(--ui-accent)', opacity: rampOpacity }
                       : { background: 'transparent', border: '1.5px solid var(--muted-foreground)' }
                   }
                 />
@@ -257,7 +266,7 @@ export default function TrendChart({ title, seriesDefs, weekData, monthData, cha
               // END of the stack, reversing the visual arrangement after an
               // untick/tick cycle.
               return (
-                <Bar key={def.key} dataKey={`series.${def.key}`} stackId="trend" fill="var(--product-accent)" maxBarSize={40} radius={isTopmost ? [3, 3, 0, 0] : undefined}>
+                <Bar key={def.key} dataKey={`series.${def.key}`} stackId="trend" fill="var(--ui-accent)" maxBarSize={40} radius={isTopmost ? [3, 3, 0, 0] : undefined}>
                   {chartData.map((point, idx) => (
                     <Cell key={idx} fillOpacity={rampOpacity} />
                   ))}

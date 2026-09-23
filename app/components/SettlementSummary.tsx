@@ -120,7 +120,7 @@ export default function SettlementSummary({ items, isScrolled, loading }: { item
 
   return (
     <div
-      className={`flex h-[72px] w-full flex-wrap items-stretch gap-x-8 border-t border-border bg-[#f4f6fb] px-2 transition-shadow duration-150 ease-out dark:bg-[#1c1c1e] md:px-4 ${
+      className={`flex h-[72px] w-full flex-wrap items-stretch gap-x-8 border-t border-border bg-[#f4f6fb] px-2 transition-shadow duration-150 ease-out dark:bg-[#0A0C11] md:px-4 ${
         isScrolled ? TABLE_STICKY_HEADER_SHADOW_CLASS : ''
       }`}
     >

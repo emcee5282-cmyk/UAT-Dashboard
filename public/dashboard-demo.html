@@ -1,0 +1,1585 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<title>Dashboard Demo</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700;800&family=Space+Grotesk:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --ink-0:#0A0C11;
+    --ink-1:#12151D;
+    --ink-2:#1A1E29;
+    --hair:#262B38;
+    --hair-soft:#1D212B;
+    --text-hi:#F3F4F7;
+    --text-mid:#9198AC;
+    --text-low:#565C70;
+    --pos:#34D399;
+    --pos-dim:rgba(52,211,153,.12);
+    --neg:#F4665A;
+    --neg-dim:rgba(244,102,90,.12);
+    --brass:#D9A441;
+    --brass-dim:rgba(217,164,65,.14);
+    --brass-deep:#9C6F1F;
+    /* Deliberately the SAME gold in both themes (unlike --brass, which
+       becomes indigo in light mode) — the trend chart's peak-day marker
+       needs to stay visually distinct from the wallet line colors, and in
+       light mode --brass(indigo) is nearly identical to --bkash, making
+       the peak dot/label blend into the line right where it should stand
+       out most. */
+    --wave-peak:#D9A441;
+    --bkash:#5B8DEF;
+    --nagad:#8B7FE8;
+    /* Muted slate-blue, deliberately NOT --brass — Upay reused the peak-day
+       gold before, so a wallet whose own line happened to draw on top
+       (Rocket/Upay at 0 all week) visually read as "the peak indicator",
+       not "Upay's own color". */
+    --upay:#7C93A8;
+    --sans:'Manrope',-apple-system,sans-serif;
+    --mono:'Space Grotesk','Manrope',-apple-system,sans-serif;
+    --on-brass:#100C02;
+    --panel-shadow:none;
+    color-scheme:dark;
+  }
+  html.light{
+    --ink-0:#F7F8FA;
+    --ink-1:#FFFFFF;
+    --ink-2:#F1F2F5;
+    /* A touch darker than the original #E7E9EE — flat white panels on the
+       barely-different #F7F8FA page background had almost no border
+       definition. Paired with --panel-shadow below for real depth instead
+       of just a border. */
+    --hair:#DEE1E8;
+    --hair-soft:#EEF0F3;
+    --panel-shadow:0 1px 2px rgba(16,24,40,.03);
+    --text-hi:#1A1D23;
+    --text-mid:#6B7280;
+    --text-low:#9CA3AF;
+    --pos:#16A34A;
+    --pos-dim:rgba(22,163,74,.10);
+    --neg:#E23D3D;
+    --neg-dim:rgba(226,61,61,.10);
+    --brass:#4F46E5;
+    --brass-dim:rgba(79,70,229,.10);
+    --brass-deep:#3730A3;
+    --bkash:#2F6FED;
+    --nagad:#7C5CE0;
+    --upay:#5C7A94;
+    --on-brass:#FFFFFF;
+    color-scheme:light;
+  }
+  html, body{transition:background .18s ease;}
+  *{box-sizing:border-box;}
+  body{
+    margin:0;
+    background:var(--ink-0);
+    font-family:var(--sans);
+    color:var(--text-hi);
+    -webkit-font-smoothing:antialiased;
+    font-variant-numeric:tabular-nums;
+  }
+  ::selection{background:var(--brass-dim);color:var(--brass);}
+
+  .theme-toggle{
+    width:22px;height:22px;border-radius:6px;
+    border:1px solid var(--hair);background:var(--ink-2);
+    color:var(--text-mid);
+    display:flex;align-items:center;justify-content:center;
+    cursor:pointer;
+  }
+  .theme-toggle svg{width:11px;height:11px;}
+  .theme-toggle:hover{color:var(--brass);border-color:var(--brass);}
+  @keyframes spin{to{transform:rotate(360deg);}}
+  #refresh-icon.spinning{animation:spin .6s linear;}
+  @keyframes panelFadeUp{from{opacity:0;transform:translateY(10px);}to{opacity:1;transform:translateY(0);}}
+
+  /* ===== Page shell ===== */
+  .page{display:flex;min-height:100vh;}
+
+  /* ===== Sidebar ===== */
+  .sidebar{
+    width:216px;flex-shrink:0;
+    background:var(--ink-1);
+    border-right:1px solid var(--hair);
+    padding:20px 12px;
+    display:flex;flex-direction:column;position:relative;
+    transition:width .3s ease-in-out;
+  }
+  .sidebar.collapsed{width:60px;}
+  .sb-brand{padding:2px 8px 26px;overflow:hidden;white-space:nowrap;}
+  .sb-brand-name{font-family:var(--mono);font-size:13px;font-weight:600;color:var(--text-hi);letter-spacing:.02em;}
+  .sb-brand-sub{font-size:10.5px;color:var(--text-low);margin-top:2px;}
+  .sidebar.collapsed .sb-brand-name,
+  .sidebar.collapsed .sb-brand-sub{opacity:0;}
+  .sb-section{font-size:10px;font-weight:600;color:var(--text-low);text-transform:uppercase;letter-spacing:.08em;padding:16px 8px 6px;white-space:nowrap;overflow:hidden;}
+  .sidebar.collapsed .sb-section{
+    height:1px;padding:0;margin:8px 10px;
+    font-size:0;background:var(--hair);
+  }
+  .sidebar.collapsed .sb-section:first-of-type{background:transparent;margin-top:0;}
+  .sb-item{
+    display:flex;align-items:center;gap:10px;
+    padding:8px 8px;margin:1px 0;border-radius:6px;
+    font-size:12.5px;color:var(--text-mid);text-decoration:none;
+    border-left:2px solid transparent;
+    position:relative;white-space:nowrap;
+  }
+  .sb-item:hover{color:var(--text-hi);background:var(--ink-2);}
+  .sb-item.active{color:var(--brass);background:var(--brass-dim);font-weight:600;}
+  .sb-item svg{width:15px;height:15px;flex-shrink:0;opacity:.85;}
+  .sb-item .dot{margin-left:auto;width:5px;height:5px;border-radius:50%;background:var(--neg);flex-shrink:0;}
+  .sidebar.collapsed .sb-item{justify-content:center;}
+  .sidebar.collapsed .sb-item .sb-label,
+  .sidebar.collapsed .sb-item .dot{display:none;}
+  .sb-tooltip{
+    position:absolute;left:100%;top:50%;transform:translateY(-50%);margin-left:12px;
+    background:var(--ink-1);border:1px solid var(--hair);border-radius:6px;
+    padding:5px 9px;font-size:11px;font-weight:500;color:var(--text-hi);
+    white-space:nowrap;pointer-events:none;opacity:0;z-index:40;
+    transition:opacity .12s ease;box-shadow:0 6px 16px rgba(0,0,0,.25);
+  }
+  .sidebar.collapsed .sb-item:hover .sb-tooltip{opacity:1;}
+  .sb-toggle{
+    position:absolute;top:24px;right:-11px;z-index:41;
+    width:22px;height:22px;border-radius:50%;
+    background:var(--ink-2);border:1px solid var(--hair);color:var(--text-mid);
+    display:flex;align-items:center;justify-content:center;cursor:pointer;
+  }
+  .sb-toggle:hover{color:var(--brass);border-color:var(--brass);}
+  .sb-toggle svg{width:11px;height:11px;transition:transform .3s ease-in-out;}
+  .sidebar.collapsed .sb-toggle svg{transform:rotate(180deg);}
+
+  /* ===== Content ===== */
+  .content{flex:1;min-width:0;padding:26px 28px;}
+  .wrap{max-width:1400px;margin:0 auto;}
+
+  .page-title-row{display:flex;align-items:flex-end;justify-content:space-between;margin-bottom:22px;}
+  .page-eyebrow{font-family:var(--mono);font-size:10.5px;color:var(--brass);letter-spacing:.1em;text-transform:uppercase;margin-bottom:6px;}
+  .page-title{font-size:22px;font-weight:600;color:var(--text-hi);}
+  .header-actions-r{display:flex;align-items:center;gap:12px;}
+  .last-updated{font-family:var(--mono);font-size:10.5px;color:var(--text-low);white-space:nowrap;}
+  .seg{display:flex;background:var(--ink-1);border:1px solid var(--hair);border-radius:7px;padding:3px;}
+  .seg button{font-size:11.5px;font-weight:600;color:var(--text-mid);background:transparent;border:none;border-radius:5px;padding:6px 14px;cursor:pointer;font-family:var(--sans);}
+  .seg button.active{background:var(--brass);color:var(--on-brass);}
+  .admin-chip{display:flex;align-items:center;gap:9px;}
+  .admin-avatar{width:28px;height:28px;border-radius:50%;background:var(--ink-2);border:1px solid var(--hair);color:var(--brass);font-size:10.5px;font-weight:700;display:flex;align-items:center;justify-content:center;font-family:var(--mono);}
+  .admin-name{font-size:12px;font-weight:600;}
+  .admin-role{font-size:10.5px;color:var(--text-low);}
+
+  /* ===== Panel base ===== */
+  .panel{background:var(--ink-1);border:1px solid var(--hair);border-radius:8px;box-shadow:var(--panel-shadow);}
+  .panel-pad{padding:18px 20px;}
+  .panel-label{font-size:10.5px;font-weight:600;color:var(--text-low);text-transform:uppercase;letter-spacing:.06em;margin-bottom:4px;}
+
+  /* ===== Hero net position ===== */
+  .hero-row{display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px;margin-bottom:12px;align-items:stretch;}
+  .hero-panel{padding:16px 20px;position:relative;overflow:hidden;display:flex;flex-direction:column;justify-content:space-between;}
+  .hero-panel::before{
+    content:'';position:absolute;top:0;right:0;width:90px;height:90px;
+    background:radial-gradient(circle,var(--brass-dim),transparent 70%);
+    pointer-events:none;
+  }
+  .hero-value{font-family:var(--mono);font-size:28px;font-weight:600;color:var(--text-hi);line-height:1.1;margin-top:6px;}
+  .hero-value sup{font-size:14px;color:var(--text-low);font-weight:500;margin-right:2px;}
+  .hero-delta{display:inline-flex;align-items:center;gap:5px;font-family:var(--mono);font-size:12px;margin-top:8px;padding:4px 9px;border-radius:5px;align-self:flex-start;}
+  .hero-delta.neg{color:var(--neg);background:var(--neg-dim);}
+  .hero-delta.pos{color:var(--pos);background:var(--pos-dim);}
+
+  .flow-panel{padding:16px 20px;display:flex;flex-direction:column;justify-content:space-between;}
+  .flow-icon{width:22px;height:22px;border-radius:6px;display:flex;align-items:center;justify-content:center;margin-bottom:8px;}
+  .flow-icon svg{width:12px;height:12px;}
+  .flow-value{font-family:var(--mono);font-size:24px;font-weight:600;margin-top:6px;line-height:1.1;}
+  .flow-sub{font-family:var(--mono);font-size:11px;color:var(--text-low);margin-top:6px;}
+
+  /* ===== Cash flow chart ===== */
+  .chart-panel{padding:20px 22px;margin-bottom:14px;}
+  .chart-head{display:flex;align-items:flex-start;justify-content:space-between;margin-bottom:4px;}
+  .chart-title{font-size:14px;font-weight:600;}
+  .chart-title-sub{font-size:11px;color:var(--text-low);margin-top:2px;}
+  .legend-dot{display:inline-flex;align-items:center;gap:6px;font-size:11px;color:var(--text-mid);margin-right:14px;font-family:var(--mono);}
+  .legend-dot i{width:7px;height:7px;border-radius:50%;display:inline-block;}
+
+  .chart-area{position:relative;height:230px;margin-top:22px;}
+  .chart-svg{width:100%;height:100%;overflow:visible;display:block;}
+  .wv-axis-label{font-family:var(--mono);font-size:10px;fill:var(--text-low);}
+  .wv-val-label{font-family:var(--mono);font-size:11px;font-weight:600;fill:var(--text-mid);}
+  .wv-val-label.peak{fill:var(--wave-peak);}
+  /* ===== Liquidity-wave trend chart (stacked gradient areas + animated draw-in) ===== */
+  .wv-area{opacity:0;animation:wvFadeIn 1s ease-out .4s forwards;}
+  @keyframes wvFadeIn{to{opacity:1;}}
+  .wv-path{animation:wvDrawLine 1.3s cubic-bezier(.4,0,.2,1) forwards;}
+  @keyframes wvDrawLine{to{stroke-dashoffset:0;}}
+  .wv-dot{opacity:0;animation:wvFadeDot .3s ease-out forwards;}
+  @keyframes wvFadeDot{to{opacity:1;}}
+  .wv-peak-ring{animation:wvRingPulse 2s ease-out infinite;}
+  @keyframes wvRingPulse{0%{r:5;opacity:.7;}100%{r:15;opacity:0;}}
+  .wv-label{opacity:0;animation:wvFadeUp .4s ease-out forwards;}
+  @keyframes wvFadeUp{from{opacity:0;transform:translateY(6px);}to{opacity:1;transform:translateY(0);}}
+  .wv-tooltip-bg{fill:var(--ink-1);stroke:var(--hair);}
+  .wv-tooltip-date{font-family:var(--mono);font-size:9.5px;fill:var(--text-low);}
+  .wv-tooltip-text{font-family:var(--mono);font-size:10px;font-weight:600;}
+  .chart-coming-soon{
+    width:100%;height:100%;display:flex;align-items:center;justify-content:center;
+    font-size:12px;color:var(--text-low);font-style:italic;text-align:center;
+  }
+  .chart-replay{
+    display:flex;align-items:center;justify-content:center;width:26px;height:26px;flex-shrink:0;
+    border-radius:7px;background:var(--ink-2);border:1px solid var(--hair);color:var(--text-mid);cursor:pointer;
+  }
+  .chart-replay:hover{color:var(--brass);border-color:var(--brass);}
+
+  /* ===== Ledger table ===== */
+  .ledger-panel{padding:18px 20px;}
+  .ledger-head{display:flex;align-items:center;justify-content:space-between;margin-bottom:14px;}
+  table.ledger{width:100%;border-collapse:collapse;font-family:var(--mono);font-size:12px;}
+  table.ledger th{
+    text-align:right;font-size:10px;font-weight:600;color:var(--text-low);
+    text-transform:uppercase;letter-spacing:.04em;
+    padding:0 0 10px;border-bottom:1px solid var(--hair);
+    font-family:var(--sans);
+  }
+  table.ledger th:first-child{text-align:left;}
+  table.ledger td{padding:11px 0;border-bottom:1px solid var(--hair-soft);text-align:right;color:var(--text-hi);}
+  table.ledger td:first-child{text-align:left;font-family:var(--sans);font-weight:600;font-size:12.5px;}
+  table.ledger tr:last-child td{border-bottom:none;}
+  .num-pos{color:var(--pos);}
+  .num-neg{color:var(--neg);}
+  .num-muted{color:var(--text-low);}
+  .delta-line{font-size:10px;margin-top:2px;}
+  tr.total-row td{padding-top:14px;border-top:1px solid var(--hair);font-weight:700;color:var(--text-hi);}
+  tr.total-row td:first-child{color:var(--brass);}
+
+  /* ===== Side rank panels ===== */
+  .side-col{display:flex;flex-direction:column;gap:14px;height:100%;}
+  .rank-panel{padding:16px 18px;display:flex;flex-direction:column;}
+  .rank-panel.grow{flex:1;min-height:0;}
+  .rank-head{display:flex;align-items:center;justify-content:space-between;margin-bottom:12px;}
+  .rank-title{font-size:12.5px;font-weight:600;}
+  .rank-tag{font-family:var(--mono);font-size:10px;color:var(--text-low);}
+  .rank-tag.pill{background:var(--brass-dim);color:var(--brass);padding:2px 8px;border-radius:20px;}
+  .rank-row{display:flex;align-items:center;gap:10px;padding:8px 4px;border-radius:6px;}
+  .rank-row.hi{background:var(--neg-dim);}
+  .rank-idx{font-family:var(--mono);font-size:10.5px;color:var(--text-low);width:16px;flex-shrink:0;}
+  .rank-row.hi .rank-idx{color:var(--neg);}
+  .rank-main{flex:1;min-width:0;}
+  .rank-name{font-size:11.5px;font-weight:600;color:var(--text-hi);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+  .rank-name.mono{font-family:var(--mono);font-size:10.5px;font-weight:500;}
+  .rank-sub{font-family:var(--mono);font-size:10px;color:var(--text-low);margin-top:1px;}
+  .rank-val{font-family:var(--mono);font-size:11px;font-weight:600;flex-shrink:0;}
+  .rank-scroll{flex:1;min-height:0;overflow-y:auto;}
+  .rank-scroll::-webkit-scrollbar{width:4px;}
+  .rank-scroll::-webkit-scrollbar-thumb{background:var(--hair);border-radius:4px;}
+
+  .dash-grid{display:grid;grid-template-columns:2.1fr 1fr;gap:14px;align-items:stretch;}
+  /* The wallet ledger's row count (5-ish wallets) will never come close to
+     the agents list's (top 50), so letting the taller column (side-col, via
+     default grid stretch) dictate the row height always left a block of
+     empty, unstyled space below the ledger — first as dead space outside
+     the panel entirely, then — after an earlier attempt made ledger-panel
+     itself grow to fill it — as dead space *inside* the panel instead. Same
+     visual problem, just moved.
+     The fix goes the other direction: .main-col opts out of stretch
+     (align-self:start) and sits at its own natural height, then JS
+     (syncDashGridHeight, called after every renderBlock) measures that
+     natural height and pins it as the grid row's explicit height via
+     grid-template-rows. side-col (still default-stretch) is forced to that
+     same height, so its .rank-panel.grow + .rank-scroll — flex:1;min-height:0;
+     overflow-y:auto, already written for exactly this — finally has a real
+     bounded parent to clip against and scrolls the agents list instead of
+     growing the page. Wallet Summary's own natural height is what "bases
+     the footer" now, not the agents list. */
+  .main-col{align-self:start;}
+
+  /* ===== Section labels ===== */
+  .section-label{
+    font-size:11px;font-weight:600;color:var(--text-low);
+    text-transform:uppercase;letter-spacing:.07em;
+    margin:22px 0 10px;
+  }
+
+  /* ===== Balance Overview cards ===== */
+  .overview-grid{display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-bottom:6px;}
+  .overview-card{padding:18px 20px;opacity:0;animation:panelFadeUp .5s ease-out forwards;}
+  .overview-card:nth-child(2){animation-delay:.1s;}
+  .bar-tooltip-track{height:4px;border-radius:20px;background:var(--hair);overflow:hidden;margin-top:6px;}
+  .bar-tooltip-fill{height:100%;border-radius:20px;background:var(--brass);transition:width 1s cubic-bezier(.4,0,.2,1);}
+  .overview-head{margin-bottom:16px;}
+  .overview-title{font-size:14px;font-weight:700;display:flex;align-items:center;gap:8px;}
+  .ov-dot{width:7px;height:7px;border-radius:50%;display:inline-block;}
+
+  .ov-ending{margin:0 0 16px;}
+  .ov-ending .lbl{font-size:11.5px;color:var(--text-mid);margin-bottom:3px;}
+  .ov-ending .val.big{font-family:var(--mono);font-size:26px;font-weight:700;line-height:1.1;}
+  .ov-ending .delta-line{font-size:11.5px;font-family:var(--mono);margin-top:7px;}
+
+  .ov-metrics{display:grid;grid-template-columns:repeat(5,1fr);gap:8px;margin-bottom:16px;}
+  .ov-metric{background:var(--ink-2);border:1px solid var(--hair);border-radius:8px;padding:10px 10px;min-width:0;}
+  .ov-metric .ml{font-size:9.5px;color:var(--text-low);text-transform:uppercase;letter-spacing:.03em;margin-bottom:5px;white-space:nowrap;}
+  .ov-metric .mv{font-family:var(--mono);font-size:12.5px;font-weight:700;color:var(--text-hi);white-space:nowrap;}
+
+  .ov-progress{background:var(--brass-dim);border-radius:8px;padding:12px 14px;margin-bottom:16px;}
+  .ov-row{display:flex;align-items:center;justify-content:space-between;gap:10px;}
+  .ov-progress .val{font-family:var(--mono);font-weight:700;color:var(--brass);}
+  .ov-progress .lbl{font-size:11.5px;color:var(--text-mid);}
+  .ov-progress.idle .lbl{color:var(--text-hi);font-weight:600;}
+  .ov-progress .lbl .today-accent{color:var(--brass);font-weight:700;}
+  .ov-no-activity-badge{font-size:10px;font-weight:700;letter-spacing:.04em;text-transform:uppercase;background:var(--ink-1);color:var(--text-mid);border:1px solid var(--hair);padding:4px 10px;border-radius:20px;white-space:nowrap;}
+  .ov-no-activity-msg{font-size:11.5px;color:var(--text-low);margin-top:8px;}
+  .ov-progress-quota-list{margin-top:10px;padding-top:10px;border-top:1px solid var(--brass-dim);display:flex;flex-direction:column;gap:7px;}
+  .ov-progress-quota{display:flex;align-items:center;gap:10px;font-size:11px;}
+  .ov-progress-quota .qn{width:54px;flex-shrink:0;color:var(--text-mid);font-weight:600;}
+  .ov-progress-quota .qtrack{flex:1;height:4px;background:var(--ink-1);border-radius:4px;overflow:hidden;}
+  .ov-progress-quota .qfill{height:100%;border-radius:4px;background:var(--brass);transition:width 1s cubic-bezier(.4,0,.2,1);}
+  .ov-progress-quota .qfill.noquota{background:var(--text-low);}
+  .ov-progress-quota .qstat{width:110px;flex-shrink:0;text-align:right;font-family:var(--mono);font-weight:700;font-size:10.5px;}
+  .ov-progress-quota .qstat.met{color:var(--pos);}
+  .ov-progress-quota .qstat.pending{color:var(--text-mid);}
+
+  /* No-quota products (Bundle Transfer) list active wallets as chips
+     instead of quota-progress rows — one per wallet that actually moved
+     volume today, so a day with only 1 active wallet shows just 1 chip. */
+  .ov-progress-chip-list{margin-top:10px;padding-top:10px;border-top:1px solid var(--brass-dim);display:flex;align-items:center;gap:8px;flex-wrap:wrap;}
+  .ov-chip{display:inline-flex;align-items:center;gap:5px;background:var(--ink-1);border:1px solid var(--hair);border-radius:20px;padding:4px 10px 4px 8px;font-size:11px;font-weight:600;color:var(--text-mid);}
+  .ov-chip .cdot{width:6px;height:6px;border-radius:50%;flex-shrink:0;}
+  .ov-chip .cval{color:var(--text-hi);font-family:var(--mono);font-weight:700;}
+  .ov-progress-quota .qstat.noquota{color:var(--text-low);font-weight:600;}
+
+  .ov-wallet-label{font-size:10px;font-weight:600;color:var(--text-low);text-transform:uppercase;letter-spacing:.05em;margin-bottom:10px;}
+  .ov-wallet-row{display:grid;grid-template-columns:repeat(4,1fr);gap:8px;}
+  .ov-wallet-card{background:var(--ink-2);border:1px solid var(--hair);border-radius:8px;padding:10px 10px;min-width:0;}
+  .ov-wallet-name{font-size:11.5px;font-weight:600;color:var(--text-hi);margin-bottom:3px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+  .ov-wallet-total{font-family:var(--mono);font-size:15px;font-weight:700;white-space:nowrap;}
+  .ov-wallet-change{font-family:var(--mono);font-size:10.5px;font-weight:700;margin-top:1px;}
+  .ov-wallet-bar{height:3px;border-radius:20px;background:var(--hair);overflow:hidden;margin:8px 0 6px;}
+  .ov-wallet-bar-fill{height:100%;border-radius:20px;background:var(--brass);transition:width 1s cubic-bezier(.4,0,.2,1);}
+  .ov-wallet-actual{font-size:10.5px;font-weight:600;color:var(--text-mid);line-height:1.4;}
+  .ov-wallet-coming{font-size:11px;color:var(--text-low);font-style:italic;padding:14px 0;text-align:center;}
+
+  @media (max-width:1300px){
+    .ov-metrics{grid-template-columns:repeat(3,1fr);}
+    .ov-wallet-row{grid-template-columns:1fr 1fr;}
+  }
+
+  /* ===== Brand tables ===== */
+  .brand-grid{display:grid;grid-template-columns:1fr 1fr;gap:14px;}
+  .brand-panel{padding:18px 20px;}
+  .brand-panel-head{display:flex;align-items:center;gap:10px;margin-bottom:14px;}
+  .brand-panel-icon{width:28px;height:28px;border-radius:8px;background:var(--ink-2);border:1px solid var(--hair);color:var(--text-mid);display:flex;align-items:center;justify-content:center;flex-shrink:0;}
+  .brand-panel-icon svg{width:14px;height:14px;}
+  .brand-panel-title{font-size:13.5px;font-weight:700;}
+  .brand-panel-sub{font-size:11px;color:var(--text-low);margin-top:1px;}
+  .export-btn-dark{
+    margin-left:auto;display:flex;align-items:center;gap:6px;
+    font-family:var(--sans);font-size:11.5px;font-weight:600;color:var(--text-mid);
+    background:var(--ink-2);border:1px solid var(--hair);border-radius:7px;padding:6px 12px;cursor:pointer;
+  }
+  .export-btn-dark:hover{color:var(--text-hi);border-color:var(--brass);}
+  .export-btn-dark svg{width:12px;height:12px;}
+  table.brand-table th, table.brand-table td{text-align:right;}
+  table.brand-table th:first-child, table.brand-table td:first-child{text-align:left;}
+
+  .chart-legend-row{margin-top:14px;}
+
+  @media (max-width:1100px){
+    .overview-grid, .brand-grid, .dash-grid{grid-template-columns:1fr;}
+  }
+</style>
+</head>
+<body>
+
+<div class="page">
+  <aside class="sidebar" id="sidebar">
+    <button class="sb-toggle" id="sb-toggle" aria-label="Collapse sidebar" title="Collapse sidebar">
+      <svg viewBox="0 0 16 16" fill="none"><path d="M10 3L5 8l5 5" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>
+    </button>
+    <div class="sb-brand">
+      <div class="sb-brand-name">OPERATIONS</div>
+      <div class="sb-brand-sub">Cashout desk</div>
+    </div>
+
+    <div class="sb-section">Overview</div>
+    <a class="sb-item active" href="#">
+      <svg viewBox="0 0 24 24" fill="none"><rect x="3" y="3" width="7" height="7" rx="1.5" stroke="currentColor" stroke-width="1.6"/><rect x="14" y="3" width="7" height="7" rx="1.5" stroke="currentColor" stroke-width="1.6"/><rect x="3" y="14" width="7" height="7" rx="1.5" stroke="currentColor" stroke-width="1.6"/><rect x="14" y="14" width="7" height="7" rx="1.5" stroke="currentColor" stroke-width="1.6"/></svg>
+      <span class="sb-label">Dashboard</span>
+      <span class="sb-tooltip">Dashboard</span>
+    </a>
+    <a class="sb-item" href="#">
+      <svg viewBox="0 0 24 24" fill="none"><path d="M3 11l9-7 9 7" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/><path d="M5 10v9a1 1 0 001 1h12a1 1 0 001-1v-9" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>
+      <span class="sb-label">SSP Overview</span>
+      <span class="sb-tooltip">SSP Overview</span>
+    </a>
+
+    <div class="sb-section">Operations</div>
+    <a class="sb-item" href="#">
+      <svg viewBox="0 0 24 24" fill="none"><rect x="3" y="7" width="18" height="13" rx="1.6" stroke="currentColor" stroke-width="1.6"/><path d="M3 11h18M8 4h8" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>
+      <span class="sb-label">Balance</span>
+      <span class="sb-tooltip">Balance</span>
+    </a>
+    <a class="sb-item" href="#">
+      <svg viewBox="0 0 24 24" fill="none"><path d="M4 4h16v16H4z" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/><path d="M8 8h8M8 12h8M8 16h5" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>
+      <span class="sb-label">Opening</span>
+      <span class="sb-tooltip">Opening</span>
+    </a>
+    <a class="sb-item" href="#">
+      <svg viewBox="0 0 24 24" fill="none"><path d="M4 7h16M16 3l4 4-4 4" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/><path d="M20 17H4M8 21l-4-4 4-4" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>
+      <span class="sb-label">Settlement</span>
+      <span class="sb-tooltip">Settlement</span>
+    </a>
+    <a class="sb-item" href="#">
+      <svg viewBox="0 0 24 24" fill="none"><circle cx="12" cy="12" r="9" stroke="currentColor" stroke-width="1.6"/><path d="M12 8v8M8 12h8" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>
+      <span class="sb-label">Top Up</span>
+      <span class="sb-tooltip">Top Up</span>
+    </a>
+
+    <div class="sb-section">Monitoring</div>
+    <a class="sb-item" href="#">
+      <svg viewBox="0 0 24 24" fill="none"><path d="M17 7l4 4-4 4M7 17l-4-4 4-4" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/><path d="M3 12h18" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>
+      <span class="sb-label">Transfer Queue</span>
+      <span class="dot"></span>
+      <span class="sb-tooltip">Transfer Queue</span>
+    </a>
+    <a class="sb-item" href="#">
+      <svg viewBox="0 0 24 24" fill="none"><path d="M3 7a2 2 0 012-2h13a2 2 0 012 2v10a2 2 0 01-2 2H5a2 2 0 01-2-2V7z" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/><path d="M3 9h18" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/><path d="M15 14h3" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>
+      <span class="sb-label">Wallet Status</span>
+      <span class="sb-tooltip">Wallet Status</span>
+    </a>
+
+    <div class="sb-section">Settings</div>
+    <a class="sb-item" href="#">
+      <svg viewBox="0 0 24 24" fill="none"><circle cx="12" cy="12" r="3" stroke="currentColor" stroke-width="1.6"/><path d="M19 12a7 7 0 00-.14-1.4l2-1.55-2-3.46-2.36.95a7 7 0 00-2.42-1.4L13.6 3h-4l-.48 2.14a7 7 0 00-2.42 1.4l-2.36-.95-2 3.46 2 1.55a7 7 0 000 2.8l-2 1.55 2 3.46 2.36-.95a7 7 0 002.42 1.4L9.6 21h4l.48-2.14a7 7 0 002.42-1.4l2.36.95 2-3.46-2-1.55c.09-.46.14-.93.14-1.4z" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round"/></svg>
+      <span class="sb-label">Settings</span>
+      <span class="sb-tooltip">Settings</span>
+    </a>
+  </aside>
+
+  <div class="content">
+  <div class="wrap">
+
+    <div class="page-title-row">
+      <div>
+        <div class="page-eyebrow">Cashout &amp; Send Money</div>
+        <div class="page-title">Operations Overview</div>
+      </div>
+      <div class="header-actions-r">
+        <span class="last-updated" id="last-updated"></span>
+        <button class="theme-toggle" onclick="refreshDashboard()" id="refresh-btn" aria-label="Refresh dashboard">
+          <svg viewBox="0 0 16 16" fill="none" id="refresh-icon"><path d="M13.5 8a5.5 5.5 0 10-1.6 3.9M13.5 8V4.5M13.5 8H10" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"/></svg>
+        </button>
+        <button class="theme-toggle" onclick="toggleTheme()" id="theme-toggle-btn" aria-label="Toggle light and dark mode">
+          <svg viewBox="0 0 16 16" fill="none" id="theme-icon"><circle cx="8" cy="8" r="3.4" stroke="currentColor" stroke-width="1.3"/><path d="M8 1.4v1.4M8 13.2v1.4M2.8 8H1.4M14.6 8h-1.4M3.9 3.9l1 1M11.1 11.1l1 1M3.9 12.1l1-1M11.1 4.9l1-1" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/></svg>
+        </button>
+        <div class="admin-chip">
+          <div class="admin-avatar">AD</div>
+          <div>
+            <div class="admin-name">Admin</div>
+            <div class="admin-role">Administrator</div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Balance Overview: Cashout + Send Money side by side, always shown -->
+    <div class="section-label">Today&rsquo;s Insights</div>
+    <div class="overview-grid">
+      <div class="panel overview-card">
+        <div class="overview-head">
+          <span class="overview-title cashout"><i class="ov-dot" style="background:var(--brass)"></i>Cashout</span>
+        </div>
+        <div id="overview-cashout"></div>
+      </div>
+      <div class="panel overview-card">
+        <div class="overview-head">
+          <span class="overview-title sendmoney"><i class="ov-dot" style="background:var(--pos)"></i>Send Money</span>
+        </div>
+        <div id="overview-sendmoney"></div>
+      </div>
+    </div>
+
+    <div id="line-blocks"></div>
+
+    <!-- Running Balance by Brand: two tables side by side -->
+    <div class="section-label">Running Balance by Brand</div>
+    <div class="brand-grid">
+      <div class="panel brand-panel">
+        <div class="brand-panel-head">
+          <div class="brand-panel-icon"><svg viewBox="0 0 16 16" fill="none"><rect x="2" y="4" width="12" height="9" rx="1.6" stroke="currentColor" stroke-width="1.3"/><path d="M2 7h12" stroke="currentColor" stroke-width="1.3"/></svg></div>
+          <div>
+            <div class="brand-panel-title">SSP Line 1: Cashout</div>
+            <div class="brand-panel-sub">Smart Solution running balance by brand</div>
+          </div>
+          <button class="export-btn-dark">
+            <svg viewBox="0 0 16 16" fill="none"><path d="M8 2v8m0 0L5 7m3 3l3-3M3 12.5h10" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"/></svg>
+            Export
+          </button>
+        </div>
+        <table class="ledger brand-table">
+          <thead><tr><th>Brand</th><th>Opening</th><th>Deposit</th><th>Withdrawal</th><th>Top Up</th><th>Settlement</th><th>Total</th></tr></thead>
+          <tbody id="brand-table-1"></tbody>
+        </table>
+      </div>
+
+      <div class="panel brand-panel">
+        <div class="brand-panel-head">
+          <div class="brand-panel-icon"><svg viewBox="0 0 16 16" fill="none"><rect x="2" y="4" width="12" height="9" rx="1.6" stroke="currentColor" stroke-width="1.3"/><path d="M2 7h12" stroke="currentColor" stroke-width="1.3"/></svg></div>
+          <div>
+            <div class="brand-panel-title">SSP Line 2: Send Money</div>
+            <div class="brand-panel-sub">Smart Solution running balance by brand</div>
+          </div>
+          <button class="export-btn-dark">
+            <svg viewBox="0 0 16 16" fill="none"><path d="M8 2v8m0 0L5 7m3 3l3-3M3 12.5h10" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"/></svg>
+            Export
+          </button>
+        </div>
+        <table class="ledger brand-table">
+          <thead><tr><th>Brand</th><th>Opening</th><th>Deposit</th><th>Withdrawal</th><th>Top Up</th><th>Settlement</th><th>Total</th></tr></thead>
+          <tbody id="brand-table-2"></tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- Brand Balance / Cash in Hand, global across lines -->
+    <div class="section-label">Brand Balance &middot; Cash In Hand</div>
+    <div class="panel brand-panel" style="margin-bottom:20px;">
+      <div class="brand-panel-head">
+        <div class="brand-panel-icon"><svg viewBox="0 0 16 16" fill="none"><rect x="2" y="3" width="12" height="10" rx="1.4" stroke="currentColor" stroke-width="1.3"/><path d="M2 6.5h12" stroke="currentColor" stroke-width="1.3"/></svg></div>
+        <div>
+          <div class="brand-panel-title">Brand Balance</div>
+          <div class="brand-panel-sub">Summary of cash in hand by brand and payment gateway</div>
+        </div>
+        <button class="export-btn-dark">
+          <svg viewBox="0 0 16 16" fill="none"><path d="M8 2v8m0 0L5 7m3 3l3-3M3 12.5h10" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"/></svg>
+          Export
+        </button>
+      </div>
+      <table class="ledger brand-table">
+        <thead><tr><th>Brand</th><th>CashOut</th><th>SendMoney</th><th>ESS</th><th>Autopay</th><th>Expay</th><th>Total CIH</th></tr></thead>
+        <tbody id="cih-table"></tbody>
+      </table>
+    </div>
+
+  </div>
+  </div>
+</div>
+
+<script>
+/* ---- theme toggle ---- */
+const moonPath = '<path d="M13.2 9.8A5.6 5.6 0 016.2 2.8a5.6 5.6 0 107 7z" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round"/>';
+const sunPath = '<circle cx="8" cy="8" r="3.4" stroke="currentColor" stroke-width="1.3"/><path d="M8 1.4v1.4M8 13.2v1.4M2.8 8H1.4M14.6 8h-1.4M3.9 3.9l1 1M11.1 11.1l1 1M3.9 12.1l1-1M11.1 4.9l1-1" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/>';
+function toggleTheme(){
+  const isLight = document.documentElement.classList.toggle('light');
+  document.getElementById('theme-icon').innerHTML = isLight ? moonPath : sunPath;
+  // No chart re-render needed: the wave chart's fills/strokes reference
+  // theme colors via CSS var() directly in their SVG attributes, so they
+  // repaint automatically when the .light class flips — unlike the old bar
+  // chart, which baked getComputedStyle() colors into literal hex strings
+  // at render time and needed a manual rebuild to pick up the new theme.
+}
+
+/* ---- sidebar collapse/expand ---- */
+// Persisted the same way the real app's own sidebar does (localStorage,
+// applied on load before first paint isn't possible here since this is a
+// static file loaded via <script> at the bottom — read+applied
+// immediately on parse instead, right after the <aside> itself exists in
+// the DOM, to keep the flash of the wrong state as short as possible).
+const sidebarEl = document.getElementById('sidebar');
+const sbToggleBtn = document.getElementById('sb-toggle');
+function setSidebarCollapsed(collapsed){
+  sidebarEl.classList.toggle('collapsed', collapsed);
+  sbToggleBtn.title = collapsed ? 'Expand sidebar' : 'Collapse sidebar';
+  sbToggleBtn.setAttribute('aria-label', sbToggleBtn.title);
+  localStorage.setItem('demoSidebarCollapsed', collapsed ? 'true' : 'false');
+}
+setSidebarCollapsed(localStorage.getItem('demoSidebarCollapsed') === 'true');
+sbToggleBtn.addEventListener('click', () => setSidebarCollapsed(!sidebarEl.classList.contains('collapsed')));
+
+function setLastUpdated(){
+  document.getElementById('last-updated').textContent = 'Updated ' + new Date().toLocaleTimeString('en-GB');
+}
+function refreshDashboard(){
+  const icon = document.getElementById('refresh-icon');
+  icon.classList.remove('spinning');
+  void icon.offsetWidth;
+  icon.classList.add('spinning');
+  loadLiveData();
+}
+setLastUpdated();
+
+function fmtM(n){ return (Math.round(n/10000)/100).toLocaleString() + 'M'; }
+function fmt2(n){ return n.toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:2}); }
+function cell(n){
+  if (n === null || n === undefined) return '<span class="num-muted">&ndash;</span>';
+  if (typeof n === 'string') return `<span class="num-muted">${n}</span>`;
+  const cls = n < 0 ? 'num-neg' : 'num-pos';
+  return `<span class="${cls}">${fmt2(n)}</span>`;
+}
+
+/* =========================================================
+   DATA — Line 1 (Cashout) and Line 2 (Send Money)
+   ========================================================= */
+const lineData = {
+  '1-cashout': {
+    dep:33360752.57, wd:34381108.15, actual:100090072.68, running:208393511.70, changeVsOpening:24267909.41,
+    chartTitle:'CashGo Trend', chartSubBase:'Daily CashGo volume',
+    legend:[{label:'Bkash',color:'--bkash'},{label:'Nagad',color:'--nagad'}],
+    chart:[
+      {date:'08/25', bkash:1.5, nagad:1.3},{date:'08/26', bkash:0.9, nagad:0.7},
+      {date:'08/27', bkash:0.7, nagad:0.6},{date:'08/28', bkash:2.7, nagad:2.2},
+      {date:'08/29', bkash:2.8, nagad:2.2},{date:'08/30', bkash:2.8, nagad:2.2},
+      {date:'08/31', bkash:2.8, nagad:2.2},
+    ],
+    chart30:[
+      {date:'08/03', bkash:2.1, nagad:1.7},{date:'08/04', bkash:1.9, nagad:1.6},
+      {date:'08/05', bkash:1.4, nagad:1.1},{date:'08/06', bkash:1.6, nagad:1.3},
+      {date:'08/07', bkash:2.3, nagad:1.9},{date:'08/08', bkash:2.5, nagad:2.0},
+      {date:'08/09', bkash:2.4, nagad:2.0},{date:'08/10', bkash:1.8, nagad:1.5},
+      {date:'08/11', bkash:1.5, nagad:1.2},{date:'08/12', bkash:1.7, nagad:1.4},
+      {date:'08/13', bkash:2.2, nagad:1.8},{date:'08/14', bkash:2.6, nagad:2.1},
+      {date:'08/15', bkash:2.7, nagad:2.2},{date:'08/16', bkash:2.0, nagad:1.6},
+      {date:'08/17', bkash:1.6, nagad:1.3},{date:'08/18', bkash:1.4, nagad:1.1},
+      {date:'08/19', bkash:1.9, nagad:1.5},{date:'08/20', bkash:2.4, nagad:1.9},
+      {date:'08/21', bkash:2.8, nagad:2.2},{date:'08/22', bkash:2.6, nagad:2.1},
+      {date:'08/23', bkash:1.9, nagad:1.5},{date:'08/24', bkash:1.6, nagad:1.3},
+      {date:'08/25', bkash:1.5, nagad:1.3},{date:'08/26', bkash:0.9, nagad:0.7},
+      {date:'08/27', bkash:0.7, nagad:0.6},{date:'08/28', bkash:2.7, nagad:2.2},
+      {date:'08/29', bkash:2.8, nagad:2.2},{date:'08/30', bkash:2.8, nagad:2.2},
+      {date:'08/31', bkash:2.8, nagad:2.2},
+    ],
+    wallets:[
+      { name:'BKASH',  dp:11557685.57, wd:-10468302.36, mid:5089482.99,  settlement:null,    actual:20954513.50, running:78390823.78, change:6178866.20 },
+      { name:'NAGAD',  dp:20479591.00, wd:-22838430.79, mid:20348782.00, settlement:-150000.00, actual:39445665.21, running:62031864.34, change:17839942.21 },
+      { name:'ROCKET', dp:1075304.00,  wd:-968608.00,   mid:null,        settlement:null,    actual:26217356.72, running:48667009.68, change:106696.00 },
+      { name:'UPAY',   dp:248172.00,   wd:-105767.00,   mid:null,        settlement:null,    actual:13472537.25, running:19303813.90, change:142405.00 },
+    ],
+    topPerformers:[
+      { name:'NAGAD',  bal:39445665.21, pnl:-2358839.79 },
+      { name:'ROCKET', bal:26217356.72, pnl:106696.00 },
+      { name:'UPAY',   bal:13472537.25, pnl:142405.00 },
+      { name:'BKASH',  bal:20954513.50, pnl:1089383.21 },
+    ],
+    agents:[
+      { code:'N-B1AG-S1-LUFFY043-BK',  inside:275.80,    pnl:952879.00 },
+      { code:'KAYO008',                inside:332428.50, pnl:81065.00 },
+      { code:'BREACH033',              inside:177112.70, pnl:78975.00 },
+      { code:'BREACH047',              inside:149225.26, pnl:75255.00 },
+      { code:'KAYO045',                inside:98274.22,  pnl:69124.00 },
+      { code:'N-K1AG-E1-BLOOD007-NG',  inside:62973.50,  pnl:61940.00 },
+      { code:'KAYO041',                inside:61426.12,  pnl:61410.00 },
+      { code:'KAYO040',                inside:61272.27,  pnl:60900.00 },
+      { code:'KAYO022',                inside:183435.27, pnl:56402.00 },
+      { code:'CYPHER011',              inside:76683.91,  pnl:54237.00 },
+      { code:'KAYO005',                inside:232239.13, pnl:53280.00 },
+      { code:'KAYO009',                inside:109800.14, pnl:53245.00 },
+      { code:'GARNET017',              inside:134536.92, pnl:52760.00 },
+      { code:'N-K1AG-E1-BLOOD015-NG',  inside:51212.30,  pnl:50760.00 },
+    ],
+  },
+  '2-sendmoney': {
+    dep:25480612.93, wd:49826598.65, actual:155478576.74, running:221883271.27, changeVsOpening:-45235011.86,
+    chartTitle:'Bundle Transfer Trend', chartSubBase:'Daily bundle volume',
+    legend:[{label:'Nagad',color:'--pos'},{label:'Rocket',color:'--nagad'},{label:'Upay',color:'--upay'}],
+    chart:[], // coming soon — no volume data published yet for this line
+    chart30:[],
+    comingSoon:true,
+    wallets:[
+      { name:'BKASH',  comingSoon:true },
+      { name:'NAGAD',  dp:10056458.20, wd:-31645013.65, mid:null, settlement:-20395458.00, actual:58109130.90, running:93957248.98, change:-41984013.45 },
+      { name:'ROCKET', dp:4452476.70,  wd:-4262359.00,  mid:null, settlement:null,          actual:35545484.73, running:46155062.96, change:190117.70 },
+      { name:'UPAY',   dp:1867686.00,  wd:-2318602.00,  mid:null, settlement:null,          actual:38857416.82, running:43752859.80, change:-450916.00 },
+    ],
+    topPerformers:[
+      { name:'NAGAD',          bal:58109130.90, pnl:-21601736.45 },
+      { name:'UPAY',           bal:38857416.82, pnl:-445283.00 },
+      { name:'Bundle Deposit', bal:3157102.62,  pnl:84921.00 },
+      { name:'ROCKET',         bal:35545484.73, pnl:112744.70 },
+    ],
+    agents:[
+      { code:'N-T1PS2-NAVY036-BK',   inside:34267.10, pnl:33300.00 },
+      { code:'N-M2PS2-MADARA019-BK', inside:34295.00, pnl:33000.00 },
+      { code:'N-M2PS2-MIRANA066-BK', inside:33146.26, pnl:31445.00 },
+      { code:'N-M2PS4-MIRANA079-BK', inside:30689.40, pnl:30600.00 },
+      { code:'N-B5PS3-SUNNY040-BK',  inside:32677.00, pnl:30290.00 },
+      { code:'N-B1PS1-AMFAN018E-BK', inside:32343.00, pnl:30000.00 },
+      { code:'N-M1PS3-ARCANE095-BK', inside:32347.08, pnl:29730.00 },
+      { code:'N-M2PS2-VAN028-BK',    inside:33405.25, pnl:29700.00 },
+      { code:'N-T1PS2-NAVY034-BK',   inside:28408.61, pnl:27900.00 },
+      { code:'N-M1PS4-VIN023-UP',    inside:41146.15, pnl:26100.00 },
+    ],
+  }
+};
+
+/* Balance Overview cards (always shown, both types) */
+const overviewData = {
+  cashout:{
+    opening:184125602.29, deposit:33360752.57, withdrawal:-34381108.15, topup:25438264.99, settlement:-150000.00,
+    ending:208393511.70, endingChange:24267909.41,
+    progressLabel:'CashGo &middot; Today', progressValue:5.26, progressQuota:5,
+    todayWallets:[
+      { name:'Bkash', value:3.67, quota:undefined },
+      { name:'Nagad', value:1.60, quota:5 },
+    ],
+    wallets:[
+      { name:'Bkash',  total:78.39, change:6.18, actual:20.95 },
+      { name:'Nagad',  total:62.33, change:18.14, actual:39.45 },
+      { name:'Rocket', total:48.67, change:0.1067, actual:26.22 },
+      { name:'UPay',   total:19.30, change:0.14241, actual:13.47 },
+    ]
+  },
+  sendmoney:{
+    opening:266730926.99, deposit:25480612.93, withdrawal:-49826598.65, topup:0.00, settlement:-20501670.00,
+    ending:221883271.27, endingChange:-44847655.72,
+    progressLabel:'Bundle Transfer &middot; Today', progressValue:0.46, progressQuota:0.46,
+    todayWallets:[
+      { name:'Nagad', value:0.46 },
+    ],
+    wallets:[
+      { name:'Bkash',  comingSoon:true },
+      { name:'Nagad',  total:93.96, change:-41.98, actual:58.11 },
+      { name:'Rocket', total:46.16, change:0.19012, actual:35.55 },
+      { name:'UPay',   total:43.73, change:0.47622, actual:38.86 },
+    ]
+  }
+};
+
+/* Running balance by brand tables — placeholder, mirrors the "no data yet" state shown */
+const brandTableData = {
+  '1': [
+    { brand:'M1', opening:64032137.97,  deposit:23075783.57, withdrawal:14031344.05, topup:16685456.99, settlement:-122989.00, total:89639045.48 },
+    { brand:'M2', opening:13351219.14,  deposit:1453846.00,  withdrawal:1400586.64,  topup:7080350.00,  settlement:null,       total:20484828.50 },
+    { brand:'K1', opening:43976910.65,  deposit:2191471.00,  withdrawal:3306997.00,  topup:null,        settlement:-27011.00,  total:42834373.65 },
+    { brand:'B1', opening:77134448.99,  deposit:5390324.00,  withdrawal:8049819.46,  topup:null,        settlement:null,       total:74474953.54 },
+    { brand:'B2', opening:14227619.92,  deposit:810911.00,   withdrawal:1568777.00,  topup:null,        settlement:null,       total:13469753.92 },
+    { brand:'B3', opening:-2667423.72,  deposit:201117.00,   withdrawal:612509.00,   topup:null,        settlement:null,       total:-3078815.72 },
+    { brand:'B4', opening:17737491.98,  deposit:300135.00,   withdrawal:571905.00,   topup:null,        settlement:null,       total:17465721.98 },
+    { brand:'B5', opening:-22323148.42, deposit:89363.00,    withdrawal:100955.00,   topup:577555.00,   settlement:null,       total:-21757185.42 },
+    { brand:'T1', opening:-11305457.71, deposit:164223.00,   withdrawal:279277.00,   topup:529421.00,   settlement:null,       total:-10891090.71 },
+    { brand:'J1', opening:-10058438.98, deposit:72878.00,    withdrawal:112311.00,   topup:565482.00,   settlement:null,       total:-9532389.98 },
+  ],
+  '2': [
+    { brand:'M1', opening:128099761.50, deposit:19352116.43, withdrawal:44058039.54, topup:null, settlement:-11748862.00, total:91644976.39 },
+    { brand:'M2', opening:24926309.08,  deposit:1074424.50,  withdrawal:2440432.13,  topup:null, settlement:-7080350.00,  total:16479951.45 },
+    { brand:'K1', opening:82712862.43,  deposit:1162067.00,  withdrawal:544127.00,   topup:null, settlement:null,          total:83330802.43 },
+    { brand:'B1', opening:8088295.10,   deposit:2913127.00,  withdrawal:2483294.98,  topup:null, settlement:null,          total:8518127.12 },
+    { brand:'B2', opening:14038774.36,  deposit:557202.00,   withdrawal:508199.00,   topup:null, settlement:null,          total:14087777.36 },
+    { brand:'B3', opening:138301.29,    deposit:134114.00,   withdrawal:49931.00,    topup:null, settlement:null,          total:222484.29 },
+    { brand:'B4', opening:5960356.35,   deposit:133530.00,   withdrawal:155000.00,   topup:null, settlement:null,          total:5938886.35 },
+    { brand:'B5', opening:1173617.49,   deposit:90892.00,    withdrawal:56025.00,    topup:null, settlement:-577555.00,    total:630929.49 },
+    { brand:'T1', opening:774264.50,    deposit:206610.00,   withdrawal:5000.00,     topup:null, settlement:-529421.00,    total:446453.50 },
+    { brand:'J1', opening:1208087.20,   deposit:16375.00,    withdrawal:1220.00,     topup:null, settlement:-565482.00,    total:657760.20 },
+  ],
+};
+function neutralCell(n){
+  if (n === null || n === undefined) return '<span class="num-muted">&ndash;</span>';
+  return n < 0 ? `<span class="num-neg">${fmt2(n)}</span>` : fmt2(n);
+}
+function renderBrandTable(elId, rowsData){
+  let sum = { opening:0, deposit:0, withdrawal:0, topup:0, settlement:0, total:0 };
+  const rows = rowsData.map(r=>{
+    sum.opening += r.opening; sum.deposit += r.deposit; sum.withdrawal += r.withdrawal;
+    sum.topup += r.topup||0; sum.settlement += r.settlement||0; sum.total += r.total;
+    return `
+      <tr>
+        <td>${r.brand}</td>
+        <td>${neutralCell(r.opening)}</td><td>${fmt2(r.deposit)}</td><td>${fmt2(r.withdrawal)}</td>
+        <td>${neutralCell(r.topup)}</td><td>${neutralCell(r.settlement)}</td><td style="font-weight:700">${neutralCell(r.total)}</td>
+      </tr>
+    `;
+  }).join('');
+  document.getElementById(elId).innerHTML = rows + `
+    <tr class="total-row">
+      <td>Total</td>
+      <td>${neutralCell(sum.opening)}</td><td>${fmt2(sum.deposit)}</td><td>${fmt2(sum.withdrawal)}</td>
+      <td>${neutralCell(sum.topup)}</td><td>${neutralCell(sum.settlement)}</td><td>${neutralCell(sum.total)}</td>
+    </tr>
+  `;
+}
+renderBrandTable('brand-table-1', brandTableData['1']);
+renderBrandTable('brand-table-2', brandTableData['2']);
+
+/* Brand Balance / Cash in Hand — global table */
+const cihData = [
+  { brand:'M1', cashout:89639045.48,  sendmoney:91644976.39, ess:45064921.63, autopay:-1436887.82, expay:-3191212.72, total:221720842.96 },
+  { brand:'M2', cashout:20484828.50,  sendmoney:16479951.45, ess:21726124.38, autopay:410411.85,    expay:970160.65,   total:60071476.83 },
+  { brand:'K1', cashout:42834373.65,  sendmoney:83330802.43, ess:20343069.06, autopay:303661.41,    expay:497096.91,   total:147309003.46 },
+  { brand:'B1', cashout:74474953.54,  sendmoney:8518127.12,  ess:23811560.01, autopay:350527.93,    expay:-1118576.92, total:106036591.67 },
+  { brand:'B2', cashout:13469753.92,  sendmoney:14087777.36, ess:12666298.55, autopay:282749.18,    expay:964222.61,   total:41470801.62 },
+  { brand:'B3', cashout:-3078815.72,  sendmoney:222484.29,   ess:-3143201.10, autopay:'ns',         expay:1898433.37,  total:-4101099.16 },
+  { brand:'B4', cashout:17465721.98,  sendmoney:5938886.35,  ess:-3930657.44, autopay:'ns',         expay:1613009.71,  total:21086960.60 },
+  { brand:'B5', cashout:-21757185.42, sendmoney:630929.49,   ess:-735184.89,  autopay:'ns',         expay:201025.71,   total:-21660415.11 },
+  { brand:'T1', cashout:-10891090.71, sendmoney:446453.50,   ess:2474846.23,  autopay:'ns',         expay:121039.35,   total:-7848751.63 },
+  { brand:'J1', cashout:-9532389.98,  sendmoney:657760.20,   ess:1976307.93,  autopay:'ns',         expay:52506.85,    total:-6845815.00 },
+];
+function cihCell(n){
+  if (n === 'ns') return '<span class="num-muted" style="font-style:italic">Not supported</span>';
+  return neutralCell(n);
+}
+const cihSum = { cashout:0, sendmoney:0, ess:0, autopay:0, expay:0, total:0 };
+const cihRows = cihData.map(r=>{
+  cihSum.cashout += r.cashout; cihSum.sendmoney += r.sendmoney; cihSum.ess += r.ess; cihSum.total += r.total;
+  if (r.autopay !== 'ns') cihSum.autopay += r.autopay;
+  cihSum.expay += r.expay;
+  return `
+    <tr>
+      <td>${r.brand}</td>
+      <td>${neutralCell(r.cashout)}</td><td>${neutralCell(r.sendmoney)}</td><td>${neutralCell(r.ess)}</td>
+      <td>${cihCell(r.autopay)}</td><td>${neutralCell(r.expay)}</td><td style="font-weight:700">${neutralCell(r.total)}</td>
+    </tr>
+  `;
+}).join('');
+document.getElementById('cih-table').innerHTML = cihRows + `
+  <tr class="total-row">
+    <td>Total PG CIH</td>
+    <td>${neutralCell(cihSum.cashout)}</td><td>${neutralCell(cihSum.sendmoney)}</td><td>${neutralCell(cihSum.ess)}</td>
+    <td>${neutralCell(cihSum.autopay)}</td><td>${neutralCell(cihSum.expay)}</td><td>${neutralCell(cihSum.total)}</td>
+  </tr>
+`;
+
+const CHIP_DOT_COLORS = {Bkash:'var(--bkash)', Nagad:'var(--nagad)', Rocket:'#22b8cf', Upay:'#ec8fc0'};
+// Two shapes depending on whether the product has a quota concept at all:
+// CashGo's wallets always carry a quota field (even if 0 for "No Quota"),
+// so it renders as progress-bar rows; Bundle Transfer's wallets never do
+// (no quota concept in the real app), so it renders as a plain chip list —
+// one chip per wallet that actually moved volume today, none padded in.
+function renderTodayWallets(todayWallets){
+  const wallets = todayWallets || [];
+  if (!wallets.length) return '';
+  const hasQuotaConcept = wallets.some(w => w.quota !== undefined);
+  if (!hasQuotaConcept){
+    return `
+      <div class="ov-progress-chip-list">
+        ${wallets.map(w => `
+          <span class="ov-chip">
+            <span class="cdot" style="background:${CHIP_DOT_COLORS[w.name]||'var(--brass)'}"></span>
+            ${w.name} <span class="cval">${w.value.toFixed(2)}M</span>
+          </span>
+        `).join('')}
+      </div>`;
+  }
+  return `
+    <div class="ov-progress-quota-list">
+      ${wallets.map(w => {
+        const hasQuota = !!w.quota && w.quota > 0;
+        if (!hasQuota){
+          return `
+            <div class="ov-progress-quota">
+              <span class="qn">${w.name}</span>
+              <div class="qtrack"><div class="qfill noquota" style="width:0%"></div></div>
+              <span class="qstat noquota">No Quota</span>
+            </div>`;
+        }
+        const wPct = Math.round((w.value / w.quota) * 100);
+        const remaining = Math.max(w.quota - w.value, 0);
+        return `
+          <div class="ov-progress-quota">
+            <span class="qn">${w.name}</span>
+            <div class="qtrack"><div class="qfill" data-fill="${Math.min(wPct,100)}" style="width:0%"></div></div>
+            <span class="qstat ${remaining<=0?'met':'pending'}">${remaining<=0?'Quota met':remaining.toFixed(2)+'M left'}</span>
+          </div>`;
+      }).join('')}
+    </div>`;
+}
+
+/* ---- render Balance Overview cards ----
+   Structure adopted from the "liquidity wave"-series Balance Overview
+   mockup: ending balance leads, five flow metrics as individual boxed
+   cards (was one flat pill strip). Wallet Breakdown bars use one uniform
+   accent color (not per-wallet), per explicit instruction. The quota
+   highlight renders one row per d.todayWallets entry — CashGo genuinely
+   has 2 wallets (Bkash + Nagad), each with its own quota straight from
+   the 'CashGo' sheet (app/api/dashboard-demo/route.ts), always both shown
+   even when one has no quota (e.g. Bkash some days) — a wallet with real
+   processed volume but no quota still gets a "No Quota" row instead of
+   being hidden. Bundle Transfer has no per-wallet quota concept in the
+   real app at all, so its todayWallets is a single Nagad entry, same
+   line it always showed. */
+function renderOverviewCard(elId, d){
+  const hasActivity = d.progressValue > 0;
+  const maxWalletTotal = Math.max(...d.wallets.filter(w=>!w.comingSoon).map(w=>w.total));
+  const metrics = [
+    {l:'Opening', v:fmt2(d.opening), cls:''},
+    {l:'Deposit', v:fmt2(Math.abs(d.deposit)), cls:'num-pos'},
+    {l:'Withdrawal', v:fmt2(Math.abs(d.withdrawal)), cls:'num-neg'},
+    {l:'Top Up', v:fmt2(d.topup), cls:d.topup!==0?'num-pos':'num-muted'},
+    {l:'Settlement', v:fmt2(d.settlement), cls:d.settlement<0?'num-neg':'num-muted'},
+  ];
+  document.getElementById(elId).innerHTML = `
+    <div class="ov-ending">
+      <div class="lbl">Ending Balance</div>
+      <div class="val big">${fmt2(d.ending)}</div>
+      <div class="delta-line ${d.endingChange<0?'num-neg':'num-pos'}">${d.endingChange<0?'&#9660;':'&#9650;'} ${fmt2(Math.abs(d.endingChange))} vs opening</div>
+    </div>
+
+    <div class="ov-metrics">
+      ${metrics.map(m => `
+        <div class="ov-metric">
+          <div class="ml">${m.l}</div>
+          <div class="mv ${m.cls}">${m.v}</div>
+        </div>
+      `).join('')}
+    </div>
+
+    <div class="ov-progress ${hasActivity?'':'idle'}">
+      <div class="ov-row" style="margin-bottom:8px;">
+        <span class="lbl">${d.progressLabel.replace(/Today$/, '<span class="today-accent">Today</span>')}</span>
+        ${hasActivity ? `<span class="val">${d.progressValue.toFixed(2)}M</span>` : `<span class="ov-no-activity-badge">No Activity</span>`}
+      </div>
+      ${hasActivity ? renderTodayWallets(d.todayWallets) : `<div class="ov-no-activity-msg">No wallet has posted a transaction yet today.</div>`}
+    </div>
+
+    <div class="ov-wallet-label">Wallet Breakdown</div>
+    <div class="ov-wallet-row">
+      ${d.wallets.map(w => w.comingSoon ? `
+        <div class="ov-wallet-card">
+          <div class="ov-wallet-name">${w.name}</div>
+          <div class="ov-wallet-coming">Coming soon</div>
+        </div>
+      ` : `
+        <div class="ov-wallet-card">
+          <div class="ov-wallet-name">${w.name}</div>
+          <div class="ov-wallet-total">${w.total}M</div>
+          <div class="ov-wallet-change ${w.change<0?'num-neg':'num-pos'}">${w.change<0?'&#9660;':'&#9650;'} ${Math.abs(w.change).toFixed(2)}M</div>
+          <div class="ov-wallet-bar"><div class="ov-wallet-bar-fill" data-fill="${Math.round((w.total/maxWalletTotal)*100)}" style="width:0%"></div></div>
+          <div class="ov-wallet-actual">Actual ${w.actual}M</div>
+        </div>
+      `).join('')}
+    </div>
+  `;
+
+  // Bars start at width:0 (set above via data-fill) and grow to their real
+  // width on the next frame — same two-step "paint empty, then animate in"
+  // technique the reference mockup uses (renderAll's requestAnimationFrame
+  // + setTimeout), scoped to just this card's own container so Cashout and
+  // Send Money don't reset each other's bars when only one side re-renders.
+  const container = document.getElementById(elId);
+  requestAnimationFrame(() => {
+    setTimeout(() => {
+      container.querySelectorAll('[data-fill]').forEach(el => { el.style.width = el.dataset.fill + '%'; });
+    }, 80);
+  });
+
+  // The outer .panel.overview-card is static markup (only this inner div
+  // gets replaced above), so its CSS entrance animation only ever plays
+  // once on page load unless explicitly restarted — same remove/reflow/add
+  // trick refreshDashboard() already uses for the refresh icon's spin.
+  const panel = container.closest('.overview-card');
+  if (panel){
+    panel.style.animation = 'none';
+    void panel.offsetWidth;
+    panel.style.animation = '';
+  }
+}
+// ---- Live data ----
+// Balance Overview cards / Net Position / Total Deposit / Total Withdrawal /
+// Wallet Summary ledger / trend chart are real, fetched from
+// /api/dashboard-demo (same underlying Google Sheets data + computation the
+// real Dashboard pages use, server-side, Manila-timezone-safe). Top
+// Performer Wallet, High Volume Agents, Running Balance by Brand, and Cash
+// In Hand stay as this file's own hardcoded mock arrays above — left
+// untouched per explicit instruction. The mock numbers already assigned to
+// overviewData/lineData above double as an offline fallback: if the fetch
+// below fails, renderOverviewCard/renderBlock still run against them
+// instead of leaving the page blank.
+function applyLiveData(data){
+  ['cashout', 'sendmoney'].forEach((key) => {
+    const live = data[key];
+    if (!live) return;
+    Object.assign(overviewData[key], live.overview);
+    const lineKey = key === 'cashout' ? '1-cashout' : '2-sendmoney';
+    const line = lineData[lineKey];
+    line.dep = live.dep;
+    line.wd = live.wd;
+    line.actual = live.actual;
+    line.running = live.running;
+    line.changeVsOpening = live.changeVsOpening;
+    line.chart = live.chart;
+    line.chart30 = live.chart30;
+    line.comingSoon = false;
+    line.wallets = live.wallets;
+  });
+}
+
+async function loadLiveData(){
+  try {
+    const res = await fetch(`/api/dashboard-demo?t=${Date.now()}`);
+    if (!res.ok) throw new Error('Failed to load live data');
+    const data = await res.json();
+    applyLiveData(data);
+  } catch (err) {
+    console.error('Dashboard Demo: falling back to mock data —', err);
+  }
+  renderOverviewCard('overview-cashout', overviewData.cashout);
+  renderOverviewCard('overview-sendmoney', overviewData.sendmoney);
+  blockDefs.forEach(b => renderBlock(b.key, b.suffix, b.title));
+  setLastUpdated();
+}
+
+/* ---- build one full line-block (hero row + chart + ledger + side panels) ---- */
+function blockHTML(suffix){
+  return `
+    <div class="section-label" id="block-title${suffix}"></div>
+    <div class="hero-row">
+      <div class="panel hero-panel">
+        <div>
+          <div class="panel-label">Net Position &middot; Running Balance</div>
+          <div class="hero-value" id="hero-value${suffix}"></div>
+        </div>
+        <div class="hero-delta neg" id="hero-delta${suffix}"></div>
+      </div>
+      <div class="panel flow-panel">
+        <div>
+          <div class="flow-icon" style="background:var(--pos-dim);color:var(--pos)">
+            <svg viewBox="0 0 16 16" fill="none"><path d="M3 10l4-4 3 3 5-6" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/><path d="M11 3h4v4" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>
+          </div>
+          <div class="panel-label">Total Deposit</div>
+        </div>
+        <div>
+          <div class="flow-value" style="color:var(--pos)" id="dep-value${suffix}"></div>
+          <div class="flow-sub" id="dep-sub${suffix}"></div>
+        </div>
+      </div>
+      <div class="panel flow-panel">
+        <div>
+          <div class="flow-icon" style="background:var(--neg-dim);color:var(--neg)">
+            <svg viewBox="0 0 16 16" fill="none"><path d="M3 6l4 4 3-3 5 6" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/><path d="M11 13h4V9" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>
+          </div>
+          <div class="panel-label">Total Withdrawal</div>
+        </div>
+        <div>
+          <div class="flow-value" style="color:var(--neg)" id="wd-value${suffix}"></div>
+          <div class="flow-sub" id="wd-sub${suffix}"></div>
+        </div>
+      </div>
+    </div>
+
+    <div class="dash-grid">
+      <div class="main-col">
+        <div class="panel chart-panel">
+          <div class="chart-head">
+            <div>
+              <div class="chart-title" id="chart-title${suffix}">CashGo Trend</div>
+              <div class="chart-title-sub" id="chart-title-sub${suffix}">Daily settlement volume, last 7 sessions</div>
+            </div>
+            <div style="display:flex;align-items:center;gap:8px;">
+              <button class="chart-replay" id="chart-replay${suffix}" title="Replay animation">
+                <svg viewBox="0 0 16 16" width="12" height="12" fill="none"><path d="M13.5 8a5.5 5.5 0 1 1-1.6-3.9" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/><path d="M13.5 2.3V6h-3.7" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/></svg>
+              </button>
+              <div class="seg">
+                <button class="active" id="range-7d${suffix}">7D</button>
+                <button id="range-30d${suffix}">30D</button>
+              </div>
+            </div>
+          </div>
+          <div class="chart-legend-row" id="chart-legend-row${suffix}"></div>
+          <div class="chart-area">
+            <svg class="chart-svg" id="trend-svg${suffix}" viewBox="0 0 980 280" preserveAspectRatio="none"></svg>
+          </div>
+        </div>
+
+        <div class="panel ledger-panel">
+          <div class="ledger-head">
+            <div>
+              <div class="chart-title">Wallet Summary</div>
+            </div>
+          </div>
+          <table class="ledger">
+            <thead>
+              <tr>
+                <th>Wallet</th><th>Total DP</th><th>Total WD</th>
+                <th>Top Up / Bundle</th><th>Settlement</th><th>Actual Bal.</th><th>Running Bal.</th>
+              </tr>
+            </thead>
+            <tbody id="ledger-rows${suffix}"></tbody>
+          </table>
+        </div>
+      </div>
+
+      <div class="side-col">
+        <div class="panel rank-panel">
+          <div class="rank-head">
+            <span class="rank-title">Top Performer Wallet</span>
+            <span class="rank-tag">Net P&amp;L</span>
+          </div>
+          <div id="top-performer-list${suffix}"></div>
+        </div>
+
+        <div class="panel rank-panel grow">
+          <div class="rank-head">
+            <span class="rank-title">High Volume Agents</span>
+            <span class="rank-tag pill">TOP 50</span>
+          </div>
+          <div class="rank-scroll" id="high-volume-list${suffix}"></div>
+        </div>
+      </div>
+    </div>
+  `;
+}
+
+const blockDefs = [
+  { key:'1-cashout',   suffix:'-1',  title:'SSP Line 1 &middot; Cashout' },
+  { key:'2-sendmoney', suffix:'-2',  title:'SSP Line 2 &middot; Send Money' },
+];
+
+// Declared here (before the renderBlock calls below reach into them via
+// renderChart) rather than down by the chart-rendering functions where they
+// read most naturally — being `const`, referencing them before this line
+// executes throws a temporal-dead-zone ReferenceError even though the
+// functions that close over them are fully hoisted.
+const chartDataBySuffix = {};
+const legendBySuffix = {};
+const lineDataBySuffix = {};
+const chartRangeBySuffix = {};
+
+const blocksContainer = document.getElementById('line-blocks');
+blockDefs.forEach(b => { blocksContainer.innerHTML += blockHTML(b.suffix); });
+blockDefs.forEach(b => {
+  document.getElementById('chart-replay' + b.suffix).addEventListener('click', () => {
+    renderChart(chartDataBySuffix[b.suffix], b.suffix, legendBySuffix[b.suffix]);
+  });
+  document.getElementById('range-7d' + b.suffix).addEventListener('click', () => setChartRange(b.suffix, '7d'));
+  document.getElementById('range-30d' + b.suffix).addEventListener('click', () => setChartRange(b.suffix, '30d'));
+});
+
+// Switches a block's trend chart between its 7-day and 30-day window —
+// same live data (app/api/dashboard-demo/route.ts computes both ranges
+// off the same already-fetched sheet rows, no extra fetch), just a
+// longer/shorter slice. Range choice persists across refreshes
+// (chartRangeBySuffix is read back in renderBlock) rather than always
+// resetting to 7D.
+function setChartRange(suffix, range){
+  chartRangeBySuffix[suffix] = range;
+  document.getElementById('range-7d' + suffix).classList.toggle('active', range === '7d');
+  document.getElementById('range-30d' + suffix).classList.toggle('active', range === '30d');
+  const d = lineDataBySuffix[suffix];
+  if (!d) return;
+  document.getElementById('chart-title-sub' + suffix).textContent = `${d.chartSubBase}, last ${range === '30d' ? 30 : 7} sessions`;
+  renderChart(range === '30d' ? d.chart30 : d.chart, suffix, d.legend);
+}
+
+// Renders once immediately with the mock fallback numbers already in
+// overviewData/lineData (so the page never shows a blank flash), then
+// loadLiveData() re-renders on top with real numbers once the fetch below
+// resolves.
+renderOverviewCard('overview-cashout', overviewData.cashout);
+renderOverviewCard('overview-sendmoney', overviewData.sendmoney);
+blockDefs.forEach(b => renderBlock(b.key, b.suffix, b.title));
+loadLiveData();
+
+function renderBlock(key, suffix, title){
+  const d = lineData[key];
+  lineDataBySuffix[suffix] = d;
+  const range = chartRangeBySuffix[suffix] || '7d';
+
+  document.getElementById('block-title' + suffix).innerHTML = title;
+  document.getElementById('hero-value' + suffix).innerHTML = '<sup>&#2547;</sup>' + fmtM(d.running);
+  const heroCls = d.changeVsOpening < 0 ? 'neg' : 'pos';
+  const heroEl = document.getElementById('hero-delta' + suffix);
+  heroEl.className = 'hero-delta ' + heroCls;
+  heroEl.innerHTML = (d.changeVsOpening<0?'&#9660; ':'&#9650; ') + fmtM(Math.abs(d.changeVsOpening)) + ' vs opening';
+
+  document.getElementById('dep-value' + suffix).textContent = fmtM(d.dep);
+  document.getElementById('dep-sub' + suffix).textContent = fmt2(d.dep);
+  document.getElementById('wd-value' + suffix).textContent = fmtM(d.wd);
+  document.getElementById('wd-sub' + suffix).textContent = fmt2(d.wd);
+
+  document.getElementById('chart-title' + suffix).textContent = d.chartTitle;
+  document.getElementById('chart-title-sub' + suffix).textContent = `${d.chartSubBase}, last ${range === '30d' ? 30 : 7} sessions`;
+  document.getElementById('chart-legend-row' + suffix).innerHTML = d.legend.map(l =>
+    `<span class="legend-dot"><i style="background:var(${l.color})"></i>${l.label}</span>`
+  ).join('') + `<span class="legend-dot"><i style="background:var(--wave-peak)"></i>Peak day</span>`;
+
+  renderChart(range === '30d' ? d.chart30 : d.chart, suffix, d.legend);
+  renderLedger(d.wallets, suffix);
+  renderTopPerformers(d.topPerformers, suffix);
+  renderAgents(d.agents, suffix);
+  syncDashGridHeight(suffix);
+}
+
+// Pins .dash-grid's row height to .main-col's own natural (unstretched)
+// height, so side-col's agents list scrolls within that bound instead of
+// dictating a taller row — see the .dash-grid comment in <style> for why.
+// Re-run after every render (row counts differ between mock/live data and
+// between Cashout/Send Money) and on resize (chart-area reflow).
+function syncDashGridHeight(suffix){
+  const dashGrid = document.getElementById('ledger-rows' + suffix).closest('.dash-grid');
+  const mainCol = dashGrid.querySelector('.main-col');
+  dashGrid.style.gridTemplateRows = Math.ceil(mainCol.getBoundingClientRect().height) + 'px';
+}
+window.addEventListener('resize', () => blockDefs.forEach(b => syncDashGridHeight(b.suffix)));
+
+/* ---- chart rendering (scoped by suffix) ---- */
+// chartDataBySuffix/legendBySuffix are declared earlier, right before the
+// blockDefs.forEach(renderBlock) call that needs them already initialized.
+// Series field keys are derived from the legend's own labels
+// (lowercased — 'Bkash'->'bkash', 'Upay'->'upay', etc.) rather than
+// hardcoded to Cashout's own 'bkash'/'nagad' pair — this used to silently
+// break Send Money's chart the moment it got real data instead of the
+// empty comingSoon:true placeholder every mock render before now: Send
+// Money's series are nagad/rocket/upay (no bkash field at all), so
+// `d.bkash + d.nagad` was reading `undefined + nagad`, NaN, on every point.
+function seriesKeys(legend){
+  return legend.map(l => l.label.toLowerCase());
+}
+function seriesTotal(d, keys){
+  return keys.reduce((sum, k) => sum + (d[k] || 0), 0);
+}
+
+/* ---- "liquidity wave" trend chart: stacked gradient areas, smooth
+   cubic-bezier boundaries, animated draw-in, peak-day ring pulse, and a
+   per-day tooltip breaking totals back down by series. Generalized from a
+   2-series reference design to however many series a block's legend
+   declares (Cashout: Bkash+Nagad: Send Money: Nagad+Rocket+Upay). ---- */
+function svgEl(tag, attrs){
+  const el = document.createElementNS('http://www.w3.org/2000/svg', tag);
+  for (const k in attrs) el.setAttribute(k, attrs[k]);
+  return el;
+}
+function smoothPath(points){
+  let d = `M ${points[0][0].toFixed(1)},${points[0][1].toFixed(1)}`;
+  for (let i=0;i<points.length-1;i++){
+    const [x0,y0]=points[i], [x1,y1]=points[i+1];
+    const mx=(x0+x1)/2;
+    d += ` C ${mx.toFixed(1)},${y0.toFixed(1)} ${mx.toFixed(1)},${y1.toFixed(1)} ${x1.toFixed(1)},${y1.toFixed(1)}`;
+  }
+  return d;
+}
+function smoothPathReversed(points){
+  const rev = [...points].reverse();
+  let d = `L ${rev[0][0].toFixed(1)},${rev[0][1].toFixed(1)}`;
+  for (let i=0;i<rev.length-1;i++){
+    const [x0,y0]=rev[i], [x1,y1]=rev[i+1];
+    const mx=(x0+x1)/2;
+    d += ` C ${mx.toFixed(1)},${y0.toFixed(1)} ${mx.toFixed(1)},${y1.toFixed(1)} ${x1.toFixed(1)},${y1.toFixed(1)}`;
+  }
+  return d;
+}
+
+function renderChart(chartData, suffix, legend){
+  chartDataBySuffix[suffix] = chartData || [];
+  legendBySuffix[suffix] = legend;
+  const svg = document.getElementById('trend-svg' + suffix);
+  svg.innerHTML = '';
+
+  if (!chartData || chartData.length === 0){
+    const fo = svgEl('foreignObject', {x:0, y:0, width:'100%', height:'100%'});
+    fo.innerHTML = '<div xmlns="http://www.w3.org/1999/xhtml" class="chart-coming-soon">Coming Soon &mdash; volume data for this line has not been published yet</div>';
+    svg.appendChild(fo);
+    return;
+  }
+  const svgNode = svg;
+
+  const keys = seriesKeys(legend);
+  const n = chartData.length;
+  // 30D mode: 30 value labels above their own points collide/overlap (the
+  // exact problem the "30d-fixed" reference redesign called out) — above a
+  // ~10-day window, drop to only the peak day's permanent label (others
+  // still reachable via the per-day hover tooltip), thin x-axis date text
+  // to every 4th day (every point still gets its own tick mark), and add
+  // y-axis gridlines so the chart stays readable without per-point labels.
+  const dense = n > 10;
+  // Per-point animation stagger tuned for a 7-point chart (0.05s/point,
+  // ~1s total spread) — used unscaled for 30 points, the last dots didn't
+  // even start fading in until 2.2s in, which read as "the line stops
+  // before reaching the end" in anything but a very patient screenshot.
+  // Scaled down so the whole cascade still finishes in well under a
+  // second regardless of day count.
+  const dotDelayStep = Math.min(0.05, 0.6 / n);
+  const W = 980, padL = dense ? 34 : 8, padR = 8, padT = 30, padB = 28;
+  const plotW = W - padL - padR, plotH = 280 - padT - padB;
+  const xStep = n > 1 ? plotW / (n - 1) : 0;
+  const xAt = i => padL + i * xStep;
+  // Falls back to 1 (never 0) so an all-zero window — a real possibility now
+  // this is live data, unlike the mock numbers which were always nonzero —
+  // renders as a flat baseline instead of a 0/0 = NaN SVG coordinate. 15%
+  // headroom keeps peak-day labels from clipping the chart's top edge.
+  const rawMax = Math.max(...chartData.map(d=>seriesTotal(d, keys))) || 1;
+  const maxV = rawMax * 1.15;
+  const yAt = v => padT + plotH - (v / maxV) * plotH;
+  const baselineY = padT + plotH;
+
+  const totals = chartData.map(d => seriesTotal(d, keys));
+  const peakIndex = totals.indexOf(Math.max(...totals));
+
+  // A layer with zero contribution across the entire window (e.g. Rocket/
+  // Upay on a week where only Nagad moved any volume) doesn't join the
+  // cumulative stack at all — its own line sits flat on the baseline (a
+  // visible "this wallet did nothing" reference) instead of either
+  // inheriting the active layer's height (the original bug: its stroke
+  // then painted the WRONG wallet's color on top) or being hidden
+  // entirely. Active layers still stack cumulatively among themselves,
+  // skipping over any inactive ones in between.
+  const layerHasData = keys.map((k) => chartData.some(d => (d[k]||0) !== 0));
+  let topActiveIndex = layerHasData.lastIndexOf(true);
+  if (topActiveIndex === -1) topActiveIndex = keys.length - 1;
+
+  // Cumulative stack: cum[i][j] = sum of active keys[0..j] for day i, or 0
+  // (baseline) for a key with no data anywhere in the window.
+  const cum = chartData.map(d => {
+    let running = 0;
+    return keys.map((k, j) => {
+      if (!layerHasData[j]) return 0;
+      running += (d[k] || 0);
+      return running;
+    });
+  });
+  const layerPts = keys.map((_, j) => chartData.map((d, i) => [xAt(i), yAt(cum[i][j])]));
+
+  const defs = svgEl('defs', {});
+  keys.forEach((_, j) => {
+    const grad = svgEl('linearGradient', {id:`wvGrad${suffix}${j}`, x1:0, y1:0, x2:0, y2:1});
+    grad.appendChild(svgEl('stop', {offset:'0%', 'stop-color':legend[j].color.startsWith('--') ? `var(${legend[j].color})` : legend[j].color, 'stop-opacity':0.5}));
+    grad.appendChild(svgEl('stop', {offset:'100%', 'stop-color':legend[j].color.startsWith('--') ? `var(${legend[j].color})` : legend[j].color, 'stop-opacity':0.06}));
+    defs.appendChild(grad);
+  });
+  svgNode.appendChild(defs);
+
+  svgNode.appendChild(svgEl('line', {x1:padL, y1:baselineY, x2:padL+plotW, y2:baselineY, stroke:'var(--hair)', 'stroke-dasharray':'2,4'}));
+
+  // Y-axis gridlines — dense mode only. Sparse (7D) mode already labels
+  // every point directly above its bar, so a separate axis would be
+  // redundant; dense mode dropped those per-point labels, so this is the
+  // only remaining reference for reading values off the curve.
+  if (dense){
+    const niceStep = (max, targetTicks) => {
+      const raw = max / targetTicks;
+      const mag = Math.pow(10, Math.floor(Math.log10(raw)));
+      const norm = raw / mag;
+      const step = norm < 1.5 ? 1 : norm < 3 ? 2 : norm < 7 ? 5 : 10;
+      return step * mag;
+    };
+    const yStepVal = niceStep(rawMax, 6) || 1;
+    for (let v = 0; v <= maxV; v += yStepVal){
+      const y = yAt(v);
+      svgNode.appendChild(svgEl('line', {x1:padL, y1:y, x2:padL+plotW, y2:y, stroke:'var(--hair-soft)', 'stroke-width':1}));
+      const yl = svgEl('text', {x:padL-8, y:y+3, 'text-anchor':'end', class:'wv-axis-label'});
+      yl.textContent = v === 0 ? '0' : v.toFixed(v < 1 ? 2 : 0)+'M';
+      svgNode.appendChild(yl);
+    }
+  }
+
+  // Areas: bottom layer fills down to the baseline, every layer above it
+  // fills down to the layer below's own boundary curve. Skipped for a
+  // no-data layer — it's already flat on the baseline (nothing to fill),
+  // and if an active layer sits right below it, an area here would just
+  // redundantly re-fill that active layer's own region with a second,
+  // muddying gradient.
+  keys.forEach((_, j) => {
+    if (!layerHasData[j]) return;
+    const top = layerPts[j];
+    const areaPath = j === 0
+      ? smoothPath(top) + ` L ${top[n-1][0].toFixed(1)},${baselineY} L ${top[0][0].toFixed(1)},${baselineY} Z`
+      : smoothPath(top) + smoothPathReversed(layerPts[j-1]) + ' Z';
+    const area = svgEl('path', {d:areaPath, fill:`url(#wvGrad${suffix}${j})`, class:'wv-area'});
+    area.style.animationDelay = (0.1 + j*0.1) + 's';
+    svgNode.appendChild(area);
+  });
+
+  // Boundary strokes: every layer's own line is always drawn (a no-data
+  // wallet's line just sits flat on the baseline instead of being
+  // hidden), with the topmost ACTIVE layer — the real running total —
+  // drawn bolder than the rest.
+  const colorOf = j => legend[j].color.startsWith('--') ? `var(${legend[j].color})` : legend[j].color;
+  keys.forEach((_, j) => {
+    const isTop = j === topActiveIndex;
+    const stroke = svgEl('path', {
+      d:smoothPath(layerPts[j]), fill:'none', stroke:colorOf(j),
+      'stroke-width':isTop?2.5:1.6, 'stroke-linecap':'round', class:'wv-path',
+    });
+    svgNode.appendChild(stroke);
+    // The draw-in animation reveals the path via stroke-dasharray/
+    // dashoffset — a length shorter than the path's own real length
+    // permanently truncates it (the stroke runs out of dashes before
+    // reaching the end, not just mid-animation but forever after too),
+    // which is exactly what a fixed guess did on longer/wigglier 30-day
+    // curves. getTotalLength() after the path is in the DOM gives the
+    // real length every time, 7-point or 30-point alike.
+    const len = stroke.getTotalLength();
+    stroke.style.strokeDasharray = len;
+    stroke.style.strokeDashoffset = len;
+    stroke.style.animationDelay = (0.1 + j*0.1) + 's';
+  });
+
+  // Shared hover tooltip — one crosshair + dot + box that moves to
+  // whichever day is hovered, instead of a separate DOM subtree per day.
+  // Matches the "30d-fixed" reference's tooltip design (vertical dashed
+  // guide line + accent dot at the hovered point + a small box breaking
+  // that day's total back down by series), generalized to however many
+  // series the legend declares.
+  const ttRowH = 14, ttH = 20 + keys.length*ttRowH, ttW = 118;
+  const tooltipG = svgEl('g', {class:'wv-tooltip-group', style:'opacity:0;transition:opacity .12s;pointer-events:none;'});
+  const crosshair = svgEl('line', {y1:padT, y2:baselineY, stroke:'var(--hair)', 'stroke-dasharray':'2,3'});
+  const hoverDot = svgEl('circle', {r:5, fill:'var(--wave-peak)', stroke:'var(--ink-1)', 'stroke-width':2});
+  const ttBg = svgEl('rect', {width:ttW, height:ttH, rx:8, class:'wv-tooltip-bg'});
+  const ttDate = svgEl('text', {class:'wv-tooltip-date'});
+  const ttRows = keys.map((_, j) => svgEl('text', {class:'wv-tooltip-text', fill:colorOf(j)}));
+  tooltipG.appendChild(crosshair);
+  tooltipG.appendChild(ttBg);
+  tooltipG.appendChild(ttDate);
+  ttRows.forEach(row => tooltipG.appendChild(row));
+  tooltipG.appendChild(hoverDot);
+  svgNode.appendChild(tooltipG);
+
+  // Dots on every layer boundary, plus a pulsing gold ring + value label on
+  // the peak day's topmost (total) point.
+  chartData.forEach((d, i) => {
+    keys.forEach((_, j) => {
+      const isTop = j === topActiveIndex;
+      const isPeak = isTop && i === peakIndex;
+      if (isPeak){
+        const ring = svgEl('circle', {cx:layerPts[j][i][0], cy:layerPts[j][i][1], r:5, fill:'none', stroke:'var(--wave-peak)', 'stroke-width':2, class:'wv-peak-ring'});
+        svgNode.appendChild(ring);
+      }
+      const dot = svgEl('circle', {
+        cx:layerPts[j][i][0], cy:layerPts[j][i][1], r:isPeak?5:(isTop?3.5:3),
+        fill:isPeak?'var(--wave-peak)':colorOf(j), stroke:'var(--ink-1)', 'stroke-width':1.5, class:'wv-dot',
+      });
+      dot.style.animationDelay = (0.75 + i*dotDelayStep) + 's';
+      svgNode.appendChild(dot);
+    });
+
+    // topActiveIndex, not the literal last key — since the no-data-layer
+    // fix above, an inactive trailing layer (e.g. Upay when only Nagad
+    // moved volume) sits flat at the baseline, so layerPts[keys.length-1]
+    // would anchor the value label there instead of at the real peak.
+    const topPt = layerPts[topActiveIndex][i];
+    const isPeak = i === peakIndex;
+    // Sparse (7D): every point gets a permanent value label — 7 of them
+    // never collide. Dense (30D): only the peak day keeps one; the rest
+    // are reachable through the hover tooltip instead of crowding the
+    // chart with 30 overlapping labels.
+    if (!dense || isPeak){
+      const label = svgEl('text', {x:topPt[0], y:topPt[1]-14, 'text-anchor':'middle', class:'wv-val-label wv-label'+(isPeak?' peak':'')});
+      label.style.animationDelay = (0.95 + i*dotDelayStep) + 's';
+      label.textContent = totals[i].toFixed(1)+'M';
+      svgNode.appendChild(label);
+    }
+
+    if (dense){
+      svgNode.appendChild(svgEl('line', {x1:xAt(i), y1:baselineY, x2:xAt(i), y2:baselineY+3, stroke:'var(--hair)'}));
+    }
+    // Dense mode thins date text to every 4th day (plus the last) so 30
+    // labels don't overlap; every point still gets its tick mark above.
+    // The last 4th-multiple can land only 1-3 days before the actual last
+    // index, close enough to visually collide with it — suppressed in
+    // that case so only the true last date shows, not both crowded
+    // together.
+    if (!dense || i === n-1 || (i % 4 === 0 && n-1-i > 2)){
+      const dl = svgEl('text', {x:xAt(i), y:baselineY+20, 'text-anchor':'middle', class:'wv-axis-label'});
+      dl.textContent = d.date;
+      svgNode.appendChild(dl);
+    }
+
+    // Hovering this day's column moves the shared crosshair/dot/box here
+    // and fills in this day's own breakdown, rather than toggling a
+    // separate tooltip subtree that already exists at this position.
+    const hoverRect = svgEl('rect', {x:xAt(i)-xStep/2, y:padT, width:xStep||plotW, height:plotH, fill:'transparent', style:'cursor:pointer'});
+    hoverRect.addEventListener('mouseenter', () => {
+      tooltipG.style.opacity = 1;
+      crosshair.setAttribute('x1', topPt[0]);
+      crosshair.setAttribute('x2', topPt[0]);
+      hoverDot.setAttribute('cx', topPt[0]);
+      hoverDot.setAttribute('cy', topPt[1]);
+      const boxX = Math.min(Math.max(topPt[0] - ttW/2, padL), padL+plotW-ttW);
+      ttBg.setAttribute('x', boxX);
+      ttBg.setAttribute('y', padT - 4);
+      ttDate.setAttribute('x', boxX + 10);
+      ttDate.setAttribute('y', padT + 10);
+      ttDate.textContent = d.date;
+      keys.forEach((k, j) => {
+        ttRows[j].setAttribute('x', boxX + 10);
+        ttRows[j].setAttribute('y', padT + 10 + (j + 1) * ttRowH);
+        ttRows[j].textContent = `${legend[j].label} ${(d[k]||0).toFixed(2)}M`;
+      });
+    });
+    hoverRect.addEventListener('mouseleave', () => { tooltipG.style.opacity = 0; });
+    svgNode.appendChild(hoverRect);
+  });
+}
+
+/* ---- ledger table (scoped by suffix) ---- */
+function renderLedger(wallets, suffix){
+  let sum = { dp:0, wd:0, mid:0, settlement:0, actual:0, running:0 };
+  const rows = wallets.map(w=>{
+    if (w.comingSoon){
+      return `
+        <tr>
+          <td>${w.name}</td>
+          <td colspan="6" class="num-muted" style="font-style:italic;">Coming soon</td>
+        </tr>
+      `;
+    }
+    sum.dp += w.dp; sum.wd += w.wd; sum.mid += w.mid||0; sum.settlement += w.settlement||0;
+    sum.actual += w.actual; sum.running += w.running;
+    const dCls = w.change < 0 ? 'num-neg' : 'num-pos';
+    const arrow = w.change < 0 ? '&#9660;' : '&#9650;';
+    return `
+      <tr>
+        <td>${w.name}</td>
+        <td>${neutralCell(w.dp)}</td>
+        <td>${neutralCell(w.wd)}</td>
+        <td>${neutralCell(w.mid)}</td>
+        <td>${neutralCell(w.settlement)}</td>
+        <td>${fmt2(w.actual)}</td>
+        <td>
+          ${fmt2(w.running)}
+          <div class="delta-line ${dCls}">${arrow} ${fmt2(Math.abs(w.change))}</div>
+        </td>
+      </tr>
+    `;
+  }).join('');
+  const totalChange = wallets.filter(w=>!w.comingSoon).reduce((s,w)=>s+w.change,0);
+  const totalCls = totalChange < 0 ? 'num-neg' : 'num-pos';
+  const totalArrow = totalChange < 0 ? '&#9660;' : '&#9650;';
+  document.getElementById('ledger-rows' + suffix).innerHTML = rows + `
+    <tr class="total-row">
+      <td>Total</td>
+      <td>${fmt2(sum.dp)}</td>
+      <td class="num-neg">${fmt2(sum.wd)}</td>
+      <td>${sum.mid ? fmt2(sum.mid) : '<span class="num-muted">&ndash;</span>'}</td>
+      <td>${sum.settlement ? fmt2(sum.settlement) : '<span class="num-muted">&ndash;</span>'}</td>
+      <td>${fmt2(sum.actual)}</td>
+      <td>
+        ${fmt2(sum.running)}
+        <div class="delta-line ${totalCls}">${totalArrow} ${fmt2(Math.abs(totalChange))}</div>
+      </td>
+    </tr>
+  `;
+}
+
+/* ---- Top Performer Wallet (scoped by suffix) ---- */
+function renderTopPerformers(list, suffix){
+  document.getElementById('top-performer-list' + suffix).innerHTML = list.map((p,i)=>{
+    const neg = p.pnl < 0;
+    const sign = neg ? '-' : '+';
+    return `
+      <div class="rank-row ${i===0 ? 'hi' : ''}">
+        <span class="rank-idx">${String(i+1).padStart(2,'0')}</span>
+        <div class="rank-main">
+          <div class="rank-name">${p.name}</div>
+          <div class="rank-sub">Bal ${fmt2(p.bal)}</div>
+        </div>
+        <div class="rank-val" style="color:${neg ? 'var(--neg)' : 'var(--pos)'}">${sign}${fmt2(Math.abs(p.pnl))}</div>
+      </div>
+    `;
+  }).join('');
+}
+
+/* ---- High Volume Agents (scoped by suffix) ---- */
+function renderAgents(list, suffix){
+  document.getElementById('high-volume-list' + suffix).innerHTML = list.map((a,i)=>{
+    const neg = a.pnl < 0;
+    return `
+      <div class="rank-row">
+        <span class="rank-idx">${String(i+1).padStart(2,'0')}</span>
+        <div class="rank-main">
+          <div class="rank-name mono">${a.code}</div>
+          <div class="rank-sub">Inside ${a.inside === null ? '&ndash;' : fmt2(a.inside)}</div>
+        </div>
+        <div class="rank-val" style="color:${neg ? 'var(--neg)' : 'var(--pos)'}">${fmt2(a.pnl)}</div>
+      </div>
+    `;
+  }).join('');
+}
+</script>
+
+</body>
+</html>

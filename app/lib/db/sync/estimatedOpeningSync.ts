@@ -240,7 +240,16 @@ export async function importEstimatedOpening(product: Product, log: MigrationLog
         log.rejected('estimated_balance_entries', `no matching agent for "${shopName}"`, { shopName, assumedBalance });
         continue;
       }
-      entries.push({ uploadId: upload.id, agentId, assumedBalance: String(assumedBalance) });
+      // deposit/withdrawal (added for the live Postgres-mode Estimated
+      // Opening display's own breakdown columns) aren't available here —
+      // this legacy Sheets-mirroring sync only ever gets the already-
+      // collapsed final assumedBalance out of readCashoutEstimatedOpening/
+      // readSendMoneyEstimatedOpening, never the components that produced
+      // it. This path is migration/legacy-Sheets-mode only (see this
+      // file's own header comment) and never feeds the live per-shop
+      // deposit/withdrawal columns, so 0/0 here is an honest "not
+      // available," not a wrong real figure.
+      entries.push({ uploadId: upload.id, agentId, deposit: '0', withdrawal: '0', assumedBalance: String(assumedBalance) });
     }
     if (entries.length > 0) await tx.insert(schema.estimatedBalanceEntries).values(entries);
     log.inserted('estimated_balance_entries', entries.length);

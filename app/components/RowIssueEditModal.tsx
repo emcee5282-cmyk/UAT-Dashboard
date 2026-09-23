@@ -294,7 +294,7 @@ export default function RowIssueEditModal({
                       onChange={(event) => setValues((current) => ({ ...current, [field.key]: event.target.value }))}
                       onBlur={() => markTouched(field.key)}
                       placeholder={field.placeholder}
-                      className={`h-10 w-full rounded-[10px] border bg-white px-3.5 text-[13px] text-foreground outline-none transition-colors focus:border-[color:var(--product-accent)] focus:ring-2 focus:ring-[color:var(--product-accent-soft)] dark:bg-[#1c1c1e] ${
+                      className={`h-10 w-full rounded-[10px] border bg-white px-3.5 text-[13px] text-foreground outline-none transition-colors focus:border-[color:var(--ui-accent)] focus:ring-2 focus:ring-[color:var(--ui-accent-soft)] dark:bg-[#1c1c1e] ${
                         error ? 'border-rose-400' : 'border-border'
                       }`}
                     />

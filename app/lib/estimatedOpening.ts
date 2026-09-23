@@ -282,20 +282,75 @@ export function aggregateByShop(
     .sort((a, b) => a.shopName.localeCompare(b.shopName));
 }
 
+export type ShopWalletLineTotals = { shopName: string; rawAccount: string; totalDP: number; totalWD: number };
+
+// Same raw rows as aggregateByShop above, but keeps each row's own raw
+// Account text as part of the grouping key instead of collapsing every
+// wallet's row into one shop-level total. A shop with only one distinct
+// raw Account in the file produces exactly one entry here too (same shape,
+// no behavior change for the common case) — this only matters for a shop
+// whose file rows span multiple wallets (e.g. separate "N-M2AG-J3-
+// AGATE001-BK" and "...-NG" rows), which aggregateByShop alone can't tell
+// apart once summed. Feeds estimatedOpeningService.ts's own per-wallet
+// estimated_balance_wallet_lines write — Opening's raw per-wallet name
+// (opening_wallet_lines) needs each wallet's own portion of this file's
+// DP/WD, not the shop-wide sum, to compute that wallet's own Estimated
+// Opening figure.
+export function aggregateByShopWithLines(
+  headerRow: (string | number)[],
+  dataRows: (string | number)[][],
+  extractShopName: (raw: string | number | undefined | null) => string = extractRealShopName
+): ShopWalletLineTotals[] {
+  const accountCol = findColumn(headerRow, 'Account');
+  const dpCol = findColumn(headerRow, 'Total DP');
+  const wdCol = findColumn(headerRow, 'Total WD');
+
+  const totals = new Map<string, { shopName: string; rawAccount: string; totalDP: number; totalWD: number }>();
+  for (const row of dataRows) {
+    const rawAccount = String(row[accountCol] ?? '').trim();
+    const shopName = extractShopName(row[accountCol]);
+    if (!shopName || shopName === 'OLD' || shopName === 'MANUAL') continue;
+    if (!isValidNumericCell(row[dpCol]) || !isValidNumericCell(row[wdCol])) continue;
+    const key = `${shopName} ${rawAccount}`;
+    const existing = totals.get(key) ?? { shopName, rawAccount, totalDP: 0, totalWD: 0 };
+    existing.totalDP += parseNumber(row[dpCol]);
+    existing.totalWD += parseNumber(row[wdCol]);
+    totals.set(key, existing);
+  }
+
+  return Array.from(totals.values()).sort((a, b) => a.shopName.localeCompare(b.shopName) || a.rawAccount.localeCompare(b.rawAccount));
+}
+
 type WalletTypeTotals = { wallet: string; totalDP: number; totalWD: number };
 
 // Aggregates the same raw wallet-level rows as aggregateByShop, but grouped
 // by the upload's own "Bank" column (NAGAD/BKASH/ROCKET/UPAY per row)
 // instead of by shop — feeds the Wallet Breakdown's per-wallet Assumed
 // Running Balance on Balance Overview.
-export function aggregateByWalletType(headerRow: (string | number)[], dataRows: (string | number)[][]): WalletTypeTotals[] {
+//
+// Send Money's own "Bank" values carry a trailing "C" (BKASHC/NAGADC/...)
+// that must be stripped before this becomes the canonical wallet key —
+// same per-product suffix convention balanceLimitService.ts's own
+// resolveWalletTypeCode() already documents and strips for agent_wallets;
+// this function never had that same fix, so a Send Money Estimated Balance
+// upload's wallet totals were being stored under "BKASHC"/"NAGADC"/
+// "ROCKETC"/"UPAYC" — keys nothing downstream (readEstimatedOpeningPg's
+// own WALLET_TO_KEY map) ever looks up, so the Wallet Breakdown Estimated
+// card's Total DP/Total WD/Estimated columns silently read as "—" for
+// every wallet. Confirmed live against a real Send Money upload.
+export function aggregateByWalletType(
+  headerRow: (string | number)[],
+  dataRows: (string | number)[][],
+  product: 'cashout' | 'sendmoney' = 'cashout'
+): WalletTypeTotals[] {
   const bankCol = findColumn(headerRow, 'Bank');
   const dpCol = findColumn(headerRow, 'Total DP');
   const wdCol = findColumn(headerRow, 'Total WD');
 
   const totals = new Map<string, { totalDP: number; totalWD: number }>();
   for (const row of dataRows) {
-    const wallet = String(row[bankCol] ?? '').trim().toUpperCase();
+    let wallet = String(row[bankCol] ?? '').trim().toUpperCase();
+    if (product === 'sendmoney') wallet = wallet.replace(/C$/, '');
     if (!wallet) continue;
     const existing = totals.get(wallet) ?? { totalDP: 0, totalWD: 0 };
     existing.totalDP += parseNumber(row[dpCol]);
@@ -644,7 +699,7 @@ export async function writeSendMoneyEstimatedOpening(
   await ensureSheetExists(sheetsApi, spreadsheetId);
 
   const shopTotals = aggregateByShop(headerRow, dataRows, extractSendMoneyShopName);
-  const walletTotals = aggregateByWalletType(headerRow, dataRows);
+  const walletTotals = aggregateByWalletType(headerRow, dataRows, 'sendmoney');
   const { openingByShop, topUpByShop, stlmByShop } = await fetchLiveSendMoneyShopFigures();
 
   const assumedBalances = shopTotals.map((s) => {

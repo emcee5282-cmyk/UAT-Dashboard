@@ -8,9 +8,9 @@
     "start": "next start",
     "lint": "eslint",
     "deploy:package": "bash scripts/deploy.sh",
-    "db:generate": "drizzle-kit generate",
-    "db:migrate": "drizzle-kit migrate",
-    "db:studio": "drizzle-kit studio",
+    "db:generate": "node --env-file=.env.local node_modules/drizzle-kit/bin.cjs generate",
+    "db:migrate": "node --env-file=.env.local node_modules/drizzle-kit/bin.cjs migrate",
+    "db:studio": "node --env-file=.env.local node_modules/drizzle-kit/bin.cjs studio",
     "migrate:data": "tsx scripts/migrate-data.ts"
   },
   "dependencies": {
@@ -21,7 +21,7 @@
     "drizzle-orm": "^0.45.2",
     "googleapis": "^173.0.0",
     "lucide-react": "^1.20.0",
-    "next": "16.2.9",
+    "next": "16.3.1",
     "pg": "^8.23.0",
     "puppeteer-core": "^25.3.0",
     "react": "19.2.4",

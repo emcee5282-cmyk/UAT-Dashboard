@@ -22,7 +22,9 @@ interface ColumnsDropdownProps {
   onRestoreDefaults: () => void;
 }
 
-const PANEL_WIDTH = 320;
+// Kept in sync with FilterDropdown's own width (its sibling "premium
+// panel") — narrowed from 320 per explicit instruction.
+const PANEL_WIDTH = 240;
 
 // Column-visibility panel — same premium shell as FilterDropdown (search,
 // rounded 16px panel, 42px rows, live/instant toggling, keyboard nav), minus
@@ -147,20 +149,20 @@ export default function ColumnsDropdown({
       role="dialog"
       aria-label="Column visibility"
       style={{ position: 'fixed', top: pos.top, left: pos.left, transformOrigin: 'top right' }}
-      className={`z-[9999] flex w-[320px] min-w-[300px] max-w-[340px] max-h-[360px] flex-col overflow-hidden rounded-[16px] border border-[#E5E7EB] bg-white shadow-xl transition-[transform,opacity] duration-[160ms] ease-[var(--ease-out-strong)] dark:border-[#3a3a3d] dark:bg-[#2a2a2d] ${
+      className={`z-[9999] flex w-[240px] min-w-[220px] max-w-[260px] max-h-[360px] flex-col overflow-hidden rounded-[16px] border border-[#E5E7EB] bg-white shadow-xl transition-[transform,opacity] duration-[160ms] ease-[var(--ease-out-strong)] dark:border-[#3a3a3d] dark:bg-[#2a2a2d] ${
         open ? 'opacity-100 scale-100' : 'opacity-0 scale-[0.98]'
       }`}
       onClick={(event) => event.stopPropagation()}
     >
       <div className="shrink-0 px-4 pt-4 pb-3">
-        <div className="flex h-9 items-center gap-2 rounded-[10px] border border-[#E5E7EB] bg-white px-3 focus-within:border-[#2563EB] focus-within:ring-2 focus-within:ring-[#2563EB]/20 dark:border-[#3a3a3d] dark:bg-[#1f1f22]">
+        <div className="flex h-9 items-center gap-2 rounded-[10px] border border-[#E5E7EB] bg-white px-3 focus-within:border-[var(--ui-accent)] focus-within:ring-2 focus-within:ring-[var(--ui-accent)]/20 dark:border-[#3a3a3d] dark:bg-[#1f1f22]">
           <Search size={14} className="shrink-0 text-[#94A3B8]" />
           <input
             ref={searchInputRef}
             value={searchQuery}
             onChange={(event) => setSearchQuery(event.target.value)}
             placeholder="Search..."
-            className="w-full bg-transparent text-[14px] font-medium text-[#111827] placeholder:text-[#94A3B8] placeholder:font-normal outline-none border-none dark:text-[#E5E7EB]"
+            className="w-full bg-transparent text-[12px] font-medium text-[#111827] placeholder:text-[#94A3B8] placeholder:font-normal outline-none border-none dark:text-[#E5E7EB]"
           />
         </div>
       </div>
@@ -179,7 +181,7 @@ export default function ColumnsDropdown({
               title={isLastVisible ? 'At least one column must stay visible' : undefined}
               onClick={() => { if (!isLastVisible) onToggle(col.key); }}
               onMouseEnter={() => setHighlightedIndex(index)}
-              className={`flex h-[42px] items-center gap-2 rounded-[10px] px-[14px] py-0 outline-none transition-colors duration-150 focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-[#2563EB] ${
+              className={`flex h-[42px] items-center gap-2 rounded-[10px] px-[14px] py-0 outline-none transition-colors duration-150 focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-[var(--ui-accent)] ${
                 isLastVisible
                   ? 'cursor-not-allowed'
                   : `cursor-pointer ${col.visible ? 'bg-[#EFF6FF] dark:bg-[#1e2a3d]' : 'hover:bg-[#F8FAFC] dark:hover:bg-white/5'}`
@@ -191,16 +193,16 @@ export default function ColumnsDropdown({
                 disabled={isLastVisible}
                 readOnly
                 tabIndex={-1}
-                className="pointer-events-none h-3.5 w-3.5 shrink-0 accent-[#2563EB] disabled:opacity-40"
+                className="pointer-events-none h-3.5 w-3.5 shrink-0 accent-[var(--ui-accent)] disabled:opacity-40"
               />
-              <span className={`truncate text-[14px] font-medium ${isLastVisible ? 'text-[#b3b8c2] dark:text-[#5a5f66]' : 'text-[#111827] dark:text-[#E5E7EB]'}`}>
+              <span className={`truncate text-[12px] font-medium ${isLastVisible ? 'text-[#b3b8c2] dark:text-[#5a5f66]' : 'text-[#111827] dark:text-[#E5E7EB]'}`}>
                 {col.label}
               </span>
             </div>
           );
         })}
         {filteredColumns.length === 0 && (
-          <div className="flex h-[42px] items-center justify-center text-[13px] text-[#94A3B8]">
+          <div className="flex h-[42px] items-center justify-center text-[12px] text-[#94A3B8]">
             No matches
           </div>
         )}
@@ -210,7 +212,7 @@ export default function ColumnsDropdown({
         <button
           type="button"
           onClick={onRestoreDefaults}
-          className="flex h-9 w-full items-center justify-center rounded-[10px] text-[13px] font-medium text-[#2563EB] transition-[background-color,transform] duration-150 ease-[var(--ease-out-strong)] hover:bg-[#EFF6FF] active:scale-[0.97] dark:text-[#60A5FA] dark:hover:bg-white/5"
+          className="flex h-9 w-full items-center justify-center rounded-[10px] text-[12px] font-medium text-[var(--ui-accent)] transition-[background-color,transform] duration-150 ease-[var(--ease-out-strong)] hover:bg-[#EFF6FF] active:scale-[0.97] dark:text-[#60A5FA] dark:hover:bg-white/5"
         >
           Restore Defaults
         </button>

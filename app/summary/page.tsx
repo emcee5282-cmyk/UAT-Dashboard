@@ -1,20 +1,22 @@
 'use client';
 
-import { useEffect, useState, useCallback, useMemo, useRef } from 'react';
+import { useEffect, useState, useCallback, useMemo, useRef, type CSSProperties } from 'react';
 import { createPortal } from 'react-dom';
 import {
   Search, Columns3, ChevronUp, ChevronDown, ChevronsUpDown, Download, BookOpen, RefreshCw,
-  MoreVertical, Copy, Pencil, Eye, Trash2, Inbox, Users, Banknote, ShieldCheck, CircleSlash,
+  MoreVertical, Copy, Pencil, Eye, Trash2, Inbox,
   Upload, Plus, CheckSquare, X, Tag, User, Wallet as WalletIcon, FilterX,
 } from 'lucide-react';
 import * as XLSX from 'xlsx';
+import { Manrope, Space_Grotesk } from 'next/font/google';
 import SettlementHeader from '../components/SettlementHeader';
 import ConnectionErrorState from '../components/ConnectionErrorState';
 import DataTable from '../components/DataTable';
 import FilterDropdown from '../components/FilterDropdown';
 import ColumnsDropdown from '../components/ColumnsDropdown';
-import TableFooter from '../components/TableFooter';
+import CompactTableFooter from '../components/CompactTableFooter';
 import EmptyState from '../components/EmptyState';
+import TableLoadingSpinner from '../components/TableLoadingSpinner';
 import RecordFormModal, { type RecordFormField } from '../components/RecordFormModal';
 import BulkImportModal from '../components/BulkImportModal';
 import BulkEditModal, { type BulkEditUpdates } from '../components/BulkEditModal';
@@ -24,29 +26,42 @@ import { extractRealShopName } from '../lib/realShopName';
 import { isLoggedIn } from '../lib/balanceEngine';
 import { getPreference, setPreference } from '../lib/preferences';
 import { SETTLEMENT_BRAND_OPTIONS } from '../lib/topupOptions';
-import { fmtAbbrev } from '@/app/lib/format';
+import { fmtAbbrev, exportNum } from '@/app/lib/format';
 import type { CashoutOpeningRow } from '@/app/lib/services/openingPageService';
 
 // Phase 6 — Today's Opening is PostgreSQL-only at runtime (no opt-in flag,
 // no Sheets fallback). See app/sendmoney/opening/page.tsx for the same
 // cutover on the Send Money product.
 
+// Page-scoped font override (Manrope for body/labels, Space Grotesk for
+// tabular-nums), matching Daily Txn Entry's own treatment and Top Up's port
+// of it (app/topup/page.tsx) — per explicit instruction, Opening now
+// matches Top Up's typeface exactly, not just its font SIZE. Every other
+// page keeps Inter.
+const manrope = Manrope({ subsets: ['latin'], variable: '--font-manrope', display: 'swap' });
+const spaceGrotesk = Space_Grotesk({ subsets: ['latin'], variable: '--font-space-grotesk', display: 'swap' });
+
 // Responsive action buttons (Upload/Export) — icon+text when the viewport
 // has room, collapsing to icon-only (40x40, no padding) once space gets
 // tight. Copied verbatim from Settlement (app/stlm/page.tsx) so this page's
 // toolbar matches its style/arrangement exactly, per explicit instruction.
+// Compact sizing (matches Wallet Status/Transfer Queue/Top Up/
+// Settlement's own density): h-10/rounded-[12px]/text-[13px] scaled down
+// to h-8/rounded-[10px]/text-[11px], gap-1.5 -> gap-[5px] — was left over
+// at the old full size while those other pages had already migrated, per
+// explicit instruction.
 const ICON_BUTTON =
-  'flex h-10 w-10 xl:w-auto shrink-0 items-center justify-center xl:justify-start gap-1.5 rounded-[12px] border border-[#E2E8F0] bg-white px-0 xl:px-3 text-[13px] font-medium text-[#475569] transition-[color,background-color,border-color,box-shadow,transform] duration-150 ease-[var(--ease-out-strong)] hover:border-[#2563EB] hover:bg-[#F1F5F9] hover:ring-2 hover:ring-[#2563EB]/20 active:scale-[0.97] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#2563EB] dark:border-[#3a3a3d] dark:bg-[#2a2a2d] dark:text-[#9CA3AF] dark:hover:bg-white/5';
+  'flex h-8 w-8 xl:w-auto shrink-0 items-center justify-center xl:justify-start gap-[5px] rounded-[10px] border border-[#E2E8F0] bg-white px-0 xl:px-[10px] text-[11px] font-medium text-[#475569] transition-[color,background-color,border-color,box-shadow,transform] duration-150 ease-[var(--ease-out-strong)] hover:border-[var(--ui-accent)] hover:bg-[#F1F5F9] active:scale-[0.97] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--ui-accent)] dark:border-[#262B38] dark:bg-[#12151D] dark:text-[#9CA3AF] dark:hover:bg-white/5';
 
 // Always-icon-only variant (never shows a text label) — Refresh/Columns
 // per explicit instruction, tooltip carries the label instead.
 const ICON_ONLY_BUTTON =
-  'flex h-10 w-10 shrink-0 items-center justify-center rounded-[12px] border border-[#E2E8F0] bg-white text-[13px] font-medium text-[#475569] transition-[color,background-color,border-color,box-shadow,transform] duration-150 ease-[var(--ease-out-strong)] hover:border-[#2563EB] hover:bg-[#F1F5F9] hover:ring-2 hover:ring-[#2563EB]/20 active:scale-[0.97] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#2563EB] dark:border-[#3a3a3d] dark:bg-[#2a2a2d] dark:text-[#9CA3AF] dark:hover:bg-white/5';
+  'flex h-8 w-8 shrink-0 items-center justify-center rounded-[10px] border border-[#E2E8F0] bg-white text-[11px] font-medium text-[#475569] transition-[color,background-color,border-color,box-shadow,transform] duration-150 ease-[var(--ease-out-strong)] hover:border-[var(--ui-accent)] hover:bg-[#F1F5F9] active:scale-[0.97] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--ui-accent)] dark:border-[#262B38] dark:bg-[#12151D] dark:text-[#9CA3AF] dark:hover:bg-white/5';
 
 // Same shell as ICON_ONLY_BUTTON, indigo text/icon instead of slate —
 // Refresh only, per explicit instruction; Columns stays neutral.
 const REFRESH_ICON_BUTTON =
-  'flex h-10 w-10 shrink-0 items-center justify-center rounded-[12px] border border-[#E2E8F0] bg-white text-[13px] font-medium text-indigo-600 transition-[color,background-color,border-color,box-shadow,transform] duration-150 ease-[var(--ease-out-strong)] hover:border-[#2563EB] hover:bg-[#F1F5F9] hover:ring-2 hover:ring-[#2563EB]/20 active:scale-[0.97] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#2563EB] dark:border-[#3a3a3d] dark:bg-[#2a2a2d] dark:text-indigo-400 dark:hover:bg-white/5';
+  'flex h-8 w-8 shrink-0 items-center justify-center rounded-[10px] border border-[#E2E8F0] bg-white text-[11px] font-medium text-indigo-600 transition-[color,background-color,border-color,box-shadow,transform] duration-150 ease-[var(--ease-out-strong)] hover:border-[var(--ui-accent)] hover:bg-[#F1F5F9] active:scale-[0.97] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--ui-accent)] dark:border-[#262B38] dark:bg-[#12151D] dark:text-indigo-400 dark:hover:bg-white/5';
 
 // Same shell as ICON_BUTTON — border, white bg, hover/active treatment all
 // identical — with only the text/icon color swapped to indigo. Replaces
@@ -54,7 +69,7 @@ const REFRESH_ICON_BUTTON =
 // more filled CTA, just a colored label on the same neutral button shell
 // as Refresh/Export/Columns.
 const NEW_BUTTON =
-  'flex h-10 w-10 xl:w-auto shrink-0 items-center justify-center xl:justify-start gap-1.5 rounded-[12px] border border-[#E2E8F0] bg-white px-0 xl:px-3 text-[13px] font-medium text-indigo-600 transition-[color,background-color,border-color,box-shadow,transform] duration-150 ease-[var(--ease-out-strong)] hover:border-[#2563EB] hover:bg-[#F1F5F9] hover:ring-2 hover:ring-[#2563EB]/20 active:scale-[0.97] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#2563EB] dark:border-[#3a3a3d] dark:bg-[#2a2a2d] dark:text-indigo-400 dark:hover:bg-white/5';
+  'flex h-8 w-8 xl:w-auto shrink-0 items-center justify-center xl:justify-start gap-[5px] rounded-[10px] border border-[#E2E8F0] bg-white px-0 xl:px-[10px] text-[11px] font-medium text-indigo-600 transition-[color,background-color,border-color,box-shadow,transform] duration-150 ease-[var(--ease-out-strong)] hover:border-[var(--ui-accent)] hover:bg-[#F1F5F9] active:scale-[0.97] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--ui-accent)] dark:border-[#262B38] dark:bg-[#12151D] dark:text-indigo-400 dark:hover:bg-white/5';
 
 // Shared hover/focus-driven tooltip state — portal-rendered so it's never
 // clipped by the toolbar's overflow-x-auto. Copied verbatim from Balance
@@ -156,9 +171,9 @@ function BulkActionsMenu({
   }, [open]);
 
   return (
-    <div className="flex items-center gap-2 dt-bar-fade-in">
-      <span className="flex items-center gap-1.5 text-[13px] font-medium text-foreground">
-        <CheckSquare size={15} className="text-indigo-600 dark:text-indigo-400" />
+    <div className="flex items-center gap-[6px] dt-bar-fade-in">
+      <span className="flex h-8 shrink-0 items-center gap-[5px] rounded-[10px] border border-[#E2E8F0] bg-white px-[10px] text-[11px] font-medium text-[#475569] dark:border-[#262B38] dark:bg-[#12151D] dark:text-[#9CA3AF]">
+        <CheckSquare size={12} className="text-[var(--ui-accent)]" />
         {count} Selected
       </span>
       <div className="relative">
@@ -172,16 +187,16 @@ function BulkActionsMenu({
           }}
           aria-haspopup="true"
           aria-expanded={open}
-          className="inline-flex h-9 items-center gap-1.5 rounded-[8px] bg-indigo-600 px-3 text-[13px] font-medium text-white transition-colors hover:bg-indigo-700 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#2563EB]"
+          className="inline-flex h-8 items-center gap-[5px] rounded-[10px] bg-[var(--ui-accent)] px-[10px] text-[11px] font-medium text-white transition-[filter] duration-150 ease-[var(--ease-out-strong)] hover:brightness-95 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--ui-accent)]"
         >
           Bulk Actions
-          <ChevronDown size={14} className={`transition-transform duration-150 ease-[var(--ease-in-out-strong)] ${open ? 'rotate-180' : ''}`} />
+          <ChevronDown size={11} className={`transition-transform duration-150 ease-[var(--ease-in-out-strong)] ${open ? 'rotate-180' : ''}`} />
         </button>
         {open && typeof document !== 'undefined' && createPortal(
           <div
             ref={menuRef}
             style={{ position: 'fixed', top: pos.top, left: pos.left }}
-            className="z-[9999] w-48 rounded-xl border border-[#e5e5e7] bg-white p-1 shadow-xl dark:border-[#3a3a3d] dark:bg-[#2a2a2d]"
+            className="z-[9999] w-48 rounded-xl border border-[#e5e5e7] bg-white p-1 shadow-xl dark:border-[#262B38] dark:bg-[#12151D]"
             onClick={(event) => event.stopPropagation()}
           >
             <button
@@ -209,7 +224,7 @@ function BulkActionsMenu({
               <Trash2 size={13} />
               Delete Selected
             </button>
-            <div className="my-1 border-t border-[#F1F5F9] dark:border-[#2f2f32]" />
+            <div className="my-1 border-t border-[#F1F5F9] dark:border-[#1A1E29]" />
             <button
               type="button"
               onClick={() => { setOpen(false); onClearSelection(); }}
@@ -255,17 +270,17 @@ function FilterTriggerButton({
         onClick={onClick}
         aria-label={label}
         {...tooltip.handlers}
-        className="inline-flex h-10 w-10 xl:w-auto shrink-0 items-center justify-center xl:justify-start gap-1.5 rounded-[12px] border border-[#E2E8F0] bg-white px-0 xl:px-3 text-[13px] font-medium text-[#475569] transition-[color,background-color,border-color,box-shadow,transform] duration-150 ease-[var(--ease-out-strong)] hover:border-[#2563EB] hover:bg-[#F1F5F9] hover:ring-2 hover:ring-[#2563EB]/20 active:scale-[0.97] dark:border-[#3a3a3d] dark:bg-[#2a2a2d] dark:text-[#9CA3AF] dark:hover:bg-white/5"
+        className="inline-flex h-8 w-8 xl:w-auto shrink-0 items-center justify-center xl:justify-start gap-[5px] rounded-[10px] border border-[#E2E8F0] bg-white px-0 xl:px-[10px] text-[11px] font-medium text-[#475569] transition-[color,background-color,border-color,box-shadow,transform] duration-150 ease-[var(--ease-out-strong)] hover:border-[var(--ui-accent)] hover:bg-[#F1F5F9] active:scale-[0.97] dark:border-[#262B38] dark:bg-[#12151D] dark:text-[#9CA3AF] dark:hover:bg-white/5"
       >
-        <Icon size={15} className="text-[#475569] dark:text-[#9CA3AF]" />
+        <Icon size={12} className="text-[#475569] dark:text-[#9CA3AF]" />
         <span className="hidden xl:inline">{label}</span>
         {anyUnchecked && (
-          <span className="flex h-4 min-w-[16px] animate-[dt-badge-pop_150ms_var(--ease-out-strong)] items-center justify-center rounded-full bg-indigo-600 px-1 text-[10px] font-semibold text-white">
+          <span className="flex h-[13px] min-w-[13px] animate-[dt-badge-pop_150ms_var(--ease-out-strong)] items-center justify-center rounded-full bg-indigo-600 px-[3px] text-[9px] font-semibold text-white">
             {selectedCount}
           </span>
         )}
         <ChevronDown
-          size={14}
+          size={11}
           className={`hidden text-[#475569] transition-transform duration-150 ease-[var(--ease-in-out-strong)] dark:text-[#9CA3AF] xl:inline ${menuOpen ? 'rotate-180' : ''}`}
         />
       </button>
@@ -289,13 +304,13 @@ function ResetFiltersButton({ anyFilterActive, onClick }: { anyFilterActive: boo
         {...tooltip.handlers}
         aria-label="Reset all filters"
         aria-disabled={!anyFilterActive}
-        className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-[12px] border transition-[color,background-color,border-color,transform] duration-150 ease-[var(--ease-out-strong)] ${
+        className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-[10px] border transition-[color,background-color,border-color,transform] duration-150 ease-[var(--ease-out-strong)] ${
           anyFilterActive
-            ? 'cursor-pointer border-[#E2E8F0] bg-white text-indigo-600 hover:border-[#FCA5A5] hover:bg-[#FEF2F2] hover:text-[#DC2626] active:scale-[0.97] active:border-[#FCA5A5] active:bg-[#FEF2F2] active:text-[#DC2626] dark:border-[#3a3a3d] dark:bg-[#2a2a2d] dark:text-indigo-400'
-            : 'cursor-default border-[#E2E8F0] bg-white text-[#475569] opacity-40 dark:border-[#3a3a3d] dark:bg-[#2a2a2d] dark:text-[#9CA3AF]'
+            ? 'cursor-pointer border-[#E2E8F0] bg-white text-indigo-600 hover:border-[#FCA5A5] hover:bg-[#FEF2F2] hover:text-[#DC2626] active:scale-[0.97] active:border-[#FCA5A5] active:bg-[#FEF2F2] active:text-[#DC2626] dark:border-[#262B38] dark:bg-[#12151D] dark:text-indigo-400'
+            : 'cursor-default border-[#E2E8F0] bg-white text-[#475569] opacity-40 dark:border-[#262B38] dark:bg-[#12151D] dark:text-[#9CA3AF]'
         }`}
       >
-        <FilterX size={20} fill={anyFilterActive ? 'currentColor' : 'none'} />
+        <FilterX size={16} fill={anyFilterActive ? 'currentColor' : 'none'} />
       </button>
       {tooltip.rendered && <Tooltip label="Reset all filters" open={tooltip.open} pos={tooltip.pos} />}
     </div>
@@ -313,14 +328,11 @@ const WALLET_TYPE_FILTER_OPTIONS = [
   { label: 'Rocket', abbreviation: 'RK' },
   { label: 'UPay', abbreviation: 'UP' },
 ];
-const WALLET_TYPE_FILTER_LABELS = [...WALLET_TYPE_FILTER_OPTIONS.map((opt) => opt.label), '—'];
+const WALLET_TYPE_FILTER_LABELS = [...WALLET_TYPE_FILTER_OPTIONS.map((opt) => opt.label), '-'];
 
-// Row-skeleton bar widths, cycled by row+column index so loading rows read
-// as varied text lengths instead of one uniform bar repeated everywhere.
-const ROW_SKELETON_WIDTHS = ['85%', '60%', '75%', '50%', '70%'];
 
 const EMPTY_STATE_ACTION_BUTTON =
-  'inline-flex h-9 items-center rounded-[8px] border border-[#E5E7EB] px-3 text-[13px] font-medium text-[#475569] transition-colors hover:bg-[#F1F5F9] dark:border-[#3a3a3d] dark:text-[#9CA3AF] dark:hover:bg-white/5';
+  'inline-flex h-9 items-center rounded-[8px] border border-[#E5E7EB] px-3 text-[13px] font-medium text-[#475569] transition-colors hover:bg-[#F1F5F9] dark:border-[#262B38] dark:text-[#9CA3AF] dark:hover:bg-white/5';
 
 const EMPTY_STATE_PRIMARY_BUTTON =
   'inline-flex h-9 items-center rounded-[8px] bg-indigo-600 px-4 text-[13px] font-medium text-white transition-colors hover:bg-indigo-700';
@@ -364,6 +376,15 @@ type Row = {
   // Opening's daily-upload Missing Shops review (Phase 3) — store + visible
   // badge only this pass, no other page logic reads this.
   isActive: boolean;
+  // Set for a row SPLIT out of a multi-wallet shop (one row per file row,
+  // agentName = that row's own raw text) — its own opening_wallet_lines.id,
+  // a real single row Edit/Delete can target directly. null for the normal
+  // one-row-per-shop case (edits go through agentCode as before).
+  lineId: number | null;
+  // The shop's real agents.agent_code — for a normal row this equals
+  // agentName; for a split row it's the shop the line belongs to, used to
+  // route Leader/SDP/Brand edits (shop-level fields) to the right agent.
+  parentAgentCode: string;
 };
 
 // Unchanged data logic — blank/'-' coerces to 0 on this page (Cashout's own
@@ -412,12 +433,27 @@ function resolveBrand(groups: string[], agentName: string): string {
 }
 
 function fmt(num: number): string {
-  if (num === 0) return '—';
+  if (num === 0) return '-';
   const formatted = Math.abs(num).toLocaleString('en-PH', {
     minimumFractionDigits: 2,
     maximumFractionDigits: 2,
   });
   return num < 0 ? `-${formatted}` : formatted;
+}
+
+const LAST_UPLOAD_MONTH_NAMES = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
+
+// "September 20, 2026 11:21 AM" — header's "Last update" indicator. Built
+// from the Date's own components (not toLocaleString) so the format stays
+// exact regardless of runtime locale, same convention used elsewhere in
+// this app for timestamp display (e.g. daily-txn-entry's formatLastUpdate).
+function formatLastOpeningUpload(date: Date): string {
+  const month = LAST_UPLOAD_MONTH_NAMES[date.getMonth()];
+  const hours24 = date.getHours();
+  const ampm = hours24 >= 12 ? 'PM' : 'AM';
+  const hours12 = hours24 % 12 || 12;
+  const minutes = String(date.getMinutes()).padStart(2, '0');
+  return `${month} ${date.getDate()}, ${date.getFullYear()} ${hours12}:${minutes} ${ampm}`;
 }
 
 // Wallet Type ("BK | NG | RK | UP") — copied verbatim from Balance
@@ -438,7 +474,7 @@ function computeWalletType(types: string[]): string {
     .filter(({ match }) => normalized.has(match))
     .map(({ abbreviation }) => abbreviation);
 
-  return abbreviations.length > 0 ? abbreviations.join(' | ') : '−';
+  return abbreviations.length > 0 ? abbreviations.join(', ') : '−';
 }
 
 const COLUMN_IDS = {
@@ -497,93 +533,11 @@ const columnWidths: Record<ColumnKey, string> = {
 
 const TABLE_MIN_WIDTH_PX = 900;
 
-function headerCellClasses(align: 'left' | 'right' | 'center', paddingCls: string = 'px-4') {
-  return `group ${paddingCls} text-[14px] leading-[20px] font-semibold text-[#475569] dark:text-[#9CA3AF] whitespace-nowrap text-${align}`;
-}
-
-// Per-code tint map — same scheme as Balance's own BrandBadge
-// (app/agentbal/page.tsx), applied here too. Unknown codes fall back to the
-// same neutral slate this badge used exclusively before.
-const BRAND_BADGE_TINTS: Record<string, string> = {
-  M1: 'bg-blue-50 text-blue-700 border-blue-200 dark:bg-blue-500/10 dark:text-blue-400 dark:border-blue-900/50',
-  M2: 'bg-cyan-50 text-cyan-700 border-cyan-200 dark:bg-cyan-500/10 dark:text-cyan-400 dark:border-cyan-900/50',
-  B1: 'bg-purple-50 text-purple-700 border-purple-200 dark:bg-purple-500/10 dark:text-purple-400 dark:border-purple-900/50',
-  B2: 'bg-violet-50 text-violet-700 border-violet-200 dark:bg-violet-500/10 dark:text-violet-400 dark:border-violet-900/50',
-  B3: 'bg-fuchsia-50 text-fuchsia-700 border-fuchsia-200 dark:bg-fuchsia-500/10 dark:text-fuchsia-400 dark:border-fuchsia-900/50',
-  B4: 'bg-indigo-50 text-indigo-700 border-indigo-200 dark:bg-indigo-500/10 dark:text-indigo-400 dark:border-indigo-900/50',
-  B5: 'bg-sky-50 text-sky-700 border-sky-200 dark:bg-sky-500/10 dark:text-sky-400 dark:border-sky-900/50',
-  K1: 'bg-orange-50 text-orange-700 border-orange-200 dark:bg-orange-500/10 dark:text-orange-400 dark:border-orange-900/50',
-  J1: 'bg-amber-50 text-amber-700 border-amber-200 dark:bg-amber-500/10 dark:text-amber-400 dark:border-amber-900/50',
-  T1: 'bg-teal-50 text-teal-700 border-teal-200 dark:bg-teal-500/10 dark:text-teal-400 dark:border-teal-900/50',
-};
-
-function brandBadgeClasses(brand: string): string {
-  return BRAND_BADGE_TINTS[brand] ?? 'bg-slate-100 text-slate-600 border-slate-200 dark:bg-slate-500/10 dark:text-slate-400 dark:border-slate-700';
-}
-
-// `brand` carries the raw code for the color lookup — `children` is the
-// (possibly search-highlighted) display content, which can differ from the
-// raw string.
-function BrandBadge({ children, brand }: { children: React.ReactNode; brand: string }) {
-  return (
-    <span className={`inline-flex h-[28px] items-center rounded-[999px] border px-[10px] text-[12px] font-semibold transition-[filter] duration-150 hover:brightness-95 dark:hover:brightness-110 ${brandBadgeClasses(brand)}`}>
-      {children}
-    </span>
-  );
-}
-
-// Same per-wallet tint scheme as WALLET_BADGE_TINTS elsewhere (e.g.
-// app/stlm/page.tsx's own Wallet column) — Bkash pink, Nagad yellow,
-// Rocket purple, Upay red — just keyed by the abbreviation
-// computeWalletType() already produces (BK/NG/RK/UP) instead of the full
-// wallet name, so the same real-world color association carries over.
-const WALLET_TYPE_BADGE_TINTS: Record<string, string> = {
-  BK: 'bg-pink-50 text-pink-700 border-pink-200 dark:bg-pink-500/10 dark:text-pink-400 dark:border-pink-900/50',
-  NG: 'bg-yellow-50 text-yellow-700 border-yellow-200 dark:bg-yellow-500/10 dark:text-yellow-400 dark:border-yellow-900/50',
-  RK: 'bg-purple-50 text-purple-700 border-purple-200 dark:bg-purple-500/10 dark:text-purple-400 dark:border-purple-900/50',
-  UP: 'bg-red-50 text-red-700 border-red-200 dark:bg-red-500/10 dark:text-red-400 dark:border-red-900/50',
-};
-
-function walletTypeBadgeClasses(code: string): string {
-  return WALLET_TYPE_BADGE_TINTS[code] ?? 'bg-slate-100 text-slate-600 border-slate-200 dark:bg-slate-500/10 dark:text-slate-400 dark:border-slate-700';
-}
-
-// Full names shown when a shop has only 1-2 active wallets (room to spell
-// it out); abbreviations shown once there are 3+ (keeps the row from
-// needing to scroll for the common case, per explicit instruction).
-const WALLET_TYPE_FULL_NAMES: Record<string, string> = {
-  BK: 'Bkash',
-  NG: 'Nagad',
-  RK: 'Rocket',
-  UP: 'Upay',
-};
-
-// row.walletType is a "BK | NG | RK | UP"-style joined string (or '−' when
-// no active wallet at all) — split it back into its own small pill per
-// code, so a shop with several active wallets shows several badges in a
-// row instead of one long plain-text string. Nowrap + horizontal scroll
-// (not flex-wrap) — the column was deliberately narrowed, and wrapping
-// badges onto multiple lines blew up individual row heights (53px up to
-// 129px on some rows); scrolling within the cell keeps every row the same
-// fixed height instead.
-function WalletTypeBadge({ walletType }: { walletType: string }) {
-  if (!walletType || walletType === '−') {
-    return <span className="text-[#94A3B8]">−</span>;
-  }
-  const codes = walletType.split(' | ');
-  const useFullNames = codes.length <= 2;
-  return (
-    <span className="dt-scroll inline-flex max-w-full flex-nowrap items-center gap-1 overflow-x-auto">
-      {codes.map((code) => (
-        <span
-          key={code}
-          className={`inline-flex h-[22px] shrink-0 items-center rounded-[999px] border px-[8px] text-[11px] font-semibold transition-[filter] duration-150 hover:brightness-95 dark:hover:brightness-110 ${walletTypeBadgeClasses(code)}`}
-        >
-          {useFullNames ? (WALLET_TYPE_FULL_NAMES[code] ?? code) : code}
-        </span>
-      ))}
-    </span>
-  );
+// Size/weight/case matched to Top Up's own table header cells
+// (app/topup/page.tsx: text-[11.5px] font-bold uppercase tracking-[0.03em])
+// per explicit instruction.
+function headerCellClasses(align: 'left' | 'right' | 'center', paddingCls: string = 'px-[8px]') {
+  return `group ${paddingCls} text-[11.5px] leading-[20px] font-bold uppercase tracking-[0.03em] text-[#475569] dark:text-[#9CA3AF] whitespace-nowrap text-${align}`;
 }
 
 // Re-triggers a short opacity+translateY fade whenever `value` changes (e.g.
@@ -659,7 +613,7 @@ function RowActionsCell({ row, onEdit, onDelete }: { row: Row; onEdit: (row: Row
           if (rect) setPos({ top: rect.bottom + 4, left: rect.right - 144 });
           setOpen((current) => !current);
         }}
-        className="flex h-8 w-8 items-center justify-center rounded-[8px] text-[#94A3B8] transition-colors duration-150 hover:bg-[#F1F5F9] hover:text-[#475569] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#2563EB] dark:hover:bg-white/5"
+        className="flex h-8 w-8 items-center justify-center rounded-[8px] text-[#94A3B8] transition-colors duration-150 hover:bg-[#F1F5F9] hover:text-[#475569] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--ui-accent)] dark:hover:bg-white/5"
       >
         <MoreVertical size={16} />
       </button>
@@ -667,7 +621,7 @@ function RowActionsCell({ row, onEdit, onDelete }: { row: Row; onEdit: (row: Row
         <div
           ref={menuRef}
           style={{ position: 'fixed', top: pos.top, left: pos.left }}
-          className="z-[9999] w-36 rounded-xl border border-[#e5e5e7] bg-white p-1 shadow-xl dark:border-[#3a3a3d] dark:bg-[#2a2a2d]"
+          className="z-[9999] w-36 rounded-xl border border-[#e5e5e7] bg-white p-1 shadow-xl dark:border-[#262B38] dark:bg-[#12151D]"
           onClick={(event) => event.stopPropagation()}
         >
           <button
@@ -686,7 +640,7 @@ function RowActionsCell({ row, onEdit, onDelete }: { row: Row; onEdit: (row: Row
             <Copy size={13} />
             Copy row
           </button>
-          <div className="my-1 border-t border-[#F1F5F9] dark:border-[#2f2f32]" />
+          <div className="my-1 border-t border-[#F1F5F9] dark:border-[#1A1E29]" />
           <button
             type="button"
             disabled
@@ -713,26 +667,35 @@ function RowActionsCell({ row, onEdit, onDelete }: { row: Row; onEdit: (row: Row
 
 function SortIcon({ active, direction }: { active: boolean; direction: 'asc' | 'desc' }) {
   return (
-    <span className="flex w-3.5 shrink-0 items-center justify-center transition-colors duration-150 ease-out">
+    <span className="flex w-[11px] shrink-0 items-center justify-center transition-colors duration-150 ease-out">
       {!active ? (
-        <ChevronsUpDown size={14} className="text-[#94A3B8]" />
+        <ChevronsUpDown size={11} className="text-[#94A3B8]" />
       ) : direction === 'asc' ? (
-        <ChevronUp size={14} className="text-[#2563EB]" />
+        <ChevronUp size={11} className="text-[var(--ui-accent)]" />
       ) : (
-        <ChevronDown size={14} className="text-[#2563EB]" />
+        <ChevronDown size={11} className="text-[var(--ui-accent)]" />
       )}
     </span>
   );
 }
 
+// Size AND row density matched to Top Up's own table body cells
+// (app/topup/page.tsx: text-[12.5px], py-1.5 = 6px) per explicit
+// instruction — color kept as this page's own established token (font
+// style/size only, not color). Brand is plain text now (no badge — matches
+// Top Up).
 function renderCell(row: Row, key: ColumnKey, onEdit: (row: Row) => void, onDelete: (row: Row) => void, searchTerm: string) {
-  const cellCls = `whitespace-nowrap overflow-hidden text-ellipsis px-4 text-${
-    DEFAULT_COLUMNS.find((c) => c.key === key)?.align ?? 'left'
-  } text-[13px] leading-[20px] font-normal text-[#111827] dark:text-[#E5E7EB]`;
-  const base = `${cellCls} py-[14px]`;
+  const align = DEFAULT_COLUMNS.find((c) => c.key === key)?.align ?? 'left';
+  // 'right'-aligned columns (Opening Balance, SDP) get extra right padding
+  // (28px vs the usual 8px) mirroring the header's own reserved space — the
+  // header word's own edge lands at this same inset boundary, so this
+  // padding keeps the data's edge matching it. Matches Top Up exactly.
+  const rightPad = align === 'right' ? 'pl-[8px] pr-[28px]' : 'px-[8px]';
+  const cellCls = `whitespace-nowrap overflow-hidden text-ellipsis ${rightPad} text-${align} text-[12.5px] leading-[16px] font-normal text-[#111827] dark:text-[#E5E7EB]`;
+  const base = `${cellCls} py-[6px]`;
   switch (key) {
     case 'brand':
-      return <td key={key} className={`${cellCls} py-3`}><BrandBadge brand={row.brand}>{highlightMatch(row.brand, searchTerm)}</BrandBadge></td>;
+      return <td key={key} title={row.brand} className={base}>{highlightMatch(row.brand, searchTerm)}</td>;
     case 'leader':
       return <td key={key} title={toProperCase(row.leader)} className={base}>{highlightMatch(toProperCase(row.leader), searchTerm)}</td>;
     case 'agentName':
@@ -745,17 +708,20 @@ function renderCell(row: Row, key: ColumnKey, onEdit: (row: Row) => void, onDele
         </td>
       );
     case 'walletType':
-      return <td key={key} title={row.walletType} className={base}><WalletTypeBadge walletType={row.walletType} /></td>;
-    // Extra right padding (pr-9 instead of the shared px-4's pr-4) shifts the
-    // number left so it lines up under the header word's own last letter —
-    // the header's sort icon (14px + 6px gap) sits further right than the
-    // text itself, and the number should follow the TEXT, not the icon.
+      return <td key={key} title={row.walletType} className={base}>{highlightMatch(row.walletType, searchTerm)}</td>;
+    // Normal weight, not bold — a single row's own balance/deposit, not a
+    // total/sum. Bold is reserved for genuine totals (e.g. the stat bar's
+    // Total Opening Balance/Total SDP above), per explicit instruction.
     case 'openingBal':
-      return <td key={key} className={`${base} !pr-9 !text-[12px] font-semibold tabular-nums ${row.openingBal < 0 ? 'text-rose-600 dark:text-rose-400' : ''}`}>{highlightMatch(fmt(row.openingBal), searchTerm)}</td>;
+      return <td key={key} className={`${base} tabular-nums ${row.openingBal < 0 ? 'text-rose-600 dark:text-rose-400' : ''}`}>{highlightMatch(fmt(row.openingBal), searchTerm)}</td>;
     case 'sdp':
-      return <td key={key} className={`${base} !pr-9 !text-[12px] font-semibold tabular-nums ${row.sdp < 0 ? 'text-rose-600 dark:text-rose-400' : ''}`}>{highlightMatch(fmt(row.sdp), searchTerm)}</td>;
+      return <td key={key} className={`${base} tabular-nums ${row.sdp < 0 ? 'text-rose-600 dark:text-rose-400' : ''}`}>{highlightMatch(fmt(row.sdp), searchTerm)}</td>;
     case 'actions':
-      return <td key={key} className={`${cellCls} py-2.5`}><span className="flex items-center justify-center"><RowActionsCell row={row} onEdit={onEdit} onDelete={onDelete} /></span></td>;
+      // py-[2px] (not the shared py-[6px]) — a real <tr>'s `height` is only
+      // a CSS minimum, not a cap, so the 32px kebab button needs tight
+      // padding here to actually fit inside the target 36px row instead of
+      // silently forcing every row taller (confirmed via live measurement).
+      return <td key={key} className={`${cellCls} py-[2px]`}><span className="flex items-center justify-center"><RowActionsCell row={row} onEdit={onEdit} onDelete={onDelete} /></span></td>;
     default:
       return null;
   }
@@ -763,9 +729,20 @@ function renderCell(row: Row, key: ColumnKey, onEdit: (row: Row) => void, onDele
 
 export default function Summary() {
   const [rows, setRows] = useState<Row[]>([]);
+  // One entry per real SHOP (never split), for the KPI stat bar only. rows
+  // above is the DISPLAY list — a multi-wallet shop appears there as
+  // several rows sharing the same shop-level SDP, so summing SDP (or
+  // counting accounts) over `rows` double/triple/quadruple-counts a
+  // multi-wallet shop. openingBal is fine to sum over `rows` (each split
+  // row's own figure is genuinely distinct, never repeated) but SDP/
+  // Accounts/No-Opening-Yet all need the per-shop view instead.
+  const [shopKpiSource, setShopKpiSource] = useState<{ openingBal: number; sdp: number }[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<ClassifiedError | null>(null);
   const [spinning, setSpinning] = useState(false);
+  // Opening's own last completed import (import_batches, importType
+  // 'opening') — header's "Last update" indicator, per explicit request.
+  const [lastOpeningUpload, setLastOpeningUpload] = useState<Date | null>(null);
   const [searchTerm, setSearchTerm] = useState('');
   const [sortColumn, setSortColumn] = useState<SortColumn>('leader');
   const [sortDirection, setSortDirection] = useState<'asc' | 'desc'>('asc');
@@ -847,22 +824,60 @@ export default function Summary() {
       // brand already resolved server-side); only walletType still needs the
       // page's own existing computeWalletType(), fed the raw isLoggedIn-gated
       // type codes instead of re-deriving anything from Sheets.
-      const res = await fetch(`/api/v2/opening?t=${Date.now()}`);
-      await assertAllOk([res]);
+      const [res, lastUploadRes] = await Promise.all([
+        fetch(`/api/v2/opening?t=${Date.now()}`),
+        fetch(`/api/v2/opening/last-upload?t=${Date.now()}`),
+      ]);
+      await assertAllOk([res, lastUploadRes]);
       const pgRows: CashoutOpeningRow[] = await res.json();
+      const { lastOpeningUpload: lastOpeningUploadStr }: { lastOpeningUpload: string | null } = await lastUploadRes.json();
+      setLastOpeningUpload(lastOpeningUploadStr ? new Date(lastOpeningUploadStr) : null);
+      // Per explicit instruction: each uploaded file row is its own entry,
+      // never merged for display — a multi-wallet shop (walletOpening.length
+      // > 0, captured per-wallet from the Opening upload) splits into one
+      // Row PER FILE ROW here, showing that row's own literal raw Agent
+      // Name and its own single figure. Each is fully editable — lineId
+      // routes Edit/Delete straight to that opening_wallet_lines row; Leader/
+      // SDP/Brand (shop-level fields) route to parentAgentCode instead. A
+      // shop with no captured per-wallet breakdown keeps the original
+      // single-row behavior, unchanged (lineId null, parentAgentCode ===
+      // agentName).
       const parsed: Row[] = pgRows
-        .map((r, index) => ({
-          agentName: r.agentCode,
-          walletType: computeWalletType(r.walletTypes),
-          openingBal: r.openingBal,
-          sdp: r.sdp,
-          leader: r.leader,
-          brand: r.brand,
-          _id: index,
-          isActive: r.isActive,
-        }))
+        .flatMap((r, index): Row[] => {
+          if (r.walletOpening.length > 0) {
+            return r.walletOpening.map((w, sub) => ({
+              agentName: w.rawAgentName,
+              walletType: w.walletTypeSuffix ?? '−',
+              openingBal: w.amount,
+              sdp: w.sdp,
+              leader: r.leader,
+              brand: r.brand,
+              _id: index * 1000 + sub,
+              isActive: r.isActive,
+              lineId: w.id,
+              parentAgentCode: r.agentCode,
+            }));
+          }
+          return [{
+            agentName: r.agentCode,
+            walletType: computeWalletType(r.walletTypes),
+            openingBal: r.openingBal,
+            sdp: r.sdp,
+            leader: r.leader,
+            brand: r.brand,
+            _id: index * 1000,
+            isActive: r.isActive,
+            lineId: null,
+            parentAgentCode: r.agentCode,
+          }];
+        })
         .filter((row) => row.agentName && row.agentName !== '-' && row.agentName !== 'OLD');
       setRows(parsed);
+      setShopKpiSource(
+        pgRows
+          .filter((r) => r.agentCode && r.agentCode !== '-' && r.agentCode !== 'OLD')
+          .map((r) => ({ openingBal: r.openingBal, sdp: r.sdp }))
+      );
       setSelectedIds(new Set());
     } catch (err) {
       setError(classifyFetchError(err instanceof Error ? err.message : String(err)));
@@ -958,8 +973,8 @@ export default function Summary() {
   // own codes is checked.
   const matchesWalletTypeFilter = useCallback((row: Row) => {
     if (!walletTypeOptions.some((name) => walletTypeFilter[name] === false)) return true;
-    if (row.walletType === '−') return isWalletTypeChecked('—');
-    const rowAbbreviations = row.walletType.split(' | ');
+    if (row.walletType === '−') return isWalletTypeChecked('-');
+    const rowAbbreviations = row.walletType.split(', ');
     return WALLET_TYPE_FILTER_OPTIONS.some(
       (opt) => rowAbbreviations.includes(opt.abbreviation) && isWalletTypeChecked(opt.label)
       // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -1013,10 +1028,10 @@ export default function Summary() {
     const counts = new Map<string, number>();
     for (const row of list) {
       if (row.walletType === '−') {
-        counts.set('—', (counts.get('—') ?? 0) + 1);
+        counts.set('-', (counts.get('-') ?? 0) + 1);
         continue;
       }
-      const rowAbbreviations = row.walletType.split(' | ');
+      const rowAbbreviations = row.walletType.split(', ');
       for (const opt of WALLET_TYPE_FILTER_OPTIONS) {
         if (rowAbbreviations.includes(opt.abbreviation)) {
           counts.set(opt.label, (counts.get(opt.label) ?? 0) + 1);
@@ -1062,6 +1077,15 @@ export default function Summary() {
     });
     return list;
   }, [facetFilteredRows, sortColumn, sortDirection]);
+
+  // Unique shop count WITHIN the current filtered/searched view — distinct
+  // from shopKpiSource (the page-wide KPI bar's own total, unaffected by
+  // search/filters). Used only for the footer's "(N shops)" clarifier so it
+  // stays correct even when the table is filtered down.
+  const sortedRowsShopCount = useMemo(
+    () => new Set(sortedRows.map((row) => row.parentAgentCode)).size,
+    [sortedRows]
+  );
 
   const totalPages = Math.max(1, Math.ceil(sortedRows.length / rowsPerPage));
   const currentPage = Math.min(page, totalPages);
@@ -1116,31 +1140,95 @@ export default function Summary() {
     await fetchData();
   }, [fetchData]);
 
-  const handleEditSave = useCallback(async (agentCode: string, values: Record<string, string>) => {
-    await patchOpeningAgents([agentCode], {
-      leader: values.leader,
-      brand: values.brand,
-      openingBalance: values.openingBalance,
-      sdp: values.sdp,
+  // A per-wallet split row (lineId set) has its own real opening_wallet_lines
+  // row — its Opening Balance AND its SDP both edit that row directly
+  // (both are summed into the shop's own totals, same treatment). Leader/
+  // Brand have no per-row equivalent, so those always route through
+  // parentAgentCode (same as agentName for a non-split row).
+  const patchOpeningWalletLine = useCallback(async (lineId: number, updates: { openingBalance?: string; sdp?: string }) => {
+    const res = await fetch('/api/v2/opening/wallet-line', {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ lineId, ...updates }),
     });
-  }, [patchOpeningAgents]);
+    if (!res.ok) {
+      const body = await res.json().catch(() => ({}));
+      throw new Error(body.error || `Request failed with status ${res.status}`);
+    }
+  }, []);
+
+  const handleEditSave = useCallback(async (row: Row, values: Record<string, string>) => {
+    const shopLevelUpdates = {
+      ...(values.leader !== undefined ? { leader: values.leader } : {}),
+      ...(values.brand !== undefined ? { brand: values.brand } : {}),
+      ...(row.lineId === null && values.openingBalance !== undefined ? { openingBalance: values.openingBalance } : {}),
+      ...(row.lineId === null && values.sdp !== undefined ? { sdp: values.sdp } : {}),
+    };
+    if (row.lineId !== null && (values.openingBalance !== undefined || values.sdp !== undefined)) {
+      await patchOpeningWalletLine(row.lineId, {
+        ...(values.openingBalance !== undefined ? { openingBalance: values.openingBalance } : {}),
+        ...(values.sdp !== undefined ? { sdp: values.sdp } : {}),
+      });
+    }
+    if (Object.keys(shopLevelUpdates).length > 0) {
+      await patchOpeningAgents([row.parentAgentCode], shopLevelUpdates);
+    } else {
+      await fetchData();
+    }
+  }, [patchOpeningAgents, patchOpeningWalletLine, fetchData]);
 
   const handleBulkEditApply = useCallback(async (updates: BulkEditUpdates) => {
-    const agentCodes = rows.filter((row) => selectedIds.has(row._id)).map((row) => row.agentName);
-    await patchOpeningAgents(agentCodes, {
-      ...(updates.leader !== undefined ? { leader: updates.leader } : {}),
-      ...(updates.openingBalance !== undefined ? { openingBalance: updates.openingBalance } : {}),
-      ...(updates.sdp !== undefined ? { sdp: updates.sdp } : {}),
-    });
+    const selectedRows = rows.filter((row) => selectedIds.has(row._id));
+    const shopLevelUpdates = { ...(updates.leader !== undefined ? { leader: updates.leader } : {}) };
+    // Opening Balance and SDP: a normal row's own agentCode carries them as
+    // before; a split row's own line gets the SAME value applied
+    // individually (no bulk line endpoint — selections needing this are
+    // small).
+    const normalRows = selectedRows.filter((row) => row.lineId === null);
+    const lineRows = selectedRows.filter((row): row is Row & { lineId: number } => row.lineId !== null);
+    if (updates.openingBalance !== undefined || updates.sdp !== undefined) {
+      if (normalRows.length > 0) {
+        await patchOpeningAgents(normalRows.map((row) => row.agentName), {
+          ...(updates.openingBalance !== undefined ? { openingBalance: updates.openingBalance } : {}),
+          ...(updates.sdp !== undefined ? { sdp: updates.sdp } : {}),
+        });
+      }
+      for (const row of lineRows) {
+        await patchOpeningWalletLine(row.lineId, {
+          ...(updates.openingBalance !== undefined ? { openingBalance: updates.openingBalance } : {}),
+          ...(updates.sdp !== undefined ? { sdp: updates.sdp } : {}),
+        });
+      }
+    }
+    if (Object.keys(shopLevelUpdates).length > 0) {
+      const parentAgentCodes = Array.from(new Set(selectedRows.map((row) => row.parentAgentCode)));
+      await patchOpeningAgents(parentAgentCodes, shopLevelUpdates);
+    } else if (updates.openingBalance !== undefined || updates.sdp !== undefined) {
+      await fetchData();
+    }
     setBulkEditOpen(false);
     setSelectedIds(new Set());
-  }, [rows, selectedIds, patchOpeningAgents]);
+  }, [rows, selectedIds, patchOpeningAgents, patchOpeningWalletLine, fetchData]);
 
-  const handleConfirmDelete = useCallback(async (agentCode: string) => {
+  const handleConfirmDelete = useCallback(async (row: Row) => {
+    if (row.lineId !== null) {
+      const res = await fetch('/api/v2/opening/wallet-line', {
+        method: 'DELETE',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ lineId: row.lineId }),
+      });
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        throw new Error(body.error || `Request failed with status ${res.status}`);
+      }
+      setSelectedIds(new Set());
+      await fetchData();
+      return;
+    }
     const res = await fetch('/api/v2/opening', {
       method: 'DELETE',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ agentCode }),
+      body: JSON.stringify({ agentCode: row.agentName }),
     });
     if (!res.ok) {
       const body = await res.json().catch(() => ({}));
@@ -1198,9 +1286,9 @@ export default function Summary() {
         case 'walletType':
           return row.walletType;
         case 'openingBal':
-          return fmt(row.openingBal);
+          return exportNum(row.openingBal);
         case 'sdp':
-          return fmt(row.sdp);
+          return exportNum(row.sdp);
         default:
           return '';
       }
@@ -1235,38 +1323,41 @@ export default function Summary() {
     setRowsPerPage(size);
   }, []);
 
-  // Balance-style KPI cards (bespoke, not SettlementSummary — that component
-  // is shared with the Send Money Opening equivalent, which wasn't part of
-  // this redesign). Count metrics have no subtitle (would just duplicate the
-  // big value); amount metrics get an abbreviated big value + full-figure
-  // subtitle (this page's own `fmt`, above), matching Balance's Total DP/
-  // Total WD pattern exactly.
+  // Compact horizontal stat bar — replaces the earlier 4-card icon KPI row
+  // (too much empty space for how little each one held), matching Top Up's
+  // own redesign (app/topup/page.tsx) exactly. Same 4 figures as before —
+  // Total Accounts, Total Opening Balance (abbreviated + full-figure
+  // subtitle), Total SDP (same), No Opening Yet — just inline in one thin
+  // row instead of separate bordered/icon cards. No delta chip here (unlike
+  // Top Up's Amount stat): opening balances are a snapshot, not a daily
+  // transaction total, so there's no "vs yesterday" to compare against.
   const kpis = useMemo(() => {
+    // Total Opening Balance sums `rows` (the split/display list) — safe,
+    // since each split row's own figure is genuinely distinct and they sum
+    // to the shop's real total. Total Accounts/Total SDP/No Opening Yet all
+    // use shopKpiSource (one entry per real shop) instead — summing those
+    // over `rows` would count a multi-wallet shop once per wallet.
     const totalOpening = rows.reduce((sum, row) => sum + row.openingBal, 0);
-    const totalSdp = rows.reduce((sum, row) => sum + row.sdp, 0);
+    const totalSdp = shopKpiSource.reduce((sum, shop) => sum + shop.sdp, 0);
     return [
       {
-        label: 'Total Accounts', icon: Users,
-        accent: 'text-indigo-600 dark:text-indigo-400', iconBg: 'bg-indigo-50 dark:bg-indigo-500/10',
-        bigValue: rows.length.toLocaleString('en-US'), subtitle: undefined as string | undefined,
+        label: 'Total Accounts',
+        bigValue: shopKpiSource.length.toLocaleString('en-US'), subtitle: undefined as string | undefined,
       },
       {
-        label: 'Total Opening Balance', icon: Banknote,
-        accent: 'text-emerald-600 dark:text-emerald-400', iconBg: 'bg-emerald-50 dark:bg-emerald-500/10',
+        label: 'Total Opening Balance',
         bigValue: fmtAbbrev(totalOpening), subtitle: fmt(totalOpening) as string | undefined,
       },
       {
-        label: 'Total SDP', icon: ShieldCheck,
-        accent: 'text-blue-600 dark:text-blue-400', iconBg: 'bg-blue-50 dark:bg-blue-500/10',
+        label: 'Total SDP',
         bigValue: fmtAbbrev(totalSdp), subtitle: fmt(totalSdp) as string | undefined,
       },
       {
-        label: 'No Opening Yet', icon: CircleSlash,
-        accent: 'text-rose-600 dark:text-rose-400', iconBg: 'bg-rose-50 dark:bg-rose-500/10',
-        bigValue: rows.filter((row) => row.openingBal === 0).length.toLocaleString('en-US'), subtitle: undefined as string | undefined,
+        label: 'No Opening Yet',
+        bigValue: shopKpiSource.filter((shop) => shop.openingBal === 0).length.toLocaleString('en-US'), subtitle: undefined as string | undefined,
       },
     ];
-  }, [rows]);
+  }, [rows, shopKpiSource]);
 
   const hasAnyRecords = rows.length > 0;
   const emptyStateNode = !hasAnyRecords ? (
@@ -1293,70 +1384,87 @@ export default function Summary() {
   );
 
   return (
-    <div
-      className="h-screen w-full flex flex-col overflow-hidden bg-background text-foreground transition-colors duration-300 dark:bg-[#1c1c1e]"
-      style={{ fontFamily: 'var(--font-inter), ui-sans-serif, system-ui, sans-serif' }}
-    >
+    <div className={`opening-page h-screen w-full flex flex-col overflow-hidden bg-background text-foreground transition-colors duration-300 dark:bg-[#0A0C11] ${manrope.variable} ${spaceGrotesk.variable}`}>
+      {/* Page-scoped font override (Manrope/Space Grotesk, matching Daily
+          Txn Entry's own treatment) — cascades down through SettlementHeader
+          too even though that component is shared/universal, since it sets
+          no font-family of its own. Every other page using SettlementHeader
+          stays on Inter, unaffected. */}
+      <style>{`
+        .opening-page {
+          font-family: var(--font-manrope), ui-sans-serif, system-ui, sans-serif;
+        }
+        .opening-page .tabular-nums {
+          font-family: var(--font-space-grotesk), ui-monospace, monospace;
+        }
+      `}</style>
       <SettlementHeader
         icon={BookOpen}
         title="Opening"
         isRefreshing={spinning}
         onRefresh={fetchData}
+        titleExtra={
+          lastOpeningUpload && (
+            <span className="hidden text-[10.5px] text-muted-foreground sm:inline">
+              Last update: <span className="font-[500]! tabular-nums">{formatLastOpeningUpload(lastOpeningUpload)}</span>
+            </span>
+          )
+        }
       />
-      <div className="w-full border-t border-border bg-[#f4f6fb] px-4 py-3 dark:bg-[#1c1c1e] md:px-6">
-        <div className="flex gap-2 pr-2">
-          {loading ? (
-            Array.from({ length: 4 }).map((_, i) => (
-              <div key={i} className="h-[80.5px] flex-1 min-w-[200px] rounded-xl border border-border bg-white p-2.5 dark:bg-[#2a2a2d]">
-                <div className="flex h-full items-center gap-3">
-                  <div className="h-8 w-8 shrink-0 animate-pulse rounded-full bg-slate-200 dark:bg-slate-700" />
-                  <div className="min-w-0 flex-1">
-                    <div className="h-3 w-20 animate-pulse rounded-md bg-slate-200 dark:bg-slate-700" />
-                    <div className="mt-1.5 h-6 w-24 animate-pulse rounded-md bg-slate-200 dark:bg-slate-700" />
-                  </div>
-                </div>
-              </div>
-            ))
-          ) : (
-            kpis.map((kpi) => (
-              <div
-                key={kpi.label}
-                className="h-[80.5px] flex-1 min-w-[200px] rounded-xl border border-border bg-white p-2.5 transition-[transform,box-shadow,border-color] duration-150 ease-out hover:-translate-y-px hover:border-foreground/20 hover:shadow-sm dark:bg-[#2a2a2d]"
-              >
-                <div className="flex h-full items-center gap-3">
-                  <div className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-full ${kpi.iconBg}`}>
-                    <kpi.icon size={16} className={kpi.accent} />
-                  </div>
-                  <div className="min-w-0 flex-1">
-                    <p className="text-[11px] font-medium leading-snug text-muted-foreground truncate">{kpi.label}</p>
-                    <FadeValue value={kpi.bigValue} className={`font-bold leading-tight text-foreground ${kpi.subtitle ? 'text-[21px]' : 'text-[28px]'}`} />
-                    {kpi.subtitle && (
-                      <p className="mt-0.5 text-[11px] leading-snug text-muted-foreground truncate">{kpi.subtitle}</p>
-                    )}
-                  </div>
-                </div>
-              </div>
-            ))
-          )}
-        </div>
-      </div>
-
-      <main className="flex-1 flex flex-col overflow-hidden px-6 pb-6 pt-1">
+      {/* px-4 md:px-[28px] + the inner mx-auto max-w-[1400px] wrapper (no
+          padding of its own) copies Daily Txn Entry's own <main> classes
+          and nesting order exactly (app/daily-txn-entry/page.tsx), matching
+          Top Up (app/topup/page.tsx) — same container size/placement. No pt
+          here — SettlementHeader's switcher row already owns that spacing
+          (py-4, symmetric top/bottom around the pills) on every page that
+          shows it, this one included. */}
+      <main className="flex-1 flex flex-col overflow-hidden px-4 pb-6 md:px-[28px] md:pb-8">
+        <div className="mx-auto flex w-full max-w-[1400px] flex-1 flex-col min-h-0">
 
         {error && <ConnectionErrorState error={error} onRetry={fetchData} />}
 
         {!error && (
           <DataTable>
-            <div className="flex shrink-0 flex-nowrap items-center overflow-x-auto border-b border-[#E5E7EB] px-4 py-3 dark:border-[#3a3a3d]">
+            {/* Compact horizontal stat bar — now lives INSIDE the same
+                bordered card as the toolbar/table (was previously a
+                separate full-width band above <main>), matching Top Up's
+                own merged-container pattern (app/topup/page.tsx) exactly. */}
+            <div className="flex shrink-0 flex-wrap items-center gap-x-6 gap-y-1.5 border-b border-[#E5E7EB] px-[13px] py-[10px] dark:border-[#262B38]">
               {loading ? (
-                <div className="mr-3 flex shrink-0 items-center gap-3">
-                  <div className="h-10 w-10 shrink-0 dt-skeleton rounded-[12px] xl:w-[92px]" />
-                  <div className="h-10 w-10 shrink-0 dt-skeleton rounded-[12px] xl:w-[98px]" />
-                  <div className="h-10 w-10 shrink-0 dt-skeleton rounded-[12px] xl:w-[130px]" />
-                  <div className="h-10 w-10 shrink-0 dt-skeleton rounded-[12px]" />
+                <>
+                  <div className="flex items-center gap-2">
+                    <div className="h-2.5 w-20 dt-skeleton rounded-md" />
+                    <div className="h-4 w-10 dt-skeleton rounded-md" />
+                  </div>
+                  {Array.from({ length: 3 }).map((_, i) => (
+                    <div key={i} className="flex items-center gap-2 border-l border-border pl-6">
+                      <div className="h-2.5 w-20 dt-skeleton rounded-md" />
+                      <div className="h-4 w-16 dt-skeleton rounded-md" />
+                    </div>
+                  ))}
+                </>
+              ) : (
+                kpis.map((kpi, i) => (
+                  <div key={kpi.label} className={`flex shrink-0 items-baseline gap-2 ${i > 0 ? 'border-l border-border pl-6' : ''}`}>
+                    <span className="text-[10px] font-semibold uppercase tracking-[0.06em] text-muted-foreground">{kpi.label}</span>
+                    <FadeValue value={kpi.bigValue} className="text-[14px] font-semibold tabular-nums text-foreground" />
+                    {kpi.subtitle && (
+                      <span className="text-[11px] tabular-nums text-muted-foreground">({kpi.subtitle})</span>
+                    )}
+                  </div>
+                ))
+              )}
+            </div>
+            <div className="flex shrink-0 flex-nowrap items-center overflow-x-auto border-b border-[#E5E7EB] px-[13px] py-[10px] dark:border-[#262B38]">
+              {loading ? (
+                <div className="mr-[10px] flex shrink-0 items-center gap-[10px]">
+                  <div className="h-8 w-8 shrink-0 dt-skeleton rounded-[10px] xl:w-[74px]" />
+                  <div className="h-8 w-8 shrink-0 dt-skeleton rounded-[10px] xl:w-[80px]" />
+                  <div className="h-8 w-8 shrink-0 dt-skeleton rounded-[10px] xl:w-[104px]" />
+                  <div className="h-8 w-8 shrink-0 dt-skeleton rounded-[10px]" />
                 </div>
               ) : (
-                <div className="mr-3 flex shrink-0 items-center gap-3">
+                <div className="mr-[10px] flex shrink-0 items-center gap-[10px]">
                   <div className="relative">
                     <FilterTriggerButton
                       label="Brand"
@@ -1418,17 +1526,17 @@ export default function Summary() {
                 </div>
               )}
 
-              <div className="flex h-10 flex-1 min-w-[200px] items-center gap-2 rounded-full border border-[#E5E7EB] bg-white px-[16px] transition-colors focus-within:border-[#2563EB] focus-within:ring-2 focus-within:ring-[#2563EB]/20 dark:border-[#3a3a3d] dark:bg-[#2a2a2d]">
+              <div className="flex h-8 flex-1 min-w-[200px] items-center gap-[6px] rounded-full border border-[#E5E7EB] bg-white px-[13px] transition-colors focus-within:border-[var(--ui-accent)] focus-within:ring-2 focus-within:ring-[var(--ui-accent)]/20 dark:border-[#262B38] dark:bg-[#12151D]">
                 {loading ? (
-                  <div className="h-3 w-32 dt-skeleton rounded-md" />
+                  <div className="dt-skeleton h-[10px] w-32 rounded-md" />
                 ) : (
                   <>
-                    <Search size={16} className="shrink-0 text-[#475569] dark:text-[#9CA3AF]" />
+                    <Search size={13} className="shrink-0 text-[#475569] dark:text-[#9CA3AF]" />
                     <input
                       aria-label="Search shops or brands"
                       value={searchTerm}
                       onChange={(event) => setSearchTerm(event.target.value)}
-                      className="flex-1 bg-transparent text-[13px] font-normal text-[#111827] placeholder:text-[#94A3B8] outline-none border-none dark:text-[#E5E7EB]"
+                      className="flex-1 bg-transparent text-[11px] font-normal text-[#111827] placeholder:text-[#94A3B8] outline-none border-none dark:text-[#E5E7EB]"
                       placeholder="Search shops or brands..."
                     />
                   </>
@@ -1441,7 +1549,7 @@ export default function Summary() {
                   per the standard bulk-selection toolbar spec (no layout
                   shift, no hidden primary actions). */}
               {!loading && selectionBarRendered && (
-                <div className="ml-3 flex shrink-0 items-center">
+                <div className="ml-[10px] flex shrink-0 items-center">
                   <BulkActionsMenu
                     count={selectedIds.size}
                     onBulkEdit={() => setBulkEditOpen(true)}
@@ -1452,39 +1560,39 @@ export default function Summary() {
               )}
 
               {loading ? (
-                <div className="ml-3 flex shrink-0 items-center gap-3">
-                  <div className="h-10 w-10 shrink-0 dt-skeleton rounded-[12px] xl:w-[92px]" />
-                  <div className="h-10 w-10 shrink-0 dt-skeleton rounded-[12px] xl:w-[92px]" />
-                  <div className="h-10 w-10 shrink-0 dt-skeleton rounded-[12px] xl:w-[88px]" />
-                  <div className="h-10 w-10 shrink-0 dt-skeleton rounded-[12px]" />
-                  <div className="h-10 w-10 shrink-0 dt-skeleton rounded-[12px]" />
+                <div className="ml-[10px] flex shrink-0 items-center gap-[10px]">
+                  <div className="h-8 w-8 shrink-0 dt-skeleton rounded-[10px] xl:w-[70px]" />
+                  <div className="h-8 w-8 shrink-0 dt-skeleton rounded-[10px] xl:w-[82px]" />
+                  <div className="h-8 w-8 shrink-0 dt-skeleton rounded-[10px] xl:w-[74px]" />
+                  <div className="h-8 w-8 shrink-0 dt-skeleton rounded-[10px]" />
+                  <div className="h-8 w-8 shrink-0 dt-skeleton rounded-[10px]" />
                 </div>
               ) : (
-                <div className="ml-3 flex shrink-0 items-center gap-3">
+                <div className="ml-[10px] flex shrink-0 items-center gap-[10px]">
                   <div className="relative">
                     <button type="button" ref={newButtonRef} onClick={() => setNewRecordOpen(true)} aria-label="New" {...newTooltip.handlers} className={NEW_BUTTON}>
-                      <Plus size={16} />
+                      <Plus size={13} />
                       <span className="hidden xl:inline">New</span>
                     </button>
                     {newTooltip.rendered && <Tooltip label="New" open={newTooltip.open} pos={newTooltip.pos} onlyWhenCompact />}
                   </div>
                   <div className="relative">
                     <button type="button" ref={uploadButtonRef} onClick={() => setBulkImportOpen(true)} aria-label="Upload" {...uploadTooltip.handlers} className={ICON_BUTTON}>
-                      <Upload size={16} />
+                      <Upload size={13} />
                       <span className="hidden xl:inline">Upload</span>
                     </button>
                     {uploadTooltip.rendered && <Tooltip label="Upload" open={uploadTooltip.open} pos={uploadTooltip.pos} onlyWhenCompact />}
                   </div>
                   <div className="relative">
                     <button type="button" ref={exportButtonRef} onClick={() => handleExport()} aria-label="Export to Excel" {...exportTooltip.handlers} className={ICON_BUTTON}>
-                      <Download size={16} />
+                      <Download size={13} />
                       <span className="hidden xl:inline">Export</span>
                     </button>
                     {exportTooltip.rendered && <Tooltip label="Export" open={exportTooltip.open} pos={exportTooltip.pos} onlyWhenCompact />}
                   </div>
                   <div className="relative">
                     <button type="button" ref={refreshButtonRef} onClick={fetchData} aria-label="Refresh Data" {...refreshTooltip.handlers} className={REFRESH_ICON_BUTTON}>
-                      <RefreshCw size={16} className={spinning ? 'animate-spin' : ''} />
+                      <RefreshCw size={13} className={spinning ? 'animate-spin' : ''} />
                     </button>
                     {refreshTooltip.rendered && <Tooltip label="Refresh Data" open={refreshTooltip.open} pos={refreshTooltip.pos} />}
                   </div>
@@ -1500,7 +1608,7 @@ export default function Summary() {
                       {...columnsTooltip.handlers}
                       className={ICON_ONLY_BUTTON}
                     >
-                      <Columns3 size={16} />
+                      <Columns3 size={13} />
                     </button>
                     {columnsTooltip.rendered && <Tooltip label="Customize Columns" open={columnsTooltip.open} pos={columnsTooltip.pos} />}
                     <ColumnsDropdown
@@ -1518,6 +1626,10 @@ export default function Summary() {
             </div>
             <div className="hidden h-1.5 shrink-0 sm:block" />
             <div className="relative hidden flex-1 min-h-0 sm:block">
+              {/* Overlay, not in-flow — centers on this outer (bounded,
+                  non-scrolling) container instead of the table's own
+                  horizontally-scrollable content width. */}
+              {loading && <TableLoadingSpinner overlay />}
               <div ref={tableScrollRef} className="dt-scroll h-full overflow-y-auto overflow-x-auto">
               <table className="w-full table-fixed text-sm" style={{ minWidth: TABLE_MIN_WIDTH_PX }}>
                 <colgroup>
@@ -1529,21 +1641,21 @@ export default function Summary() {
                     />
                   ))}
                 </colgroup>
-                <thead className={`sticky top-0 z-[50] bg-[#FAFAFB] dark:bg-[#252528] border-b border-[#E2E8F0] dark:border-[#3a3a3d] transition-shadow duration-150 ease-out ${
+                <thead className={`sticky top-0 z-[50] bg-[#FAFAFB] dark:bg-[#0E1119] border-b border-[#E2E8F0] dark:border-[#262B38] transition-shadow duration-150 ease-out ${
                   isScrolled ? 'shadow-[0_2px_4px_rgba(15,23,42,0.1)] dark:shadow-[0_2px_4px_rgba(0,0,0,0.35)]' : ''
                 }`}>
-                  <tr className="h-[48px]">
-                    <th style={{ width: '44px' }} className="px-0">
+                  <tr className="h-[32px]">
+                    <th style={{ width: '44px' }} className="px-0 text-[12px] font-semibold text-[#475569] dark:text-[#9CA3AF]">
                       <div className="flex items-center justify-center">
                         {loading ? (
-                          <div className="h-3.5 w-3.5 dt-skeleton rounded" />
+                          <div className="h-[11px] w-[11px] dt-skeleton rounded" />
                         ) : (
                           <input
                             type="checkbox"
                             aria-label="Select all rows on this page"
                             checked={allOnPageSelected}
                             onChange={toggleSelectAllOnPage}
-                            className="h-3.5 w-3.5 cursor-pointer"
+                            className="h-[11px] w-[11px] cursor-pointer"
                           />
                         )}
                       </div>
@@ -1552,18 +1664,27 @@ export default function Summary() {
                       <th
                         key={col.key}
                         style={{ width: columnWidths[col.key] }}
-                        className={headerCellClasses(col.align, 'px-4')}>
+                        className={headerCellClasses(col.align, col.align === 'right' ? 'pl-[8px] pr-[28px]' : 'px-[8px]')}>
                         {/* Header shimmers along with the body during
                             loading, per explicit instruction — reverses the
                             earlier "headers are never placeholders" spec. */}
                         {loading ? (
                           <div
-                            className={`h-3 w-3/5 max-w-[72px] dt-skeleton rounded-md ${
+                            className={`h-[10px] w-3/5 max-w-[58px] dt-skeleton rounded-md ${
                               col.align === 'right' ? 'ml-auto' : col.align === 'center' ? 'mx-auto' : ''
                             }`}
                           />
                         ) : !col.sortable ? (
-                          <span>{col.label}</span>
+                          // normal-case override: browsers reset
+                          // text-transform to none on <button> by default,
+                          // so every OTHER (sortable) header already loses
+                          // the inherited `uppercase` from headerCellClasses
+                          // and falls back to its label's own literal case
+                          // ("Action", not "ACTION"). This plain <span> has
+                          // no such reset, so it would otherwise be the only
+                          // header actually rendering uppercase — this keeps
+                          // it visually matching the rest.
+                          <span className="normal-case">{col.label}</span>
                         ) : (
                           <button
                             type="button"
@@ -1579,8 +1700,19 @@ export default function Summary() {
                               col.align === 'right' ? 'justify-end' : col.align === 'center' ? 'justify-center' : 'justify-start'
                             }`}
                           >
-                            <span>{col.label}</span>
-                            <SortIcon active={sortColumn === col.key} direction={sortDirection} />
+                            {col.align === 'center' || col.align === 'right' ? (
+                              <span className="relative inline-flex items-center">
+                                {col.label}
+                                <span className="absolute left-full ml-1.5 flex items-center">
+                                  <SortIcon active={sortColumn === col.key} direction={sortDirection} />
+                                </span>
+                              </span>
+                            ) : (
+                              <>
+                                <span>{col.label}</span>
+                                <SortIcon active={sortColumn === col.key} direction={sortDirection} />
+                              </>
+                            )}
                           </button>
                         )}
                       </th>
@@ -1588,46 +1720,31 @@ export default function Summary() {
                   </tr>
                 </thead>
                 <tbody>
-                  {loading ? Array.from({ length: 11 }).map((_, i) => (
-                    <tr key={i} className="h-[52px] border-b border-[#ECEFF3] last:border-0 dark:border-[#2f2f32]">
-                      <td />
-                      {visibleColumns.map((col, colIdx) => (
-                        <td key={col.key} className="px-4 py-[14px]">
-                          <div
-                            className="dt-skeleton h-3 rounded-md"
-                            style={{ width: ROW_SKELETON_WIDTHS[(i + colIdx) % ROW_SKELETON_WIDTHS.length] }}
-                          />
-                        </td>
-                      ))}
-                    </tr>
-                  )) : pagedRows.length > 0 ? pagedRows.map((row, i) => {
+                  {loading ? (
+                    // Empty — the loading indicator is the overlay spinner
+                    // on the outer container above, not row content here.
+                    null
+                  ) : pagedRows.length > 0 ? pagedRows.map((row, i) => {
                     const isChecked = selectedIds.has(row._id);
                     return (
                       <tr
                         key={i}
-                        tabIndex={0}
-                        onClick={() => toggleRowSelection(row._id)}
-                        onKeyDown={(event) => {
-                          if (event.key === 'Enter' || event.key === ' ') {
-                            event.preventDefault();
-                            toggleRowSelection(row._id);
-                          }
-                        }}
                         aria-selected={isChecked}
-                        className={`h-[52px] cursor-pointer border-b border-[#ECEFF3] last:border-0 dark:border-[#2f2f32] transition-colors duration-150 ease-out focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-[#2563EB] ${
+                        className={`dt-row-stagger-in h-[36px] border-b border-[#ECEFF3] last:border-0 dark:border-[#1A1E29] transition-colors duration-150 ease-out ${
                           isChecked
-                            ? 'bg-[color:var(--product-accent-soft)]'
+                            ? 'bg-[color:var(--ui-accent-soft)]'
                             : 'hover:bg-black/[0.02] dark:hover:bg-white/[0.025]'
                         }`}
+                        style={{ '--stagger-delay': `${Math.min(i, 12) * 30}ms` } as CSSProperties}
                       >
-                        <td onClick={(event) => event.stopPropagation()}>
+                        <td>
                           <div className="flex items-center justify-center">
                             <input
                               type="checkbox"
                               aria-label={`Select row for ${row.agentName}`}
                               checked={isChecked}
                               onChange={() => toggleRowSelection(row._id)}
-                              className="h-3.5 w-3.5 cursor-pointer"
+                              className="h-[11px] w-[11px] cursor-pointer"
                             />
                           </div>
                         </td>
@@ -1655,16 +1772,14 @@ export default function Summary() {
             <div className="flex-1 min-h-0 overflow-y-auto sm:hidden">
               <div className="flex flex-col gap-2 p-3">
                 {loading ? (
-                  Array.from({ length: 8 }).map((_, i) => (
-                    <div key={i} className="rounded-xl border border-border bg-white p-3.5 dark:bg-[#2a2a2d]">
-                      <div className="h-4 w-2/3 animate-pulse rounded-md bg-slate-200 dark:bg-slate-700" />
-                      <div className="mt-2 h-3 w-1/3 animate-pulse rounded-md bg-slate-200 dark:bg-slate-700" />
-                      <div className="mt-3 h-6 w-1/2 animate-pulse rounded-md bg-slate-200 dark:bg-slate-700" />
-                    </div>
-                  ))
+                  <TableLoadingSpinner minHeight={8 * 90} />
                 ) : pagedRows.length > 0 ? (
                   pagedRows.map((row, i) => (
-                    <div key={row.agentName || i} className="rounded-xl border border-border bg-white p-3.5 dark:bg-[#2a2a2d]">
+                    <div
+                      key={row.agentName || i}
+                      className="dt-row-stagger-in rounded-xl border border-border bg-white p-3.5 dark:bg-[#12151D]"
+                      style={{ '--stagger-delay': `${Math.min(i, 12) * 30}ms` } as CSSProperties}
+                    >
                       <div className="flex items-start justify-between gap-2">
                         <div className="min-w-0">
                           <p className="truncate text-sm font-bold text-foreground">
@@ -1696,10 +1811,18 @@ export default function Summary() {
             </div>
 
             {!loading && (
-              <TableFooter
+              <CompactTableFooter
                 recordCountText={
                   sortedRows.length === 0
                     ? 'Showing 0 of 0 Accounts'
+                    // A multi-wallet shop displays as several rows (its own
+                    // "-BK"/"-NG" etc.), so the raw row count isn't the same
+                    // as the shop count shown elsewhere (e.g. Balance's own
+                    // footer, this page's own Total Accounts KPI) — spelled
+                    // out here so the two numbers next to each other don't
+                    // read as a mismatch.
+                    : sortedRowsShopCount !== sortedRows.length
+                    ? `Showing ${startIndex + 1}–${Math.min(endIndex, sortedRows.length)} of ${sortedRows.length} rows (${sortedRowsShopCount.toLocaleString('en-US')} shops)`
                     : `Showing ${startIndex + 1}–${Math.min(endIndex, sortedRows.length)} of ${sortedRows.length} Accounts`
                 }
                 currentPage={currentPage}
@@ -1714,6 +1837,7 @@ export default function Summary() {
             )}
           </DataTable>
         )}
+        </div>
       </main>
 
       <RecordFormModal
@@ -1729,14 +1853,14 @@ export default function Summary() {
           openingBalance: editingRow.openingBal ? String(editingRow.openingBal) : '',
           sdp: editingRow.sdp ? String(editingRow.sdp) : '',
         } : {}}
-        onSave={editingRow ? (values) => handleEditSave(editingRow.agentName, values) : undefined}
+        onSave={editingRow ? (values) => handleEditSave(editingRow, values) : undefined}
         primaryButtonClassName="bg-indigo-600 hover:bg-indigo-700"
       />
 
       <ConfirmDeleteModal
         isOpen={deletingRow !== null}
         onClose={() => setDeletingRow(null)}
-        onConfirm={() => handleConfirmDelete(deletingRow!.agentName)}
+        onConfirm={() => handleConfirmDelete(deletingRow!)}
         title="Delete Wallet?"
         subject={deletingRow?.agentName ?? ''}
         primaryButtonClassName="bg-rose-600 hover:bg-rose-700"

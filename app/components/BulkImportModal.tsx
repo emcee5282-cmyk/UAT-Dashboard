@@ -5,7 +5,7 @@ import { createPortal } from 'react-dom';
 import {
   Upload, X, FileSpreadsheet, Download, CheckCircle2, AlertCircle, AlertTriangle, ChevronLeft, ChevronRight, ChevronDown, ChevronUp, Pencil, Check, SkipForward,
   Store, User, Clock, FileText, Wallet, RefreshCw, Copy, UserX, CalendarClock, Tag, MessageSquare,
-  UserPlus, UserMinus, Layers, ListChecks,
+  ListChecks,
 } from 'lucide-react';
 import {
   MODAL_OVERLAY_CLASS,
@@ -34,7 +34,6 @@ import { mockImportRecords } from '../lib/importService';
 import { parseEstimateRows, formatImportTimestamp, type EstimateImportRecord, type EstimateRowError } from '../lib/estimateUpload';
 import type { RecordFormField } from './RecordFormModal';
 import RowIssueEditModal from './RowIssueEditModal';
-import SearchableCombobox from './SearchableCombobox';
 import EstimateLastImportRow from './EstimateLastImportRow';
 
 // A single wizard implementation serves Settlement's row shape
@@ -71,28 +70,12 @@ type NewShopDecision =
   | { action: 'insert'; leader: string }
   | { action: 'link'; agentCode: string };
 
-// Minimal shape pulled from GET /api/v2/opening or /api/v2/sendmoney/opening
-// (openingPageService.ts's CashoutOpeningRow/SendMoneyOpeningPgRow) — used
-// for New Shops matching/Leader suggestions (agentCode/leader), the
-// SDP-change comparison (sdp — null means "no previous value", same as the
-// roster's own read side; the check is skipped entirely then, per spec),
-// and (Phase 3) Missing Shops' own "Last updated" display. The two source
-// shapes differ in field names (sdp vs securityDeposit) — normalized to
-// this one shape at fetch time.
-type OpeningRosterEntry = { agentCode: string; leader: string; sdp: number | null; lastImportMatchedAt: string | null };
-
-// SDP change confirmation (Phase 2) — a starting-point threshold, per the
-// user's own caveat; retune here if it proves too/not sensitive once
-// exercised against real day-to-day SDP fluctuations.
-const SDP_CHANGE_THRESHOLD = 0.5;
 
 const TEMPLATE_LABEL: Record<TemplateModule, string> = {
   settlement: 'Settlement',
   topup: 'Top Up',
   openingCashout: 'Opening Balance (Cashout)',
   openingSendMoney: 'Opening Balance (Send Money)',
-  balanceLimitCashout: 'Balance Limit (Cashout)',
-  balanceLimitSendMoney: 'Balance Limit (Send Money)',
 };
 
 // Multi-step import wizard — UI/UX/validation-flow only, per explicit spec:
@@ -326,7 +309,7 @@ type BulkImportModalProps = {
   moduleLabel: string;
   templateModule: TemplateModule;
   accentButtonClassName: string;
-  // Send Money's accentButtonClassName resolves var(--product-accent),
+  // Send Money's accentButtonClassName resolves var(--ui-accent),
   // which is scoped to [data-product="sendmoney"] (set on AppShell's own
   // wrapper) — createPortal renders this modal straight onto document.body,
   // outside that wrapper, so the variable silently fails to resolve and
@@ -440,34 +423,12 @@ export default function BulkImportModal({
   // mechanism the in-file check already uses, nothing new there.
   const [existingRecords, setExistingRecords] = useState<ExistingTransactionSignature[]>([]);
   const [alreadyImportedMatchByRow, setAlreadyImportedMatchByRow] = useState<Map<number, ExistingTransactionSignature>>(new Map());
-  // Opening's daily-upload New Shops confirmation — fetched once per scan
-  // (same "part of the existing scan, no new loading state" convention as
-  // existingRecords above), the current roster this file's Agent Names get
-  // matched against. newShopDecisions mirrors importOpeningFile's own
-  // NewShopDecision shape exactly (see importService.ts) — sent as-is at
-  // import time.
-  const [existingRoster, setExistingRoster] = useState<OpeningRosterEntry[]>([]);
+  // newShopDecisions mirrors importOpeningFile's own NewShopDecision shape
+  // exactly (see importService.ts) — sent as-is at import time. Nothing in
+  // the UI writes to it anymore (New Shops/Missing Shops are both fully
+  // automatic server-side now), kept only as a pass-through in case a
+  // future caller wants to supply an explicit 'link' override.
   const [newShopDecisions, setNewShopDecisions] = useState<Record<number, NewShopDecision>>({});
-  const [newShopsPanelOpen, setNewShopsPanelOpen] = useState(false);
-  // SDP-change confirmation (Phase 2) — one decision per flagged row.
-  // 'skip' excludes just that row's SDP update at import time (the rest of
-  // the row, e.g. Opening Balance, still applies normally) — unlike
-  // skippedRows/duplicateDecisions, this never removes the row from the
-  // import entirely.
-  const [sdpChangeDecisions, setSdpChangeDecisions] = useState<Record<number, 'confirm' | 'skip'>>({});
-  const [sdpChangesPanelOpen, setSdpChangesPanelOpen] = useState(false);
-  // Missing Shops review — moved into the Ready to Import step (Roster
-  // Changes group), a real blocking decision same as every other panel
-  // here. Keyed by agentCode.lower, not row number — a missing shop has no
-  // row in the uploaded file at all. 'keep' is a client-side-only decision
-  // (no network call, but still resolves the row for gating purposes);
-  // 'inactive' PATCHes the existing /api/v2/opening (or sendmoney) route.
-  // Zero Out removed per explicit request — Keep and Mark Inactive are the
-  // only two actions now.
-  const [missingShopDecisions, setMissingShopDecisions] = useState<Record<string, 'keep' | 'inactive'>>({});
-  const [missingShopBusy, setMissingShopBusy] = useState<Record<string, boolean>>({});
-  const [missingShopErrors, setMissingShopErrors] = useState<Record<string, string>>({});
-  const [missingShopsPanelOpen, setMissingShopsPanelOpen] = useState(false);
   const [importDone, setImportDone] = useState(0);
   const [importCompletedAt, setImportCompletedAt] = useState<Date | null>(null);
   // Opening module only (Phase 4) — real network write, mirrors
@@ -580,18 +541,30 @@ export default function BulkImportModal({
     const sixthField = (row: SettlementImportRow | TopUpImportRow): string =>
       (moduleKind === 'topup' ? (row as TopUpImportRow).type : (row as SettlementImportRow).remarks) ?? '';
     const rows = inputRows as (SettlementImportRow | TopUpImportRow)[];
-    const alreadyImported = detectAlreadyImportedDuplicates(rows, existingRecords, sixthField, (row) => toDateKey(row.date));
+    // Cashout Top Up only, per explicit instruction — "Bundle Transfer In"
+    // rows legitimately repeat (multiple real bundles landing with the same
+    // brand/agent/wallet/amount/date is expected, not an accidental double-
+    // entry), so they're excluded from the dedup pool entirely rather than
+    // flagged and requiring a manual Skip/Import-anyway decision every time.
+    // Excluded from the INPUT to both duplicate checks (not filtered out of
+    // the results after the fact) so a Bundle Transfer In row also never
+    // causes some OTHER row to be flagged as ITS duplicate. Send Money and
+    // every other Top Up type are completely unaffected.
+    const dedupCandidateRows = moduleKind === 'topup' && product === 'cashout'
+      ? rows.filter((row) => ((row as TopUpImportRow).type ?? '').trim().toLowerCase() !== 'bundle transfer in')
+      : rows;
+    const alreadyImported = detectAlreadyImportedDuplicates(dedupCandidateRows, existingRecords, sixthField, (row) => toDateKey(row.date));
     return {
       entries: [
         ...(moduleKind === 'topup'
           ? validateTopUpRows(inputRows as TopUpImportRow[], validationConfig)
           : validateSettlementRows(inputRows as SettlementImportRow[], validationConfig)),
-        ...detectDuplicatesWithinFile(inputRows as SettlementImportRow[]),
+        ...detectDuplicatesWithinFile(dedupCandidateRows as SettlementImportRow[]),
         ...alreadyImported.entries,
       ],
       alreadyImportedMatchByRow: alreadyImported.matchByRow,
     };
-  }, [validationConfig, moduleKind]);
+  }, [validationConfig, moduleKind, product]);
 
   // What counts as "the row's headline amount" for the Total Amount stat
   // card / Complete screen — Opening Balance for the 'opening' module,
@@ -812,12 +785,7 @@ export default function BulkImportModal({
     setEntries([]);
     setExistingRecords([]);
     setAlreadyImportedMatchByRow(new Map());
-    setExistingRoster([]);
     setNewShopDecisions({});
-    setSdpChangeDecisions({});
-    setMissingShopDecisions({});
-    setMissingShopBusy({});
-    setMissingShopErrors({});
     setSummary(null);
     setIssuesExpanded(false);
     setEditingRowNumber(null);
@@ -825,9 +793,6 @@ export default function BulkImportModal({
     setConfirmedDates(new Set());
     setDuplicateDecisions({});
     setDuplicatesPanelOpen(false);
-    setNewShopsPanelOpen(false);
-    setSdpChangesPanelOpen(false);
-    setMissingShopsPanelOpen(false);
     setImportDone(0);
     setImportCompletedAt(null);
     cancelImportRef.current();
@@ -857,6 +822,7 @@ export default function BulkImportModal({
 
   useEffect(() => {
     if (isOpen) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect -- drives the open/close CSS transition, not a derived-state anti-pattern
       setRendered(true);
       setClosing(false);
     } else if (rendered) {
@@ -877,6 +843,7 @@ export default function BulkImportModal({
   useEffect(() => {
     if (step !== 'scanning' || !file) return;
     let cancelled = false;
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- resets scan-status display state before the async scan below runs, not a derived-state anti-pattern
     setScanMessageIndex(0);
     setScanError(null);
 
@@ -929,11 +896,10 @@ export default function BulkImportModal({
       let computedEntries: ValidationEntry[] = [];
       let computedMatches: Map<number, ExistingTransactionSignature> = new Map();
       let fetchedExistingRecords: ExistingTransactionSignature[] = [];
-      let fetchedExistingRoster: OpeningRosterEntry[] = [];
       let failure: string | null = null;
       try {
         const parsed = await parseWorkbookFile(file);
-        parsedRows = moduleKind === 'opening' ? mapOpeningRows(parsed, product) : moduleKind === 'topup' ? mapTopUpRows(parsed) : mapSettlementRows(parsed);
+        parsedRows = moduleKind === 'opening' ? mapOpeningRows(parsed, product) : moduleKind === 'topup' ? mapTopUpRows(parsed, product) : mapSettlementRows(parsed, product);
 
         // "Already imported" cross-check — part of this same scan, not a
         // separate step (no extra loading state). Settlement/Top Up only;
@@ -956,47 +922,6 @@ export default function BulkImportModal({
             // check and the server's own fingerprint check at actual import
             // time still apply; this is an added safety net, not the only one.
             if (existingRes.ok) fetchedExistingRecords = await existingRes.json();
-          }
-        }
-
-        // New Shops confirmation + SDP-change confirmation — same "part of
-        // the existing scan" pattern. Reuses the existing GET /api/v2/opening
-        // (or /sendmoney/opening) roster endpoint that already powers Today's
-        // Opening's own page — no new route. A failed fetch here isn't
-        // treated as a hard scan failure either: it just means every row
-        // falls back to looking "new" and no SDP-change check runs (the
-        // panels/gates still work correctly, just conservatively), matching
-        // the existing-records check's own "added safety net, not the only
-        // path" stance above. Cashout's read side already coerces sdp to a
-        // real number (0 for null); Send Money's own securityDeposit stays
-        // nullable — normalized to the same `sdp: number | null` field here
-        // either way, since a genuinely-null previous value is exactly what
-        // skips the SDP-change check ("nothing to compare against").
-        //
-        // Bug fix — this used to gate on the `product` PROP, which neither
-        // app/summary/page.tsx nor app/sendmoney/opening/page.tsx actually
-        // passes to this modal for their Opening instance (both only wire
-        // estimateApiBasePath). The roster fetch above silently never ran
-        // at all, so existingRoster stayed permanently empty and every row
-        // that happened to reach the New Shop check (i.e. any row that also
-        // had an unrelated issue, like an in-file duplicate) got wrongly
-        // flagged as new — confirmed against a genuinely existing shop
-        // (AGATE002BK) that should never have shown that badge. Derived the
-        // same way handleOpeningImportStart already derives its own local
-        // `product` below, since that's Opening's real, established
-        // product-detection convention — not the `product` prop.
-        const openingProduct = estimateApiBasePath?.includes('sendmoney') ? 'sendmoney' : 'cashout';
-        if (moduleKind === 'opening') {
-          const rosterRes = await fetch(openingProduct === 'sendmoney' ? '/api/v2/sendmoney/opening' : '/api/v2/opening');
-          if (rosterRes.ok) {
-            const rosterJson = await rosterRes.json();
-            fetchedExistingRoster = (rosterJson as { agentCode: string; leader: string | null; sdp?: number | null; securityDeposit?: number | null; lastImportMatchedAt: string | null }[])
-              .map((r) => ({
-                agentCode: r.agentCode,
-                leader: r.leader ?? '',
-                sdp: openingProduct === 'sendmoney' ? (r.securityDeposit ?? null) : (r.sdp ?? null),
-                lastImportMatchedAt: r.lastImportMatchedAt ?? null,
-              }));
           }
         }
 
@@ -1024,7 +949,6 @@ export default function BulkImportModal({
       setEntries(computedEntries);
       setExistingRecords(fetchedExistingRecords);
       setAlreadyImportedMatchByRow(computedMatches);
-      setExistingRoster(fetchedExistingRoster);
       setSummary(calculateSummary(parsedRows, computedEntries));
       setStep('validation');
     })();
@@ -1159,17 +1083,6 @@ export default function BulkImportModal({
     () => errorRowGroups.filter((group) => !group.skipped).length,
     [errorRowGroups]
   );
-  // Every row with a real blocking error, regardless of skip state — used
-  // below by New Shops/SDP Changes, which (unlike errorRowGroups/
-  // duplicateOnlyRowGroups) need to scan EVERY uploaded row, not just rows
-  // that already happen to be in reviewRowGroups (that set only ever
-  // contains rows with an existing error/duplicate entry or an explicit
-  // Skip — a plain row with no other issue is invisible there, which used
-  // to make a genuinely new shop with clean data invisible to the New Shops
-  // check entirely, and only catch a new/missing-roster shop when it also
-  // happened to have some unrelated flag, like an in-file duplicate).
-  const errorRowNumbers = useMemo(() => new Set(errorRowGroups.map((group) => group.row)), [errorRowGroups]);
-
   // Every duplicate row (across every cluster) needs an explicit decision
   // before Continue can enable — Skip and Import anyway are equally valid,
   // there's just no silent default.
@@ -1179,122 +1092,10 @@ export default function BulkImportModal({
   );
   const duplicatesConfirmed = duplicateClusters.length === 0 || allDuplicatesDecided;
 
-  // New Shops — Opening only. existingRosterByCode is the current roster
-  // fetched at scan time (see the scanning effect); a row whose Agent Name
-  // isn't in it has nothing to match against, so it needs an explicit
-  // insert/link decision before it can go anywhere near the database.
-  const existingRosterByCode = useMemo(
-    () => new Map(existingRoster.map((r) => [r.agentCode.trim().toLowerCase(), r])),
-    [existingRoster]
-  );
-  const leaderOptions = useMemo(
-    () => Array.from(new Set(existingRoster.map((r) => r.leader).filter((name) => name.trim() !== ''))).sort((a, b) => a.localeCompare(b)),
-    [existingRoster]
-  );
-  const existingRosterAgentCodes = useMemo(() => existingRoster.map((r) => r.agentCode), [existingRoster]);
-  // A 'link' decision resolves the row the moment a real agentCode is
-  // picked — at that point it's no longer "new," it's folded into the
-  // normal matched/update path, so it drops out of this list entirely
-  // (matches how duplicateOnlyRowGroups stops tracking a duplicate once
-  // decided). An 'insert' decision stays visible either way, since the row
-  // genuinely IS going to be inserted — it just also needs to show whether
-  // its Leader is filled in yet.
-  const newShopRowGroups = useMemo(() => {
-    if (moduleKind !== 'opening') return [];
-    return rows
-      .filter((row) => !skippedRows.has(row.row) && !errorRowNumbers.has(row.row))
-      .filter((row) => !existingRosterByCode.has((row.agentName ?? '').trim().toLowerCase()))
-      .filter((row) => {
-        const decision = newShopDecisions[row.row];
-        return !(decision?.action === 'link' && decision.agentCode.trim() !== '');
-      })
-      .map((row) => ({ row: row.row, agent: row.agentName }));
-  }, [moduleKind, rows, skippedRows, errorRowNumbers, existingRosterByCode, newShopDecisions]);
-
-  // Bulk "Yes, new shop" — unlike Duplicates' Skip all/Import all anyway
-  // (a real binary choice, always fully resolvable in bulk), a row with no
-  // Leader in the file genuinely CAN'T be confirmed this way — Leader is
-  // required, so that row is deliberately left exactly as it was (no
-  // decision written, still visibly unresolved in the panel) rather than
-  // silently skipped or defaulted. Only "Yes, new shop" gets a bulk
-  // version — "No — matches existing" needs a specific shop picked per
-  // row, there's no sensible bulk form of that.
-  const confirmAllNewShopsAsNew = useCallback(() => {
-    setNewShopDecisions((current) => {
-      const next = { ...current };
-      newShopRowGroups.forEach((group) => {
-        const leader = (rows.find((r) => r.row === group.row)?.leader ?? '').trim();
-        if (!leader) return;
-        next[group.row] = { action: 'insert', leader };
-      });
-      return next;
-    });
-  }, [newShopRowGroups, rows]);
-
-  const newShopsConfirmed = useMemo(
-    () => newShopRowGroups.every((group) => {
-      const decision = newShopDecisions[group.row];
-      return decision?.action === 'insert' && decision.leader.trim() !== '';
-    }),
-    [newShopRowGroups, newShopDecisions]
-  );
-
-  // SDP Changes — Opening only. A row resolves to a "previous SDP" either
-  // via its own Agent Name already matching the roster, or via a resolved
-  // 'link' decision (a New Shop row the user pointed at an existing shop) —
-  // either way it's now a normal matched row, so its SDP gets the same
-  // scrutiny. Genuinely new shops (confirmed inserts) have nothing to
-  // compare against and are never eligible — same "no previous value" logic
-  // as importOpeningFile's own insert path. prev === null/0 also skips the
-  // check entirely (division-by-zero guard, and "no previous value to
-  // compare against" is the same case either way per spec).
-  type SdpChangeRow = { row: number; agent: string; prevSdp: number; newSdp: number; pctChange: number };
-  const sdpChangeRowGroups = useMemo((): SdpChangeRow[] => {
-    if (moduleKind !== 'opening') return [];
-    return rows.flatMap((row): SdpChangeRow[] => {
-      if (skippedRows.has(row.row) || errorRowNumbers.has(row.row)) return [];
-      const agentName = row.agentName ?? '';
-      const decision = newShopDecisions[row.row];
-      const targetCode = decision?.action === 'link' && decision.agentCode.trim() !== ''
-        ? decision.agentCode
-        : existingRosterByCode.has(agentName.trim().toLowerCase())
-        ? agentName
-        : null;
-      if (!targetCode) return [];
-      const roster = existingRosterByCode.get(targetCode.trim().toLowerCase());
-      if (!roster || !roster.sdp) return [];
-      const newSdp = parseAmount(row.sdp ?? '');
-      const pctChange = Math.abs(newSdp - roster.sdp) / roster.sdp;
-      if (pctChange < SDP_CHANGE_THRESHOLD) return [];
-      return [{ row: row.row, agent: agentName, prevSdp: roster.sdp, newSdp, pctChange }];
-    });
-  }, [moduleKind, rows, skippedRows, errorRowNumbers, newShopDecisions, existingRosterByCode]);
-  const sdpChangesConfirmed = useMemo(
-    () => sdpChangeRowGroups.every((row) => sdpChangeDecisions[row.row] !== undefined),
-    [sdpChangeRowGroups, sdpChangeDecisions]
-  );
-
-  // Missing Shops — the roster snapshot fetched at scan time, minus every
-  // agentCode appearing ANYWHERE in the uploaded file (regardless of that
-  // row's own skip/error/decision state — a row that errored out still
-  // means this shop WAS present in today's file, just not successfully
-  // processed; that's a different problem, not a missing shop). Moved into
-  // the Ready to Import step (Roster Changes group) — now a real blocking
-  // gate, same as every other panel here; no longer deferred to the
-  // Success screen.
-  const missingShops = useMemo(() => {
-    if (moduleKind !== 'opening') return [];
-    const uploadedCodes = new Set(rows.map((row) => (row.agentName ?? '').trim().toLowerCase()));
-    return existingRoster.filter((entry) => !uploadedCodes.has(entry.agentCode.trim().toLowerCase()));
-  }, [moduleKind, existingRoster, rows]);
-  // Every missing shop needs an explicit Keep or Mark Inactive decision —
-  // 'keep' now counts as a real resolved decision for gating purposes
-  // (previously just a client-side acknowledgment with nothing to gate,
-  // back when this panel was non-blocking on the Success screen).
-  const missingShopsResolved = useMemo(
-    () => missingShops.every((shop) => missingShopDecisions[shop.agentCode.trim().toLowerCase()] !== undefined),
-    [missingShops, missingShopDecisions]
-  );
+  // New Shops and Missing Shops are both fully automatic now — an unmatched
+  // row always auto-inserts (see importOpeningFile), and any existing shop
+  // this upload doesn't touch is auto-marked inactive server-side. No more
+  // client-side roster classification or manual review needed for either.
 
   // Everything NOT going into this import — actively-erroring rows, every
   // duplicate that hasn't been explicitly decided 'import' yet (an
@@ -1313,12 +1114,8 @@ export default function BulkImportModal({
     duplicateOnlyRowGroups.forEach((group) => {
       if (!group.skipped && duplicateDecisions[group.row] !== 'import') set.add(group.row);
     });
-    newShopRowGroups.forEach((group) => {
-      const decision = newShopDecisions[group.row];
-      if (!(decision?.action === 'insert' && decision.leader.trim() !== '')) set.add(group.row);
-    });
     return set;
-  }, [skippedRows, reviewRowGroups, duplicateOnlyRowGroups, duplicateDecisions, newShopRowGroups, newShopDecisions]);
+  }, [skippedRows, reviewRowGroups, duplicateOnlyRowGroups, duplicateDecisions]);
 
   const readyRows = useMemo(() => rows.filter((row) => !excludedRowNumbers.has(row.row)), [rows, excludedRowNumbers]);
   const readyTotalAmount = useMemo(() => readyRows.reduce((sum, row) => sum + parseAmount(getRowAmount(row)), 0), [readyRows, getRowAmount]);
@@ -1429,17 +1226,11 @@ export default function BulkImportModal({
       // agent) — the server still parses and validates the full original
       // file, this only trims what it actually writes. See excludedRowNumbers.
       formData.append('excludedRows', JSON.stringify(Array.from(skippedRows)));
-      // New Shops confirmation (see newShopsConfirmed) — every row that
-      // matched no existing agent already has an explicit decision by the
-      // time Continue is reachable, sent as-is; importOpeningFile mirrors
-      // this exact shape (NewShopDecision) server-side.
+      // New Shops — an unmatched row's own decision (if any, e.g. a 'link')
+      // is still sent as-is; importOpeningFile now auto-inserts anything
+      // left unresolved using the row's own Leader column, no confirmation
+      // required.
       formData.append('newShopDecisions', JSON.stringify(newShopDecisions));
-      // SDP-change confirmation (see sdpChangesConfirmed) — rows the user
-      // chose Skip for still import normally, just without their SDP figure
-      // overwritten; importOpeningFile leaves that column untouched for
-      // these row numbers.
-      const sdpSkipRows = sdpChangeRowGroups.filter((row) => sdpChangeDecisions[row.row] === 'skip').map((row) => row.row);
-      formData.append('sdpSkipRows', JSON.stringify(sdpSkipRows));
       // TEMPORARY perf-verification instrumentation — remove once the
       // server-side bulk-update fix is confirmed. Covers upload + full
       // server processing as one wall-clock number; the server's own
@@ -1461,7 +1252,7 @@ export default function BulkImportModal({
       setImportError(err instanceof Error ? err.message : 'Import failed.');
       setStep('validation');
     }
-  }, [file, estimateApiBasePath, onImported, skippedRows, newShopDecisions, sdpChangeRowGroups, sdpChangeDecisions, readyRows.length, startImportProgress, finishImportProgress, stopImportProgress]);
+  }, [file, estimateApiBasePath, onImported, skippedRows, newShopDecisions, readyRows.length, startImportProgress, finishImportProgress, stopImportProgress]);
 
   // Phase 7 — Settlement/Top Up's real write, generalized from
   // handleOpeningImportStart above rather than duplicating it: same
@@ -1636,103 +1427,6 @@ export default function BulkImportModal({
 
   const downloadReport = moduleKind === 'opening' ? downloadOpeningReport : downloadTransactionReport;
 
-  // Missing Shops — Keep is a client-side-only decision (no network call,
-  // but still resolves the row for gating — see missingShopsResolved);
-  // Mark Inactive PATCHes the *existing* /api/v2/opening (or sendmoney)
-  // route directly — same route Edit/Bulk Edit already use, now that
-  // isActive is a real OpeningFieldUpdates field (openingActionsService.ts).
-  // Zero Out removed per explicit request.
-  const applyMissingShopAction = useCallback(async (agentCode: string) => {
-    const key = agentCode.trim().toLowerCase();
-    const openingProduct = estimateApiBasePath?.includes('sendmoney') ? 'sendmoney' : 'cashout';
-    setMissingShopBusy((current) => ({ ...current, [key]: true }));
-    setMissingShopErrors((current) => {
-      if (!(key in current)) return current;
-      const next = { ...current };
-      delete next[key];
-      return next;
-    });
-    try {
-      const res = await fetch(openingProduct === 'sendmoney' ? '/api/v2/sendmoney/opening' : '/api/v2/opening', {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ agentCodes: [agentCode], updates: { isActive: false } }),
-      });
-      const result = await res.json().catch(() => null);
-      if (!res.ok) throw new Error(result?.error || 'Update failed.');
-      setMissingShopDecisions((current) => ({ ...current, [key]: 'inactive' }));
-    } catch (err) {
-      setMissingShopErrors((current) => ({ ...current, [key]: err instanceof Error ? err.message : 'Update failed.' }));
-    } finally {
-      setMissingShopBusy((current) => ({ ...current, [key]: false }));
-    }
-  }, [estimateApiBasePath]);
-
-  const markMissingShopKept = useCallback((agentCode: string) => {
-    setMissingShopDecisions((current) => ({ ...current, [agentCode.trim().toLowerCase()]: 'keep' }));
-  }, []);
-
-  // "Keep all" — every unresolved missing shop at once. Only touches rows
-  // without a decision yet, same convention as the other panels' bulk
-  // actions (never overwrites an already-made choice, e.g. an already
-  // Mark-Inactive'd shop).
-  const keepAllMissingShops = useCallback(() => {
-    setMissingShopDecisions((current) => {
-      const next = { ...current };
-      missingShops.forEach((shop) => {
-        const key = shop.agentCode.trim().toLowerCase();
-        if (next[key] === undefined) next[key] = 'keep';
-      });
-      return next;
-    });
-  }, [missingShops]);
-
-  // Export Roster Changes — one workbook covering BOTH New Shops and
-  // Missing Shops (two sheets), folded together since both live under the
-  // same "Roster Changes" section now. Always the FULL lists, never just
-  // the visible-20 slice per panel — same "display cap ≠ detection cap"
-  // convention as the Errors panel's own Export Issues Report.
-  const downloadRosterChangesReport = useCallback(() => {
-    const workbook = XLSX.utils.book_new();
-
-    const newShopHeaders = ['Row', 'Agent Name', 'Opening Balance', 'SDP', 'Decision', 'Leader / Linked To'];
-    const newShopData = newShopRowGroups.map((group) => {
-      const sourceRow = rows.find((r) => r.row === group.row);
-      const decision = newShopDecisions[group.row];
-      return [
-        group.row,
-        group.agent,
-        sourceRow?.openingBalance ?? '',
-        sourceRow?.sdp ?? '',
-        decision?.action === 'insert' ? 'New Shop' : decision?.action === 'link' ? 'Linked to Existing' : '',
-        decision?.action === 'insert' ? decision.leader : decision?.action === 'link' ? decision.agentCode : '',
-      ];
-    });
-    const newShopSheet = XLSX.utils.aoa_to_sheet([newShopHeaders, ...newShopData]);
-    newShopSheet['!cols'] = newShopHeaders.map(() => ({ wch: 20 }));
-    XLSX.utils.book_append_sheet(workbook, newShopSheet, 'New Shops');
-
-    const missingShopHeaders = ['Agent Name', 'Leader', 'Last Updated', 'Decision'];
-    const missingShopData = missingShops.map((shop) => {
-      const key = shop.agentCode.trim().toLowerCase();
-      const decision = missingShopDecisions[key];
-      return [
-        shop.agentCode,
-        shop.leader,
-        shop.lastImportMatchedAt
-          ? new Date(shop.lastImportMatchedAt).toLocaleString('en-US', { month: 'short', day: 'numeric', year: 'numeric', hour: '2-digit', minute: '2-digit' })
-          : 'Never',
-        decision === 'keep' ? 'Kept' : decision === 'inactive' ? 'Marked Inactive' : '',
-      ];
-    });
-    const missingShopSheet = XLSX.utils.aoa_to_sheet([missingShopHeaders, ...missingShopData]);
-    missingShopSheet['!cols'] = missingShopHeaders.map(() => ({ wch: 20 }));
-    XLSX.utils.book_append_sheet(workbook, missingShopSheet, 'Missing Shops');
-
-    const dateSuffix = new Date().toISOString().slice(0, 10);
-    XLSX.writeFile(workbook, `opening-roster-changes-${dateSuffix}.xlsx`);
-  }, [newShopRowGroups, rows, newShopDecisions, missingShops, missingShopDecisions]);
-
   const downloadEstimateReport = useCallback(() => {
     const headers = ['Row', 'Shop Code', 'Shop Name', 'Column', 'Invalid Value', 'Error Message'];
     const data = estimateRowErrors.map((e) => [e.row, e.shopCode, e.shopName, e.column, e.value, e.message]);
@@ -1750,7 +1444,7 @@ export default function BulkImportModal({
   // than just blocking it up front.
   const canContinue = estimateMode
     ? (estimateParsed !== null && estimateDetectedShops > 0)
-    : (activeErrorCount === 0 && duplicatesConfirmed && sdpChangesConfirmed && newShopsConfirmed && missingShopsResolved && allDatesConfirmed && readyRows.length > 0);
+    : (activeErrorCount === 0 && duplicatesConfirmed && allDatesConfirmed && readyRows.length > 0);
   const hasNonBlockingIssues = (summary?.warningCount ?? 0) + (summary?.duplicateCount ?? 0) > 0;
 
   const importedTimestampLabel = importCompletedAt
@@ -1873,7 +1567,7 @@ export default function BulkImportModal({
                     <div
                       className={`flex h-[22px] w-[22px] shrink-0 items-center justify-center rounded-full border-[1.5px] text-[11px] font-bold transition-colors ${
                         status === 'done' ? 'border-emerald-500 bg-emerald-50 text-emerald-600 dark:bg-emerald-500/15 dark:text-emerald-400'
-                          : status === 'active' ? 'border-transparent text-white shadow-[0_4px_10px_-2px_var(--product-accent)]'
+                          : status === 'active' ? 'border-transparent text-white shadow-[0_4px_10px_-2px_var(--ui-accent)]'
                           : 'border-border text-muted-foreground'
                       }`}
                       style={status === 'active' ? MODAL_GLYPH_STYLE : undefined}
@@ -1898,13 +1592,13 @@ export default function BulkImportModal({
             <>
               {allowEstimateMode && (
                 <label className={`mb-2.5 flex cursor-pointer items-start gap-3 rounded-[14px] border p-3.5 transition-colors ${
-                  estimateMode ? 'border-[color:var(--product-accent)] bg-[color:var(--product-accent-soft)]' : 'border-border bg-muted/20 hover:border-muted-foreground/40'
+                  estimateMode ? 'border-[color:var(--ui-accent)] bg-[color:var(--ui-accent-soft)]' : 'border-border bg-muted/20 hover:border-muted-foreground/40'
                 }`}>
                   <input
                     type="checkbox"
                     checked={estimateMode}
                     onChange={(event) => setEstimateMode(event.target.checked)}
-                    className="mt-0.5 h-[18px] w-[18px] shrink-0 rounded-[5px] border-border accent-[color:var(--product-accent)]"
+                    className="mt-0.5 h-[18px] w-[18px] shrink-0 rounded-[5px] border-border accent-[color:var(--ui-accent)]"
                   />
                   <div className="min-w-0">
                     <p className="text-[13px] font-bold text-foreground">Estimate Opening Balance</p>
@@ -1936,7 +1630,7 @@ export default function BulkImportModal({
                 onDrop={handleDrop}
                 onClick={() => fileInputRef.current?.click()}
                 className={`flex h-[130px] cursor-pointer flex-col items-center justify-center gap-1.5 rounded-[14px] border-[1.5px] border-dashed px-4 text-center transition-colors ${
-                  dragActive ? 'border-[color:var(--product-accent)] bg-[color:var(--product-accent-soft)]' : 'border-border bg-muted/20 hover:border-[color:var(--product-accent)] hover:bg-[color:var(--product-accent-soft)]'
+                  dragActive ? 'border-[color:var(--ui-accent)] bg-[color:var(--ui-accent-soft)]' : 'border-border bg-muted/20 hover:border-[color:var(--ui-accent)] hover:bg-[color:var(--ui-accent-soft)]'
                 }`}
               >
                 <span className={MODAL_GLYPH_CLASS} style={MODAL_GLYPH_STYLE}>
@@ -1969,7 +1663,7 @@ export default function BulkImportModal({
               <div className="w-full max-w-xs">
                 <div className="h-1.5 w-full overflow-hidden rounded-full bg-muted">
                   <div
-                    className="h-full rounded-full bg-[color:var(--product-accent)] transition-all duration-200 ease-out"
+                    className="h-full rounded-full bg-[color:var(--ui-accent)] transition-all duration-200 ease-out"
                     style={{ width: `${((scanMessageIndex + 1) / SCAN_MESSAGES.length) * 100}%` }}
                   />
                 </div>
@@ -1999,7 +1693,7 @@ export default function BulkImportModal({
                   type="button"
                   onClick={resetWizardState}
                   aria-label="Remove file"
-                  className="shrink-0 rounded-lg p-1 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#2563EB]"
+                  className="shrink-0 rounded-lg p-1 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--ui-accent)]"
                 >
                   <X size={16} />
                 </button>
@@ -2134,33 +1828,28 @@ export default function BulkImportModal({
                   type="button"
                   onClick={resetWizardState}
                   aria-label="Remove file"
-                  className="shrink-0 rounded-lg p-1 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#2563EB]"
+                  className="shrink-0 rounded-lg p-1 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--ui-accent)]"
                 >
                   <X size={16} />
                 </button>
               </div>
 
               {/* Compact stat cards — Total Records / Ready / [Duplicates,
-                  only when present] / [New Shops, Opening only, only when
-                  present] / Errors. These are mutually exclusive and always
-                  sum to Total Records: Errors takes priority for any row
-                  that has one (even if it's ALSO a duplicate — see
+                  only when present] / Errors. These are mutually exclusive
+                  and always sum to Total Records: Errors takes priority for
+                  any row that has one (even if it's ALSO a duplicate — see
                   errorRowGroups/IssueBadge), Duplicates is every
                   duplicate-only row regardless of its Skip/Import decision,
-                  New Shops is every unmatched-Agent-Name row regardless of
-                  its insert/link decision, Ready is everything else. This is
-                  a DISPLAY-only partition for these cards — it's
-                  deliberately different from readyRows/readyTotalAmount
-                  below (the real set that actually gets imported), where a
-                  duplicate decided "Import anyway" DOES count as ready to
-                  import; it just doesn't move out of this card's Duplicates
-                  bucket (same for a resolved New Shop). */}
+                  Ready is everything else (Opening's unmatched rows count as
+                  Ready too now — they always auto-insert, no separate New
+                  Shops bucket). This is a DISPLAY-only partition for these
+                  cards — it's deliberately different from readyRows/
+                  readyTotalAmount below (the real set that actually gets
+                  imported), where a duplicate decided "Import anyway" DOES
+                  count as ready to import; it just doesn't move out of this
+                  card's Duplicates bucket. */}
               <div className={`mt-2.5 grid gap-2 ${
-                duplicateOnlyRowGroups.length > 0 && newShopRowGroups.length > 0
-                  ? 'grid-cols-5'
-                  : duplicateOnlyRowGroups.length > 0 || newShopRowGroups.length > 0
-                  ? 'grid-cols-4'
-                  : 'grid-cols-3'
+                duplicateOnlyRowGroups.length > 0 ? 'grid-cols-4' : 'grid-cols-3'
               }`}>
                 <div className="flex items-center gap-2 rounded-xl border border-border p-1.5">
                   <div className="flex h-6 w-6 shrink-0 items-center justify-center rounded-lg bg-muted text-foreground">
@@ -2176,7 +1865,7 @@ export default function BulkImportModal({
                     <CheckCircle2 size={12} />
                   </div>
                   <div className="min-w-0">
-                    <p className="text-[14px] font-bold tabular-nums text-foreground">{(summary.totalRows - activeErrorCount - duplicateOnlyRowGroups.length - newShopRowGroups.length).toLocaleString()}</p>
+                    <p className="text-[14px] font-bold tabular-nums text-foreground">{(summary.totalRows - activeErrorCount - duplicateOnlyRowGroups.length).toLocaleString()}</p>
                     <p className="text-[10px] text-muted-foreground">Ready</p>
                   </div>
                 </div>
@@ -2188,17 +1877,6 @@ export default function BulkImportModal({
                     <div className="min-w-0">
                       <p className="text-[14px] font-bold tabular-nums text-amber-700 dark:text-amber-400">{duplicateOnlyRowGroups.length}</p>
                       <p className="text-[10px] text-amber-700/90 dark:text-amber-400/80">Duplicates</p>
-                    </div>
-                  </div>
-                )}
-                {newShopRowGroups.length > 0 && (
-                  <div className="flex items-center gap-2 rounded-xl border border-indigo-200 bg-indigo-50/50 p-1.5 dark:border-indigo-500/20 dark:bg-indigo-500/10">
-                    <div className="flex h-6 w-6 shrink-0 items-center justify-center rounded-lg bg-indigo-100 text-indigo-700 dark:bg-indigo-500/20 dark:text-indigo-400">
-                      <UserPlus size={12} />
-                    </div>
-                    <div className="min-w-0">
-                      <p className="text-[14px] font-bold tabular-nums text-indigo-700 dark:text-indigo-400">{newShopRowGroups.length}</p>
-                      <p className="text-[10px] text-indigo-700/90 dark:text-indigo-400/80">New Shops</p>
                     </div>
                   </div>
                 )}
@@ -2240,14 +1918,11 @@ export default function BulkImportModal({
                   a snapshot of what's wrong, not what's been decided about
                   it. Hidden entirely on a fully clean file. */}
               {(errorRowGroups.length > 0 || duplicateOnlyRowGroups.length > 0) && (() => {
-                // Data Issues = Errors + Duplicates + SDP Changes (SDP is
-                // Opening-only; sdpChangesConfirmed is vacuously true for
-                // Settlement/Top Up, where sdpChangeRowGroups is always
-                // empty, so this has no effect there). Disabled once every
-                // row across all three is resolved — nothing outstanding
-                // left to export for offline review — not a one-way lock,
-                // re-enables the moment any row goes back to unresolved.
-                const dataIssuesResolved = activeErrorCount === 0 && allDuplicatesDecided && sdpChangesConfirmed;
+                // Data Issues = Errors + Duplicates. Disabled once every row
+                // across both is resolved — nothing outstanding left to
+                // export for offline review — not a one-way lock, re-enables
+                // the moment any row goes back to unresolved.
+                const dataIssuesResolved = activeErrorCount === 0 && allDuplicatesDecided;
                 return (
                   <button
                     type="button"
@@ -2470,7 +2145,7 @@ export default function BulkImportModal({
                           <button
                             type="button"
                             onClick={() => applyDuplicateDecisionToAll('import', duplicateOnlyRowGroups.map((g) => g.row))}
-                            className="rounded-md border border-[color:var(--product-accent)] px-2 py-1 text-[10px] font-semibold text-[color:var(--product-accent)] transition-colors hover:bg-[color:var(--product-accent-soft)]"
+                            className="rounded-md border border-[color:var(--ui-accent)] px-2 py-1 text-[10px] font-semibold text-[color:var(--ui-accent)] transition-colors hover:bg-[color:var(--ui-accent-soft)]"
                           >
                             Import all anyway
                           </button>
@@ -2530,7 +2205,7 @@ export default function BulkImportModal({
                                       onClick={() => setDuplicateDecision(row.row, 'import')}
                                       className={`flex items-center gap-1 rounded-md border px-2 py-1.5 text-[11px] font-semibold transition-colors ${
                                         decision === 'import'
-                                          ? 'border-[color:var(--product-accent)] bg-[color:var(--product-accent)] text-white shadow-sm'
+                                          ? 'border-[color:var(--ui-accent)] bg-[color:var(--ui-accent)] text-white shadow-sm'
                                           : 'border-border bg-white text-muted-foreground hover:bg-muted dark:bg-transparent'
                                       }`}
                                     >
@@ -2594,7 +2269,7 @@ export default function BulkImportModal({
                                     onClick={() => applyDuplicateDecisionToAll('import', clusterRowNumbers)}
                                     className={`rounded-md border px-2 py-1.5 text-[11px] font-semibold transition-colors ${
                                       clusterDecision === 'import'
-                                        ? 'border-[color:var(--product-accent)] bg-[color:var(--product-accent)] text-white'
+                                        ? 'border-[color:var(--ui-accent)] bg-[color:var(--ui-accent)] text-white'
                                         : 'border-border text-muted-foreground hover:bg-muted'
                                     }`}
                                   >
@@ -2631,7 +2306,7 @@ export default function BulkImportModal({
                                           onClick={() => setDuplicateDecision(row.row, 'import')}
                                           className={`rounded-md border px-2 py-1 text-[10.5px] font-semibold transition-colors ${
                                             decision === 'import'
-                                              ? 'border-[color:var(--product-accent)] bg-[color:var(--product-accent)] text-white shadow-sm'
+                                              ? 'border-[color:var(--ui-accent)] bg-[color:var(--ui-accent)] text-white shadow-sm'
                                               : 'border-border bg-white text-muted-foreground hover:bg-muted dark:bg-transparent'
                                           }`}
                                         >
@@ -2661,439 +2336,6 @@ export default function BulkImportModal({
                 </div>
               ) : (
                 <ClearStatusBanner text="No duplicates found. This file is ready to import." />
-              )}
-
-              {/* SDP Changes Need Review — Opening only, part of the Data
-                  Issues group. Soft confirmation (Confirm/Skip), same as
-                  New Shops/Missing Shops — Skip does NOT exclude the row
-                  from import, it only tells the server to leave that one
-                  shop's SDP column untouched (see sdpSkipRows in
-                  handleOpeningImportStart); Opening Balance and everything
-                  else on the row still applies normally. */}
-              {moduleKind === 'opening' && (
-                sdpChangeRowGroups.length > 0 ? (
-                  <div className={`mt-2.5 overflow-hidden rounded-[14px] border ${sdpChangesConfirmed ? 'border-emerald-200 dark:border-emerald-500/20' : 'border-amber-200 dark:border-amber-500/20'}`}>
-                    <button
-                      type="button"
-                      onClick={() => setSdpChangesPanelOpen((current) => !current)}
-                      className={`flex w-full items-center justify-between gap-2 px-4 py-2.5 text-left transition-colors ${
-                        sdpChangesConfirmed
-                          ? 'bg-emerald-50 hover:bg-emerald-100 dark:bg-emerald-500/10 dark:hover:bg-emerald-500/15'
-                          : 'bg-amber-50 hover:bg-amber-100 dark:bg-amber-500/10 dark:hover:bg-amber-500/15'
-                      }`}
-                    >
-                      <span className="flex items-center gap-2">
-                        {sdpChangesConfirmed
-                          ? <CheckCircle2 size={15} className="shrink-0 text-emerald-600 dark:text-emerald-400" />
-                          : <AlertTriangle size={15} className="shrink-0 text-amber-600 dark:text-amber-400" />}
-                        <span>
-                          <span className={`block text-[13px] font-bold ${sdpChangesConfirmed ? 'text-emerald-800 dark:text-emerald-400' : 'text-amber-800 dark:text-amber-400'}`}>
-                            {sdpChangesConfirmed && '✓ '}{sdpChangeRowGroups.length} SDP change{sdpChangeRowGroups.length === 1 ? '' : 's'} need{sdpChangeRowGroups.length === 1 ? 's' : ''} review
-                          </span>
-                          <span className={`block text-[11px] ${sdpChangesConfirmed ? 'text-emerald-700 dark:text-emerald-400/80' : 'text-amber-700 dark:text-amber-400/80'}`}>
-                            {sdpChangesConfirmed
-                              ? `${sdpChangeRowGroups.length} of ${sdpChangeRowGroups.length} resolved`
-                              : 'Confirm each large change, or Skip to keep the previous SDP value for that shop.'}
-                          </span>
-                        </span>
-                      </span>
-                      {sdpChangesPanelOpen
-                        ? <ChevronUp size={15} className={`shrink-0 ${sdpChangesConfirmed ? 'text-emerald-700 dark:text-emerald-400' : 'text-amber-700 dark:text-amber-400'}`} />
-                        : <ChevronDown size={15} className={`shrink-0 ${sdpChangesConfirmed ? 'text-emerald-700 dark:text-emerald-400' : 'text-amber-700 dark:text-amber-400'}`} />}
-                    </button>
-                    <div className={`grid transition-[grid-template-rows] duration-200 ease-out ${
-                      sdpChangesPanelOpen ? 'grid-rows-[1fr]' : 'grid-rows-[0fr]'
-                    }`}>
-                      <div className="overflow-hidden">
-                        <div className="max-h-[320px] divide-y divide-border overflow-y-auto border-t border-amber-200 bg-white dark:border-amber-500/20 dark:bg-[#2a2a2d]">
-                          {sdpChangeRowGroups.map((row) => {
-                            const decision = sdpChangeDecisions[row.row];
-                            const pctLabel = `${row.newSdp >= row.prevSdp ? '+' : '-'}${Math.round(row.pctChange * 100)}%`;
-                            return (
-                              <div key={row.row} className="flex items-center justify-between gap-3 px-4 py-2">
-                                <div className="min-w-0 flex-1">
-                                  <p className="truncate text-[13px] font-medium text-foreground">{row.agent}</p>
-                                  <p className="mt-0.5 text-[11px] text-muted-foreground">
-                                    Row {row.row} · {displayNum(row.prevSdp)} → {displayNum(row.newSdp)} ({pctLabel})
-                                  </p>
-                                </div>
-                                <div className="flex shrink-0 items-center gap-1.5">
-                                  <button
-                                    type="button"
-                                    onClick={() => setSdpChangeDecisions((current) => ({ ...current, [row.row]: 'skip' }))}
-                                    className={`flex items-center gap-1 rounded-md border px-2 py-1.5 text-[11px] font-semibold transition-colors ${
-                                      decision === 'skip'
-                                        ? 'border-foreground bg-foreground text-white shadow-sm dark:border-white dark:bg-white dark:text-[#1c1c1e]'
-                                        : 'border-border bg-white text-muted-foreground hover:bg-muted dark:bg-transparent'
-                                    }`}
-                                  >
-                                    {decision === 'skip' && <Check size={11} className="shrink-0" />}
-                                    Skip
-                                  </button>
-                                  <button
-                                    type="button"
-                                    onClick={() => setSdpChangeDecisions((current) => ({ ...current, [row.row]: 'confirm' }))}
-                                    className={`flex items-center gap-1 rounded-md border px-2 py-1.5 text-[11px] font-semibold transition-colors ${
-                                      decision === 'confirm'
-                                        ? 'border-[color:var(--product-accent)] bg-[color:var(--product-accent)] text-white shadow-sm'
-                                        : 'border-border bg-white text-muted-foreground hover:bg-muted dark:bg-transparent'
-                                    }`}
-                                  >
-                                    {decision === 'confirm' && <Check size={11} className="shrink-0" />}
-                                    Confirm
-                                  </button>
-                                </div>
-                              </div>
-                            );
-                          })}
-                        </div>
-                      </div>
-                    </div>
-                  </div>
-                ) : (
-                  <ClearStatusBanner text="No large SDP changes detected." />
-                )
-              )}
-
-              {/* Roster Changes group — New Shops + Missing Shops, moved
-                  into this same Ready to Import step (Missing Shops used to
-                  live on the Success screen, non-blocking — superseded: it's
-                  a real blocking decision now, same pattern as everything
-                  else here). One combined export for both, inline with the
-                  header itself (no divider on this header — matches the
-                  reference mockup exactly, a deliberately different layout
-                  from Data Issues' header). */}
-              {moduleKind === 'opening' && (() => {
-                // Roster Changes = New Shops + Missing Shops. .every() on an
-                // empty array is vacuously true, so this one condition
-                // already covers both cases the button needs to disable
-                // for: nothing there at all, AND everything there already
-                // resolved — no separate "is there anything" check needed.
-                // Live/reactive, not a one-way lock: flips back the moment
-                // a row becomes unresolved again.
-                const rosterChangesResolved = newShopsConfirmed && missingShopsResolved;
-                return (
-                  <ReviewSectionHeader
-                    icon={Layers}
-                    label="Roster Changes"
-                    subtitle="Who's joining or missing from this upload"
-                    trailing={
-                      <button
-                        type="button"
-                        onClick={downloadRosterChangesReport}
-                        disabled={rosterChangesResolved}
-                        className={`flex shrink-0 items-center gap-1 rounded-md border px-2 py-1 text-[11px] font-semibold transition-colors ${
-                          rosterChangesResolved
-                            ? 'cursor-not-allowed border-border text-muted-foreground opacity-50'
-                            : 'border-border text-foreground hover:bg-muted'
-                        }`}
-                      >
-                        <ListChecks size={11} />
-                        Export Roster Changes (.xlsx)
-                      </button>
-                    }
-                  />
-                );
-              })()}
-
-              {/* New Shops — Opening only. A row whose Agent Name matches
-                  nothing in the current roster needs an explicit decision
-                  before Continue enables (same hard gate as Errors/
-                  Duplicates, confirmed): either a real new shop (Leader
-                  required, resolved via find-or-create same as everywhere
-                  else in the app) or a link onto an existing shop this row
-                  was actually meant to update (the typo/variant case). Bulk
-                  "Confirm all as new shops" below covers the "Yes, new
-                  shop" side only (using each row's own Leader from the
-                  file) — "No — matches existing" still needs a specific
-                  shop picked per row, no sensible bulk form of that. */}
-              {moduleKind === 'opening' && (
-                newShopRowGroups.length > 0 ? (
-                  <div className={`mt-2.5 overflow-hidden rounded-[14px] border ${newShopsConfirmed ? 'border-emerald-200 dark:border-emerald-500/20' : 'border-indigo-200 dark:border-indigo-500/20'}`}>
-                    <button
-                      type="button"
-                      onClick={() => setNewShopsPanelOpen((current) => !current)}
-                      className={`flex w-full items-center justify-between gap-2 px-4 py-2.5 text-left transition-colors ${
-                        newShopsConfirmed
-                          ? 'bg-emerald-50 hover:bg-emerald-100 dark:bg-emerald-500/10 dark:hover:bg-emerald-500/15'
-                          : 'bg-indigo-50 hover:bg-indigo-100 dark:bg-indigo-500/10 dark:hover:bg-indigo-500/15'
-                      }`}
-                    >
-                      <span className="flex items-center gap-2">
-                        {newShopsConfirmed
-                          ? <CheckCircle2 size={15} className="shrink-0 text-emerald-600 dark:text-emerald-400" />
-                          : <UserPlus size={15} className="shrink-0 text-indigo-600 dark:text-indigo-400" />}
-                        <span>
-                          <span className={`block text-[13px] font-bold ${newShopsConfirmed ? 'text-emerald-800 dark:text-emerald-400' : 'text-indigo-800 dark:text-indigo-400'}`}>
-                            {newShopsConfirmed && '✓ '}{newShopRowGroups.length} new shop{newShopRowGroups.length === 1 ? '' : 's'} detected in this file
-                          </span>
-                          <span className={`block text-[11px] ${newShopsConfirmed ? 'text-emerald-700 dark:text-emerald-400/80' : 'text-indigo-700 dark:text-indigo-400/80'}`}>
-                            {newShopsConfirmed
-                              ? `${newShopRowGroups.length} of ${newShopRowGroups.length} resolved`
-                              : 'Confirm each one, or link it to an existing shop if this is a typo/variant.'}
-                          </span>
-                        </span>
-                      </span>
-                      {newShopsPanelOpen
-                        ? <ChevronUp size={15} className={`shrink-0 ${newShopsConfirmed ? 'text-emerald-700 dark:text-emerald-400' : 'text-indigo-700 dark:text-indigo-400'}`} />
-                        : <ChevronDown size={15} className={`shrink-0 ${newShopsConfirmed ? 'text-emerald-700 dark:text-emerald-400' : 'text-indigo-700 dark:text-indigo-400'}`} />}
-                    </button>
-                    <div className={`grid transition-[grid-template-rows] duration-200 ease-out ${
-                      newShopsPanelOpen ? 'grid-rows-[1fr]' : 'grid-rows-[0fr]'
-                    }`}>
-                      <div className="overflow-hidden">
-                        <div className="border-t border-indigo-200 bg-white dark:border-indigo-500/20 dark:bg-[#2a2a2d]">
-                          {/* Quick action — outside the scroll area, always
-                              visible, same pattern as Duplicates' Skip
-                              all/Import all anyway bar. Only "Yes, new
-                              shop" bulk-applies; a row with no Leader in
-                              the file is left exactly as-is (no decision
-                              written), still visibly unresolved below. */}
-                          {(() => {
-                            const blankLeaderCount = newShopRowGroups.filter(
-                              (group) => !(rows.find((r) => r.row === group.row)?.leader ?? '').trim()
-                            ).length;
-                            const confirmedInsertCount = newShopRowGroups.filter((group) => {
-                              const d = newShopDecisions[group.row];
-                              return d?.action === 'insert' && d.leader.trim() !== '';
-                            }).length;
-                            return (
-                              <div className="flex items-center justify-between gap-2 border-b border-border bg-muted/20 px-4 py-1.5">
-                                <span className="text-[10px] text-muted-foreground">
-                                  {blankLeaderCount > 0
-                                    ? `${confirmedInsertCount} confirmed, ${blankLeaderCount} still need${blankLeaderCount === 1 ? 's' : ''} a Leader assigned`
-                                    : `Quick action for all ${newShopRowGroups.length} row${newShopRowGroups.length === 1 ? '' : 's'}`}
-                                </span>
-                                <button
-                                  type="button"
-                                  onClick={confirmAllNewShopsAsNew}
-                                  disabled={blankLeaderCount === newShopRowGroups.length}
-                                  className="rounded-md border border-[color:var(--product-accent)] px-2 py-1 text-[10px] font-semibold text-[color:var(--product-accent)] transition-colors hover:bg-[color:var(--product-accent-soft)] disabled:cursor-not-allowed disabled:opacity-50"
-                                >
-                                  Confirm all as new shops
-                                </button>
-                              </div>
-                            );
-                          })()}
-                          <div className="max-h-[320px] divide-y divide-border overflow-y-auto">
-                          {/* Capped at the first 20 rows — same convention
-                              as Errors/Missing Shops, a file with hundreds
-                              or thousands of new shops relies on the bulk
-                              action/Export above, not scrolling through
-                              every mounted row. The cap is display-only:
-                              confirmAllNewShopsAsNew and
-                              downloadRosterChangesReport both already
-                              operate on the full, unsliced
-                              newShopRowGroups. */}
-                          {newShopRowGroups.slice(0, 20).map((group) => {
-                            const sourceRow = rows.find((r) => r.row === group.row);
-                            const decision = newShopDecisions[group.row];
-                            return (
-                              <div key={group.row} className="px-4 py-2">
-                                <div className="flex items-start justify-between gap-2">
-                                  <div className="min-w-0 flex-1">
-                                    <p className="truncate text-[13px] font-medium text-foreground">{group.agent}</p>
-                                    <p className="mt-0.5 text-[11px] text-muted-foreground">
-                                      Row {group.row} · Opening {displayNum(parseAmount(sourceRow?.openingBalance ?? ''))} · SDP {displayNum(parseAmount(sourceRow?.sdp ?? ''))}
-                                    </p>
-                                  </div>
-                                  <div className="flex shrink-0 items-center gap-1.5">
-                                    <button
-                                      type="button"
-                                      onClick={() => setNewShopDecisions((current) => ({ ...current, [group.row]: { action: 'link', agentCode: '' } }))}
-                                      className={`flex items-center gap-1 rounded-md border px-2 py-1.5 text-[11px] font-semibold transition-colors ${
-                                        decision?.action === 'link'
-                                          ? 'border-foreground bg-foreground text-white shadow-sm dark:border-white dark:bg-white dark:text-[#1c1c1e]'
-                                          : 'border-border bg-white text-muted-foreground hover:bg-muted dark:bg-transparent'
-                                      }`}
-                                    >
-                                      {decision?.action === 'link' && <Check size={11} className="shrink-0" />}
-                                      No — matches existing
-                                    </button>
-                                    <button
-                                      type="button"
-                                      onClick={() => setNewShopDecisions((current) => {
-                                        const existing = current[group.row];
-                                        const leader = existing?.action === 'insert' ? existing.leader : (sourceRow?.leader ?? '');
-                                        return { ...current, [group.row]: { action: 'insert', leader } };
-                                      })}
-                                      className={`flex items-center gap-1 rounded-md border px-2 py-1.5 text-[11px] font-semibold transition-colors ${
-                                        decision?.action === 'insert'
-                                          ? 'border-[color:var(--product-accent)] bg-[color:var(--product-accent)] text-white shadow-sm'
-                                          : 'border-border bg-white text-muted-foreground hover:bg-muted dark:bg-transparent'
-                                      }`}
-                                    >
-                                      {decision?.action === 'insert' && <Check size={11} className="shrink-0" />}
-                                      Yes, new shop
-                                    </button>
-                                  </div>
-                                </div>
-                                {decision?.action === 'insert' && (
-                                  <div className="mt-2">
-                                    <label className="mb-1 block text-[10px] font-medium text-muted-foreground">Leader</label>
-                                    <SearchableCombobox
-                                      value={decision.leader}
-                                      onChange={(value) => setNewShopDecisions((current) => ({ ...current, [group.row]: { action: 'insert', leader: value } }))}
-                                      options={leaderOptions}
-                                      allowCustom
-                                      placeholder="Select or type a Leader"
-                                    />
-                                    {!decision.leader.trim() && (
-                                      <p className="mt-1 text-[10px] text-amber-600 dark:text-amber-400">Leader is required before this shop can be confirmed.</p>
-                                    )}
-                                  </div>
-                                )}
-                                {decision?.action === 'link' && (
-                                  <div className="mt-2">
-                                    <label className="mb-1 block text-[10px] font-medium text-muted-foreground">Matches which existing shop?</label>
-                                    <SearchableCombobox
-                                      value={decision.agentCode}
-                                      onChange={(value) => setNewShopDecisions((current) => ({ ...current, [group.row]: { action: 'link', agentCode: value } }))}
-                                      options={existingRosterAgentCodes}
-                                      placeholder="Search existing shops"
-                                    />
-                                  </div>
-                                )}
-                              </div>
-                            );
-                          })}
-                          </div>
-                          {newShopRowGroups.length > 20 && (
-                            <p className="border-t border-border px-4 py-2 text-[11px] text-muted-foreground">
-                              Showing 20 of {newShopRowGroups.length} new shops. Export Roster Changes to review the rest.
-                            </p>
-                          )}
-                        </div>
-                      </div>
-                    </div>
-                  </div>
-                ) : (
-                  <ClearStatusBanner text="No new shops detected. Every row matches an existing shop." />
-                )
-              )}
-
-              {/* Missing Shops — moved here from the Success screen (was
-                  non-blocking/post-import; now a real blocking decision,
-                  same as every other panel in this step). Full-set
-                  detection unchanged: scan-time roster minus every
-                  agentCode appearing anywhere in the uploaded file. Own
-                  distinct panel, never merged with New Shops. */}
-              {moduleKind === 'opening' && (
-                missingShops.length > 0 ? (
-                  <div className={`mt-2.5 overflow-hidden rounded-[14px] border ${missingShopsResolved ? 'border-emerald-200 dark:border-emerald-500/20' : 'border-indigo-200 dark:border-indigo-500/20'}`}>
-                    <button
-                      type="button"
-                      onClick={() => setMissingShopsPanelOpen((current) => !current)}
-                      className={`flex w-full items-center justify-between gap-2 px-4 py-2.5 text-left transition-colors ${
-                        missingShopsResolved
-                          ? 'bg-emerald-50 hover:bg-emerald-100 dark:bg-emerald-500/10 dark:hover:bg-emerald-500/15'
-                          : 'bg-indigo-50 hover:bg-indigo-100 dark:bg-indigo-500/10 dark:hover:bg-indigo-500/15'
-                      }`}
-                    >
-                      <span className="flex items-center gap-2">
-                        {missingShopsResolved
-                          ? <CheckCircle2 size={15} className="shrink-0 text-emerald-600 dark:text-emerald-400" />
-                          : <UserMinus size={15} className="shrink-0 text-indigo-600 dark:text-indigo-400" />}
-                        <span>
-                          <span className={`block text-[13px] font-bold ${missingShopsResolved ? 'text-emerald-800 dark:text-emerald-400' : 'text-indigo-800 dark:text-indigo-400'}`}>
-                            {missingShopsResolved && '✓ '}{missingShops.length} shop{missingShops.length === 1 ? '' : 's'} from your records weren&apos;t in this file
-                          </span>
-                          <span className={`block text-[11px] ${missingShopsResolved ? 'text-emerald-700 dark:text-emerald-400/80' : 'text-indigo-700 dark:text-indigo-400/80'}`}>
-                            {missingShopsResolved
-                              ? `${missingShops.length} of ${missingShops.length} resolved`
-                              : 'Choose what to do with each before Continue.'}
-                          </span>
-                        </span>
-                      </span>
-                      {missingShopsPanelOpen
-                        ? <ChevronUp size={15} className={`shrink-0 ${missingShopsResolved ? 'text-emerald-700 dark:text-emerald-400' : 'text-indigo-700 dark:text-indigo-400'}`} />
-                        : <ChevronDown size={15} className={`shrink-0 ${missingShopsResolved ? 'text-emerald-700 dark:text-emerald-400' : 'text-indigo-700 dark:text-indigo-400'}`} />}
-                    </button>
-                    <div className={`grid transition-[grid-template-rows] duration-200 ease-out ${
-                      missingShopsPanelOpen ? 'grid-rows-[1fr]' : 'grid-rows-[0fr]'
-                    }`}>
-                      <div className="overflow-hidden">
-                        <div className="border-t border-indigo-200 bg-white dark:border-indigo-500/20 dark:bg-[#2a2a2d]">
-                          <div className="flex items-center justify-between gap-2 border-b border-border bg-muted/20 px-4 py-1.5">
-                            <span className="text-[10px] text-muted-foreground">
-                              Quick action for all {missingShops.length} shop{missingShops.length === 1 ? '' : 's'}
-                            </span>
-                            <button
-                              type="button"
-                              onClick={keepAllMissingShops}
-                              className="rounded-md border border-[color:var(--product-accent)] px-2 py-1 text-[10px] font-semibold text-[color:var(--product-accent)] transition-colors hover:bg-[color:var(--product-accent-soft)]"
-                            >
-                              Keep all
-                            </button>
-                          </div>
-                          <div className="max-h-[280px] divide-y divide-border overflow-y-auto">
-                            {missingShops.slice(0, 20).map((shop) => {
-                              const key = shop.agentCode.trim().toLowerCase();
-                              const decision = missingShopDecisions[key];
-                              const busy = missingShopBusy[key] ?? false;
-                              const error = missingShopErrors[key];
-                              const lastUpdatedLabel = shop.lastImportMatchedAt
-                                ? new Date(shop.lastImportMatchedAt).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
-                                : 'never';
-                              return (
-                                <div
-                                  key={shop.agentCode}
-                                  className={`flex items-center justify-between gap-3 px-4 py-2 transition-opacity ${decision === 'inactive' ? 'opacity-50' : ''}`}
-                                >
-                                  <div className="min-w-0 flex-1">
-                                    <p className="truncate text-[13px] font-medium text-foreground">{shop.agentCode}</p>
-                                    <p className="mt-0.5 text-[11px] text-muted-foreground">Last updated: {lastUpdatedLabel}</p>
-                                    {error && <p className="mt-1 text-[10px] text-rose-600 dark:text-rose-400">{error}</p>}
-                                  </div>
-                                  <div className="flex shrink-0 items-center gap-1.5">
-                                    {decision === 'inactive' ? (
-                                      <span className="inline-flex items-center gap-1 rounded-md border border-border bg-muted px-2 py-0.5 text-[10px] font-semibold text-muted-foreground">
-                                        <UserMinus size={10} className="shrink-0" />
-                                        Inactive
-                                      </span>
-                                    ) : decision === 'keep' ? (
-                                      <span className="inline-flex items-center gap-1 rounded-md border border-emerald-200 bg-emerald-50 px-2 py-0.5 text-[10px] font-semibold text-emerald-700 dark:border-emerald-500/20 dark:bg-emerald-500/10 dark:text-emerald-400">
-                                        <Check size={10} className="shrink-0" />
-                                        Kept
-                                      </span>
-                                    ) : (
-                                      <>
-                                        <button
-                                          type="button"
-                                          disabled={busy}
-                                          onClick={() => markMissingShopKept(shop.agentCode)}
-                                          className="rounded-md border border-[color:var(--product-accent)] bg-[color:var(--product-accent)] px-2 py-1.5 text-[11px] font-semibold text-white transition-colors hover:opacity-90 disabled:opacity-50"
-                                        >
-                                          Keep
-                                        </button>
-                                        <button
-                                          type="button"
-                                          disabled={busy}
-                                          onClick={() => applyMissingShopAction(shop.agentCode)}
-                                          className="rounded-md border border-border bg-white px-2 py-1.5 text-[11px] font-semibold text-muted-foreground transition-colors hover:bg-muted disabled:opacity-50 dark:bg-transparent"
-                                        >
-                                          Mark Inactive
-                                        </button>
-                                        {busy && <span className="text-[10px] text-muted-foreground">Saving…</span>}
-                                      </>
-                                    )}
-                                  </div>
-                                </div>
-                              );
-                            })}
-                          </div>
-                          {missingShops.length > 20 && (
-                            <p className="border-t border-border px-4 py-2 text-[11px] text-muted-foreground">
-                              Showing 20 of {missingShops.length} missing shops. Export Roster Changes to review the rest.
-                            </p>
-                          )}
-                        </div>
-                      </div>
-                    </div>
-                  </div>
-                ) : (
-                  <ClearStatusBanner text="No shops missing from today's file." />
-                )
               )}
 
               {datesNeedingConfirmation.length > 0 ? (
@@ -3134,7 +2376,7 @@ export default function BulkImportModal({
                                   return next;
                                 });
                               }}
-                              className="h-3.5 w-3.5 rounded border-border accent-[color:var(--product-accent)]"
+                              className="h-3.5 w-3.5 rounded border-border accent-[color:var(--ui-accent)]"
                             />
                             <span className={`text-[11px] font-medium ${confirmed ? 'text-emerald-600 dark:text-emerald-400' : 'text-muted-foreground'}`}>
                               {confirmed ? 'Confirmed' : 'Is this correct?'}
@@ -3164,7 +2406,7 @@ export default function BulkImportModal({
               <p className="text-[12px] text-muted-foreground">This may take a few seconds.</p>
               <div className="h-1.5 w-full max-w-xs overflow-hidden rounded-full bg-muted">
                 <div
-                  className="h-full rounded-full bg-[color:var(--product-accent)] transition-all duration-300 ease-out"
+                  className="h-full rounded-full bg-[color:var(--ui-accent)] transition-all duration-300 ease-out"
                   style={{ width: `${Math.min(estimateImportProgress, 100)}%` }}
                 />
               </div>
@@ -3174,18 +2416,18 @@ export default function BulkImportModal({
 
           {step === 'importing' && !estimateMode && summary && (
             <div className="flex h-full flex-col items-center justify-center py-14 text-center">
-              <div className="mb-6 h-16 w-16 animate-spin rounded-full border-4 border-[color:var(--product-accent-soft)] border-t-[color:var(--product-accent)]" />
+              <div className="mb-6 h-16 w-16 animate-spin rounded-full border-4 border-[color:var(--ui-accent-soft)] border-t-[color:var(--ui-accent)]" />
               <p className="mb-1 text-[13px] font-bold text-foreground">
                 Importing {importDone} of {readyRows.length} record{readyRows.length === 1 ? '' : 's'}...
               </p>
               <p className="mb-5 text-[12px] text-muted-foreground">This usually takes a few seconds.</p>
               <div className="h-1.5 w-full max-w-xs overflow-hidden rounded-full bg-muted">
                 <div
-                  className="h-full rounded-full bg-[color:var(--product-accent)] transition-all duration-150 ease-out"
+                  className="h-full rounded-full bg-[color:var(--ui-accent)] transition-all duration-150 ease-out"
                   style={{ width: `${readyRows.length ? (importDone / readyRows.length) * 100 : 0}%` }}
                 />
               </div>
-              <p className="mt-2 text-[11px] font-semibold tabular-nums text-[color:var(--product-accent)]">
+              <p className="mt-2 text-[11px] font-semibold tabular-nums text-[color:var(--ui-accent)]">
                 {readyRows.length ? Math.round((importDone / readyRows.length) * 100) : 0}%
               </p>
             </div>
@@ -3321,12 +2563,6 @@ export default function BulkImportModal({
                     ? 'Resolve Errors'
                     : !allDuplicatesDecided
                     ? 'Resolve Duplicates'
-                    : !sdpChangesConfirmed
-                    ? 'Confirm SDP Changes'
-                    : !newShopsConfirmed
-                    ? 'Confirm New Shops'
-                    : !missingShopsResolved
-                    ? 'Resolve Missing Shops'
                     : !allDatesConfirmed
                     ? 'Confirm Dates'
                     : readyRows.length === 0

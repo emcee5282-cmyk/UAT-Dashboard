@@ -1,0 +1,1 @@
+ALTER TABLE "agent_wallets" ADD COLUMN "dp_limit" numeric(18, 2);

@@ -5,12 +5,10 @@
 // directly static-servable (no API route needed just to serve a static
 // file).
 export const TEMPLATE_PATHS = {
-  settlement: '/templates/settlement-template.xlsx',
-  topup: '/templates/topup-template.xlsx',
+  settlement: '/templates/Settlement-Deductions_Template.xlsx',
+  topup: '/templates/Topup-Additions_Template.xlsx',
   openingCashout: '/templates/opening-cashout-template.xlsx',
   openingSendMoney: '/templates/opening-sendmoney-template.xlsx',
-  balanceLimitCashout: '/templates/balance-limit-cashout-template.xlsx',
-  balanceLimitSendMoney: '/templates/balance-limit-sendmoney-template.xlsx',
 } as const;
 
 export type TemplateModule = keyof typeof TEMPLATE_PATHS;

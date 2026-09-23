@@ -22,6 +22,11 @@ export function normalizeWalletStatus(raw: string): string | null {
   if (lower.includes('discrepancy') || lower.includes('clear balance')) return 'WD Only';
   if (lower.includes('top up')) return 'Top Up Acc.';
   if (lower.includes('wallet with issue')) return 'Wallet With Issue';
+  // A real, distinct status (Balance Limit's own "Status" column, both
+  // products — see balanceLimitParser.ts) meaning the wallet was manually
+  // turned off, not merely disconnected — kept as its own label rather
+  // than collapsing into Disconnected below, per explicit instruction.
+  if (lower.includes('disable')) return 'Disable';
   if (lower.includes('x group') || lower.includes('disconnected')) return 'Disconnected';
   if (lower.includes('check account problem')) return 'Account Problem';
   return 'Disconnected';
@@ -42,12 +47,29 @@ export function computeWalletStatus(statuses: string[]): string {
   if (has('WD Only')) return 'WD Only';
   if (has('Top Up Acc.')) return 'Top Up Acc.';
   if (has('Wallet With Issue')) return 'Wallet With Issue';
+  if (has('Disable')) return 'Disable';
   if (has('Account Problem')) return 'Account Problem';
 
   return 'Disconnected';
 }
 
-export const WALLET_STATUS_OPTIONS = ['DP + WD', 'DP Only', 'WD Only', 'Top Up Acc.', 'Wallet With Issue', 'Disconnected', 'Account Problem', 'No Record'];
+export const WALLET_STATUS_OPTIONS = ['DP + WD', 'DP Only', 'WD Only', 'Top Up Acc.', 'Wallet With Issue', 'Disable', 'Disconnected', 'Account Problem', 'No Record'];
+
+// Send Money-only Group values (confirmed live in agent_wallets.account_status:
+// 1,085 real rows — 1,048 "Monthly Reach Limit" + 37 "Daily Reach Limit" —
+// 100% Send Money, 0 Cashout). normalizeWalletStatus above has no case for
+// either, so they'd otherwise silently fall through its default
+// 'Disconnected' — losing a real, meaningful distinction (a wallet
+// temporarily blocked on its own daily/monthly volume cap is not the same
+// as a disconnected one). This is a SEPARATE function, never called by any
+// Cashout code path, so computeWalletStatus itself — and therefore
+// Cashout's own behavior — never changes.
+export const SENDMONEY_REACH_LIMIT_STATUSES = ['Daily Reach Limit', 'Monthly Reach Limit'];
+
+export function computeSendMoneyWalletStatus(statuses: string[]): string {
+  const reachLimitStatus = statuses.find((s) => SENDMONEY_REACH_LIMIT_STATUSES.includes(s.trim()));
+  return reachLimitStatus ?? computeWalletStatus(statuses);
+}
 
 // "Balance Inside" rule: a wallet's own `balance` field counts only while
 // its Login flag reads "Yes" — shared predicate for that gate.

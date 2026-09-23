@@ -29,7 +29,7 @@ import { eq, and, isNull } from 'drizzle-orm';
 import { getDb } from '../db/client';
 import * as schema from '../db/schema';
 import type {
-  Priority, WalletStatusValue, MainReason, ClosureType, AffectedService, ScheduleOverride,
+  Priority, WalletStatusValue, MainReason, ClosureType, AffectedService,
 } from '../walletStatus';
 
 const UPDATED_BY = 'Operations Admin';
@@ -139,8 +139,6 @@ export type WalletSettingsUpdate = {
   closureType: ClosureType;
   affectedServices: AffectedService[];
   minimumAmountCanTake: number | null;
-  balanceLimitOverride: number | null;
-  scheduleOverride: ScheduleOverride;
 };
 
 // Single-wallet save for the unified Edit Wallet Settings modal — mirrors
@@ -160,15 +158,12 @@ export async function updateWalletSettingsPg(product: Product, shopKey: string, 
 
     const currentAffected = (current?.affectedServices ?? []).slice().sort().join(',');
     const currentMinAmt = current?.minimumAmountCanTake === null || current?.minimumAmountCanTake === undefined ? '' : String(current.minimumAmountCanTake);
-    const currentBalLimit = current?.balanceLimitOverride === null || current?.balanceLimitOverride === undefined ? '' : String(current.balanceLimitOverride);
 
     logChange('remark', current?.remark ?? '', update.remark);
     logChange('mainReason', current?.mainReason ?? '', update.mainReason);
     logChange('closureType', current?.closureType ?? '', update.closureType);
     logChange('affectedServices', currentAffected, update.affectedServices.slice().sort().join(','));
     logChange('minimumAmountCanTake', currentMinAmt, update.minimumAmountCanTake === null ? '' : String(update.minimumAmountCanTake));
-    logChange('balanceLimitOverride', currentBalLimit, update.balanceLimitOverride === null ? '' : String(update.balanceLimitOverride));
-    logChange('scheduleOverride', current?.scheduleOverride ?? '', update.scheduleOverride);
 
     await upsertRow(tx, target, current, {
       remark: update.remark || null,
@@ -178,8 +173,6 @@ export async function updateWalletSettingsPg(product: Product, shopKey: string, 
       closureType: update.closureType || null,
       affectedServices: update.affectedServices,
       minimumAmountCanTake: update.minimumAmountCanTake === null ? null : String(update.minimumAmountCanTake),
-      balanceLimitOverride: update.balanceLimitOverride === null ? null : String(update.balanceLimitOverride),
-      scheduleOverride: update.scheduleOverride || null,
     });
 
     if (historyRows.length > 0) await tx.insert(schema.walletStatusHistory).values(historyRows);
@@ -199,8 +192,6 @@ export type WalletStatusBulkUpdatePg = {
   closureType?: ClosureType;
   affectedServices?: AffectedService[];
   minimumAmountCanTake?: number | null;
-  balanceLimitOverride?: number | null;
-  scheduleOverride?: ScheduleOverride;
 };
 
 // Bulk Edit's write path — one transaction covering every selected
@@ -249,15 +240,6 @@ export async function bulkUpdateWalletSettingsPg(product: Product, updates: Wall
         const currentMinAmt = current?.minimumAmountCanTake === null || current?.minimumAmountCanTake === undefined ? '' : String(current.minimumAmountCanTake);
         logChange('minimumAmountCanTake', currentMinAmt, entry.minimumAmountCanTake === null ? '' : String(entry.minimumAmountCanTake));
         values.minimumAmountCanTake = entry.minimumAmountCanTake === null ? null : String(entry.minimumAmountCanTake);
-      }
-      if (entry.balanceLimitOverride !== undefined) {
-        const currentBalLimit = current?.balanceLimitOverride === null || current?.balanceLimitOverride === undefined ? '' : String(current.balanceLimitOverride);
-        logChange('balanceLimitOverride', currentBalLimit, entry.balanceLimitOverride === null ? '' : String(entry.balanceLimitOverride));
-        values.balanceLimitOverride = entry.balanceLimitOverride === null ? null : String(entry.balanceLimitOverride);
-      }
-      if (entry.scheduleOverride !== undefined) {
-        logChange('scheduleOverride', current?.scheduleOverride ?? '', entry.scheduleOverride);
-        values.scheduleOverride = entry.scheduleOverride || null;
       }
 
       if (Object.keys(values).length > 0) await upsertRow(tx, target, current, values);

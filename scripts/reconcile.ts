@@ -6,8 +6,6 @@
 // agent per metric. Nothing is written anywhere by this script.
 //
 // Run with: npx tsx --env-file=.env.local scripts/reconcile.ts [cashout|sendmoney]
-import { config } from 'dotenv';
-config({ path: '.env.local' });
 import { fetchRange, fetchBalanceLimitRows } from '../app/lib/googleSheets';
 import {
   computeCompanyBalance, computeAgentWithdrawal, computeBaseLimit,

@@ -14,7 +14,7 @@
 // preview only; the server independently re-parses and re-validates from
 // scratch (app/lib/services/balanceLimitService.ts) before anything reaches
 // PostgreSQL — nothing from this client request is trusted blindly.
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState, type CSSProperties } from 'react';
 import { createPortal } from 'react-dom';
 import { Upload, X, FileSpreadsheet, Download, CheckCircle2, AlertCircle, ChevronRight, ChevronUp, ChevronDown, Check } from 'lucide-react';
 import * as XLSX from 'xlsx';
@@ -30,7 +30,6 @@ import {
 import { parseWorkbookFile } from '../lib/xlsxParser';
 import { mapBalanceLimitRows, type BalanceLimitRow } from '../lib/balanceLimitParser';
 import { isValidNumericCell } from '../lib/uploadValidation';
-import { downloadTemplate } from '../lib/templates';
 
 type Product = 'cashout' | 'sendmoney';
 type Step = 'upload' | 'scanning' | 'validation' | 'importing' | 'complete';
@@ -49,18 +48,29 @@ type RowIssue = { row: number; shopCode: string; field: string; value: string; i
 // too, not silently included with a wrong total (same rule every other
 // bulk-import preview in this app already follows). OLD/MANUAL rows never
 // reach here — already filtered out before this is called (see the scanning
-// effect below), same as the server.
-function validatePreviewRow(row: BalanceLimitRow, agentRoster: Set<string>): RowIssue | null {
+// effect below), same as the server. Roster membership is deliberately NOT
+// checked here anymore — an unmatched-but-format-valid shop code is no
+// longer a validation error, it's Step 2's own auto-create/skip decision
+// (see the scanning effect's second filter pass below), same as the server.
+function validatePreviewRow(row: BalanceLimitRow): RowIssue | null {
+  // Step 1 — Shop Code format.
   if (!row.shopCode) {
     return { row: row.row, shopCode: row.rawAccount || '(blank)', field: 'Account', value: row.rawAccount, issue: 'Missing or invalid shop code' };
-  }
-  if (!agentRoster.has(row.shopCode.toLowerCase())) {
-    return { row: row.row, shopCode: row.shopCode, field: 'Account', value: row.rawAccount, issue: 'No matching agent in roster' };
   }
   if (!isValidNumericCell(row.balance)) return { row: row.row, shopCode: row.shopCode, field: 'Balance', value: row.balance, issue: 'Invalid number format' };
   if (!isValidNumericCell(row.totalDP)) return { row: row.row, shopCode: row.shopCode, field: 'Total DP', value: row.totalDP, issue: 'Invalid number format' };
   if (!isValidNumericCell(row.totalWD)) return { row: row.row, shopCode: row.shopCode, field: 'Total WD', value: row.totalWD, issue: 'Invalid number format' };
+  if (!isValidNumericCell(row.dpLimit)) return { row: row.row, shopCode: row.shopCode, field: 'DP Limit', value: row.dpLimit, issue: 'Invalid number format' };
   return null;
+}
+
+// Mirrors balanceLimitService.ts's own n() — same comma-stripping/blank-as-
+// zero coercion, so Step 2's DP/WD>0 check agrees with the server exactly.
+function n(val: string): number {
+  const cleaned = (val ?? '').replace(/,/g, '').trim();
+  if (!cleaned || cleaned === '-') return 0;
+  const num = parseFloat(cleaned);
+  return isNaN(num) ? 0 : num;
 }
 
 type BalanceLimitUploadModalProps = {
@@ -93,6 +103,13 @@ export default function BalanceLimitUploadModal({
   const [importError, setImportError] = useState<string | null>(null);
   const [importResult, setImportResult] = useState<{ validCount: number; errorCount: number; rowCount: number } | null>(null);
   const [importedAt, setImportedAt] = useState<Date | null>(null);
+  // Matches BulkImportModal.tsx's own Estimated Opening import exactly — no
+  // real progress events from the server (Balance Limit's own import is one
+  // request/response, same as that flow), so this simulates a climb to 90%
+  // while in flight, then completes to 100% once the response actually
+  // arrives (see handleImportStart below).
+  const [importProgress, setImportProgress] = useState(0);
+  const importProgressTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [rendered, setRendered] = useState(isOpen);
   const [closing, setClosing] = useState(false);
@@ -109,6 +126,11 @@ export default function BalanceLimitUploadModal({
     setImportError(null);
     setImportResult(null);
     setImportedAt(null);
+    setImportProgress(0);
+    if (importProgressTimerRef.current) {
+      clearInterval(importProgressTimerRef.current);
+      importProgressTimerRef.current = null;
+    }
   }, []);
 
   const requestClose = useCallback(() => onClose(), [onClose]);
@@ -151,7 +173,23 @@ export default function BalanceLimitUploadModal({
         // in balanceLimitService.ts exactly, so the preview's counts here
         // are never out of sync with what actually gets imported.
         parsedRows = allRows.filter((r) => r.shopCode !== 'OLD' && r.shopCode !== 'MANUAL');
-        computedIssues = parsedRows.map((r) => validatePreviewRow(r, roster)).filter((x): x is RowIssue => x !== null);
+        computedIssues = parsedRows.map((r) => validatePreviewRow(r)).filter((x): x is RowIssue => x !== null);
+
+        // Step 2 — an unmatched-but-format-valid shop code (i.e. one that
+        // didn't already fail validatePreviewRow above) only survives into
+        // Total Records/Ready when it carries real DP/WD activity; zero on
+        // both means it's silently excluded here, same "not a real record"
+        // treatment OLD/MANUAL got above (never shown as an error, never
+        // counted). An EXISTING shop code always survives regardless of its
+        // own DP/WD values — mirrors balanceLimitService.ts's own
+        // finalRows filter exactly, so this preview's counts match what
+        // actually imports.
+        const issueRows = new Set(computedIssues.map((i) => i.row));
+        parsedRows = parsedRows.filter((r) => {
+          if (issueRows.has(r.row)) return true; // real format/numeric error — stays visible
+          if (roster.has(r.shopCode.toLowerCase())) return true; // existing shop, always kept
+          return n(r.totalDP) > 0 || n(r.totalWD) > 0; // new-shop candidate — keep; else skip
+        });
       } catch (err) {
         failure = err instanceof Error ? err.message : 'Could not read this file.';
       }
@@ -200,6 +238,16 @@ export default function BalanceLimitUploadModal({
     if (!file) return;
     setStep('importing');
     setImportError(null);
+    setImportProgress(0);
+
+    // No real progress events from the server (one request/response,
+    // same reasoning as Estimated Opening's own import in
+    // BulkImportModal.tsx) — simulate a climb to 90% while in flight,
+    // then complete to 100% once the response actually arrives.
+    importProgressTimerRef.current = setInterval(() => {
+      setImportProgress((current) => (current >= 90 ? current : current + Math.random() * 12));
+    }, 250);
+
     // TEMPORARY perf-verification instrumentation — remove once the
     // server-side brand-backfill fix is confirmed. Covers upload + full
     // server processing (parse/validate/write) as one wall-clock number;
@@ -215,11 +263,22 @@ export default function BalanceLimitUploadModal({
       console.timeEnd('[BalanceLimit] upload+import round-trip');
       const result = await res.json().catch(() => null);
       if (!res.ok) throw new Error(result?.error || 'Import failed.');
+
+      if (importProgressTimerRef.current) {
+        clearInterval(importProgressTimerRef.current);
+        importProgressTimerRef.current = null;
+      }
+      setImportProgress(100);
+
       setImportResult({ validCount: result.validCount, errorCount: result.errorCount, rowCount: result.rowCount });
       setImportedAt(new Date());
       setStep('complete');
       onImported?.();
     } catch (err) {
+      if (importProgressTimerRef.current) {
+        clearInterval(importProgressTimerRef.current);
+        importProgressTimerRef.current = null;
+      }
       setImportError(err instanceof Error ? err.message : 'Import failed.');
       setStep('validation');
     }
@@ -249,7 +308,21 @@ export default function BalanceLimitUploadModal({
 
   return createPortal(
     <div data-product={dataProduct} className={MODAL_OVERLAY_CLASS(closing)} onClick={requestClose}>
-      <div role="dialog" aria-modal="true" aria-label="Bulk Import Balance Limit" onClick={(e) => e.stopPropagation()} className={MODAL_WIDE_CARD_CLASS(closing)}>
+      {/* Per explicit instruction this modal is only ever indigo + yellow,
+          never the per-product teal Send Money otherwise gets (modalTheme.ts's
+          own MODAL_GLYPH_CLASS/STYLE and card ring read var(--product-accent),
+          which [data-product="sendmoney"] above sets to teal) — overridden
+          here, scoped to just this dialog's own subtree, rather than touching
+          modalTheme.ts/globals.css themselves, which every other modal in the
+          app still relies on for its normal per-product coloring. */}
+      <div
+        role="dialog"
+        aria-modal="true"
+        aria-label="Bulk Import Balance Limit"
+        onClick={(e) => e.stopPropagation()}
+        className={MODAL_WIDE_CARD_CLASS(closing)}
+        style={{ '--product-accent': '#4f46e5', '--product-accent-soft': 'rgba(79, 70, 229, 0.08)' } as CSSProperties}
+      >
         <div className="flex items-start justify-between gap-3 p-6 pb-0">
           <div className="flex items-center gap-2.5">
             <span className={MODAL_GLYPH_CLASS} style={MODAL_GLYPH_STYLE}><Upload size={16} /></span>
@@ -278,8 +351,8 @@ export default function BalanceLimitUploadModal({
                   <div className="flex shrink-0 items-center gap-2">
                     <div
                       className={`flex h-[22px] w-[22px] shrink-0 items-center justify-center rounded-full border-[1.5px] text-[11px] font-bold transition-colors ${
-                        status === 'done' ? 'border-emerald-500 bg-emerald-50 text-emerald-600 dark:bg-emerald-500/15 dark:text-emerald-400'
-                          : status === 'active' ? 'border-transparent text-white shadow-[0_4px_10px_-2px_var(--product-accent)]'
+                        status === 'done' ? 'border-indigo-500 bg-indigo-50 text-indigo-600 dark:bg-indigo-500/15 dark:text-indigo-400'
+                          : status === 'active' ? 'border-transparent text-white shadow-[0_4px_10px_-2px_var(--ui-accent)]'
                           : 'border-border text-muted-foreground'
                       }`}
                       style={status === 'active' ? MODAL_GLYPH_STYLE : undefined}
@@ -300,17 +373,6 @@ export default function BalanceLimitUploadModal({
         <div key={step} className="dt-step-fade-in min-h-0 flex-1 overflow-y-auto border-t border-border px-6 py-4">
           {step === 'upload' && (
             <>
-              <div className="mb-3.5 flex items-center justify-between gap-3 rounded-[14px] border border-border bg-muted/20 p-3.5">
-                <p className="text-[13px] font-semibold text-foreground">Need the official template?</p>
-                <button
-                  type="button"
-                  onClick={() => downloadTemplate(product === 'cashout' ? 'balanceLimitCashout' : 'balanceLimitSendMoney')}
-                  className="flex shrink-0 items-center gap-1.5 rounded-[9px] border border-border bg-white px-3 py-2 text-[12px] font-semibold text-foreground transition-colors hover:border-muted-foreground/40 dark:bg-transparent"
-                >
-                  <Download size={13} />
-                  Download Latest Template
-                </button>
-              </div>
               <div
                 onDragEnter={(e) => { e.preventDefault(); setDragActive(true); }}
                 onDragOver={(e) => { e.preventDefault(); setDragActive(true); }}
@@ -318,7 +380,7 @@ export default function BalanceLimitUploadModal({
                 onDrop={handleDrop}
                 onClick={() => fileInputRef.current?.click()}
                 className={`flex h-[130px] cursor-pointer flex-col items-center justify-center gap-1.5 rounded-[14px] border-[1.5px] border-dashed px-4 text-center transition-colors ${
-                  dragActive ? 'border-[color:var(--product-accent)] bg-[color:var(--product-accent-soft)]' : 'border-border bg-muted/20 hover:border-[color:var(--product-accent)] hover:bg-[color:var(--product-accent-soft)]'
+                  dragActive ? 'border-[color:var(--ui-accent)] bg-[color:var(--ui-accent-soft)]' : 'border-border bg-muted/20 hover:border-[color:var(--ui-accent)] hover:bg-[color:var(--ui-accent-soft)]'
                 }`}
               >
                 <span className={MODAL_GLYPH_CLASS} style={MODAL_GLYPH_STYLE}><Upload size={17} /></span>
@@ -327,7 +389,7 @@ export default function BalanceLimitUploadModal({
                 <input ref={fileInputRef} type="file" accept=".xlsx,.xls" className="hidden" onChange={(e) => handleFileSelected(e.target.files?.[0])} />
               </div>
               {scanError && (
-                <div className="mt-3 flex items-center gap-1.5 rounded-lg bg-rose-50 px-3 py-2 text-[11px] font-medium text-rose-700 dark:bg-rose-500/10 dark:text-rose-400">
+                <div className="mt-3 flex items-center gap-1.5 rounded-lg bg-yellow-50 px-3 py-2 text-[11px] font-medium text-yellow-700 dark:bg-yellow-500/10 dark:text-yellow-400">
                   <AlertCircle size={13} className="shrink-0" />{scanError}
                 </div>
               )}
@@ -338,7 +400,7 @@ export default function BalanceLimitUploadModal({
             <div className="flex h-full flex-col items-center justify-center gap-4">
               <div className="w-full max-w-xs">
                 <div className="h-1.5 w-full overflow-hidden rounded-full bg-muted">
-                  <div className="h-full rounded-full bg-[color:var(--product-accent)] transition-all duration-200 ease-out" style={{ width: `${((scanMessageIndex + 1) / SCAN_MESSAGES.length) * 100}%` }} />
+                  <div className="h-full rounded-full bg-[color:var(--ui-accent)] transition-all duration-200 ease-out" style={{ width: `${((scanMessageIndex + 1) / SCAN_MESSAGES.length) * 100}%` }} />
                 </div>
               </div>
               <p key={scanMessageIndex} className="dt-fade-in text-[13px] font-medium text-foreground">{SCAN_MESSAGES[scanMessageIndex]}</p>
@@ -348,7 +410,7 @@ export default function BalanceLimitUploadModal({
           {step === 'validation' && (
             <div>
               <div className="flex items-center gap-3 rounded-[14px] border border-border bg-muted/20 p-2.5">
-                <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-emerald-600 text-white"><FileSpreadsheet size={18} /></div>
+                <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-indigo-600 text-white"><FileSpreadsheet size={18} /></div>
                 <div className="min-w-0 flex-1">
                   <p className="truncate text-[13px] font-semibold text-foreground">{file?.name}</p>
                   <p className="text-[11px] text-muted-foreground">{file ? (file.size / 1024).toFixed(0) : 0} KB · {rows.length} rows · Modified {file ? new Date(file.lastModified).toLocaleDateString() : ''}</p>
@@ -364,37 +426,37 @@ export default function BalanceLimitUploadModal({
                   <div className="min-w-0"><p className="text-[14px] font-bold tabular-nums text-foreground">{rows.length.toLocaleString()}</p><p className="text-[10px] text-muted-foreground">Total Records</p></div>
                 </div>
                 <div className="flex items-center gap-2 rounded-[14px] border border-border p-1.5">
-                  <div className="flex h-6 w-6 shrink-0 items-center justify-center rounded-lg bg-emerald-50 text-emerald-600 dark:bg-emerald-500/15 dark:text-emerald-400"><CheckCircle2 size={12} /></div>
+                  <div className="flex h-6 w-6 shrink-0 items-center justify-center rounded-lg bg-indigo-50 text-indigo-600 dark:bg-indigo-500/15 dark:text-indigo-400"><CheckCircle2 size={12} /></div>
                   <div className="min-w-0"><p className="text-[14px] font-bold tabular-nums text-foreground">{readyCount.toLocaleString()}</p><p className="text-[10px] text-muted-foreground">Ready</p></div>
                 </div>
                 <div className="flex items-center gap-2 rounded-[14px] border border-border p-1.5">
-                  <div className={`flex h-6 w-6 shrink-0 items-center justify-center rounded-lg ${issues.length === 0 ? 'bg-emerald-50 text-emerald-600 dark:bg-emerald-500/15 dark:text-emerald-400' : 'bg-rose-50 text-rose-600 dark:bg-rose-500/15 dark:text-rose-400'}`}>
+                  <div className={`flex h-6 w-6 shrink-0 items-center justify-center rounded-lg ${issues.length === 0 ? 'bg-indigo-50 text-indigo-600 dark:bg-indigo-500/15 dark:text-indigo-400' : 'bg-yellow-50 text-yellow-600 dark:bg-yellow-500/15 dark:text-yellow-400'}`}>
                     {issues.length === 0 ? <CheckCircle2 size={12} /> : <AlertCircle size={12} />}
                   </div>
-                  <div className="min-w-0"><p className={`text-[14px] font-bold tabular-nums ${issues.length > 0 ? 'text-rose-600 dark:text-rose-400' : 'text-foreground'}`}>{issues.length}</p><p className="text-[10px] text-muted-foreground">Errors</p></div>
+                  <div className="min-w-0"><p className={`text-[14px] font-bold tabular-nums ${issues.length > 0 ? 'text-yellow-600 dark:text-yellow-400' : 'text-foreground'}`}>{issues.length}</p><p className="text-[10px] text-muted-foreground">Errors</p></div>
                 </div>
               </div>
 
-              <div className={`mt-2.5 overflow-hidden rounded-[14px] border ${issues.length > 0 ? 'border-rose-200 dark:border-rose-500/20' : 'border-emerald-200 dark:border-emerald-500/20'}`}>
+              <div className={`mt-2.5 overflow-hidden rounded-[14px] border ${issues.length > 0 ? 'border-yellow-200 dark:border-yellow-500/20' : 'border-indigo-200 dark:border-indigo-500/20'}`}>
                 <button
                   type="button"
                   onClick={() => { if (issues.length > 0) setIssuesExpanded((v) => !v); }}
                   disabled={issues.length === 0}
-                  className={`flex w-full items-center justify-between gap-2 px-3 py-2 text-left transition-colors ${issues.length > 0 ? 'bg-rose-50 hover:bg-rose-100 dark:bg-rose-500/10 dark:hover:bg-rose-500/15' : 'bg-emerald-50 dark:bg-emerald-500/10'}`}
+                  className={`flex w-full items-center justify-between gap-2 px-3 py-2 text-left transition-colors ${issues.length > 0 ? 'bg-yellow-50 hover:bg-yellow-100 dark:bg-yellow-500/10 dark:hover:bg-yellow-500/15' : 'bg-indigo-50 dark:bg-indigo-500/10'}`}
                 >
                   <span className="flex items-start gap-2">
-                    {issues.length > 0 ? <AlertCircle size={15} className="mt-0.5 shrink-0 text-rose-600 dark:text-rose-400" /> : <CheckCircle2 size={15} className="mt-0.5 shrink-0 text-emerald-600 dark:text-emerald-400" />}
+                    {issues.length > 0 ? <AlertCircle size={15} className="mt-0.5 shrink-0 text-yellow-600 dark:text-yellow-400" /> : <CheckCircle2 size={15} className="mt-0.5 shrink-0 text-indigo-600 dark:text-indigo-400" />}
                     <span>
-                      <span className={`block text-[12px] font-semibold ${issues.length > 0 ? 'text-rose-700 dark:text-rose-400' : 'text-emerald-700 dark:text-emerald-400'}`}>{issues.length > 0 ? 'Validation issues detected' : 'No validation errors found'}</span>
-                      <span className={`block text-[11px] ${issues.length > 0 ? 'text-rose-600/90 dark:text-rose-400/80' : 'text-emerald-600/90 dark:text-emerald-400/80'}`}>{issues.length > 0 ? 'Please review the rows below before continuing.' : 'This file is ready to import.'}</span>
+                      <span className={`block text-[12px] font-semibold ${issues.length > 0 ? 'text-yellow-700 dark:text-yellow-400' : 'text-indigo-700 dark:text-indigo-400'}`}>{issues.length > 0 ? 'Validation issues detected' : 'No validation errors found'}</span>
+                      <span className={`block text-[11px] ${issues.length > 0 ? 'text-yellow-600/90 dark:text-yellow-400/80' : 'text-indigo-600/90 dark:text-indigo-400/80'}`}>{issues.length > 0 ? 'Please review the rows below before continuing.' : 'This file is ready to import.'}</span>
                     </span>
                   </span>
-                  {issues.length > 0 && (issuesExpanded ? <ChevronUp size={14} className="mt-0.5 shrink-0 text-rose-600 dark:text-rose-400" /> : <ChevronDown size={14} className="mt-0.5 shrink-0 text-rose-600 dark:text-rose-400" />)}
+                  {issues.length > 0 && (issuesExpanded ? <ChevronUp size={14} className="mt-0.5 shrink-0 text-yellow-600 dark:text-yellow-400" /> : <ChevronDown size={14} className="mt-0.5 shrink-0 text-yellow-600 dark:text-yellow-400" />)}
                 </button>
                 {issues.length > 0 && (
                   <div className={`grid transition-[grid-template-rows] duration-200 ease-out ${issuesExpanded ? 'grid-rows-[1fr]' : 'grid-rows-[0fr]'}`}>
                     <div className="overflow-hidden">
-                      <div className="border-t border-rose-200 dark:border-rose-500/20">
+                      <div className="border-t border-yellow-200 dark:border-yellow-500/20">
                         <div className="flex items-center justify-end px-3 py-2">
                           <button type="button" onClick={downloadReport} className="flex shrink-0 items-center gap-1 rounded-md border border-border bg-white px-2 py-1 text-[10px] font-medium text-foreground transition-colors hover:bg-muted dark:bg-transparent">
                             <Download size={11} />Download Error Report (.xlsx)
@@ -416,7 +478,7 @@ export default function BalanceLimitUploadModal({
                                   <td className="whitespace-nowrap px-2.5 py-1.5 tabular-nums text-foreground">{e.row}</td>
                                   <td className="whitespace-nowrap px-2.5 py-1.5 text-foreground">{e.shopCode}</td>
                                   <td className="whitespace-nowrap px-2.5 py-1.5 text-muted-foreground">{e.field}</td>
-                                  <td className="whitespace-nowrap px-2.5 py-1.5 text-rose-600 dark:text-rose-400">{e.issue}</td>
+                                  <td className="whitespace-nowrap px-2.5 py-1.5 text-yellow-600 dark:text-yellow-400">{e.issue}</td>
                                 </tr>
                               ))}
                             </tbody>
@@ -429,12 +491,12 @@ export default function BalanceLimitUploadModal({
               </div>
 
               {importError && (
-                <div className="mt-3 flex items-center gap-1.5 rounded-lg bg-rose-50 px-3 py-2 text-[11px] font-medium text-rose-700 dark:bg-rose-500/10 dark:text-rose-400">
+                <div className="mt-3 flex items-center gap-1.5 rounded-lg bg-yellow-50 px-3 py-2 text-[11px] font-medium text-yellow-700 dark:bg-yellow-500/10 dark:text-yellow-400">
                   <AlertCircle size={13} className="shrink-0" />{importError}
                 </div>
               )}
 
-              <div className="mt-3 flex items-center gap-1.5 rounded-lg bg-amber-50 px-3 py-2 text-[11px] font-medium text-amber-700 dark:bg-amber-500/10 dark:text-amber-400">
+              <div className="mt-3 flex items-center gap-1.5 rounded-lg bg-yellow-50 px-3 py-2 text-[11px] font-medium text-yellow-700 dark:bg-yellow-500/10 dark:text-yellow-400">
                 <AlertCircle size={13} className="shrink-0" />
                 This replaces the entire current Balance Limit dataset for {product === 'cashout' ? 'Cashout' : 'Send Money'} — any shop not in this file will show no wallet data after import.
               </div>
@@ -442,17 +504,26 @@ export default function BalanceLimitUploadModal({
           )}
 
           {step === 'importing' && (
-            <div className="flex h-full flex-col items-center justify-center gap-3">
-              <p className="text-[13px] font-semibold text-foreground">Importing...</p>
-              <p className="text-[12px] text-muted-foreground">This may take a few seconds.</p>
-              <div className="h-1.5 w-full max-w-xs overflow-hidden rounded-full bg-muted"><div className="h-full w-2/3 animate-pulse rounded-full bg-[color:var(--product-accent)]" /></div>
+            <div className="flex h-full flex-col items-center justify-center py-14 text-center">
+              <div className="mb-6 h-16 w-16 animate-spin rounded-full border-4 border-[color:var(--ui-accent-soft)] border-t-[color:var(--ui-accent)]" />
+              <p className="mb-1 text-[13px] font-bold text-foreground">Importing your records...</p>
+              <p className="mb-5 text-[12px] text-muted-foreground">This usually takes a few seconds.</p>
+              <div className="h-1.5 w-full max-w-xs overflow-hidden rounded-full bg-muted">
+                <div
+                  className="h-full rounded-full bg-[color:var(--ui-accent)] transition-all duration-150 ease-out"
+                  style={{ width: `${Math.min(importProgress, 100)}%` }}
+                />
+              </div>
+              <p className="mt-2 text-[11px] font-semibold tabular-nums text-[color:var(--ui-accent)]">
+                {Math.round(Math.min(importProgress, 100))}%
+              </p>
             </div>
           )}
 
           {step === 'complete' && importResult && (
             <div className="flex h-full flex-col">
               <div className="flex flex-col items-center justify-center gap-1.5 pb-4 pt-2 text-center">
-                <div className="flex h-[52px] w-[52px] items-center justify-center rounded-full bg-emerald-50 text-emerald-600 shadow-[0_4px_14px_-2px_rgba(16,185,129,0.35)] dark:bg-emerald-500/15 dark:text-emerald-400">
+                <div className="flex h-[52px] w-[52px] items-center justify-center rounded-full bg-indigo-50 text-indigo-600 shadow-[0_4px_14px_-2px_rgba(79,70,229,0.35)] dark:bg-indigo-500/15 dark:text-indigo-400">
                   <CheckCircle2 size={22} />
                 </div>
                 <p className="text-[15px] font-bold text-foreground">Import Completed</p>

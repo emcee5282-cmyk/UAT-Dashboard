@@ -1,8 +1,11 @@
 import { NextResponse } from 'next/server';
 import { importTopUpFile, type Product } from '@/app/lib/services/importService';
 
-// LOCAL/FOUNDATION ONLY — see app/api/v2/import/settlement/route.ts for the
-// full explanation (identical pattern, Top Up-specific import function).
+// Live upload path for Top Up's real Upload button — wired via
+// BulkImportModal's importApiBasePath on app/topup/page.tsx and
+// app/sendmoney/topup/page.tsx. See app/api/v2/import/settlement/route.ts
+// for the full explanation (identical pattern, Top Up-specific import
+// function).
 export async function POST(request: Request) {
   try {
     const formData = await request.formData();

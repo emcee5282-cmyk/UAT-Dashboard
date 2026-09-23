@@ -23,9 +23,6 @@
 // non-retried collision; 401 keeps its existing one-time re-login + retry,
 // independent of the new retry counter. Other 4xx are never retried.
 
-import { config } from 'dotenv';
-config({ path: '.env.local' });
-
 // ---------------------------------------------------------------------------
 // Localhost safety — hardcoded, not configurable via any env var, on purpose.
 // A configurable base URL is a copy-paste accident waiting to point this at

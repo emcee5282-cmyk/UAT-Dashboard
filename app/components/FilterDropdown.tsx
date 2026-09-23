@@ -20,7 +20,12 @@ interface FilterDropdownProps {
   onChange: (next: Record<string, boolean>) => void;
 }
 
-const PANEL_WIDTH = 320;
+// Narrowed from 320 per explicit instruction — a 320px panel for a
+// 2-option filter (e.g. DP/WD's Yes/No) looked oversized; 240 still fits
+// the longest real option label in the app (Wallet Status's "Wallet With
+// Issue") plus its count badge without wrapping, via the label's existing
+// `truncate` class as a fallback for anything longer.
+const PANEL_WIDTH = 240;
 
 // Premium multi-select filter panel — search, counts, live/instant apply
 // (every click re-filters the table right away, no separate Apply step),
@@ -165,20 +170,20 @@ export default function FilterDropdown({
       role="dialog"
       aria-label="Filter"
       style={{ position: 'fixed', top: pos.top, left: pos.left, transformOrigin: 'top left' }}
-      className={`z-[9999] flex w-[320px] min-w-[300px] max-w-[340px] max-h-[360px] flex-col overflow-hidden rounded-[16px] border border-[#E5E7EB] bg-white shadow-xl transition-[transform,opacity] duration-[160ms] ease-[var(--ease-out-strong)] dark:border-[#3a3a3d] dark:bg-[#2a2a2d] ${
+      className={`z-[9999] flex w-[240px] min-w-[220px] max-w-[260px] max-h-[360px] flex-col overflow-hidden rounded-[16px] border border-[#E5E7EB] bg-white shadow-xl transition-[transform,opacity] duration-[160ms] ease-[var(--ease-out-strong)] dark:border-[#3a3a3d] dark:bg-[#2a2a2d] ${
         open ? 'opacity-100 scale-100' : 'opacity-0 scale-[0.98]'
       }`}
       onClick={(event) => event.stopPropagation()}
     >
       <div className="shrink-0 px-4 pt-4 pb-3">
-        <div className="flex h-9 items-center gap-2 rounded-[10px] border border-[#E5E7EB] bg-white px-3 focus-within:border-[#2563EB] focus-within:ring-2 focus-within:ring-[#2563EB]/20 dark:border-[#3a3a3d] dark:bg-[#1f1f22]">
+        <div className="flex h-9 items-center gap-2 rounded-[10px] border border-[#E5E7EB] bg-white px-3 focus-within:border-[var(--ui-accent)] focus-within:ring-2 focus-within:ring-[var(--ui-accent)]/20 dark:border-[#3a3a3d] dark:bg-[#1f1f22]">
           <Search size={14} className="shrink-0 text-[#94A3B8]" />
           <input
             ref={searchInputRef}
             value={searchQuery}
             onChange={(event) => setSearchQuery(event.target.value)}
             placeholder="Search..."
-            className="w-full bg-transparent text-[14px] font-medium text-[#111827] placeholder:text-[#94A3B8] placeholder:font-normal outline-none border-none dark:text-[#E5E7EB]"
+            className="w-full bg-transparent text-[12px] font-medium text-[#111827] placeholder:text-[#94A3B8] placeholder:font-normal outline-none border-none dark:text-[#E5E7EB]"
           />
         </div>
       </div>
@@ -195,7 +200,7 @@ export default function FilterDropdown({
               tabIndex={-1}
               onClick={() => toggleValue(opt.value)}
               onMouseEnter={() => setHighlightedIndex(index)}
-              className={`flex h-[42px] cursor-pointer items-center justify-between gap-2 rounded-[10px] px-[14px] py-0 outline-none transition-colors duration-150 focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-[#2563EB] ${
+              className={`flex h-[42px] cursor-pointer items-center justify-between gap-2 rounded-[10px] px-[14px] py-0 outline-none transition-colors duration-150 focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-[var(--ui-accent)] ${
                 checked
                   ? 'bg-[#EFF6FF] dark:bg-[#1e2a3d]'
                   : 'hover:bg-[#F8FAFC] dark:hover:bg-white/5'
@@ -207,20 +212,20 @@ export default function FilterDropdown({
                   checked={checked}
                   readOnly
                   tabIndex={-1}
-                  className="pointer-events-none h-3.5 w-3.5 shrink-0 accent-[#2563EB]"
+                  className="pointer-events-none h-3.5 w-3.5 shrink-0 accent-[var(--ui-accent)]"
                 />
-                <span className="truncate text-[14px] font-medium text-[#111827] dark:text-[#E5E7EB]">
+                <span className="truncate text-[12px] font-medium text-[#111827] dark:text-[#E5E7EB]">
                   {opt.label}
                 </span>
               </span>
-              <span className="shrink-0 rounded-[6px] bg-[#F1F5F9] px-2.5 py-[3px] text-[12px] font-medium text-[#64748B] dark:bg-white/10 dark:text-[#9CA3AF]">
+              <span className="shrink-0 rounded-[6px] bg-[#F1F5F9] px-2.5 py-[3px] text-[10.5px] font-medium tabular-nums text-[#64748B] dark:bg-white/10 dark:text-[#9CA3AF]">
                 {opt.count.toLocaleString('en-US')}
               </span>
             </div>
           );
         })}
         {filteredOptions.length === 0 && (
-          <div className="flex h-[42px] items-center justify-center text-[13px] text-[#94A3B8]">
+          <div className="flex h-[42px] items-center justify-center text-[12px] text-[#94A3B8]">
             No matches
           </div>
         )}
@@ -230,7 +235,7 @@ export default function FilterDropdown({
         <button
           type="button"
           onClick={toggleAll}
-          className="flex h-9 w-full items-center justify-center rounded-[10px] text-[13px] font-medium text-[#2563EB] transition-[background-color,transform] duration-150 ease-[var(--ease-out-strong)] hover:bg-[#EFF6FF] active:scale-[0.97] dark:text-[#60A5FA] dark:hover:bg-white/5"
+          className="flex h-9 w-full items-center justify-center rounded-[10px] text-[12px] font-medium text-[var(--ui-accent)] transition-[background-color,transform] duration-150 ease-[var(--ease-out-strong)] hover:bg-[#EFF6FF] active:scale-[0.97] dark:text-[#60A5FA] dark:hover:bg-white/5"
         >
           {allChecked ? 'Clear All' : 'Select All'}
         </button>
