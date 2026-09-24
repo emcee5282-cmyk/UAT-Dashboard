@@ -118,8 +118,17 @@ async function loadBrandMap(product: Product): Promise<Map<string, number>> {
   return map;
 }
 
+// manilaFields, not date.getFullYear()/getMonth()/getDate() — those read
+// the SERVER's own runtime timezone (UTC on the VPS). parsedDate here comes
+// from settlementValidation.ts's parseImportDate, which (after its own
+// Manila-midnight fix) returns an instant like "2026-09-23T16:00:00Z" for
+// the calendar date "Sept 24" in Manila terms — UTC-local getters on that
+// same instant read back "Sept 23", one day short. Confirmed live: a
+// same-day Settlement upload validated correctly (validCount: 153) but
+// every row got silently stored one calendar day early.
 function formatDateOnly(date: Date): string {
-  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
+  const { year, month, day } = manilaFields(date);
+  return `${year}-${String(month + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
 }
 
 // Deterministic dedup key. Does NOT include remarks/type — those are

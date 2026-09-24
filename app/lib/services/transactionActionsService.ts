@@ -27,6 +27,7 @@ import { getDb } from '../db/client';
 import * as schema from '../db/schema';
 import { checkWalletField, checkAmountField, checkDateField, parseImportDate } from '../settlementValidation';
 import { parseAmount } from '../format';
+import { manilaFields } from '../businessDate';
 
 export type Product = 'cashout' | 'sendmoney';
 export type TransactionType = 'settlement' | 'topup';
@@ -48,7 +49,12 @@ function toStorageDate(display: string): string {
   const result = checkDateField(display);
   if (result) throw new TransactionActionError(result.message, 400);
   const parsed = parseImportDate(display)!;
-  return `${parsed.getFullYear()}-${String(parsed.getMonth() + 1).padStart(2, '0')}-${String(parsed.getDate()).padStart(2, '0')}`;
+  // manilaFields, not parsed.getFullYear()/getMonth()/getDate() — same fix
+  // as importService.ts's own formatDateOnly. parseImportDate returns a
+  // Manila-midnight instant; UTC-local getters on it read back one
+  // calendar day early.
+  const { year, month, day } = manilaFields(parsed);
+  return `${year}-${String(month + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
 }
 
 async function resolveAgentId(product: Product, agentName: string): Promise<number> {

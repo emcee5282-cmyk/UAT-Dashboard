@@ -169,14 +169,18 @@ function formatDateForEdit(dateStr: string): string {
 // imported duplicate check (runValidation, the scanning step's distinct-
 // dates extraction) both compare against. null for an unparseable date
 // (already flagged elsewhere via checkDateField — nothing to compare here).
-// Constructed and read back via the same LOCAL getters (parseImportDate's
-// "M/D/YYYY" branch builds a local-timezone Date) — a self-consistent
-// round trip, unlike mixing local getters with a Manila-anchored Date
-// elsewhere in this app.
+// Read via manilaFields(), not local getters — parseImportDate's "M/D/YYYY"
+// branch builds a Manila-anchored instant (manilaMidnight), and this key is
+// compared directly against occurredOn, a real Manila calendar-date string
+// from the DB. Local getters would only match that if the browser's own
+// timezone happened to be Manila — the same mismatch already fixed on the
+// server side (importService.ts's formatDateOnly, transactionActionsService.ts's
+// toStorageDate).
 function toDateKey(rawDate: string | undefined): string | null {
   const parsed = parseImportDate((rawDate ?? '').trim());
   if (!parsed) return null;
-  return `${parsed.getFullYear()}-${String(parsed.getMonth() + 1).padStart(2, '0')}-${String(parsed.getDate()).padStart(2, '0')}`;
+  const { year, month, day } = manilaFields(parsed);
+  return `${year}-${String(month + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
 }
 
 // Proper-cases a raw uploaded value for display in the edit form (e.g.
@@ -1147,9 +1151,10 @@ export default function BulkImportModal({
       if (!raw) return;
       const parsed = parseImportDate(raw);
       if (!parsed) return;
-      const isToday = parsed.getFullYear() === today.year && parsed.getMonth() === today.month && parsed.getDate() === today.day;
+      const parsedFields = manilaFields(parsed);
+      const isToday = parsedFields.year === today.year && parsedFields.month === today.month && parsedFields.day === today.day;
       if (isToday) return;
-      const key = `${parsed.getFullYear()}-${parsed.getMonth()}-${parsed.getDate()}`;
+      const key = `${parsedFields.year}-${parsedFields.month}-${parsedFields.day}`;
       const existing = byDate.get(key);
       byDate.set(key, { date: existing?.date ?? raw, count: (existing?.count ?? 0) + 1 });
     });
