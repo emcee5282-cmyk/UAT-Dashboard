@@ -16,7 +16,7 @@
 // continuously-live value. That's the intended model going forward: state
 // persists until the next deliberate sync/import, no background polling
 // required.
-import { desc, eq } from 'drizzle-orm';
+import { and, desc, eq } from 'drizzle-orm';
 import { getDb } from '../client';
 import * as schema from '../schema';
 
@@ -31,4 +31,32 @@ export async function readRosterCutoffPg(product: Product): Promise<Date | null>
     .orderBy(desc(schema.rosterSyncLog.syncedAt))
     .limit(1);
   return row ? row.syncedAt : null;
+}
+
+// "When was Opening last refreshed" — sourced from import_batches' own live
+// completedAt (the daily Bulk Import Opening wizard already logs this on
+// every real run), NOT readRosterCutoffPg's roster_sync_log above —
+// confirmed via direct query to hold just a handful of rows, never updated
+// by any live route (see readRosterCutoffPg's own callers' comments).
+// Duplicates app/lib/services/balanceService.ts's own private
+// readLatestOpeningImportCutoff (same query) rather than importing it —
+// that file imports FROM app/lib/db/read/estimatedOpening.ts, which itself
+// needs this same signal, so importing balanceService.ts there would be
+// circular. This file has no such dependency either direction, so it's the
+// safe common home for both estimatedOpening.ts and estimatedOpeningService.ts.
+export async function readLatestOpeningImportCutoffPg(product: Product): Promise<Date | null> {
+  const db = getDb();
+  const [row] = await db
+    .select({ completedAt: schema.importBatches.completedAt })
+    .from(schema.importBatches)
+    .where(
+      and(
+        eq(schema.importBatches.product, product),
+        eq(schema.importBatches.importType, 'opening'),
+        eq(schema.importBatches.status, 'completed')
+      )
+    )
+    .orderBy(desc(schema.importBatches.completedAt))
+    .limit(1);
+  return row?.completedAt ?? null;
 }

@@ -104,7 +104,7 @@ export async function readEstimatedOpeningPg(product: Product): Promise<{
 // ---------------------------------------------------------------------------
 import { toDateOnlyString } from '../../services/estimatedOpeningService';
 import { ESTIMATED_OPENING_EXCLUDED_LEADERS, formatUploadTimestamp } from '../../estimatedOpening';
-import { readRosterCutoffPg } from './rosterSyncLog';
+import { readLatestOpeningImportCutoffPg } from './rosterSyncLog';
 import { extractOpeningWalletTypeSuffix } from '../../realShopName';
 
 // Same abbreviation<->full-name mapping used throughout (balanceService.ts,
@@ -251,7 +251,11 @@ export async function readEstimatedOpeningDisplayPg(product: Product): Promise<{
     walletLinesByAgentId.get(l.agentId)!.push({ walletType: l.walletType, deposit: Number(l.deposit), withdrawal: Number(l.withdrawal), assumedBalance: Number(l.assumedBalance) });
   }
 
-  const cutoffDate = await readRosterCutoffPg(product);
+  // Was readRosterCutoffPg (roster_sync_log) — confirmed stuck on a stale
+  // date, never updated by any live route. readLatestOpeningImportCutoffPg
+  // tracks the real Opening import history instead (import_batches), same
+  // fix applied to estimatedOpeningService.ts's own upload-side cutoff.
+  const cutoffDate = await readLatestOpeningImportCutoffPg(product);
   const cutoffDateStr = cutoffDate ? toDateOnlyString(cutoffDate) : null;
 
   const txByAgentCode = new Map<string, { topUp: number; settlement: number }>();

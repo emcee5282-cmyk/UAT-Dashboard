@@ -31,7 +31,7 @@ import { getDb } from '../db/client';
 import * as schema from '../db/schema';
 import { aggregateByShop, aggregateByShopWithLines, aggregateByWalletType, formatUploadTimestamp } from '../estimatedOpening';
 import { extractRealShopName, extractSendMoneyShopName, extractOpeningWalletTypeSuffix } from '../realShopName';
-import { readRosterCutoffPg } from '../db/read/rosterSyncLog';
+import { readLatestOpeningImportCutoffPg } from '../db/read/rosterSyncLog';
 
 // Same abbreviation<->full-name mapping balanceService.ts's own
 // OPENING_SUFFIX_TO_WALLET_TYPE uses — needed here to match a raw upload
@@ -82,9 +82,15 @@ export async function importEstimatedOpeningFromUpload(
     throw new Error('No valid shop rows found in the uploaded file.');
   }
 
-  const cutoffDate = await readRosterCutoffPg(product);
+  // Was readRosterCutoffPg (roster_sync_log) — confirmed stuck on a stale
+  // date (never updated by any live route, only scripts/migrate-data.ts's
+  // one-time historical migration). readLatestOpeningImportCutoffPg tracks
+  // the real, live Opening import history (import_batches.completedAt)
+  // instead, so Estimated Balance sums THIS product's actual most-recently-
+  // uploaded-Opening day's Top Up/Settlement, not a 40-day-old snapshot.
+  const cutoffDate = await readLatestOpeningImportCutoffPg(product);
   if (!cutoffDate) {
-    throw new Error(`No roster cutoff signal available for ${product} yet — run a sync at least once before uploading.`);
+    throw new Error(`No completed Opening import found for ${product} yet — upload Opening at least once before uploading Estimated Balance.`);
   }
   const cutoffDateStr = toDateOnlyString(cutoffDate);
 
