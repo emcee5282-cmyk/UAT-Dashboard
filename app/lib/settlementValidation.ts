@@ -41,7 +41,15 @@ export function parseImportDate(raw: string): Date | null {
   const slashParts = trimmed.split('/');
   if (slashParts.length === 3) {
     const [m, d, y] = slashParts.map(Number);
-    if (m && d && y) return new Date(y, m - 1, d);
+    // manilaMidnight, not new Date(y, m-1, d) — that constructs the date at
+    // midnight in the SERVER's own runtime timezone (UTC on the VPS), which
+    // is 8 hours AHEAD of Manila midnight for the same calendar date.
+    // getManilaCalendarToday() below is correctly Manila-anchored, so
+    // comparing a UTC-midnight "today" against it made every upload dated
+    // "today" register as 8 hours in the future and get rejected outright —
+    // confirmed live: every row of a same-day Settlement upload failed with
+    // "Future dates are not allowed" for today's own date.
+    if (m && d && y) return manilaMidnight(y, m - 1, d);
   }
   const generic = new Date(trimmed);
   return isNaN(generic.getTime()) ? null : generic;
