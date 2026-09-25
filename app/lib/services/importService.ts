@@ -32,7 +32,7 @@ import { parseAmount } from '../format';
 import { TOPUP_TYPE_OPTIONS } from '../topupOptions';
 import { getBrandsForProduct } from '../db/read/brands';
 import { getBusinessToday, manilaFields } from '../businessDate';
-import { extractRawWalletFamily, extractShopSeriesFamily } from '../realShopName';
+import { extractRawWalletFamily, extractShopSeriesFamily, extractOpeningWalletTypeSuffix } from '../realShopName';
 import { buildGhostAgentMap, reconcileGhostsForImport } from './shopIdentityReconciliation';
 
 export type Product = 'cashout' | 'sendmoney';
@@ -401,20 +401,56 @@ type OpeningWalletLine = { agentId: number; rawAgentName: string; openingBalance
 // even ones with zero line items this time — a shop that used to be
 // multi-wallet but no longer is in this file should lose its stale
 // breakdown too.
+//
+// previousOpeningBalance carry-forward: since this table is delete-then-
+// insert (no persistent row identity across uploads), a new line can't just
+// read its own old value the way agents' single UPDATE...SET can. Instead,
+// the OLD lines are read here before they're deleted, keyed by
+// `${agentId}:${walletTypeSuffix}` (BK/NG/RK/UP, via
+// extractOpeningWalletTypeSuffix — the same identity Estimated Opening's own
+// wallet-line matching already uses), and each new line inherits its
+// matching old line's openingBalance. A line whose wallet type didn't exist
+// in the previous upload (a genuinely new line) gets null — same "may not
+// exist yet" fallback as agents.previousOpeningBalance.
 async function replaceOpeningWalletLines(tx: Tx, agentIds: number[], lines: OpeningWalletLine[]): Promise<void> {
   if (agentIds.length === 0) return;
   const uniqueAgentIds = Array.from(new Set(agentIds));
+
+  const previousByKey = new Map<string, string>();
   for (let i = 0; i < uniqueAgentIds.length; i += BULK_UPDATE_CHUNK_SIZE) {
     const chunk = uniqueAgentIds.slice(i, i + BULK_UPDATE_CHUNK_SIZE);
+    const oldLines = await tx
+      .select({ agentId: schema.openingWalletLines.agentId, rawAgentName: schema.openingWalletLines.rawAgentName, openingBalance: schema.openingWalletLines.openingBalance })
+      .from(schema.openingWalletLines)
+      .where(inArray(schema.openingWalletLines.agentId, chunk));
+    for (const old of oldLines) {
+      const suffix = extractOpeningWalletTypeSuffix(old.rawAgentName);
+      if (suffix) previousByKey.set(`${old.agentId}:${suffix}`, old.openingBalance);
+    }
     await tx.delete(schema.openingWalletLines).where(inArray(schema.openingWalletLines.agentId, chunk));
   }
-  for (let i = 0; i < lines.length; i += BULK_UPDATE_CHUNK_SIZE) {
-    const chunk = lines.slice(i, i + BULK_UPDATE_CHUNK_SIZE);
+
+  const linesWithPrevious = lines.map((line) => {
+    const suffix = extractOpeningWalletTypeSuffix(line.rawAgentName);
+    const previousOpeningBalance = suffix ? previousByKey.get(`${line.agentId}:${suffix}`) ?? null : null;
+    return { ...line, previousOpeningBalance };
+  });
+
+  for (let i = 0; i < linesWithPrevious.length; i += BULK_UPDATE_CHUNK_SIZE) {
+    const chunk = linesWithPrevious.slice(i, i + BULK_UPDATE_CHUNK_SIZE);
     if (chunk.length === 0) continue;
     await tx.insert(schema.openingWalletLines).values(chunk);
   }
 }
 
+// previous_opening_balance = a.opening_balance (the OLD row's value, per
+// standard SQL UPDATE...SET semantics — every expression in the SET list
+// reads the pre-update row) carries the about-to-be-overwritten Opening
+// forward one snapshot deep, in the same atomic statement. See
+// agents.previousOpeningBalance's own schema comment for why: Estimated
+// Opening's shopRows/walletRows use this as their baseline instead of the
+// live column, so a fresh Opening upload doesn't instantly become its own
+// estimate's baseline.
 async function bulkUpdateOpeningAgentsWithSdp(tx: Tx, updates: OpeningUpdateWithSdp[], now: Date): Promise<void> {
   for (let i = 0; i < updates.length; i += BULK_UPDATE_CHUNK_SIZE) {
     const chunk = updates.slice(i, i + BULK_UPDATE_CHUNK_SIZE);
@@ -422,7 +458,7 @@ async function bulkUpdateOpeningAgentsWithSdp(tx: Tx, updates: OpeningUpdateWith
     const values = sql.join(chunk.map((u) => sql`(${u.id}::int, ${u.openingBalance}::numeric, ${u.sdp}::numeric)`), sql`, `);
     await tx.execute(sql`
       UPDATE agents AS a
-      SET opening_balance = v.opening_balance, sdp = v.sdp, is_active = true, last_import_matched_at = ${now}, updated_at = ${now}
+      SET previous_opening_balance = a.opening_balance, opening_balance = v.opening_balance, sdp = v.sdp, is_active = true, last_import_matched_at = ${now}, updated_at = ${now}
       FROM (VALUES ${values}) AS v(id, opening_balance, sdp)
       WHERE a.id = v.id
     `);
@@ -436,7 +472,7 @@ async function bulkUpdateOpeningAgentsSkipSdp(tx: Tx, updates: OpeningUpdateSkip
     const values = sql.join(chunk.map((u) => sql`(${u.id}::int, ${u.openingBalance}::numeric)`), sql`, `);
     await tx.execute(sql`
       UPDATE agents AS a
-      SET opening_balance = v.opening_balance, is_active = true, last_import_matched_at = ${now}, updated_at = ${now}
+      SET previous_opening_balance = a.opening_balance, opening_balance = v.opening_balance, is_active = true, last_import_matched_at = ${now}, updated_at = ${now}
       FROM (VALUES ${values}) AS v(id, opening_balance)
       WHERE a.id = v.id
     `);

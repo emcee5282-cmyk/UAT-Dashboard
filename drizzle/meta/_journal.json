@@ -204,6 +204,27 @@
       "when": 1789800046175,
       "tag": "0028_add_estimated_balance_wallet_lines",
       "breakpoints": true
+    },
+    {
+      "idx": 29,
+      "version": "7",
+      "when": 1789801857405,
+      "tag": "0029_estimated_balance_wallet_lines_use_wallet_type",
+      "breakpoints": true
+    },
+    {
+      "idx": 30,
+      "version": "7",
+      "when": 1789804804290,
+      "tag": "0030_estimated_balance_deposit_withdrawal",
+      "breakpoints": true
+    },
+    {
+      "idx": 31,
+      "version": "7",
+      "when": 1790316295010,
+      "tag": "0031_add_opening_previous_balance",
+      "breakpoints": true
     }
   ]
 }

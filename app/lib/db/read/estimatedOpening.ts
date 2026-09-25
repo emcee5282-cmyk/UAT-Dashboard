@@ -211,7 +211,7 @@ export async function readEstimatedOpeningDisplayPg(product: Product): Promise<{
   // table, same isActive gap already fixed elsewhere this session
   // (getAgentBalances, getCashoutOpeningRows) but missed here.
   const rosterRows = await db
-    .select({ id: schema.agents.id, agentCode: schema.agents.agentCode, openingBalance: schema.agents.openingBalance, leaderName: schema.leaders.name })
+    .select({ id: schema.agents.id, agentCode: schema.agents.agentCode, openingBalance: schema.agents.openingBalance, previousOpeningBalance: schema.agents.previousOpeningBalance, leaderName: schema.leaders.name })
     .from(schema.agents)
     .leftJoin(schema.leaders, eq(schema.agents.leaderId, schema.leaders.id))
     .where(and(eq(schema.agents.product, product), eq(schema.agents.isActive, true)));
@@ -223,14 +223,14 @@ export async function readEstimatedOpeningDisplayPg(product: Product): Promise<{
   const agentIds = rosterRows.map((r) => r.id);
   const lineRows = agentIds.length > 0
     ? await db
-        .select({ agentId: schema.openingWalletLines.agentId, rawAgentName: schema.openingWalletLines.rawAgentName, openingBalance: schema.openingWalletLines.openingBalance })
+        .select({ agentId: schema.openingWalletLines.agentId, rawAgentName: schema.openingWalletLines.rawAgentName, openingBalance: schema.openingWalletLines.openingBalance, previousOpeningBalance: schema.openingWalletLines.previousOpeningBalance })
         .from(schema.openingWalletLines)
         .where(inArray(schema.openingWalletLines.agentId, agentIds))
     : [];
-  const linesByAgentId = new Map<number, { rawAgentName: string; openingBalance: string }[]>();
+  const linesByAgentId = new Map<number, { rawAgentName: string; openingBalance: string; previousOpeningBalance: string | null }[]>();
   for (const l of lineRows) {
     if (!linesByAgentId.has(l.agentId)) linesByAgentId.set(l.agentId, []);
-    linesByAgentId.get(l.agentId)!.push({ rawAgentName: l.rawAgentName, openingBalance: l.openingBalance });
+    linesByAgentId.get(l.agentId)!.push({ rawAgentName: l.rawAgentName, openingBalance: l.openingBalance, previousOpeningBalance: l.previousOpeningBalance });
   }
   // Per-wallet Estimated Opening lines for THIS upload (see
   // estimated_balance_wallet_lines' own schema comment) — only present for
@@ -331,7 +331,12 @@ export async function readEstimatedOpeningDisplayPg(product: Product): Promise<{
         const suffix = extractOpeningWalletTypeSuffix(line.rawAgentName);
         const walletType = suffix ? OPENING_SUFFIX_TO_WALLET_TYPE[suffix] : null;
         const uploadedLine = walletType ? walletLines.find((wl) => wl.walletType === walletType) : undefined;
-        const lineOpening = parseFloat(line.openingBalance);
+        // previousOpeningBalance (the line's own opening as of the LAST
+        // upload before the current one), not the live column — see
+        // opening_wallet_lines.previousOpeningBalance's own schema comment.
+        // Falls back to the live value only when no previous snapshot
+        // exists yet (this line's very first upload since the fix shipped).
+        const lineOpening = line.previousOpeningBalance !== null ? parseFloat(line.previousOpeningBalance) : parseFloat(line.openingBalance);
         const walletTx = walletType ? (txByAgentIdWallet.get(`${roster.id}:${walletType}`) ?? { topUp: 0, settlement: 0 }) : { topUp: 0, settlement: 0 };
         const lineDeposit = uploadedLine !== undefined ? uploadedLine.deposit : walletTx.topUp;
         const lineWithdrawal = uploadedLine !== undefined ? uploadedLine.withdrawal : walletTx.settlement;
@@ -352,7 +357,12 @@ export async function readEstimatedOpeningDisplayPg(product: Product): Promise<{
     // the shop, otherwise the live fallback (opening + today's Top Up −
     // Settlement, no Deposit/Withdrawal component since the upload never
     // reported any).
-    const opening = roster.openingBalance === null ? 0 : parseFloat(roster.openingBalance);
+    // previousOpeningBalance, not the live column — see
+    // agents.previousOpeningBalance's own schema comment. Falls back to the
+    // live value only when no previous snapshot exists yet.
+    const opening = roster.previousOpeningBalance !== null
+      ? parseFloat(roster.previousOpeningBalance)
+      : (roster.openingBalance === null ? 0 : parseFloat(roster.openingBalance));
     const uploadedDW = uploadedDepositWithdrawalByAgentCode.get(roster.agentCode);
     const tx = txByAgentCode.get(roster.agentCode) ?? { topUp: 0, settlement: 0 };
     const deposit = uploadedDW !== undefined ? uploadedDW.deposit : tx.topUp;

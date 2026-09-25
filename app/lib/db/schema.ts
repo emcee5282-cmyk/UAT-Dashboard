@@ -119,6 +119,19 @@ export const agents = pgTable(
     leaderId: integer('leader_id').references(() => leaders.id),
     brandId: integer('brand_id').references(() => brands.id),
     openingBalance: numeric('opening_balance', { precision: 18, scale: 2 }),
+    // Whatever openingBalance held immediately BEFORE the most recent
+    // Opening upload overwrote it — carried forward by importOpeningFile()
+    // on every import, one snapshot deep (not a full history). Estimated
+    // Opening's own shopRows/walletRows (readEstimatedOpeningDisplayPg) use
+    // this as their baseline instead of the live column, specifically so a
+    // fresh Opening upload doesn't instantly become its own estimate's
+    // baseline — the whole point of the Estimate is to project today's
+    // figure from the LAST CONFIRMED day's Opening plus today's live
+    // Deposit/Withdrawal, so ops can validate the next real upload against
+    // it. Every other reader of openingBalance (the /summary roster table,
+    // Agent Balance, Settlement, Dashboard, etc.) is intentionally
+    // untouched — this column exists only for that one validation purpose.
+    previousOpeningBalance: numeric('previous_opening_balance', { precision: 18, scale: 2 }),
     sdp: numeric('sdp', { precision: 18, scale: 2 }),
     // Opening Balance's daily-upload feature (see importOpeningFile in
     // importService.ts): isActive backs the "Mark Inactive" action on a shop
@@ -191,6 +204,12 @@ export const openingWalletLines = pgTable(
     // instruction ("i display mo din yung name na nakalagay sa file").
     rawAgentName: text('raw_agent_name').notNull(),
     openingBalance: numeric('opening_balance', { precision: 18, scale: 2 }).notNull(),
+    // Same purpose as agents.previousOpeningBalance (see its own comment) —
+    // one snapshot deep, carried forward per line by importOpeningFile()
+    // matching lines across uploads by wallet-type suffix (opening_wallet_lines
+    // itself is delete-then-insert per shop on every upload, so a line has no
+    // persistent row identity across uploads to hang this off directly).
+    previousOpeningBalance: numeric('previous_opening_balance', { precision: 18, scale: 2 }),
     // This row's own SDP cell, exactly as the file has it — summed into
     // agents.sdp at the shop level (same treatment as opening_balance),
     // never resolved/deduped away. Per explicit instruction: every row's
