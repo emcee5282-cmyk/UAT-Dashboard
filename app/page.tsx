@@ -105,6 +105,7 @@ type ApiCashInHand = {
   autopay: number;
   autopaySupported: boolean;
   expay: number;
+  phbpay: number;
   totalBrandCIH: number;
 };
 
@@ -632,7 +633,7 @@ const LEDGER_SKELETON_COL_WIDTHS = ['flex-[1.6]', 'flex-1', 'flex-1', 'flex-1', 
 
 // Same idea for the Running Balance / Cash In Hand tables — Brand name
 // column wider than the 6 numeric columns beside it.
-const BRAND_TABLE_SKELETON_COL_WIDTHS = ['flex-[1.3]', 'flex-1', 'flex-1', 'flex-1', 'flex-1', 'flex-1', 'flex-[0.9]'];
+const BRAND_TABLE_SKELETON_COL_WIDTHS = ['flex-[1.3]', 'flex-1', 'flex-1', 'flex-1', 'flex-1', 'flex-1', 'flex-1', 'flex-[0.9]'];
 
 function LedgerSkeleton() {
   // Mirrors WalletSummaryTable's real shape: a bordered title row, then a
@@ -1284,7 +1285,7 @@ function RunningBalanceSkeleton() {
 // Cash In Hand (section 7)
 // ---------------------------------------------------------------------------
 
-type CihColumnKey = 'sspAg' | 'sspPs' | 'ess' | 'autopay' | 'expay' | 'totalBrandCIH';
+type CihColumnKey = 'sspAg' | 'sspPs' | 'ess' | 'autopay' | 'expay' | 'phbpay' | 'totalBrandCIH';
 type CihSortKey = 'brand' | CihColumnKey;
 
 const CIH_COLUMNS: { key: CihColumnKey; label: string }[] = [
@@ -1293,6 +1294,7 @@ const CIH_COLUMNS: { key: CihColumnKey; label: string }[] = [
   { key: 'ess', label: 'ESS' },
   { key: 'autopay', label: 'Autopay' },
   { key: 'expay', label: 'Expay' },
+  { key: 'phbpay', label: 'PHBPAY' },
   { key: 'totalBrandCIH', label: 'Total CIH' },
 ];
 
@@ -1490,7 +1492,7 @@ function CashInHandSection({ rows, total }: { rows: ApiCashInHand[]; total: ApiC
 }
 
 function CashInHandSkeleton() {
-  // 7-column table (Brand + 6 CIH_COLUMNS) with 10 brand rows + a Total
+  // 8-column table (Brand + 7 CIH_COLUMNS) with 10 brand rows + a Total
   // row, matching the real CashInHandSection — same fix as
   // RunningBalanceSkeleton above, just keeping this section's own header
   // border (the real header here does have a border-b, unlike Running

@@ -98,6 +98,7 @@ type CashInHandRow = {
   // no data is silently discarded.
   autopaySupported: boolean;
   expay: number;
+  phbpay: number;
   totalBrandCIH: number;
 };
 
@@ -239,7 +240,7 @@ type RawBrandBalanceRow = { brand: string; opening: number; deposit: number; wit
 // (the two tabs use different strings for the same gateway: 'ess'/'essPg',
 // 'atp'/'autopay' — everything else matches).
 const LEDGER_TO_PG_KEY: Record<string, string> = {
-  ssp1: 'ssp1', ssp2: 'ssp2', ess: 'essPg', atp: 'autopay', expay: 'expay', hkpay: 'hkpay',
+  ssp1: 'ssp1', ssp2: 'ssp2', ess: 'essPg', atp: 'autopay', expay: 'expay', hkpay: 'hkpay', phbpay: 'phbpay',
 };
 
 async function getDailyTxnLedgerBrandTotals(ledgerId: string, businessDate: string): Promise<RawBrandBalanceRow[]> {
@@ -297,7 +298,7 @@ export async function GET() {
       cashoutSheetRows, sendMoneySheetRows,
       cashoutAgentWalletRaw, cashoutTransactions, cashGoHistoryRows,
       sendMoneyAgentWalletRaw, sendMoneyTransactions,
-      ssp1LedgerRows, ssp2LedgerRows, essLedgerRows, atpLedgerRows, expayLedgerRows,
+      ssp1LedgerRows, ssp2LedgerRows, essLedgerRows, atpLedgerRows, expayLedgerRows, phbpayLedgerRows,
       estimatedOpening, estimatedSendMoneyOpening,
       openingTrendCashout, openingTrendSendMoney,
       cashoutAgentBalances, sendMoneyAgentBalances,
@@ -334,7 +335,7 @@ export async function GET() {
       getAgentWalletRawRows('sendmoney'),
       getSendMoneyTransactionsSince('sendmoney', bundleHistorySince),
       // SSP Line 1 & 2 (Opening/Deposit/Withdrawal/Total) and Brand Cash In
-      // Hand's Ess/Autopay/Expay columns — PostgreSQL, read straight from
+      // Hand's Ess/Autopay/Expay/Phbpay columns — PostgreSQL, read straight from
       // Daily Transaction Entry's own ledger cards (daily_txn_ledger_entry),
       // not the old "Brand Balance" sheet/table. Confirmed with the user
       // directly: those cards' own Totals ARE the real source for these,
@@ -345,6 +346,7 @@ export async function GET() {
       getDailyTxnLedgerBrandTotals('ess', todayKey),
       getDailyTxnLedgerBrandTotals('atp', todayKey),
       getDailyTxnLedgerBrandTotals('expay', todayKey),
+      getDailyTxnLedgerBrandTotals('phbpay', todayKey),
       // Estimated Opening override — PostgreSQL (readEstimatedOpeningDisplayPg,
       // the exact same reader the Balance pages' own /api/opening/estimated-balance
       // and /api/sendmoney/opening/estimated-balance GET routes already use),
@@ -787,6 +789,7 @@ export async function GET() {
     const essByBrand = new Map(essLedgerRows.map((r) => [r.brand.toUpperCase(), r.total]));
     const atpByBrand = new Map(atpLedgerRows.map((r) => [r.brand.toUpperCase(), r.total]));
     const expayByBrand = new Map(expayLedgerRows.map((r) => [r.brand.toUpperCase(), r.total]));
+    const phbpayByBrand = new Map(phbpayLedgerRows.map((r) => [r.brand.toUpperCase(), r.total]));
 
     const cashInHandRows: CashInHandRow[] = DAILY_TXN_LEDGER_BRANDS.map((brand) => {
       const key = brand.toUpperCase();
@@ -795,6 +798,7 @@ export async function GET() {
       const ess = essByBrand.get(key) ?? 0;
       const autopay = atpByBrand.get(key) ?? 0;
       const expay = expayByBrand.get(key) ?? 0;
+      const phbpay = phbpayByBrand.get(key) ?? 0;
       return {
         brand,
         sspAg,
@@ -803,7 +807,8 @@ export async function GET() {
         autopay,
         autopaySupported: !AUTOPAY_UNSUPPORTED_BRANDS.includes(key),
         expay,
-        totalBrandCIH: sspAg + sspPs + ess + autopay + expay,
+        phbpay,
+        totalBrandCIH: sspAg + sspPs + ess + autopay + expay + phbpay,
       };
     });
 
@@ -818,6 +823,7 @@ export async function GET() {
       autopay: cashInHandRows.reduce((s, r) => s + r.autopay, 0),
       autopaySupported: true,
       expay: cashInHandRows.reduce((s, r) => s + r.expay, 0),
+      phbpay: cashInHandRows.reduce((s, r) => s + r.phbpay, 0),
       totalBrandCIH: cashInHandRows.reduce((s, r) => s + r.totalBrandCIH, 0),
     };
 

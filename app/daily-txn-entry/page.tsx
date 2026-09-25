@@ -74,6 +74,7 @@ const LEDGERS: LedgerMeta[] = [
   { id: 'atp', title: 'AUTOPAY Gateway · Cashout', kind: 'standard' },
   { id: 'expay', title: 'EXPAY Gateway · Cashout', kind: 'standard' },
   { id: 'hkpay', title: 'HKPAY Gateway · Cashout', kind: 'standard' },
+  { id: 'phbpay', title: 'PHBPAY Gateway · Cashout & Sendmoney', kind: 'standard' },
 ];
 
 // New "PG Balances" tab — a separate view (same page, pill-switch below the
@@ -86,8 +87,8 @@ const LEDGERS: LedgerMeta[] = [
 const PG_WALLETS = ['Bkash', 'Nagad', 'Rocket', 'UPay'] as const;
 type PgWallet = (typeof PG_WALLETS)[number];
 
-type PgKey = 'autopay' | 'expay' | 'ssp1' | 'ssp2' | 'essPg' | 'hkpay';
-const PG_KEYS: PgKey[] = ['autopay', 'expay', 'ssp1', 'ssp2', 'essPg', 'hkpay'];
+type PgKey = 'autopay' | 'expay' | 'ssp1' | 'ssp2' | 'essPg' | 'hkpay' | 'phbpay';
+const PG_KEYS: PgKey[] = ['autopay', 'expay', 'ssp1', 'ssp2', 'essPg', 'hkpay', 'phbpay'];
 const PG_LABELS: Record<PgKey, string> = {
   autopay: 'AUTOPAY',
   expay: 'EXPAY',
@@ -95,6 +96,7 @@ const PG_LABELS: Record<PgKey, string> = {
   ssp2: 'SSP Line 2',
   essPg: 'ESS',
   hkpay: 'HKPAY',
+  phbpay: 'PHBPAY',
 };
 
 // Ported verbatim from the reference file's fmt() — parenthesized negatives,
@@ -339,7 +341,7 @@ function LedgerCard({ def, onActivity }: { def: LedgerMeta; onActivity: () => vo
   // to `kind` (ESS previously read "Available for WD" here; ATP/EXPAY/
   // HKPAY are 'standard' kind, same as SSP Line 1/2, so this can't be
   // derived from isEss alone anymore).
-  const totalLabel = ['atp', 'expay', 'hkpay', 'ess'].includes(def.id) ? 'Available Balance' : 'Total';
+  const totalLabel = ['atp', 'expay', 'hkpay', 'phbpay', 'ess'].includes(def.id) ? 'Available Balance' : 'Total';
 
   function onCellInput(e: React.FormEvent<HTMLInputElement>) {
     const { row, brand } = e.currentTarget.dataset as { row: RowKey; brand: Brand };

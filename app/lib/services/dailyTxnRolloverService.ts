@@ -18,13 +18,13 @@ import { deletePgBalanceOlderThan } from '../db/read/dailyTxnPgBalance';
 import { deleteCashgoEntriesOlderThan } from '../db/read/dailyTxnCashgo';
 import { upsertLedgerEntries, type LedgerEntryInput } from './dailyTxnEntryService';
 
-const LEDGER_IDS = ['ssp1', 'ssp2', 'ess', 'atp', 'expay', 'hkpay'] as const;
+const LEDGER_IDS = ['ssp1', 'ssp2', 'ess', 'atp', 'expay', 'hkpay', 'phbpay'] as const;
 const ESS_LEDGER_ID = 'ess';
 export const DAILY_TXN_LEDGER_BRANDS = ['M1', 'M2', 'K1', 'B1', 'B2', 'B3', 'B4', 'B5', 'T1', 'J1'] as const;
 const BRANDS = DAILY_TXN_LEDGER_BRANDS;
 const WALLET_LEDGER_IDS = ['ssp1', 'ssp2'] as const;
 const WALLETS = ['Bkash', 'Nagad', 'Rocket', 'UPay'] as const;
-const PG_KEYS = ['autopay', 'expay', 'ssp1', 'ssp2', 'essPg', 'hkpay'] as const;
+const PG_KEYS = ['autopay', 'expay', 'ssp1', 'ssp2', 'essPg', 'hkpay', 'phbpay'] as const;
 
 const LEDGER_RETENTION_DAYS = 30;
 const REPORT_RETENTION_DAYS = 7;

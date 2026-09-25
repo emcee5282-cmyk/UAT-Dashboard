@@ -8,7 +8,7 @@ import { upsertPgBalanceEntries } from '@/app/lib/services/dailyTxnEntryService'
 // Self-contained, same as wallet-closing above (not derived from Operations
 // tab's ledgers).
 
-const PG_KEYS = ['autopay', 'expay', 'ssp1', 'ssp2', 'essPg', 'hkpay'] as const;
+const PG_KEYS = ['autopay', 'expay', 'ssp1', 'ssp2', 'essPg', 'hkpay', 'phbpay'] as const;
 
 function todayStr(): string {
   const { year, month, day } = manilaFields(getBusinessToday());
