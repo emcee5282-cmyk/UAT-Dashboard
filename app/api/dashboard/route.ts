@@ -535,6 +535,17 @@ export async function GET() {
     const cashoutActualTotal = cashoutDataRows.reduce((s, r) => s + r.actualBal, 0);
     const cashoutRunningTotal = cashoutDataRows.reduce((s, r) => s + r.runningBal, 0);
     const cashoutVsOpening = cashoutRunningTotal - cashoutOpeningEffective;
+    // Today's Insights' own Ending Balance — a direct sum of the figures
+    // already shown in that same card (Opening/Deposit/Withdrawal/TopUp/
+    // Settlement, all live), not cashoutRunningTotal (per-wallet runningBal,
+    // which bakes in dashboard_manual_balances' own opening column — a
+    // manually-synced snapshot that goes stale independently of the live
+    // Opening figure used here, producing a card whose 5 line items never
+    // actually summed to its own Ending Balance). cashoutRunningTotal/
+    // cashoutVsOpening themselves stay as-is — the Wallet Summary ledger's
+    // per-wallet Running Balance column is a separate concern, untouched.
+    const cashoutEndingLive = cashoutOpeningEffective + cashoutTotalDP + cashoutTotalWDSigned + cashoutTotalTopUp + cashoutTotalStlm;
+    const cashoutEndingChangeLive = cashoutEndingLive - cashoutOpeningEffective;
 
     // Top Performer Wallet (Cashout) — simple net gain per wallet, no BD/
     // Bkash segregation (that's Send Money-only, see below). Ported
@@ -682,6 +693,9 @@ export async function GET() {
     const sendMoneyActualTotal = sendMoneyDataRows.reduce((s, r) => s + r.actualBal, 0);
     const sendMoneyRunningTotal = sendMoneyDataRows.reduce((s, r) => s + r.runningBal, 0);
     const sendMoneyVsOpening = sendMoneyRunningTotal - sendMoneyOpeningEffective;
+    // Today's Insights' own Ending Balance — see cashoutEndingLive's comment.
+    const sendMoneyEndingLive = sendMoneyOpeningEffective + sendMoneyTotalDP + sendMoneyTotalWDSigned + sendMoneyTotalTopUp + sendMoneyTotalStlm;
+    const sendMoneyEndingChangeLive = sendMoneyEndingLive - sendMoneyOpeningEffective;
 
     // Top Performer Wallet (Send Money) — BD-keyword shops stripped out of
     // each wallet's own gain and broken out as their own "Bundle Deposit"
@@ -849,8 +863,8 @@ export async function GET() {
           withdrawal: cashoutTotalWDSigned,
           topup: cashoutTotalTopUp,
           settlement: cashoutTotalStlm,
-          ending: cashoutRunningTotal,
-          endingChange: cashoutVsOpening,
+          ending: cashoutEndingLive,
+          endingChange: cashoutEndingChangeLive,
           progressValue: round2((cashoutToday.bk + cashoutToday.ng) / M),
           progressQuota: round2((cashoutToday.bkQuota + cashoutToday.ngQuota) / M) || undefined,
           progressLabel: cashoutProgressLabel,
@@ -878,8 +892,8 @@ export async function GET() {
           withdrawal: sendMoneyTotalWDSigned,
           topup: sendMoneyTotalTopUp,
           settlement: sendMoneyTotalStlm,
-          ending: sendMoneyRunningTotal,
-          endingChange: sendMoneyVsOpening,
+          ending: sendMoneyEndingLive,
+          endingChange: sendMoneyEndingChangeLive,
           progressValue: round2(sendMoneyTodayTotal / M),
           progressQuota: round2(sendMoneyTodayTotal / M) || undefined,
           progressLabel: sendMoneyProgressLabel,
