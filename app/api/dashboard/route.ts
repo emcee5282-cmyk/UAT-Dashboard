@@ -195,36 +195,6 @@ function formatShortDateLabel(date: Date): string {
   return `${SHORT_MONTH_NAMES[month]} ${day}`;
 }
 
-// CashGo/Bundle Transfer "Today" strip's own real source of truth — per
-// explicit instruction: today wins outright whenever it has real activity
-// (labeled "Today"), full stop. Otherwise this walks backward day-by-day
-// through the same history window already loaded for the trend charts
-// (bounded by `maxDaysBack`, matching `bundleHistorySince`) for the most
-// recent day that DOES have activity, and reports that day's own figure +
-// date instead of collapsing to an empty "No Activity" state the moment
-// today itself is quiet. `hasActivity` is caller-supplied (not "any field
-// nonzero") specifically so quota fields (CashGo's bkQuota/ngQuota, always
-// pre-set regardless of whether anything actually posted) never count as
-// activity on their own.
-function latestActivityDay<T>(
-  byDate: Map<string, T>,
-  cutoff: Date,
-  empty: T,
-  maxDaysBack: number,
-  hasActivity: (t: T) => boolean
-): { data: T; date: Date } {
-  const today = byDate.get(dateKey(cutoff));
-  if (today && hasActivity(today)) return { data: today, date: cutoff };
-  for (let i = 1; i <= maxDaysBack; i++) {
-    const date = new Date(cutoff.getTime() - i * 24 * 60 * 60 * 1000);
-    const entry = byDate.get(dateKey(date));
-    if (entry && hasActivity(entry)) return { data: entry, date };
-  }
-  // No activity anywhere in the loaded window — falls back to today's own
-  // (empty) bucket, same terminal "No Activity, Today" state as before.
-  return { data: empty, date: cutoff };
-}
-
 type RawBrandBalanceRow = { brand: string; opening: number; deposit: number; withdrawal: number; total: number };
 
 // Per-brand rollup of one Daily Transaction Entry ledger card (Operations
@@ -403,6 +373,20 @@ export async function GET() {
       estimatedSendMoneyOpening.uploadedAt !== null &&
       toBusinessDate(estimatedSendMoneyOpening.uploadedAt).getTime() === cutoff.getTime();
 
+    // CashGo/Bundle Transfer "Today" strip's own gate (per explicit spec) —
+    // true when EITHER Opening's own last import IS today (fresh, not
+    // stale — the opposite condition from estimatedOpeningValid above,
+    // which requires Opening to be stale) OR a same-business-day Estimated
+    // Balance upload exists. Deliberately independent of
+    // estimatedOpeningValid/estimatedSendMoneyOpeningValid: those two gate
+    // the Opening KPI override specifically, not this strip.
+    const cashoutHasTodayBalanceData =
+      (cashoutCutoffDate !== null && cashoutCutoffDate.getTime() === cutoff.getTime()) ||
+      (estimatedOpening.uploadedAt !== null && toBusinessDate(estimatedOpening.uploadedAt).getTime() === cutoff.getTime());
+    const sendMoneyHasTodayBalanceData =
+      (sendMoneyCutoffDate !== null && sendMoneyCutoffDate.getTime() === cutoff.getTime()) ||
+      (estimatedSendMoneyOpening.uploadedAt !== null && toBusinessDate(estimatedSendMoneyOpening.uploadedAt).getTime() === cutoff.getTime());
+
     const cashoutOpeningOverride = estimatedOpeningValid
       ? Array.from(estimatedOpening.balancesWithFallback.values()).reduce((s, v) => s + v, 0)
       : undefined;
@@ -502,8 +486,8 @@ export async function GET() {
     // plus today's own figure separately for the progress bar. PostgreSQL-
     // backed (daily_txn_cashgo_entry, via Daily Transaction Entry's CashGo
     // tab) — each business date has 2 rows (bkash/nagad), folded into one
-    // map entry per date here to match the shape buildDaySeries/
-    // latestActivityDay below already expect.
+    // map entry per date here to match the shape buildDaySeries below (and
+    // cashoutHasTodayBalanceData's own today/yesterday lookup) expect.
     const cashGoByDate = new Map<string, { bk: number; ng: number; bkQuota: number; ngQuota: number }>();
     cashGoHistoryRows.forEach((row) => {
       const [y, m, d] = row.businessDate.split('-').map(Number);
@@ -524,9 +508,15 @@ export async function GET() {
     const cashGoPoint = (date: string, t: typeof emptyCashGo) => ({ date, bkash: round2(t.bk / M), nagad: round2(t.ng / M) });
     const cashoutChart = buildDaySeries(cashGoByDate, emptyCashGo, 7, yesterday, cashGoPoint);
     const cashoutChart30 = buildDaySeries(cashGoByDate, emptyCashGo, 30, yesterday, cashGoPoint);
-    const cashoutTodayResult = latestActivityDay(cashGoByDate, cutoff, emptyCashGo, 32, (t) => t.bk + t.ng > 0);
-    const cashoutToday = cashoutTodayResult.data;
-    const cashoutProgressLabel = cashoutTodayResult.date.getTime() === cutoff.getTime() ? 'Today' : formatShortDateLabel(cashoutTodayResult.date);
+    // Fixed fallback to yesterday only, gated on cashoutHasTodayBalanceData
+    // (see its own comment above) — replaces the old 32-day walk-back.
+    // Today's own bucket shows labeled "Today" once today's balance data
+    // exists, even if it's genuinely zero; otherwise yesterday's bucket
+    // shows labeled with its own date — this never looks further back.
+    const cashoutToday = cashoutHasTodayBalanceData
+      ? (cashGoByDate.get(dateKey(cutoff)) ?? emptyCashGo)
+      : (cashGoByDate.get(dateKey(yesterday)) ?? emptyCashGo);
+    const cashoutProgressLabel = cashoutHasTodayBalanceData ? 'Today' : formatShortDateLabel(yesterday);
 
     const cashoutDataRows = cashoutWallets.filter((r) => r.wallet.toLowerCase() !== 'total');
     const cashoutTotalDP = cashoutDataRows.reduce((s, r) => s + r.totalDP, 0);
@@ -675,16 +665,16 @@ export async function GET() {
     const bundlePoint = (date: string, t: typeof emptyBundle) => ({ date, nagad: round2(t.NAGAD / M), rocket: round2(t.ROCKET / M), upay: round2(t.UPAY / M) });
     const sendMoneyChart = buildDaySeries(bundleByDate, emptyBundle, 7, yesterday, bundlePoint);
     const sendMoneyChart30 = buildDaySeries(bundleByDate, emptyBundle, 30, yesterday, bundlePoint);
-    // Today's own bucket only, no fallback to the last active day — per
-    // explicit instruction (reversing the earlier "sum since last update"
-    // rule below): once today has no real activity yet, the strip shows
-    // "Today" with 0 rather than silently borrowing yesterday's figure
-    // under a misleading date label. Cashout's own CashGo strip keeps its
-    // separate latestActivityDay fallback untouched — this change is
-    // scoped to Send Money's Bundle Transfer only.
-    const sendMoneyTodayBundle = bundleByDate.get(dateKey(cutoff)) ?? emptyBundle;
+    // Same gated fallback-to-yesterday rule as Cashout's CashGo strip (see
+    // sendMoneyHasTodayBalanceData's own comment) — today's own bucket
+    // shows labeled "Today" once today's balance data exists, even if it's
+    // genuinely zero; otherwise yesterday's bucket shows labeled with its
+    // own date, never further back than that.
+    const sendMoneyTodayBundle = sendMoneyHasTodayBalanceData
+      ? (bundleByDate.get(dateKey(cutoff)) ?? emptyBundle)
+      : (bundleByDate.get(dateKey(yesterday)) ?? emptyBundle);
     const sendMoneyTodayTotal = sendMoneyTodayBundle.NAGAD + sendMoneyTodayBundle.ROCKET + sendMoneyTodayBundle.UPAY;
-    const sendMoneyProgressLabel = 'Today';
+    const sendMoneyProgressLabel = sendMoneyHasTodayBalanceData ? 'Today' : formatShortDateLabel(yesterday);
 
     const sendMoneyDataRows = sendMoneyWallets.filter((r) => r.wallet.toUpperCase() !== 'TOTAL');
     const sendMoneyTotalDP = sendMoneyDataRows.reduce((s, r) => s + r.totalDP, 0);
