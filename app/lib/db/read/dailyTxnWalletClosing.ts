@@ -1,6 +1,6 @@
 // Reads for daily_txn_wallet_closing_entry — Report tab's "Wallet Breakdown
 // Opening" card (YesterdayClosingCard, rendered once each for ssp1/ssp2).
-import { and, eq, lte, desc, lt } from 'drizzle-orm';
+import { and, eq, lte, desc, lt, isNotNull } from 'drizzle-orm';
 import { getDb } from '../client';
 import * as schema from '../schema';
 
@@ -36,6 +36,15 @@ export async function getDailyTxnWalletClosing(ledgerId: 'ssp1' | 'ssp2', busine
 // far into the past. A separate function (not a change to
 // getDailyTxnWalletClosing above) since that one's exact-date behavior is
 // still correct and needed for the Operations tab's own editable form.
+//
+// isNotNull(amount) — every business day gets a blank (amount: null)
+// placeholder row inserted by the nightly rollover (ensureTodayBlankRows),
+// so without this filter the "most recent by businessDate" row picked here
+// could be that same-day blank placeholder instead of the last REAL entry,
+// contradicting this function's own carry-forward purpose above. Confirmed
+// live as the reason Estimated's Wallet Breakdown could read 0/blank right
+// after a business-day rollover despite a real figure existing from a prior
+// day.
 export async function getLatestDailyTxnWalletClosing(ledgerId: 'ssp1' | 'ssp2', onOrBeforeBusinessDate: string): Promise<DailyTxnWalletClosingRow[]> {
   const db = getDb();
   const rows = await db
@@ -46,7 +55,11 @@ export async function getLatestDailyTxnWalletClosing(ledgerId: 'ssp1' | 'ssp2', 
       businessDate: schema.dailyTxnWalletClosingEntry.businessDate,
     })
     .from(schema.dailyTxnWalletClosingEntry)
-    .where(and(eq(schema.dailyTxnWalletClosingEntry.ledgerId, ledgerId), lte(schema.dailyTxnWalletClosingEntry.businessDate, onOrBeforeBusinessDate)))
+    .where(and(
+      eq(schema.dailyTxnWalletClosingEntry.ledgerId, ledgerId),
+      lte(schema.dailyTxnWalletClosingEntry.businessDate, onOrBeforeBusinessDate),
+      isNotNull(schema.dailyTxnWalletClosingEntry.amount)
+    ))
     .orderBy(desc(schema.dailyTxnWalletClosingEntry.businessDate));
 
   const latestByWallet = new Map<string, DailyTxnWalletClosingRow>();

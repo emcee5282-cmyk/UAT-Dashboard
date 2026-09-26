@@ -14,11 +14,14 @@ import { getLatestDailyTxnWalletClosing } from '@/app/lib/db/read/dailyTxnWallet
 // routes and the Dashboard's own Estimated Opening override already use —
 // into this tab's two containers:
 //   - Wallet Breakdown Estimated: per-wallet Estimated = latest available
-//     Wallet Breakdown Opening amount on/before today (dailyTxnWalletClosingEntry,
-//     carried forward via getLatestDailyTxnWalletClosing when today's entry
-//     hasn't been made yet — per explicit instruction, this card should
-//     never go blank just because nobody entered today's Opening) +
-//     uploaded Total DP − uploaded Total WD (confirmed formula).
+//     Wallet Breakdown Opening amount on/before YESTERDAY (dailyTxnWalletClosingEntry,
+//     carried further back via getLatestDailyTxnWalletClosing when even
+//     yesterday's entry is missing) + uploaded Total DP − uploaded Total WD
+//     (confirmed formula). Deliberately excludes TODAY's own entry as the
+//     baseline — same reasoning as Estimated Opening (Each Shop)'s own
+//     previousOpeningBalance: a fresh same-day entry must never become its
+//     own estimate's baseline, so today's figure can be sanity-checked
+//     against what this card already shows instead of silently replacing it.
 //   - Estimated Opening (Each Shop): balancesWithFallback — every roster
 //     shop, using the actual uploaded figure where the shop was in the
 //     file, falling back to opening+topUp−settlement otherwise. Same value
@@ -33,8 +36,13 @@ import { getLatestDailyTxnWalletClosing } from '@/app/lib/db/read/dailyTxnWallet
 // back onto the Balance page's single existing modal; those tables have
 // been dropped (see drizzle/ for the migration).
 
-function todayStr(): string {
-  const { year, month, day } = manilaFields(getBusinessToday());
+// One business day before today — the Wallet Breakdown Estimated card's own
+// baseline cutoff (see this file's header comment). Not reused for
+// shopRows/walletRows below: those already carry their own
+// previousOpeningBalance baseline from readEstimatedOpeningDisplayPg.
+function yesterdayStr(): string {
+  const yesterday = new Date(getBusinessToday().getTime() - 24 * 60 * 60 * 1000);
+  const { year, month, day } = manilaFields(yesterday);
   return `${year}-${String(month + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
 }
 
@@ -61,7 +69,7 @@ export async function GET(request: Request) {
 
   const [estimated, openingRows] = await Promise.all([
     readEstimatedOpeningDisplayPg(product),
-    getLatestDailyTxnWalletClosing(ledgerId, todayStr()),
+    getLatestDailyTxnWalletClosing(ledgerId, yesterdayStr()),
   ]);
 
   const openingByWallet = new Map(openingRows.map((r) => [r.wallet, r.amount]));
