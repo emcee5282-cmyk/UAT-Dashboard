@@ -9,7 +9,7 @@ import {
   readEstimatedOpeningWalletTotalsForCutoffRange,
   type EstimatedOpeningWalletTotals,
 } from '@/app/lib/db/read/estimatedOpening';
-import { getDailyTxnWalletClosingRange, getLatestDailyTxnWalletClosing } from '@/app/lib/db/read/dailyTxnWalletClosing';
+import { getDailyTxnWalletClosingRange, getLatestDailyTxnWalletClosing, getDailyTxnWalletClosing } from '@/app/lib/db/read/dailyTxnWalletClosing';
 
 export const PG_WALLETS = ['Bkash', 'Nagad', 'Rocket', 'UPay'] as const;
 // UNMAPPED is a valid key in the stored wallet-totals data (see
@@ -173,9 +173,40 @@ export async function computeWalletEstimates(
   yesterday: string,
   walletTotals: Map<string, EstimatedOpeningWalletTotals>
 ): Promise<WalletEstimate[]> {
-  const cascadeData = await fetchCascadeData(ledgerId, product, yesterday);
+  // TODAY's own confirmed closing (Report tab's "Yesterday Closing" card,
+  // saved under TODAY's businessDate — yesterday's closing IS today's
+  // opening) takes effect immediately, same Tier-1 rule resolveWalletOpening
+  // already applies to every earlier date ("used as-is, no addition") —
+  // per explicit instruction, a same-day confirmed entry should not have to
+  // wait until tomorrow's cascade run to be picked up. Checked here rather
+  // than inside resolveWalletOpening, which only ever resolves `yesterday`
+  // and earlier — today is one day past anything its own recursion reaches.
+  const today = subtractDays(yesterday, -1);
+  const [cascadeData, todayConfirmedRows] = await Promise.all([
+    fetchCascadeData(ledgerId, product, yesterday),
+    getDailyTxnWalletClosing(ledgerId, today),
+  ]);
+  const todayConfirmedByWallet = new Map(
+    todayConfirmedRows.filter((r): r is typeof r & { amount: number } => r.amount !== null).map((r) => [r.wallet, r.amount])
+  );
+
   return Promise.all(
     PG_WALLETS.map(async (wallet) => {
+      const todayConfirmed = todayConfirmedByWallet.get(wallet);
+      if (todayConfirmed !== undefined) {
+        return {
+          wallet,
+          opening: todayConfirmed,
+          openingSource: 'confirmed' as const,
+          openingSourceDate: today,
+          totalDp: null,
+          totalWd: null,
+          settlement: null,
+          topup: null,
+          amount: todayConfirmed,
+        };
+      }
+
       const t = walletTotals.get(WALLET_TO_KEY[wallet]);
       const resolution = await resolveWalletOpening(ledgerId, wallet, yesterday, cascadeData);
       const opening = resolution.amount;
