@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server';
 import { clean } from '@/app/lib/format';
 import { getBusinessToday, manilaMidnight, manilaFields, toBusinessDate } from '@/app/lib/businessDate';
 import { readEstimatedOpeningDisplayPg } from '@/app/lib/db/read/estimatedOpening';
+import { computeWalletEstimates, type WalletEstimate } from '@/app/lib/services/estimatedWalletCascade';
 import { getSspLine1TopUpSettlement } from '@/app/lib/db/read/sspLine1';
 import { getSendMoneyTransactionsSince } from '@/app/lib/db/read/sendMoneyTransactions';
 import { getOpeningBalanceTrend } from '@/app/lib/db/read/openingBalanceTrend';
@@ -387,12 +388,30 @@ export async function GET() {
       (sendMoneyCutoffDate !== null && sendMoneyCutoffDate.getTime() === cutoff.getTime()) ||
       (estimatedSendMoneyOpening.uploadedAt !== null && toBusinessDate(estimatedSendMoneyOpening.uploadedAt).getTime() === cutoff.getTime());
 
-    const cashoutOpeningOverride = estimatedOpeningValid
-      ? Array.from(estimatedOpening.balancesWithFallback.values()).reduce((s, v) => s + v, 0)
-      : undefined;
-    const sendMoneyOpeningOverride = estimatedSendMoneyOpeningValid
-      ? Array.from(estimatedSendMoneyOpening.balancesWithFallback.values()).reduce((s, v) => s + v, 0)
-      : undefined;
+    // Opening KPI / wallet tiles — per explicit instruction, driven ONLY by
+    // the SAME 4-wallet cascade the Estimated tab uses (estimatedWalletCascade.ts's
+    // computeWalletEstimates), not the roster-level balancesWithFallback
+    // override this block used before. estimatedOpeningValid/
+    // estimatedSendMoneyOpeningValid above stay in use for the Settlement/
+    // TopUp cutoff-widening and "Today" strip below — only the Opening figure
+    // itself moved to the cascade, which supersedes that binary override
+    // (it already picks confirmed/estimated/carry-forward per wallet).
+    //
+    // No roster-level "UNMAPPED" supplement — per explicit correction, that
+    // double-counted. daily_txn_wallet_closing_entry's confirmed figures and
+    // estimated_balance_wallet_totals' upload figures are both WHOLE-WALLET
+    // totals (ops observes/uploads the entire wallet's balance directly),
+    // not derived from agent_wallets — a shop with no agent_wallets row is
+    // still fully included in those wallet-level totals already. Summing
+    // balancesWithFallback for such shops and adding it again created a
+    // second, unrelated pot of money on top of an already-complete cascade.
+    const yesterdayKey = formatCutoffDateKey(new Date(cutoff.getTime() - 24 * 60 * 60 * 1000));
+    const [cashoutWalletEstimates, sendMoneyWalletEstimates] = await Promise.all([
+      computeWalletEstimates('ssp1', 'cashout', yesterdayKey, estimatedOpening.walletTotals),
+      computeWalletEstimates('ssp2', 'sendmoney', yesterdayKey, estimatedSendMoneyOpening.walletTotals),
+    ]);
+    const cashoutWalletEstimateByType = new Map(cashoutWalletEstimates.map((w) => [w.wallet.toUpperCase(), w]));
+    const sendMoneyWalletEstimateByType = new Map(sendMoneyWalletEstimates.map((w) => [w.wallet.toUpperCase(), w]));
 
     // Top Up/Settlement totals reset at the 2AM business-day rollover,
     // UNLESS Opening is still stale (hasn't refreshed for today) AND no
@@ -412,10 +431,10 @@ export async function GET() {
     // ---------- Cashout ----------
     const cashoutWallets = parseWalletSheetRows(cashoutSheetRows);
 
-    // Postgres (sum of getAgentBalances' own per-agent openingBalance), not
-    // "Opening AG" col B summed by hand — same figure, same roster.
-    const cashoutOpeningSum = cashoutAgentBalances.reduce((sum, a) => sum + a.openingBalance, 0);
-    const cashoutOpeningEffective = cashoutOpeningOverride ?? cashoutOpeningSum;
+    // Sum of the 4-wallet cascade's own Estimated (falls back to bare Opening
+    // for a wallet with no upload data at all) — the complete Opening figure,
+    // no roster-level supplement (see this block's own header comment above).
+    const cashoutOpeningEffective = cashoutWalletEstimates.reduce((s, w) => s + (w.amount ?? w.opening), 0);
 
     // Wallet-type DP/WD — Postgres (agent_wallets via getAgentWalletRawRows),
     // not "SSP AG BalanceLimit". Per-agent DP/WD/Balance Inside for High
@@ -460,6 +479,13 @@ export async function GET() {
       if (wd) row.totalWD = -wd;
       if (topUp) row.bdTransferIn = topUp;
       if (stlm) row.stlm = -stlm;
+      // Opening overridden from the SAME 4-wallet cascade the KPI above
+      // sums — was left as parseWalletSheetRows' own stale "Dashboard
+      // Overview" sheet value while DP/WD/TopUp/Settlement above were
+      // already live, which is exactly why the tile sum didn't reconcile
+      // against the Ending Balance card (per explicit instruction).
+      const estimate = cashoutWalletEstimateByType.get(row.wallet.toUpperCase());
+      if (estimate) row.opening = estimate.amount ?? estimate.opening;
       row.runningBal = row.opening + row.totalDP + row.totalWD + row.bdTransferIn + row.stlm;
     });
 
@@ -549,10 +575,10 @@ export async function GET() {
     // ---------- Send Money ----------
     const sendMoneyWallets = parseWalletSheetRows(sendMoneySheetRows);
 
-    // Postgres (sum of getAgentBalances' own per-agent openingBalance), not
-    // "Opening AG" col O (idx 12) summed by hand — same figure, same roster.
-    const sendMoneyOpeningSum = sendMoneyAgentBalances.reduce((sum, a) => sum + a.openingBalance, 0);
-    const sendMoneyOpeningEffective = sendMoneyOpeningOverride ?? sendMoneyOpeningSum;
+    // Sum of the 4-wallet cascade's own Estimated (falls back to bare Opening
+    // for a wallet with no upload data at all) — the complete Opening figure,
+    // no roster-level supplement (see cashoutOpeningEffective's own comment).
+    const sendMoneyOpeningEffective = sendMoneyWalletEstimates.reduce((s, w) => s + (w.amount ?? w.opening), 0);
 
     // Wallet-type DP/WD, split into WITH (feeds the Wallet Summary ledger)
     // and WITHOUT BD-keyword shops (feeds Top Performer Wallet only) — BD's
@@ -639,6 +665,10 @@ export async function GET() {
       if (wd) row.totalWD = -wd;
       if (topUp) row.bdTransferIn = topUp;
       if (stlm) row.stlm = -stlm;
+      // Opening overridden from the SAME 4-wallet cascade the KPI above sums
+      // — see cashoutWallets.forEach's own comment for why.
+      const estimate = sendMoneyWalletEstimateByType.get(key);
+      if (estimate) row.opening = estimate.amount ?? estimate.opening;
       row.runningBal = row.opening + row.totalDP + row.totalWD + row.bdTransferIn + row.stlm;
     });
 
@@ -832,15 +862,38 @@ export async function GET() {
           change: r.runningBal - r.opening,
         }));
 
-    const toOverviewWallets = (walletRows: WalletRow[]) =>
+    // estimatesByType supplies each tile's own Opening source tag (Task 5) —
+    // keyed the same uppercase wallet name as cashoutWalletEstimateByType/
+    // sendMoneyWalletEstimateByType above.
+    const toOverviewWallets = (walletRows: WalletRow[], estimatesByType: Map<string, WalletEstimate>) =>
       walletRows
         .filter((r) => !['TOTAL', ''].includes(r.wallet.toUpperCase()))
-        .map((r) => ({
-          name: WALLET_DISPLAY[r.wallet.toUpperCase()] ?? r.wallet,
-          total: round2(r.runningBal / M),
-          change: round2((r.runningBal - r.opening) / M),
-          actual: round2(r.actualBal / M),
-        }));
+        .map((r) => {
+          const estimate = estimatesByType.get(r.wallet.toUpperCase());
+          return {
+            name: WALLET_DISPLAY[r.wallet.toUpperCase()] ?? r.wallet,
+            total: round2(r.runningBal / M),
+            change: round2((r.runningBal - r.opening) / M),
+            actual: round2(r.actualBal / M),
+            openingSource: estimate?.openingSource ?? null,
+            openingSourceDate: estimate?.openingSourceDate ?? null,
+          };
+        });
+
+    // The KPI-level tag (Task 5) — 'confirmed'/'estimated'/'carry-forward'
+    // when all 4 wallets agree, else 'mixed' (not currently observed live,
+    // but a per-wallet cascade can structurally disagree, e.g. one wallet
+    // missing a confirmed closing while the other 3 have one).
+    function overallOpeningSource(estimates: WalletEstimate[]): { source: string; sourceDate: string | null } {
+      const distinct = new Set(estimates.map((e) => `${e.openingSource}:${e.openingSourceDate}`));
+      if (distinct.size === 1) {
+        const [first] = estimates;
+        return { source: first.openingSource, sourceDate: first.openingSourceDate };
+      }
+      return { source: 'mixed', sourceDate: null };
+    }
+    const cashoutOpeningSourceInfo = overallOpeningSource(cashoutWalletEstimates);
+    const sendMoneyOpeningSourceInfo = overallOpeningSource(sendMoneyWalletEstimates);
 
     return NextResponse.json({
       cashout: {
@@ -855,6 +908,8 @@ export async function GET() {
         wallets: toLedgerWallets(cashoutWallets),
         overview: {
           opening: cashoutOpeningEffective,
+          openingSource: cashoutOpeningSourceInfo.source,
+          openingSourceDate: cashoutOpeningSourceInfo.sourceDate,
           deposit: cashoutTotalDP,
           withdrawal: cashoutTotalWDSigned,
           topup: cashoutTotalTopUp,
@@ -868,7 +923,7 @@ export async function GET() {
             { name: 'Bkash', value: round2(cashoutToday.bk / M), quota: round2(cashoutToday.bkQuota / M) || undefined },
             { name: 'Nagad', value: round2(cashoutToday.ng / M), quota: round2(cashoutToday.ngQuota / M) || undefined },
           ],
-          wallets: toOverviewWallets(cashoutWallets),
+          wallets: toOverviewWallets(cashoutWallets, cashoutWalletEstimateByType),
           lastUpdate: cashoutBalanceLimitLastImport?.completedAt ?? null,
         },
       },
@@ -884,6 +939,8 @@ export async function GET() {
         wallets: toLedgerWallets(sendMoneyWallets),
         overview: {
           opening: sendMoneyOpeningEffective,
+          openingSource: sendMoneyOpeningSourceInfo.source,
+          openingSourceDate: sendMoneyOpeningSourceInfo.sourceDate,
           deposit: sendMoneyTotalDP,
           withdrawal: sendMoneyTotalWDSigned,
           topup: sendMoneyTotalTopUp,
@@ -898,7 +955,7 @@ export async function GET() {
             { name: 'Rocket', value: round2(sendMoneyTodayBundle.ROCKET / M) },
             { name: 'Upay', value: round2(sendMoneyTodayBundle.UPAY / M) },
           ].filter((w) => w.value > 0),
-          wallets: toOverviewWallets(sendMoneyWallets),
+          wallets: toOverviewWallets(sendMoneyWallets, sendMoneyWalletEstimateByType),
           lastUpdate: sendMoneyBalanceLimitLastImport?.completedAt ?? null,
         },
       },

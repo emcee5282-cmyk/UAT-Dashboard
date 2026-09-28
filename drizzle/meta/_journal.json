@@ -225,6 +225,20 @@
       "when": 1790316295010,
       "tag": "0031_add_opening_previous_balance",
       "breakpoints": true
+    },
+    {
+      "idx": 32,
+      "version": "7",
+      "when": 1790500000000,
+      "tag": "0032_add_estimated_wallet_settlement_topup",
+      "breakpoints": true
+    },
+    {
+      "idx": 33,
+      "version": "7",
+      "when": 1790600000000,
+      "tag": "0033_add_estimated_upload_excluded_reason",
+      "breakpoints": true
     }
   ]
 }

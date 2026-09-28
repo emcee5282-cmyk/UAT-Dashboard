@@ -20,13 +20,19 @@
 // Also does NOT reproduce the API route's `lastImport` field (sourced from
 // a separate readImportLog() call, a different concern from this domain) —
 // out of scope for this pass.
-import { and, eq, desc, inArray } from 'drizzle-orm';
+import { and, eq, desc, inArray, gte, lte, isNull } from 'drizzle-orm';
 import { getDb } from '../client';
 import * as schema from '../schema';
 
 export type Product = 'cashout' | 'sendmoney';
 
-export type EstimatedOpeningWalletTotals = { totalDP: number; totalWD: number };
+// settlement/topUp are nullable — NULL means "not captured" (an upload row
+// written before this column existed), distinct from a real captured 0.
+export type EstimatedOpeningWalletTotals = { totalDP: number; totalWD: number; settlement: number | null; topUp: number | null };
+
+function nOrNull(val: string | null): number | null {
+  return val === null ? null : Number(val);
+}
 
 export async function readEstimatedOpeningPg(product: Product): Promise<{
   balances: Map<string, number>;
@@ -46,7 +52,7 @@ export async function readEstimatedOpeningPg(product: Product): Promise<{
   const [latestUpload] = await db
     .select()
     .from(schema.estimatedBalanceUploads)
-    .where(eq(schema.estimatedBalanceUploads.product, product))
+    .where(and(eq(schema.estimatedBalanceUploads.product, product), isNull(schema.estimatedBalanceUploads.excludedReason)))
     .orderBy(desc(schema.estimatedBalanceUploads.uploadedAt))
     .limit(1);
 
@@ -77,9 +83,97 @@ export async function readEstimatedOpeningPg(product: Product): Promise<{
   for (const w of walletLineRows) walletLineBalances.set(`${w.agentId}:${w.walletType}`, Number(w.assumedBalance));
 
   const walletTotals = new Map<string, EstimatedOpeningWalletTotals>();
-  for (const w of walletTotalsRows) walletTotals.set(w.walletType, { totalDP: Number(w.totalDp), totalWD: Number(w.totalWd) });
+  for (const w of walletTotalsRows) walletTotals.set(w.walletType, { totalDP: Number(w.totalDp), totalWD: Number(w.totalWd), settlement: nOrNull(w.settlement), topUp: nOrNull(w.topup) });
 
   return { balances, walletLineBalances, walletTotals, uploadedAt: latestUpload.uploadedAt };
+}
+
+// Daily Txn Entry's "Wallet Breakdown Estimated" card (app/api/daily-txn-entry/
+// estimated/route.ts) needs a SPECIFIC past day's uploaded wallet totals (the
+// upload whose own cutoffDate is that day), not just "whatever the latest
+// upload is" like readEstimatedOpeningPg above — its own Opening fallback
+// cascade (per explicit spec) is "confirmed closing for D-1, else the
+// Estimated value from the upload dated D-1 (recursed for ITS OWN Opening),
+// else carry forward" — the middle tier needs this exact-cutoffDate lookup,
+// matched on cutoffDate (business date), never upload timestamp. Multiple
+// uploads sharing the same cutoffDate resolve to the latest one (uploadedAt
+// DESC). Returns null when no upload exists for that exact cutoffDate
+// (caller then falls through to its next tier).
+export async function readEstimatedOpeningWalletTotalsForCutoff(
+  product: Product,
+  cutoffDate: string
+): Promise<Map<string, EstimatedOpeningWalletTotals> | null> {
+  const db = getDb();
+  const [upload] = await db
+    .select()
+    .from(schema.estimatedBalanceUploads)
+    .where(and(
+      eq(schema.estimatedBalanceUploads.product, product),
+      eq(schema.estimatedBalanceUploads.cutoffDate, cutoffDate),
+      isNull(schema.estimatedBalanceUploads.excludedReason)
+    ))
+    .orderBy(desc(schema.estimatedBalanceUploads.uploadedAt))
+    .limit(1);
+
+  if (!upload) return null;
+
+  const rows = await db
+    .select()
+    .from(schema.estimatedBalanceWalletTotals)
+    .where(eq(schema.estimatedBalanceWalletTotals.uploadId, upload.id));
+
+  const totals = new Map<string, EstimatedOpeningWalletTotals>();
+  for (const w of rows) totals.set(w.walletType, { totalDP: Number(w.totalDp), totalWD: Number(w.totalWd), settlement: nOrNull(w.settlement), topUp: nOrNull(w.topup) });
+  return totals;
+}
+
+// Batch version of readEstimatedOpeningWalletTotalsForCutoff — every upload
+// (and its wallet totals) whose cutoffDate falls in [startDate, endDate], one
+// round trip for the uploads + one for their wallet totals, instead of a
+// query per date. Backs estimated/route.ts's resolveWalletOpening cascade
+// (per explicit instruction: batch-fetch the date range once per request,
+// never per recursion level). Multiple uploads sharing a cutoffDate resolve
+// to the latest (uploadedAt DESC) — same rule as the single-date version.
+export async function readEstimatedOpeningWalletTotalsForCutoffRange(
+  product: Product,
+  startDate: string,
+  endDate: string
+): Promise<Map<string, Map<string, EstimatedOpeningWalletTotals>>> {
+  const db = getDb();
+  const uploads = await db
+    .select()
+    .from(schema.estimatedBalanceUploads)
+    .where(and(
+      eq(schema.estimatedBalanceUploads.product, product),
+      gte(schema.estimatedBalanceUploads.cutoffDate, startDate),
+      lte(schema.estimatedBalanceUploads.cutoffDate, endDate),
+      isNull(schema.estimatedBalanceUploads.excludedReason)
+    ))
+    .orderBy(desc(schema.estimatedBalanceUploads.uploadedAt));
+
+  // First hit per cutoffDate wins — uploads is already ordered uploadedAt DESC.
+  const latestUploadByCutoff = new Map<string, { id: number }>();
+  for (const u of uploads) {
+    if (!latestUploadByCutoff.has(u.cutoffDate)) latestUploadByCutoff.set(u.cutoffDate, { id: u.id });
+  }
+  if (latestUploadByCutoff.size === 0) return new Map();
+
+  const uploadIds = Array.from(latestUploadByCutoff.values()).map((u) => u.id);
+  const uploadIdToCutoff = new Map(Array.from(latestUploadByCutoff.entries()).map(([cutoff, u]) => [u.id, cutoff]));
+
+  const totalsRows = await db
+    .select()
+    .from(schema.estimatedBalanceWalletTotals)
+    .where(inArray(schema.estimatedBalanceWalletTotals.uploadId, uploadIds));
+
+  const result = new Map<string, Map<string, EstimatedOpeningWalletTotals>>();
+  for (const w of totalsRows) {
+    const cutoff = uploadIdToCutoff.get(w.uploadId);
+    if (!cutoff) continue;
+    if (!result.has(cutoff)) result.set(cutoff, new Map());
+    result.get(cutoff)!.set(w.walletType, { totalDP: Number(w.totalDp), totalWD: Number(w.totalWd), settlement: nOrNull(w.settlement), topUp: nOrNull(w.topup) });
+  }
+  return result;
 }
 
 // ---------------------------------------------------------------------------
@@ -102,10 +196,12 @@ export async function readEstimatedOpeningPg(product: Product): Promise<{
 // count, exactly the same reasoning the old Sheets-based function documented
 // for itself).
 // ---------------------------------------------------------------------------
-import { toDateOnlyString } from '../../services/estimatedOpeningService';
 import { ESTIMATED_OPENING_EXCLUDED_LEADERS, formatUploadTimestamp } from '../../estimatedOpening';
-import { readLatestOpeningImportCutoffPg } from './rosterSyncLog';
 import { extractOpeningWalletTypeSuffix } from '../../realShopName';
+import { TOPUP_TYPE_OPTIONS } from '../../topupOptions';
+import { SETTLEMENT_REMARKS_SUGGESTIONS } from '../../settlementOptions';
+import { matchTransactionType, zeroedTypeMap } from '../../transactionTypeMatch';
+import { subtractDays } from '../../services/estimatedWalletCascade';
 
 // Same abbreviation<->full-name mapping used throughout (balanceService.ts,
 // estimatedOpeningService.ts) — needed here to match a stored walletType
@@ -133,12 +229,23 @@ export type EstimatedOpeningDisplayRow = { agentCode: string; displayName: strin
 // wallets, these figures are the SUM of that shop's own wallet-breakdown
 // rows below (built bottom-up at write time — see estimatedOpeningService.ts's
 // own comment — so this never has to independently reconcile against them).
+// topupByType/settlementByType keys are exactly the entries of
+// TOPUP_TYPE_OPTIONS/SETTLEMENT_REMARKS_SUGGESTIONS at read time, plus
+// OTHER_TYPE_LABEL ('Other') for a remarks value that's NULL, blank, or
+// doesn't match any entry (case-insensitive + trimmed — see
+// transactionTypeMatch.ts). Every canonical column is always present (zero-
+// filled), even when 0 for this shop/day, per explicit spec — the columns
+// are driven by those two option lists, never by DISTINCT remarks seen in
+// the data. estimatedBalance now includes these:
+// opening + deposit - withdrawal + Σ(topupByType) - Σ(settlementByType).
 export type EstimatedOpeningShopRow = {
   agentCode: string;
   displayName: string;
   openingBalance: number;
   deposit: number;
   withdrawal: number;
+  topupByType: Record<string, number>;
+  settlementByType: Record<string, number>;
   estimatedBalance: number;
 };
 
@@ -155,6 +262,8 @@ export type EstimatedOpeningWalletRow = {
   openingBalance: number;
   deposit: number;
   withdrawal: number;
+  topupByType: Record<string, number>;
+  settlementByType: Record<string, number>;
   estimatedBalance: number;
 };
 
@@ -177,7 +286,7 @@ export async function readEstimatedOpeningDisplayPg(product: Product): Promise<{
   const [latestUpload] = await db
     .select()
     .from(schema.estimatedBalanceUploads)
-    .where(eq(schema.estimatedBalanceUploads.product, product))
+    .where(and(eq(schema.estimatedBalanceUploads.product, product), isNull(schema.estimatedBalanceUploads.excludedReason)))
     .orderBy(desc(schema.estimatedBalanceUploads.uploadedAt))
     .limit(1);
 
@@ -198,7 +307,7 @@ export async function readEstimatedOpeningDisplayPg(product: Product): Promise<{
   for (const e of entries) uploadedDepositWithdrawalByAgentCode.set(e.agentCode, { deposit: Number(e.deposit), withdrawal: Number(e.withdrawal) });
 
   const walletTotals = new Map<string, EstimatedOpeningWalletTotals>();
-  for (const w of walletTotalsRows) walletTotals.set(w.walletType, { totalDP: Number(w.totalDp), totalWD: Number(w.totalWd) });
+  for (const w of walletTotalsRows) walletTotals.set(w.walletType, { totalDP: Number(w.totalDp), totalWD: Number(w.totalWd), settlement: nOrNull(w.settlement), topUp: nOrNull(w.topup) });
 
   // Every roster shop, with its leader (for the ONEMEN exclusion) —
   // mirrors the old function's own openingByShop/leaderByShop pair.
@@ -251,36 +360,90 @@ export async function readEstimatedOpeningDisplayPg(product: Product): Promise<{
     walletLinesByAgentId.get(l.agentId)!.push({ walletType: l.walletType, deposit: Number(l.deposit), withdrawal: Number(l.withdrawal), assumedBalance: Number(l.assumedBalance) });
   }
 
-  // Was readRosterCutoffPg (roster_sync_log) — confirmed stuck on a stale
-  // date, never updated by any live route. readLatestOpeningImportCutoffPg
-  // tracks the real Opening import history instead (import_batches), same
-  // fix applied to estimatedOpeningService.ts's own upload-side cutoff.
-  const cutoffDate = await readLatestOpeningImportCutoffPg(product);
-  const cutoffDateStr = cutoffDate ? toDateOnlyString(cutoffDate) : null;
+  // The per-shop TopUp/Settlement breakdown must describe the SAME activity
+  // date as the file's own DP/WD — latestUpload.cutoffDate minus one Manila
+  // business day, never cutoffDate itself. A file uploaded on cutoffDate
+  // always reports the PREVIOUS day's data (e.g. an upload on 09-27 contains
+  // "BalanceLimit-2026-09-26"), so Settlement/TopUp must be pulled from that
+  // same prior day, not the day the file happened to be uploaded on. Per
+  // explicit bug report: querying occurredOn = cutoffDate directly (this
+  // block's first version) pulled in a real, but WRONG-day, settlement for
+  // shop N-B1AG-M5-ATOS004-NG and wrongly deducted it from the estimate.
+  // cutoffDate itself is unchanged (still the upload's own posted date, per
+  // the earlier explicit rule) — only this wallet_transactions filter shifts
+  // back one day. Same subtractDays() estimatedWalletCascade.ts's own
+  // resolveWalletOpening already uses, reused rather than reimplemented.
+  const cutoffDateStr: string = subtractDays(latestUpload.cutoffDate, 1);
 
-  const txByAgentCode = new Map<string, { topUp: number; settlement: number }>();
-  // Per-wallet too (wallet included) — needed for a split shop's own
-  // per-line live fallback (a line the upload didn't cover still needs
-  // its OWN Top Up/Settlement, not the whole shop's combined total).
-  const txByAgentIdWallet = new Map<string, { topUp: number; settlement: number }>();
+  // Per-shop-per-type breakdown (Estimated Line 1/Line 2's new columns) —
+  // whole-shop and per-wallet-line versions (a split shop's line needs its
+  // OWN type breakdown, not the whole shop's). Every canonical
+  // type from TOPUP_TYPE_OPTIONS/SETTLEMENT_REMARKS_SUGGESTIONS is
+  // zero-filled up front so a shop with zero activity for a type still has
+  // that key present (matchTransactionType/zeroedTypeMap, see
+  // transactionTypeMatch.ts) — never derived from DISTINCT remarks.
+  const topupByAgentCodeAndType = new Map<string, Record<string, number>>();
+  const settlementByAgentCodeAndType = new Map<string, Record<string, number>>();
+  const topupByAgentWalletAndType = new Map<string, Record<string, number>>();
+  const settlementByAgentWalletAndType = new Map<string, Record<string, number>>();
+  // Rows whose agent is inactive fall outside the roster loop below entirely
+  // (rosterRows is isActive=true only) and would otherwise silently vanish —
+  // per explicit instruction, tracked separately here and surfaced as an
+  // UNMAPPED shop row per wallet (see after the roster loop), same
+  // reconciliation convention as the wallet card's own UNMAPPED bucket.
+  const unmappedByWalletAndType = new Map<string, { topup: Record<string, number>; settlement: Record<string, number> }>();
+
   if (cutoffDateStr) {
     const txRows = await db
-      .select({ agentId: schema.walletTransactions.agentId, agentCode: schema.agents.agentCode, transactionType: schema.walletTransactions.transactionType, amount: schema.walletTransactions.amount, wallet: schema.walletTransactions.wallet })
+      .select({
+        agentId: schema.walletTransactions.agentId,
+        agentCode: schema.agents.agentCode,
+        isActive: schema.agents.isActive,
+        transactionType: schema.walletTransactions.transactionType,
+        amount: schema.walletTransactions.amount,
+        wallet: schema.walletTransactions.wallet,
+        remarks: schema.walletTransactions.remarks,
+      })
       .from(schema.walletTransactions)
       .innerJoin(schema.agents, eq(schema.walletTransactions.agentId, schema.agents.id))
       .where(and(eq(schema.walletTransactions.product, product), eq(schema.walletTransactions.occurredOn, cutoffDateStr)));
+
     for (const t of txRows) {
-      const bucket = txByAgentCode.get(t.agentCode) ?? { topUp: 0, settlement: 0 };
-      if (t.transactionType === 'topup') bucket.topUp += Number(t.amount);
-      else bucket.settlement += Number(t.amount);
-      txByAgentCode.set(t.agentCode, bucket);
+      const amount = Number(t.amount);
+      const isTopup = t.transactionType === 'topup';
+
+      if (!t.isActive) {
+        // UNMAPPED — this agent is inactive, so it will never be visited by
+        // the roster loop below. Bucketed per wallet (needs a real wallet to
+        // mean anything); a null-wallet inactive-agent row has nowhere
+        // meaningful to attribute and is skipped (none observed live, but
+        // guards against a future NULL wallet on an inactive agent's row).
+        if (t.wallet) {
+          const bucket = unmappedByWalletAndType.get(t.wallet) ?? { topup: zeroedTypeMap(TOPUP_TYPE_OPTIONS), settlement: zeroedTypeMap(SETTLEMENT_REMARKS_SUGGESTIONS) };
+          const type = matchTransactionType(t.remarks, isTopup ? TOPUP_TYPE_OPTIONS : SETTLEMENT_REMARKS_SUGGESTIONS);
+          const target = isTopup ? bucket.topup : bucket.settlement;
+          target[type] = (target[type] ?? 0) + amount;
+          unmappedByWalletAndType.set(t.wallet, bucket);
+        }
+        continue;
+      }
+
+      const typeMaps = topupByAgentCodeAndType.has(t.agentCode)
+        ? { topup: topupByAgentCodeAndType.get(t.agentCode)!, settlement: settlementByAgentCodeAndType.get(t.agentCode)! }
+        : { topup: zeroedTypeMap(TOPUP_TYPE_OPTIONS), settlement: zeroedTypeMap(SETTLEMENT_REMARKS_SUGGESTIONS) };
+      const type = matchTransactionType(t.remarks, isTopup ? TOPUP_TYPE_OPTIONS : SETTLEMENT_REMARKS_SUGGESTIONS);
+      (isTopup ? typeMaps.topup : typeMaps.settlement)[type] += amount;
+      topupByAgentCodeAndType.set(t.agentCode, typeMaps.topup);
+      settlementByAgentCodeAndType.set(t.agentCode, typeMaps.settlement);
 
       if (t.wallet) {
         const key = `${t.agentId}:${t.wallet}`;
-        const walletBucket = txByAgentIdWallet.get(key) ?? { topUp: 0, settlement: 0 };
-        if (t.transactionType === 'topup') walletBucket.topUp += Number(t.amount);
-        else walletBucket.settlement += Number(t.amount);
-        txByAgentIdWallet.set(key, walletBucket);
+        const walletTypeMaps = topupByAgentWalletAndType.has(key)
+          ? { topup: topupByAgentWalletAndType.get(key)!, settlement: settlementByAgentWalletAndType.get(key)! }
+          : { topup: zeroedTypeMap(TOPUP_TYPE_OPTIONS), settlement: zeroedTypeMap(SETTLEMENT_REMARKS_SUGGESTIONS) };
+        (isTopup ? walletTypeMaps.topup : walletTypeMaps.settlement)[type] += amount;
+        topupByAgentWalletAndType.set(key, walletTypeMaps.topup);
+        settlementByAgentWalletAndType.set(key, walletTypeMaps.settlement);
       }
     }
   }
@@ -337,13 +500,27 @@ export async function readEstimatedOpeningDisplayPg(product: Product): Promise<{
         // Falls back to the live value only when no previous snapshot
         // exists yet (this line's very first upload since the fix shipped).
         const lineOpening = line.previousOpeningBalance !== null ? parseFloat(line.previousOpeningBalance) : parseFloat(line.openingBalance);
-        const walletTx = walletType ? (txByAgentIdWallet.get(`${roster.id}:${walletType}`) ?? { topUp: 0, settlement: 0 }) : { topUp: 0, settlement: 0 };
-        const lineDeposit = uploadedLine !== undefined ? uploadedLine.deposit : walletTx.topUp;
-        const lineWithdrawal = uploadedLine !== undefined ? uploadedLine.withdrawal : walletTx.settlement;
-        const lineEstimated = lineOpening + lineDeposit - lineWithdrawal;
+        // deposit/withdrawal no longer fall back to live Top Up/Settlement
+        // when the upload didn't cover this line (was walletTx.topUp/
+        // walletTx.settlement) — that fallback is now redundant with, and
+        // would double-count against, the new topupByType/settlementByType
+        // columns below, which already derive from the exact same
+        // wallet_transactions rows. deposit/withdrawal are now purely the
+        // uploaded file's own figures (0 when uncovered), matching the
+        // wallet card's own totalDP/totalWD convention (always pure-file,
+        // never live-blended) — the live activity that used to backfill
+        // these two fields is fully and more precisely represented by the
+        // type columns now.
+        const lineDeposit = uploadedLine?.deposit ?? 0;
+        const lineWithdrawal = uploadedLine?.withdrawal ?? 0;
+        const lineTopupByType = walletType ? (topupByAgentWalletAndType.get(`${roster.id}:${walletType}`) ?? zeroedTypeMap(TOPUP_TYPE_OPTIONS)) : zeroedTypeMap(TOPUP_TYPE_OPTIONS);
+        const lineSettlementByType = walletType ? (settlementByAgentWalletAndType.get(`${roster.id}:${walletType}`) ?? zeroedTypeMap(SETTLEMENT_REMARKS_SUGGESTIONS)) : zeroedTypeMap(SETTLEMENT_REMARKS_SUGGESTIONS);
+        const lineTopupTotal = Object.values(lineTopupByType).reduce((s, v) => s + v, 0);
+        const lineSettlementTotal = Object.values(lineSettlementByType).reduce((s, v) => s + v, 0);
+        const lineEstimated = lineOpening + lineDeposit - lineWithdrawal + lineTopupTotal - lineSettlementTotal;
 
-        walletRows.push({ agentCode: roster.agentCode, shopDisplayName, walletDisplayName: line.rawAgentName, openingBalance: lineOpening, deposit: lineDeposit, withdrawal: lineWithdrawal, estimatedBalance: lineEstimated });
-        shopRows.push({ agentCode: roster.agentCode, displayName: line.rawAgentName, openingBalance: lineOpening, deposit: lineDeposit, withdrawal: lineWithdrawal, estimatedBalance: lineEstimated });
+        walletRows.push({ agentCode: roster.agentCode, shopDisplayName, walletDisplayName: line.rawAgentName, openingBalance: lineOpening, deposit: lineDeposit, withdrawal: lineWithdrawal, topupByType: lineTopupByType, settlementByType: lineSettlementByType, estimatedBalance: lineEstimated });
+        shopRows.push({ agentCode: roster.agentCode, displayName: line.rawAgentName, openingBalance: lineOpening, deposit: lineDeposit, withdrawal: lineWithdrawal, topupByType: lineTopupByType, settlementByType: lineSettlementByType, estimatedBalance: lineEstimated });
         rows.push({ agentCode: roster.agentCode, displayName: line.rawAgentName, assumedBalance: lineEstimated });
 
         shopEstimated += lineEstimated;
@@ -352,11 +529,7 @@ export async function readEstimatedOpeningDisplayPg(product: Product): Promise<{
       continue;
     }
 
-    // No Opening-defined wallet structure — whole-shop formula, unchanged.
-    // Uses the real uploaded deposit/withdrawal when this upload covered
-    // the shop, otherwise the live fallback (opening + today's Top Up −
-    // Settlement, no Deposit/Withdrawal component since the upload never
-    // reported any).
+    // No Opening-defined wallet structure — whole-shop formula.
     // previousOpeningBalance, not the live column — see
     // agents.previousOpeningBalance's own schema comment. Falls back to the
     // live value only when no previous snapshot exists yet.
@@ -364,14 +537,43 @@ export async function readEstimatedOpeningDisplayPg(product: Product): Promise<{
       ? parseFloat(roster.previousOpeningBalance)
       : (roster.openingBalance === null ? 0 : parseFloat(roster.openingBalance));
     const uploadedDW = uploadedDepositWithdrawalByAgentCode.get(roster.agentCode);
-    const tx = txByAgentCode.get(roster.agentCode) ?? { topUp: 0, settlement: 0 };
-    const deposit = uploadedDW !== undefined ? uploadedDW.deposit : tx.topUp;
-    const withdrawal = uploadedDW !== undefined ? uploadedDW.withdrawal : tx.settlement;
-    const assumedBalance = opening + deposit - withdrawal;
+    // deposit/withdrawal no longer fall back to live Top Up/Settlement (was
+    // tx.topUp/tx.settlement) — see the split-shop branch's own comment
+    // above for why: that fallback is now redundant with, and would
+    // double-count against, topupByType/settlementByType below.
+    const deposit = uploadedDW?.deposit ?? 0;
+    const withdrawal = uploadedDW?.withdrawal ?? 0;
+    const topupByType = topupByAgentCodeAndType.get(roster.agentCode) ?? zeroedTypeMap(TOPUP_TYPE_OPTIONS);
+    const settlementByType = settlementByAgentCodeAndType.get(roster.agentCode) ?? zeroedTypeMap(SETTLEMENT_REMARKS_SUGGESTIONS);
+    const topupTotal = Object.values(topupByType).reduce((s, v) => s + v, 0);
+    const settlementTotal = Object.values(settlementByType).reduce((s, v) => s + v, 0);
+    const assumedBalance = opening + deposit - withdrawal + topupTotal - settlementTotal;
 
     balancesWithFallback.set(roster.agentCode, assumedBalance);
-    shopRows.push({ agentCode: roster.agentCode, displayName: shopDisplayName, openingBalance: opening, deposit, withdrawal, estimatedBalance: assumedBalance });
+    shopRows.push({ agentCode: roster.agentCode, displayName: shopDisplayName, openingBalance: opening, deposit, withdrawal, topupByType, settlementByType, estimatedBalance: assumedBalance });
     rows.push({ agentCode: roster.agentCode, displayName: shopDisplayName, assumedBalance });
+  }
+
+  // UNMAPPED — one synthetic shopRow per wallet with inactive-agent activity
+  // (see unmappedByWalletAndType's own comment above), so that money still
+  // reconciles into the per-shop total instead of silently vanishing because
+  // its shop is off-roster. No real Opening/DP/WD (0/0/0) — its Estimated is
+  // purely the net of its own TopUp/Settlement.
+  for (const [wallet, byType] of unmappedByWalletAndType) {
+    const topupTotal = Object.values(byType.topup).reduce((s, v) => s + v, 0);
+    const settlementTotal = Object.values(byType.settlement).reduce((s, v) => s + v, 0);
+    if (topupTotal === 0 && settlementTotal === 0) continue;
+    const estimatedBalance = topupTotal - settlementTotal;
+    shopRows.push({
+      agentCode: `UNMAPPED-${wallet}`,
+      displayName: `Unmapped (${wallet})`,
+      openingBalance: 0,
+      deposit: 0,
+      withdrawal: 0,
+      topupByType: byType.topup,
+      settlementByType: byType.settlement,
+      estimatedBalance,
+    });
   }
 
   const lastImport: ImportLogEntry = {

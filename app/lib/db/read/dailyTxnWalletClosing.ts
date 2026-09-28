@@ -1,6 +1,6 @@
 // Reads for daily_txn_wallet_closing_entry — Report tab's "Wallet Breakdown
 // Opening" card (YesterdayClosingCard, rendered once each for ssp1/ssp2).
-import { and, eq, lte, desc, lt, isNotNull } from 'drizzle-orm';
+import { and, eq, lte, gte, desc, lt, isNotNull } from 'drizzle-orm';
 import { getDb } from '../client';
 import * as schema from '../schema';
 
@@ -9,6 +9,12 @@ export type DailyTxnWalletClosingRow = {
   amount: number | null;
   updatedAt: Date;
 };
+
+// getLatestDailyTxnWalletClosing's own return shape — adds businessDate
+// (which real date this carried-forward row actually landed on) so a caller
+// building a "Carry-forward (09/25)" source tag can show which day it is,
+// not just that carry-forward happened.
+export type DailyTxnWalletClosingRowWithDate = DailyTxnWalletClosingRow & { businessDate: string };
 
 export async function getDailyTxnWalletClosing(ledgerId: 'ssp1' | 'ssp2', businessDate: string): Promise<DailyTxnWalletClosingRow[]> {
   const db = getDb();
@@ -45,7 +51,7 @@ export async function getDailyTxnWalletClosing(ledgerId: 'ssp1' | 'ssp2', busine
 // live as the reason Estimated's Wallet Breakdown could read 0/blank right
 // after a business-day rollover despite a real figure existing from a prior
 // day.
-export async function getLatestDailyTxnWalletClosing(ledgerId: 'ssp1' | 'ssp2', onOrBeforeBusinessDate: string): Promise<DailyTxnWalletClosingRow[]> {
+export async function getLatestDailyTxnWalletClosing(ledgerId: 'ssp1' | 'ssp2', onOrBeforeBusinessDate: string): Promise<DailyTxnWalletClosingRowWithDate[]> {
   const db = getDb();
   const rows = await db
     .select({
@@ -62,12 +68,42 @@ export async function getLatestDailyTxnWalletClosing(ledgerId: 'ssp1' | 'ssp2', 
     ))
     .orderBy(desc(schema.dailyTxnWalletClosingEntry.businessDate));
 
-  const latestByWallet = new Map<string, DailyTxnWalletClosingRow>();
+  const latestByWallet = new Map<string, DailyTxnWalletClosingRowWithDate>();
   for (const r of rows) {
     if (latestByWallet.has(r.wallet)) continue; // already-ordered by businessDate DESC — first hit per wallet is the most recent
-    latestByWallet.set(r.wallet, { wallet: r.wallet, amount: r.amount === null ? null : Number(r.amount), updatedAt: r.updatedAt });
+    latestByWallet.set(r.wallet, { wallet: r.wallet, amount: r.amount === null ? null : Number(r.amount), updatedAt: r.updatedAt, businessDate: r.businessDate });
   }
   return Array.from(latestByWallet.values());
+}
+
+// Batch version of getDailyTxnWalletClosing — every CONFIRMED (non-null)
+// row in [startDate, endDate] for this ledger, one query. Backs
+// estimated/route.ts's own resolveWalletOpening cascade (per explicit
+// instruction: batch-fetch once per request, never one query per recursion
+// level). Retention on this table is 1 week, so this is always a small
+// result set regardless of how wide the window is.
+export async function getDailyTxnWalletClosingRange(
+  ledgerId: 'ssp1' | 'ssp2',
+  startDate: string,
+  endDate: string
+): Promise<DailyTxnWalletClosingRowWithDate[]> {
+  const db = getDb();
+  const rows = await db
+    .select({
+      wallet: schema.dailyTxnWalletClosingEntry.wallet,
+      amount: schema.dailyTxnWalletClosingEntry.amount,
+      updatedAt: schema.dailyTxnWalletClosingEntry.updatedAt,
+      businessDate: schema.dailyTxnWalletClosingEntry.businessDate,
+    })
+    .from(schema.dailyTxnWalletClosingEntry)
+    .where(and(
+      eq(schema.dailyTxnWalletClosingEntry.ledgerId, ledgerId),
+      gte(schema.dailyTxnWalletClosingEntry.businessDate, startDate),
+      lte(schema.dailyTxnWalletClosingEntry.businessDate, endDate),
+      isNotNull(schema.dailyTxnWalletClosingEntry.amount)
+    ));
+
+  return rows.map((r) => ({ wallet: r.wallet, amount: r.amount === null ? null : Number(r.amount), updatedAt: r.updatedAt, businessDate: r.businessDate }));
 }
 
 // Retention: 1 week, hard delete.

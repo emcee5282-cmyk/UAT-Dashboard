@@ -32,6 +32,8 @@ import * as schema from '../db/schema';
 import { aggregateByShop, aggregateByShopWithLines, aggregateByWalletType, formatUploadTimestamp } from '../estimatedOpening';
 import { extractRealShopName, extractSendMoneyShopName, extractOpeningWalletTypeSuffix } from '../realShopName';
 import { readLatestOpeningImportCutoffPg } from '../db/read/rosterSyncLog';
+import { toBusinessDate, manilaFields } from '../businessDate';
+import { subtractDays } from './estimatedWalletCascade';
 
 // Same abbreviation<->full-name mapping balanceService.ts's own
 // OPENING_SUFFIX_TO_WALLET_TYPE uses — needed here to match a raw upload
@@ -41,18 +43,34 @@ const OPENING_SUFFIX_TO_WALLET_TYPE: Record<string, string> = {
   BK: 'BKASH', NG: 'NAGAD', RK: 'ROCKET', UP: 'UPAY',
 };
 
+const KNOWN_WALLET_TYPES = new Set(['BKASH', 'NAGAD', 'ROCKET', 'UPAY']);
+// wallet_transactions.wallet is free-text (typed by whoever uploaded the
+// Settlement/Top Up file) and has confirmed live typos ('ROCJET', 'NAGA',
+// 'NAGAd') — trim+uppercase normalizes casing but can't fix a typo, so
+// anything that still isn't one of the 4 known types is bucketed under
+// 'UNMAPPED' rather than silently dropped (see estimated_balance_wallet_totals'
+// own schema comment for why this matters for reconciliation).
+function normalizeWalletTypeOrUnmapped(raw: string | null): string {
+  const upper = (raw ?? '').trim().toUpperCase();
+  return KNOWN_WALLET_TYPES.has(upper) ? upper : 'UNMAPPED';
+}
+
 export type Product = 'cashout' | 'sendmoney';
 
 function n(val: string | null): number {
   return val === null ? 0 : parseFloat(val);
 }
 
-// Same Manila-midnight-Date -> 'YYYY-MM-DD' derivation balanceService.ts
-// already uses for businessTodayStr, reused here for consistency — both
-// values ultimately come from the same manilaMidnight() construction
-// (getBusinessToday() / fetchRosterCutoffDate(), see rosterSyncLog.ts).
+// Manila business-date 'YYYY-MM-DD' derivation (2 AM reset, see
+// businessDate.ts) — was native .getFullYear()/.getMonth()/.getDate(), which
+// reads the RUNTIME's own local timezone. On Vercel (UTC) that silently gave
+// the UTC calendar date instead of the Manila business date, exactly the bug
+// class businessDate.ts's own header comment warns about (confirmed live: a
+// cashout upload completed 2026-09-27 02:52 Manila — correctly business day
+// 09-27 — was stored as cutoff_date 2026-09-26 under the old getters).
 export function toDateOnlyString(date: Date): string {
-  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
+  const { year, month, day } = manilaFields(toBusinessDate(date));
+  return `${year}-${String(month + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
 }
 
 export type EstimatedOpeningUploadResult = { uploadedAt: string; shopCount: number };
@@ -82,17 +100,72 @@ export async function importEstimatedOpeningFromUpload(
     throw new Error('No valid shop rows found in the uploaded file.');
   }
 
-  // Was readRosterCutoffPg (roster_sync_log) — confirmed stuck on a stale
-  // date (never updated by any live route, only scripts/migrate-data.ts's
-  // one-time historical migration). readLatestOpeningImportCutoffPg tracks
-  // the real, live Opening import history (import_batches.completedAt)
-  // instead, so Estimated Balance sums THIS product's actual most-recently-
-  // uploaded-Opening day's Top Up/Settlement, not a 40-day-old snapshot.
-  const cutoffDate = await readLatestOpeningImportCutoffPg(product);
-  if (!cutoffDate) {
+  // Cashout-only file-mismatch guard — per explicit instruction, after a real
+  // Send Money file was uploaded to the Cashout endpoint by mistake (its
+  // wallet-type column produced 'BKASHC'/'NAGADC'/'ROCKETC'/'UPAYC' instead of
+  // the 4 known types, and it only had 132 shop rows against Cashout's normal
+  // ~2,300-2,400). Send Money is NOT guarded — per explicit instruction, only
+  // Cashout blocks.
+  //   1. Every wallet type this file's own DP/WD columns produced
+  //      (aggregateByWalletType) must normalize to BKASH/NAGAD/ROCKET/UPAY.
+  //      Any other value (a typo, a stray suffix, a wrong-product file) fails
+  //      the whole upload — this is the same normalization
+  //      normalizeWalletTypeOrUnmapped applies to wallet_transactions, but
+  //      here it's a hard reject, not a fallback bucket, because Cashout's own
+  //      DP/WD file should never legitimately contain an unrecognized type.
+  //   2. Shop count must fall within [1,000, 5,000] — comfortably spans every
+  //      real Cashout upload seen (2,316-2,372) with wide margin on both
+  //      sides, while rejecting both a tiny/malformed file (upload 29's 132)
+  //      and an accidentally-swapped Send Money file (~16,500 shops).
+  if (product === 'cashout') {
+    const badWalletTypes = walletTotals.map((w) => w.wallet).filter((w) => !KNOWN_WALLET_TYPES.has(w.toUpperCase()));
+    if (badWalletTypes.length > 0) {
+      throw new Error(
+        `Upload rejected: this doesn't look like a Cashout file — found wallet type(s) ${badWalletTypes.join(', ')}, ` +
+        `which don't match Bkash/Nagad/Rocket/UPay. Confirm this is the correct Cashout BalanceLimit file.`
+      );
+    }
+    if (shopTotals.length < 1000 || shopTotals.length > 5000) {
+      throw new Error(
+        `Upload rejected: this file has ${shopTotals.length} shop rows, outside Cashout's expected range (1,000-5,000; ` +
+        `typical is ~2,300-2,400). Confirm this is the correct Cashout file, not Send Money's.`
+      );
+    }
+  }
+
+  // Still requires at least one completed Opening import to exist (unchanged
+  // precondition) — but per explicit decision, cutoffDate itself is now this
+  // UPLOAD's own Manila business date (uploadedAtDate below), not the
+  // separate Opening import's own date. Was readLatestOpeningImportCutoffPg's
+  // result used directly for cutoffDate — that tied a file's cutoff to
+  // whatever Opening import happened to be latest AT UPLOAD TIME, which
+  // could silently drift from this upload's own timing (confirmed live: a
+  // cashout Estimated Balance upload at 02:52 Manila picked up a LATER,
+  // unrelated Opening import from 08:23 Manila the same morning). cutoffDate
+  // now means "the business day this Estimated Balance file was uploaded
+  // on" — the file's own DP/WD data is understood to represent the day
+  // BEFORE that (see this file's own header comment and
+  // estimatedWalletCascade.ts's resolveWalletOpening, whose Tier 2 looks up
+  // uploads by that same convention).
+  const openingImportExists = await readLatestOpeningImportCutoffPg(product);
+  if (!openingImportExists) {
     throw new Error(`No completed Opening import found for ${product} yet — upload Opening at least once before uploading Estimated Balance.`);
   }
-  const cutoffDateStr = toDateOnlyString(cutoffDate);
+  const uploadedAtDate = new Date();
+  const cutoffDateStr = toDateOnlyString(uploadedAtDate);
+  // Top Up/Settlement must describe the SAME activity date as the file's own
+  // DP/WD (cutoffDate minus one Manila business day — a file uploaded on
+  // cutoffDate always reports the PREVIOUS day's data, e.g. an upload on
+  // 09-27 contains "BalanceLimit-2026-09-26"). Per explicit bug report: this
+  // used to query wallet_transactions at cutoffDateStr directly (the
+  // upload's own posted date), which pulled in a DIFFERENT day's Settlement/
+  // TopUp than what the DP/WD actually represents (confirmed live: shop
+  // N-B1AG-M5-ATOS004-NG had a real 50,000 settlement dated one day AFTER
+  // its DP/WD's own activity date, wrongly deducted from that day's
+  // estimate). cutoffDate itself (the upload's own business date, stored on
+  // estimatedBalanceUploads.cutoffDate below) is UNCHANGED — only the
+  // wallet_transactions filter shifts back one day to match DP/WD.
+  const activityDateStr = subtractDays(cutoffDateStr, 1);
 
   const agentRows = await db
     .select({ id: schema.agents.id, agentCode: schema.agents.agentCode, openingBalance: schema.agents.openingBalance })
@@ -100,11 +173,11 @@ export async function importEstimatedOpeningFromUpload(
     .where(eq(schema.agents.product, product));
   const agentByCode = new Map(agentRows.map((a) => [a.agentCode, a]));
 
-  // Single grouped query for that one cutoff day's Top Up/Settlement across
-  // every agent — not one query per shop (explicit performance requirement).
-  // wallet included so a multi-line shop's own per-wallet lines (below) can
-  // attribute each wallet's own Top Up/Settlement instead of the whole
-  // shop's combined total.
+  // Single grouped query for that one activity day's Top Up/Settlement
+  // across every agent — not one query per shop (explicit performance
+  // requirement). wallet included so a multi-line shop's own per-wallet
+  // lines (below) can attribute each wallet's own Top Up/Settlement instead
+  // of the whole shop's combined total.
   const txRows = await db
     .select({
       agentId: schema.walletTransactions.agentId,
@@ -113,10 +186,16 @@ export async function importEstimatedOpeningFromUpload(
       wallet: schema.walletTransactions.wallet,
     })
     .from(schema.walletTransactions)
-    .where(and(eq(schema.walletTransactions.product, product), eq(schema.walletTransactions.occurredOn, cutoffDateStr)));
+    .where(and(eq(schema.walletTransactions.product, product), eq(schema.walletTransactions.occurredOn, activityDateStr)));
 
   const txByAgentId = new Map<number, { topUp: number; settlement: number }>();
   const txByAgentWallet = new Map<string, { topUp: number; settlement: number }>();
+  // Wallet-TYPE-level (not per-agent) Settlement/Top Up for this same cutoff
+  // day — snapshotted onto estimated_balance_wallet_totals below so the
+  // Wallet Breakdown Estimated card's own Settlement/Topup columns never
+  // shift when a transaction is entered later for this date. Reuses txRows
+  // (already fetched above for the per-agent maps), no extra query.
+  const txByWalletType = new Map<string, { topUp: number; settlement: number }>();
   for (const t of txRows) {
     const bucket = txByAgentId.get(t.agentId) ?? { topUp: 0, settlement: 0 };
     if (t.transactionType === 'topup') bucket.topUp += n(t.amount); else bucket.settlement += n(t.amount);
@@ -128,6 +207,11 @@ export async function importEstimatedOpeningFromUpload(
       if (t.transactionType === 'topup') walletBucket.topUp += n(t.amount); else walletBucket.settlement += n(t.amount);
       txByAgentWallet.set(key, walletBucket);
     }
+
+    const walletType = normalizeWalletTypeOrUnmapped(t.wallet);
+    const typeBucket = txByWalletType.get(walletType) ?? { topUp: 0, settlement: 0 };
+    if (t.transactionType === 'topup') typeBucket.topUp += n(t.amount); else typeBucket.settlement += n(t.amount);
+    txByWalletType.set(walletType, typeBucket);
   }
 
   // Opening's own per-wallet lines decide EVERYTHING about wallet structure
@@ -175,11 +259,23 @@ export async function importEstimatedOpeningFromUpload(
 
     if (openingLines.length === 0) {
       // No Opening-defined wallet structure for this shop — whole-shop
-      // formula, unchanged from before.
+      // formula. deposit/withdrawal stored here are the FILE's own DP/WD
+      // only, never blended with wallet_transactions — they feed the
+      // Estimated tabs' "Total DP"/"Total WD" columns, which sit alongside
+      // their OWN dedicated Topup/Settlement-by-type columns
+      // (readEstimatedOpeningDisplayPg); blending tx amounts in here too
+      // would double-count the exact same money in two columns (confirmed
+      // live: AEGIS004's stored withdrawal included a 150,000 settlement
+      // that also had its own Settlement column). assumedBalance is a
+      // SEPARATE computation that still includes tx.topUp/tx.settlement —
+      // it's the complete opening+DP-WD+topUp-settlement figure other
+      // consumers (balanceService.ts's Agent Balance Opening override) rely
+      // on, and its formula/value is unchanged by this fix.
       const tx = txByAgentId.get(agent.id) ?? { topUp: 0, settlement: 0 };
-      const deposit = s.totalDP + tx.topUp;
-      const withdrawal = s.totalWD + tx.settlement;
-      entries.push({ agentId: agent.id, deposit, withdrawal, assumedBalance: opening + deposit - withdrawal });
+      const deposit = s.totalDP;
+      const withdrawal = s.totalWD;
+      const assumedBalance = opening + deposit + tx.topUp - withdrawal - tx.settlement;
+      entries.push({ agentId: agent.id, deposit, withdrawal, assumedBalance });
       continue;
     }
 
@@ -219,30 +315,44 @@ export async function importEstimatedOpeningFromUpload(
       totalsByOpeningLineId.set(matchedOpeningLine.id, existing);
     }
 
+    // deposit/withdrawal accumulated here (shopDeposit/shopWithdrawal,
+    // lineDeposit/lineWithdrawal) are pure file values — same reasoning as
+    // the whole-shop branch above. assumedBalance is tracked via a SEPARATE
+    // blended accumulator (shopAssumedBalanceDelta et al.) so its value
+    // (opening/lineOpening + fileDP + topUp - fileWD - settlement) is
+    // unchanged by this fix, only what gets stored as "deposit"/
+    // "withdrawal" changes.
     let shopDeposit = 0;
     let shopWithdrawal = 0;
+    let shopDepositBlended = 0;
+    let shopWithdrawalBlended = 0;
     for (const line of openingLines) {
       const suffix = extractOpeningWalletTypeSuffix(line.rawAgentName);
       const walletTypeFull = suffix ? OPENING_SUFFIX_TO_WALLET_TYPE[suffix] : null;
       const matched = totalsByOpeningLineId.get(line.id);
       const lineOpening = n(line.openingBalance);
       const walletTx = walletTypeFull ? (txByAgentWallet.get(`${agent.id}:${walletTypeFull}`) ?? { topUp: 0, settlement: 0 }) : { topUp: 0, settlement: 0 };
-      const lineDeposit = (matched?.totalDP ?? 0) + walletTx.topUp;
-      const lineWithdrawal = (matched?.totalWD ?? 0) + walletTx.settlement;
+      const lineDeposit = matched?.totalDP ?? 0;
+      const lineWithdrawal = matched?.totalWD ?? 0;
+      const lineDepositBlended = lineDeposit + walletTx.topUp;
+      const lineWithdrawalBlended = lineWithdrawal + walletTx.settlement;
       shopDeposit += lineDeposit;
       shopWithdrawal += lineWithdrawal;
+      shopDepositBlended += lineDepositBlended;
+      shopWithdrawalBlended += lineWithdrawalBlended;
       if (walletTypeFull) {
-        walletLineInserts.push({ agentId: agent.id, walletType: walletTypeFull, deposit: lineDeposit, withdrawal: lineWithdrawal, assumedBalance: lineOpening + lineDeposit - lineWithdrawal });
+        walletLineInserts.push({ agentId: agent.id, walletType: walletTypeFull, deposit: lineDeposit, withdrawal: lineWithdrawal, assumedBalance: lineOpening + lineDepositBlended - lineWithdrawalBlended });
       }
     }
-    entries.push({ agentId: agent.id, deposit: shopDeposit, withdrawal: shopWithdrawal, assumedBalance: opening + shopDeposit - shopWithdrawal });
+    entries.push({ agentId: agent.id, deposit: shopDeposit, withdrawal: shopWithdrawal, assumedBalance: opening + shopDepositBlended - shopWithdrawalBlended });
   }
   if (entries.length === 0) {
     throw new Error('None of the uploaded shops matched a known agent — check the file is for the correct product.');
   }
 
-  const uploadedAtDate = new Date();
-
+  // Reuses the SAME uploadedAtDate computed above for cutoffDateStr — the
+  // stored upload row and the cutoff it was derived from must be the exact
+  // same instant, not two separate `new Date()` calls a few queries apart.
   await db.transaction(async (tx) => {
     const [upload] = await tx
       .insert(schema.estimatedBalanceUploads)
@@ -271,10 +381,29 @@ export async function importEstimatedOpeningFromUpload(
       await tx.insert(schema.estimatedBalanceEntries).values(entryRows.slice(i, i + INSERT_CHUNK_SIZE));
     }
 
-    if (walletTotals.length > 0) {
-      // Small (at most 4 rows, one per wallet type) — no chunking needed.
+    // Merge the file-based DP/WD (walletTotals, already scoped to known
+    // wallet suffixes) with the wallet_transactions-based Settlement/Topup
+    // (txByWalletType, which can include 'UNMAPPED') — a wallet type present
+    // in either source gets its own row, so a wallet with e.g. Settlement
+    // but no file DP/WD activity still gets recorded instead of being
+    // dropped for having "nothing" in the file-only map.
+    const dpWdByWalletType = new Map(walletTotals.map((w) => [w.wallet, { totalDP: w.totalDP, totalWD: w.totalWD }]));
+    const allWalletTypeKeys = new Set([...dpWdByWalletType.keys(), ...txByWalletType.keys()]);
+    if (allWalletTypeKeys.size > 0) {
+      // Small (at most 5 rows: 4 known wallets + UNMAPPED) — no chunking needed.
       await tx.insert(schema.estimatedBalanceWalletTotals).values(
-        walletTotals.map((w) => ({ uploadId: upload.id, walletType: w.wallet, totalDp: String(w.totalDP), totalWd: String(w.totalWD) }))
+        Array.from(allWalletTypeKeys).map((walletType) => {
+          const dpWd = dpWdByWalletType.get(walletType) ?? { totalDP: 0, totalWD: 0 };
+          const txTotals = txByWalletType.get(walletType) ?? { topUp: 0, settlement: 0 };
+          return {
+            uploadId: upload.id,
+            walletType,
+            totalDp: String(dpWd.totalDP),
+            totalWd: String(dpWd.totalWD),
+            settlement: String(txTotals.settlement),
+            topup: String(txTotals.topUp),
+          };
+        })
       );
     }
 

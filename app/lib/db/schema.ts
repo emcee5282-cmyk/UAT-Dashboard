@@ -632,6 +632,14 @@ export const estimatedBalanceUploads = pgTable('estimated_balance_uploads', {
   // Confirmed real (writeCashoutEstimatedOpening/writeSendMoneyEstimatedOpening
   // both return + persist this to the sheet's own Import Log block).
   shopCount: integer('shop_count'),
+  // Soft-exclude, never hard-delete (per explicit instruction) — NULL means
+  // valid/in-use. A non-null reason (e.g. "Wrong product file (Send Money
+  // data uploaded to Cashout)") means every read path (readEstimatedOpeningPg,
+  // readEstimatedOpeningDisplayPg, readEstimatedOpeningWalletTotalsForCutoff/
+  // Range) must filter this upload out of "latest for product" and cutoff
+  // lookups entirely, as if it were never uploaded, while the row itself and
+  // its wallet_totals/entries stay on disk for audit history.
+  excludedReason: text('excluded_reason'),
 });
 
 // assumedBalance already has that upload's Top Up/Settlement baked in at
@@ -672,9 +680,33 @@ export const estimatedBalanceWalletTotals = pgTable(
   {
     id: serial('id').primaryKey(),
     uploadId: integer('upload_id').notNull().references(() => estimatedBalanceUploads.id),
-    walletType: text('wallet_type').notNull(), // 'BKASH' | 'NAGAD' | 'ROCKET' | 'UPAY'
+    // 'BKASH' | 'NAGAD' | 'ROCKET' | 'UPAY', or 'UNMAPPED' — settlement/topup
+    // wallet_transactions rows for this upload's cutoffDate whose own `wallet`
+    // text didn't normalize (trim+uppercase) to one of the 4 known types
+    // (typos like 'ROCJET'/'NAGA' seen live) land here instead of being
+    // silently dropped, so Settlement/Topup totals still reconcile against
+    // the true wallet_transactions sum for that date. totalDp/totalWd stay 0
+    // for this row — Deposit/Withdrawal come from the upload FILE, which is
+    // already constrained to known wallet suffixes, not free-text.
+    walletType: text('wallet_type').notNull(),
     totalDp: numeric('total_dp', { precision: 18, scale: 2 }).notNull(),
     totalWd: numeric('total_wd', { precision: 18, scale: 2 }).notNull(),
+    // Snapshot of that cutoffDate's wallet_transactions settlement/topup,
+    // captured once at upload time — per explicit instruction, a transaction
+    // entered later for the same date must NOT retroactively change this row.
+    // Sign convention: stored as positive magnitudes, same as
+    // wallet_transactions.amount itself; the + Topup / − Settlement
+    // direction is applied where this is READ (estimated/route.ts), not here
+    // — see computeCompanyBalance() (balanceEngine.ts) for the same
+    // convention already established elsewhere in this app.
+    // Nullable, no default — NULL means "not captured" (every upload row
+    // written before this column existed), distinct from a real 0.00 of
+    // captured-but-no-activity. The UI shows NULL as "—", not "0.00" (per
+    // explicit instruction), and the Estimated formula treats NULL as 0 for
+    // the arithmetic only (old rows must still compute Opening + DP − WD
+    // unchanged).
+    settlement: numeric('settlement', { precision: 18, scale: 2 }),
+    topup: numeric('topup', { precision: 18, scale: 2 }),
   },
   (t) => [uniqueIndex('estimated_balance_wallet_totals_uq').on(t.uploadId, t.walletType)]
 );

@@ -16,6 +16,8 @@ import AccountMenu from '@/app/components/AccountMenu';
 import TableLoadingSpinner from '@/app/components/TableLoadingSpinner';
 import DateRangeFilter from '@/app/components/DateRangeFilter';
 import { useTheme } from '@/app/components/ThemeProvider';
+import { TOPUP_TYPE_OPTIONS } from '@/app/lib/topupOptions';
+import { SETTLEMENT_REMARKS_SUGGESTIONS } from '@/app/lib/settlementOptions';
 
 // Explicit, scoped exception to this app's app-wide Inter rule — per
 // explicit instruction, this page only: Manrope for UI text/labels/body
@@ -989,19 +991,44 @@ function YesterdayClosingCard({
   );
 }
 
-type EstimatedWalletRow = { wallet: (typeof PG_WALLETS)[number]; amount: number | null; totalDp: number | null; totalWd: number | null; opening: number | null };
-// "Per Shop" row — one per Opening shop, never split. displayName is
-// Opening's own raw per-wallet name when the shop has exactly one
-// opening_wallet_lines row (Opening is the source of truth for shop
-// names), otherwise the bare agentCode. openingBalance/deposit/withdrawal
-// are shown as their own columns per explicit spec
-// (Estimated Balance = Opening Balance + Total Deposit − Total
-// Withdrawal); deposit/withdrawal already fold in today's Top Up/
-// Settlement alongside the uploaded file's own Deposit/Withdrawal.
-type EstimatedAgentRow = { agentCode: string; displayName: string; openingBalance: number; deposit: number; withdrawal: number; estimatedBalance: number };
+type EstimatedOpeningSource = 'confirmed' | 'estimated' | 'carry-forward';
+type EstimatedWalletRow = {
+  wallet: (typeof PG_WALLETS)[number];
+  amount: number | null;
+  totalDp: number | null;
+  totalWd: number | null;
+  settlement: number | null;
+  topup: number | null;
+  opening: number | null;
+  openingSource: EstimatedOpeningSource;
+  openingSourceDate: string;
+};
+type EstimatedUnmapped = { settlement: number; topup: number } | null;
+// "Per Shop" row — one per Opening shop, never split (except the synthetic
+// UNMAPPED-<wallet> rows, one per wallet with inactive-agent activity — see
+// estimatedOpening.ts). displayName is Opening's own raw per-wallet name
+// when the shop has exactly one opening_wallet_lines row (Opening is the
+// source of truth for shop names), otherwise the bare agentCode.
+// topupByType/settlementByType keys are exactly TOPUP_TYPE_OPTIONS/
+// SETTLEMENT_REMARKS_SUGGESTIONS at read time, plus 'Other' — driven by
+// those two lists, never hardcoded here or derived from DISTINCT remarks.
+// deposit/withdrawal are the uploaded file's own figures only (0 when
+// uncovered) — no longer live-Top-Up/Settlement fallback, since that would
+// double-count against topupByType/settlementByType now.
+type EstimatedAgentRow = {
+  agentCode: string;
+  displayName: string;
+  openingBalance: number;
+  deposit: number;
+  withdrawal: number;
+  topupByType: Record<string, number>;
+  settlementByType: Record<string, number>;
+  estimatedBalance: number;
+};
 
 type EstimatedLedgerState = {
   walletRows: EstimatedWalletRow[];
+  unmapped: EstimatedUnmapped;
   agentRows: EstimatedAgentRow[];
   loading: boolean;
   lastUpdate: string;
@@ -1019,6 +1046,7 @@ type EstimatedLedgerState = {
 // vertical block.
 function useEstimatedLedgerData(ledgerId: 'ssp1' | 'ssp2'): EstimatedLedgerState {
   const [walletRows, setWalletRows] = useState<EstimatedWalletRow[]>([]);
+  const [unmapped, setUnmapped] = useState<EstimatedUnmapped>(null);
   const [agentRows, setAgentRows] = useState<EstimatedAgentRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [lastUpdate, setLastUpdate] = useState('No upload yet');
@@ -1031,6 +1059,7 @@ function useEstimatedLedgerData(ledgerId: 'ssp1' | 'ssp2'): EstimatedLedgerState
       const json = await res.json();
       if (cancelled) return;
       setWalletRows(json.walletRows ?? []);
+      setUnmapped(json.unmapped ?? null);
       setAgentRows(json.shopRows ?? []);
       setLastUpdate(json.uploadedAt ? formatLastUpdate(new Date(json.uploadedAt)) : 'No upload yet');
       setFileInfo(json.fileName ? `${json.fileName}${json.rowCount !== null && json.rowCount !== undefined ? ` · ${json.rowCount} shops` : ''}` : null);
@@ -1041,7 +1070,7 @@ function useEstimatedLedgerData(ledgerId: 'ssp1' | 'ssp2'): EstimatedLedgerState
     };
   }, [ledgerId]);
 
-  return { walletRows, agentRows, loading, lastUpdate, fileInfo };
+  return { walletRows, unmapped, agentRows, loading, lastUpdate, fileInfo };
 }
 
 // Two side-by-side sections (Wallet Breakdown, then Estimated Opening),
@@ -1049,9 +1078,12 @@ function useEstimatedLedgerData(ledgerId: 'ssp1' | 'ssp2'): EstimatedLedgerState
 // layout request, matching the existing "Wallet Breakdown Opening" section's
 // own left/right card convention exactly, rather than stacking each
 // ledger's wallet card + agent table as one vertical unit.
-function EstimatedTabContent() {
-  const ssp1 = useEstimatedLedgerData('ssp1');
-  const ssp2 = useEstimatedLedgerData('ssp2');
+// One line per tab now (Estimated Line 1 / Estimated Line 2), each showing
+// only its own Wallet Breakdown Estimated card + its own full-width per-shop
+// table — per explicit instruction, replacing the old combined tab that
+// showed both lines side by side.
+function EstimatedTabContent({ ledgerId, title, exportLabel }: { ledgerId: 'ssp1' | 'ssp2'; title: string; exportLabel: string }) {
+  const state = useEstimatedLedgerData(ledgerId);
 
   return (
     <div className="flex flex-col gap-6">
@@ -1060,39 +1092,86 @@ function EstimatedTabContent() {
           Wallet Breakdown Estimated
         </h2>
         <div className="flex flex-wrap gap-4">
-          <EstimatedWalletCard title="SSP Line1 · Cashout" state={ssp1} />
-          <EstimatedWalletCard title="SSP Line2 · Send Money" state={ssp2} />
+          <EstimatedWalletCard title={title} state={state} />
         </div>
       </div>
       <div className="scroll-mt-6">
         <h2 className="mb-2 text-[11px] font-semibold uppercase tracking-[0.07em] text-muted-foreground">
           Estimated Opening (Each Shop)
         </h2>
-        <div className="flex flex-col gap-4 xl:flex-row xl:items-start">
-          <EstimatedOpeningTable title="SSP Line1 Agents" rows={ssp1.agentRows} loading={ssp1.loading} exportLabel="SSP_Line1" />
-          <EstimatedOpeningTable title="SSP Line2 Agents" rows={ssp2.agentRows} loading={ssp2.loading} exportLabel="SSP_Line2" />
-        </div>
+        <EstimatedOpeningTable title={`${title} Agents`} rows={state.agentRows} loading={state.loading} exportLabel={exportLabel} />
       </div>
     </div>
   );
 }
 
+// 'YYYY-MM-DD' -> 'MM/DD', for the Opening source tag ("Estimated (09/26)",
+// "Carry-forward (09/25)") — plain string slicing, no Date/timezone
+// conversion needed since the source string is already a resolved business
+// date, not an instant.
+function formatSourceDate(dateStr: string): string {
+  const [, m, d] = dateStr.split('-');
+  return `${m}/${d}`;
+}
+
+const OPENING_SOURCE_LABEL: Record<EstimatedOpeningSource, (date: string) => string> = {
+  confirmed: () => 'Confirmed',
+  estimated: (date) => `Estimated (${formatSourceDate(date)})`,
+  'carry-forward': (date) => `Carry-forward (${formatSourceDate(date)})`,
+};
+const OPENING_SOURCE_TITLE: Record<EstimatedOpeningSource, string> = {
+  confirmed: 'A confirmed Wallet Breakdown Closing exists for this date.',
+  estimated: 'No confirmed closing for this date — using that date\'s own Estimated Balance upload instead.',
+  'carry-forward': 'No confirmed closing or upload for this date — carried forward from the last confirmed closing.',
+};
+
+// Small pill next to the Opening figure — lets Report spot at a glance which
+// days it forgot to input an updated opening for, per explicit spec.
+function OpeningSourceTag({ source, sourceDate }: { source: EstimatedOpeningSource; sourceDate: string }) {
+  // Confirmed is the expected/happy-path state — no badge needed for it, per
+  // explicit instruction. Estimated/Carry-forward stay tagged since those are
+  // the actual signal ("Report forgot to input an updated opening").
+  if (source === 'confirmed') return null;
+  const colorClass = source === 'estimated'
+    ? 'border-amber-200 bg-amber-50 text-amber-700 dark:border-amber-900 dark:bg-amber-950 dark:text-amber-400'
+    : 'border-rose-200 bg-rose-50 text-rose-700 dark:border-rose-900 dark:bg-rose-950 dark:text-rose-400';
+  return (
+    <span
+      title={OPENING_SOURCE_TITLE[source]}
+      className={`ml-1.5 inline-block rounded px-1 py-[1px] text-[8.5px] font-semibold leading-tight ${colorClass}`}
+    >
+      {OPENING_SOURCE_LABEL[source](sourceDate)}
+    </span>
+  );
+}
+
 // Same column richness as the Per Shop table below it, per explicit
 // follow-up instruction ("i-same mo sa baba") — Wallet / Opening / Total
-// DP / Total WD / Estimated, not just Wallet / Estimated. All 4 figures
-// were already computed server-side (app/api/daily-txn-entry/estimated/
-// route.ts's own walletTypeCards) — opening + totalDp/totalWd just weren't
-// being rendered.
+// DP / Total WD / Settlement / Topup / Estimated. All figures are computed
+// server-side (app/api/daily-txn-entry/estimated/route.ts's own
+// walletTypeCards).
 function EstimatedWalletCard({ title, state }: { title: string; state: EstimatedLedgerState }) {
-  const { walletRows: rows, loading, lastUpdate, fileInfo } = state;
-  const total = rows.reduce((s, r) => s + (r.amount ?? 0), 0);
+  const { walletRows: rows, unmapped, loading, lastUpdate, fileInfo } = state;
+  // Total includes UNMAPPED's own net (Topup − Settlement) — per explicit
+  // instruction, that activity is real and did happen somewhere in the
+  // ledger, so the card's own Total must reconcile against the true
+  // wallet_transactions sum for the date, even though we can't attribute it
+  // to a specific wallet's own Opening/Estimated (see WALLET_TO_KEY's own
+  // comment in estimated/route.ts for why it never becomes one).
+  const unmappedNet = unmapped ? unmapped.topup - unmapped.settlement : 0;
+  const total = rows.reduce((s, r) => s + (r.amount ?? 0), 0) + unmappedNet;
   const totalOpening = rows.reduce((s, r) => s + (r.opening ?? 0), 0);
   const totalDp = rows.reduce((s, r) => s + (r.totalDp ?? 0), 0);
   const totalWd = rows.reduce((s, r) => s + (r.totalWd ?? 0), 0);
+  const totalSettlement = rows.reduce((s, r) => s + (r.settlement ?? 0), 0);
+  const totalTopup = rows.reduce((s, r) => s + (r.topup ?? 0), 0);
 
   function handleDownload() {
-    const data: { Wallet: string; 'Opening Balance': number; 'Total DP': number; 'Total WD': number; Estimated: number }[] = rows.map((r) => ({ Wallet: r.wallet, 'Opening Balance': r.opening ?? 0, 'Total DP': r.totalDp ?? 0, 'Total WD': r.totalWd ?? 0, Estimated: r.amount ?? 0 }));
-    data.push({ Wallet: 'Total', 'Opening Balance': totalOpening, 'Total DP': totalDp, 'Total WD': totalWd, Estimated: total });
+    const data: { Wallet: string; 'Opening Balance': number; 'Total DP': number; 'Total WD': number; Settlement: number; Topup: number; Estimated: number }[] = rows.map((r) => ({
+      Wallet: r.wallet, 'Opening Balance': r.opening ?? 0, 'Total DP': r.totalDp ?? 0, 'Total WD': r.totalWd ?? 0,
+      Settlement: r.settlement ?? 0, Topup: r.topup ?? 0, Estimated: r.amount ?? 0,
+    }));
+    data.push({ Wallet: 'Total', 'Opening Balance': totalOpening, 'Total DP': totalDp, 'Total WD': totalWd, Settlement: totalSettlement, Topup: totalTopup, Estimated: total });
     const worksheet = XLSX.utils.json_to_sheet(data);
     const workbook = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(workbook, worksheet, 'Wallet Breakdown Estimated');
@@ -1100,7 +1179,7 @@ function EstimatedWalletCard({ title, state }: { title: string; state: Estimated
   }
 
   return (
-    <div className="w-full rounded-lg border border-[#DEE1E8] bg-white px-4 py-3.5 dark:border-[#262B38] dark:bg-[#12151D] sm:w-[560px]">
+    <div className="w-full rounded-lg border border-[#DEE1E8] bg-white px-4 py-3.5 dark:border-[#262B38] dark:bg-[#12151D] sm:w-[720px]">
       <div className="mb-3 flex flex-wrap items-start justify-between gap-2">
         <div>
           <div className="flex items-center gap-2">
@@ -1142,6 +1221,8 @@ function EstimatedWalletCard({ title, state }: { title: string; state: Estimated
                 <th className="px-2 py-1.5 text-right">Opening</th>
                 <th className="px-2 py-1.5 text-right">Total DP</th>
                 <th className="px-2 py-1.5 text-right">Total WD</th>
+                <th className="px-2 py-1.5 text-right">Settlement</th>
+                <th className="px-2 py-1.5 text-right">Topup</th>
                 <th className="px-2 py-1.5 text-right">Estimated</th>
               </tr>
             </thead>
@@ -1151,6 +1232,7 @@ function EstimatedWalletCard({ title, state }: { title: string; state: Estimated
                   <td className="whitespace-nowrap px-2 py-1.5 text-[11.5px] font-bold text-foreground">{r.wallet}</td>
                   <td className={`whitespace-nowrap px-2 py-1.5 text-right text-[12px] tabular-nums ${r.opening === null ? 'text-muted-foreground' : (r.opening ?? 0) < 0 ? 'text-[color:var(--dd-neg)]' : 'text-foreground'}`}>
                     {r.opening === null ? '—' : fmt(r.opening)}
+                    <OpeningSourceTag source={r.openingSource} sourceDate={r.openingSourceDate} />
                   </td>
                   <td className={`whitespace-nowrap px-2 py-1.5 text-right text-[12px] tabular-nums ${r.totalDp === null ? 'text-muted-foreground' : (r.totalDp ?? 0) < 0 ? 'text-[color:var(--dd-neg)]' : 'text-foreground'}`}>
                     {r.totalDp === null ? '—' : fmt(r.totalDp)}
@@ -1158,19 +1240,47 @@ function EstimatedWalletCard({ title, state }: { title: string; state: Estimated
                   <td className={`whitespace-nowrap px-2 py-1.5 text-right text-[12px] tabular-nums ${r.totalWd === null ? 'text-muted-foreground' : (r.totalWd ?? 0) < 0 ? 'text-[color:var(--dd-neg)]' : 'text-foreground'}`}>
                     {r.totalWd === null ? '—' : fmt(r.totalWd)}
                   </td>
+                  <td className={`whitespace-nowrap px-2 py-1.5 text-right text-[12px] tabular-nums ${r.settlement === null ? 'text-muted-foreground' : (r.settlement ?? 0) < 0 ? 'text-[color:var(--dd-neg)]' : 'text-foreground'}`}>
+                    {r.settlement === null ? '—' : fmt(r.settlement)}
+                  </td>
+                  <td className={`whitespace-nowrap px-2 py-1.5 text-right text-[12px] tabular-nums ${r.topup === null ? 'text-muted-foreground' : (r.topup ?? 0) < 0 ? 'text-[color:var(--dd-neg)]' : 'text-foreground'}`}>
+                    {r.topup === null ? '—' : fmt(r.topup)}
+                  </td>
                   <td className={`whitespace-nowrap px-2 py-1.5 text-right text-[12px] tabular-nums ${r.amount === null ? 'text-muted-foreground' : (r.amount ?? 0) < 0 ? 'text-[color:var(--dd-neg)]' : 'text-foreground'}`}>
                     {r.amount === null ? '—' : fmt(r.amount)}
                   </td>
                 </tr>
               ))}
             </tbody>
+            <tfoot>
+              <tr className="border-t border-[#DEE1E8] dark:border-[#262B38]">
+                <td className="whitespace-nowrap px-2 pt-2 text-[11.5px] font-extrabold text-foreground">Total</td>
+                <td className={`whitespace-nowrap px-2 pt-2 text-right text-[12px] font-extrabold tabular-nums ${totalOpening < 0 ? 'text-[color:var(--dd-neg)]' : 'text-foreground'}`}>
+                  {fmt(totalOpening)}
+                </td>
+                <td className={`whitespace-nowrap px-2 pt-2 text-right text-[12px] font-extrabold tabular-nums ${totalDp < 0 ? 'text-[color:var(--dd-neg)]' : 'text-foreground'}`}>
+                  {fmt(totalDp)}
+                </td>
+                <td className={`whitespace-nowrap px-2 pt-2 text-right text-[12px] font-extrabold tabular-nums ${totalWd < 0 ? 'text-[color:var(--dd-neg)]' : 'text-foreground'}`}>
+                  {fmt(totalWd)}
+                </td>
+                <td className={`whitespace-nowrap px-2 pt-2 text-right text-[12px] font-extrabold tabular-nums ${totalSettlement < 0 ? 'text-[color:var(--dd-neg)]' : 'text-foreground'}`}>
+                  {fmt(totalSettlement)}
+                </td>
+                <td className={`whitespace-nowrap px-2 pt-2 text-right text-[12px] font-extrabold tabular-nums ${totalTopup < 0 ? 'text-[color:var(--dd-neg)]' : 'text-foreground'}`}>
+                  {fmt(totalTopup)}
+                </td>
+                <td className={`whitespace-nowrap px-2 pt-2 text-right text-[13px] font-extrabold tabular-nums ${total < 0 ? 'text-[color:var(--dd-neg)]' : 'text-foreground'}`}>
+                  {fmt(total)}
+                </td>
+              </tr>
+            </tfoot>
           </table>
-          <div className="mt-1.5 flex items-center justify-between border-t border-[#DEE1E8] pt-2 dark:border-[#262B38]">
-            <span className="text-[11.5px] font-extrabold text-foreground">Total</span>
-            <span className={`text-[13px] font-extrabold tabular-nums ${total < 0 ? 'text-[color:var(--dd-neg)]' : 'text-foreground'}`}>
-              {fmt(total)}
-            </span>
-          </div>
+          {unmapped && (
+            <p className="mt-1.5 text-[10px] font-medium text-amber-700 dark:text-amber-400">
+              ⚠ Unmapped wallet activity for this date not included above — Settlement {fmt(unmapped.settlement)}, Topup {fmt(unmapped.topup)} (wallet name didn&apos;t match Bkash/Nagad/Rocket/UPay).
+            </p>
+          )}
           {fileInfo && (
             <p className="mt-2 truncate text-[10px] text-muted-foreground" title={fileInfo}>
               {fileInfo}
@@ -1184,21 +1294,42 @@ function EstimatedWalletCard({ title, state }: { title: string; state: Estimated
 
 // Compact numeric cell — shared shape between this table and
 // EstimatedWalletCard above.
-function EstimatedNumCell({ value }: { value: number }) {
+function EstimatedNumCell({ value, className = '' }: { value: number; className?: string }) {
   return (
-    <td className={`whitespace-nowrap px-2 py-1.5 text-right text-[11.5px] tabular-nums ${value < 0 ? 'text-[color:var(--dd-neg)]' : 'text-foreground'}`}>
+    <td className={`whitespace-nowrap px-2 py-1.5 text-right text-[11.5px] tabular-nums ${value < 0 ? 'text-[color:var(--dd-neg)]' : 'text-foreground'} ${className}`}>
       {fmt(value)}
     </td>
   );
 }
 
-// Per Shop — Shop / Opening Balance / Total Deposit / Total Withdrawal /
-// Estimated Balance, per explicit spec. A real <table> (not the old 2-column
-// flex list) since there are now 4 data columns to show.
+const OTHER_TYPE_LABEL = 'Other';
+// Column pixel floor per kind — a simpler stand-in for the wallet-status
+// page's own COLUMN_LIMITS (that one measures real text width per cell via
+// canvas; overkill here since every data column is a short currency number)
+// — still guarantees no column gets squeezed illegibly under horizontal
+// scroll, which is the actual point of that pattern.
+const SHOP_COL_MIN_PX = 170;
+const NUM_COL_MIN_PX = 110;
+
+// Per Shop — Shop | Opening | Total DP | Total WD | [TopUp types] | Other
+// TopUp | [Settlement types] | Other Settlement | Estimated Balance. Type
+// columns are driven entirely by TOPUP_TYPE_OPTIONS/SETTLEMENT_REMARKS_SUGGESTIONS
+// (never hardcoded, never derived from DISTINCT remarks) — adding a type to
+// either shared list adds a column here automatically. Shop column sticky
+// left; the rest scrolls horizontally once the type columns don't fit.
 function EstimatedOpeningTable({ title, rows, loading, exportLabel }: { title: string; rows: EstimatedAgentRow[]; loading: boolean; exportLabel: string }) {
   const [query, setQuery] = useState('');
   const [page, setPage] = useState(0);
   const PAGE_SIZE = 50;
+
+  // Other columns render only when non-zero somewhere in the FULL dataset
+  // for this line/day (not just the current search filter) — per explicit
+  // spec, so they disappear on their own once legacy untyped data is cleaned
+  // up, without a code change.
+  const hasOtherTopup = useMemo(() => rows.some((r) => (r.topupByType[OTHER_TYPE_LABEL] ?? 0) !== 0), [rows]);
+  const hasOtherSettlement = useMemo(() => rows.some((r) => (r.settlementByType[OTHER_TYPE_LABEL] ?? 0) !== 0), [rows]);
+  const topupCols = useMemo(() => [...TOPUP_TYPE_OPTIONS, ...(hasOtherTopup ? [OTHER_TYPE_LABEL] : [])], [hasOtherTopup]);
+  const settlementCols = useMemo(() => [...SETTLEMENT_REMARKS_SUGGESTIONS, ...(hasOtherSettlement ? [OTHER_TYPE_LABEL] : [])], [hasOtherSettlement]);
 
   const filtered = useMemo(() => {
     const q = query.trim().toUpperCase();
@@ -1210,15 +1341,25 @@ function EstimatedOpeningTable({ title, rows, loading, exportLabel }: { title: s
   const pageRows = filtered.slice(page * PAGE_SIZE, page * PAGE_SIZE + PAGE_SIZE);
 
   function handleDownload() {
-    const data = filtered.map((r) => ({ 'Shop Name': r.displayName, 'Opening Balance': r.openingBalance, 'Total Deposit': r.deposit, 'Total Withdrawal': r.withdrawal, 'Estimated Balance': r.estimatedBalance }));
+    const data = filtered.map((r) => ({
+      'Shop Name': r.displayName,
+      'Opening Balance': r.openingBalance,
+      'Total Deposit': r.deposit,
+      'Total Withdrawal': r.withdrawal,
+      ...Object.fromEntries(topupCols.map((t) => [t === OTHER_TYPE_LABEL ? 'Other TopUp' : t, r.topupByType[t] ?? 0])),
+      ...Object.fromEntries(settlementCols.map((t) => [t === OTHER_TYPE_LABEL ? 'Other Settlement' : t, r.settlementByType[t] ?? 0])),
+      'Estimated Balance': r.estimatedBalance,
+    }));
     const worksheet = XLSX.utils.json_to_sheet(data);
     const workbook = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(workbook, worksheet, 'Estimated Opening');
     XLSX.writeFile(workbook, `Estimated_Opening_${exportLabel.replace(/[^A-Za-z0-9]+/g, '_')}.xlsx`);
   }
 
+  const colCount = 4 + topupCols.length + settlementCols.length + 1;
+
   return (
-    <div className="w-full rounded-lg border border-[#DEE1E8] bg-white px-4 py-3.5 dark:border-[#262B38] dark:bg-[#12151D] xl:w-[720px]">
+    <div className="w-full rounded-lg border border-[#DEE1E8] bg-white px-4 py-3.5 dark:border-[#262B38] dark:bg-[#12151D]">
       <div className="mb-2 flex items-start justify-between gap-2">
         <div className="flex items-center gap-2">
           <span className="h-2 w-2 shrink-0 rounded-full bg-foreground" />
@@ -1261,30 +1402,59 @@ function EstimatedOpeningTable({ title, rows, loading, exportLabel }: { title: s
         <p className="py-6 text-center text-[12px] text-muted-foreground">No upload yet.</p>
       ) : (
         <>
-          <div className="max-h-[420px] overflow-auto">
+          <div className="max-h-[520px] overflow-auto">
             <table className="w-full border-collapse">
-              <thead className="sticky top-0 bg-white dark:bg-[#12151D]">
-                <tr className="border-b border-[#EFF1F4] text-[10px] font-bold uppercase tracking-[0.03em] text-muted-foreground dark:border-[#1A1E29]">
-                  <th className="px-2 py-1.5 text-left">Shop</th>
-                  <th className="px-2 py-1.5 text-right">Opening Balance</th>
-                  <th className="px-2 py-1.5 text-right">Total Deposit</th>
-                  <th className="px-2 py-1.5 text-right">Total Withdrawal</th>
-                  <th className="px-2 py-1.5 text-right">Estimated Balance</th>
+              <thead>
+                <tr className="border-b border-[#EFF1F4] text-[9.5px] font-bold uppercase tracking-[0.03em] text-muted-foreground dark:border-[#1A1E29]">
+                  <th className="sticky left-0 top-0 z-20 bg-white px-2 py-1 dark:bg-[#12151D]" style={{ minWidth: SHOP_COL_MIN_PX }} />
+                  <th className="sticky top-0 z-10 bg-white px-2 py-1 dark:bg-[#12151D]" colSpan={3} />
+                  <th className="sticky top-0 z-10 bg-white px-2 py-1 text-center text-teal-700 dark:bg-[#12151D] dark:text-teal-400" colSpan={topupCols.length}>
+                    Topup
+                  </th>
+                  <th className="sticky top-0 z-10 bg-white px-2 py-1 text-center text-orange-700 dark:bg-[#12151D] dark:text-orange-400" colSpan={settlementCols.length}>
+                    Settlement
+                  </th>
+                  <th className="sticky top-0 z-10 bg-white px-2 py-1 dark:bg-[#12151D]" />
+                </tr>
+                <tr className="sticky top-[19px] z-10 border-b border-[#EFF1F4] bg-white text-[10px] font-bold uppercase tracking-[0.03em] text-muted-foreground dark:border-[#1A1E29] dark:bg-[#12151D]">
+                  <th className="sticky left-0 z-20 bg-white px-2 py-1.5 text-left dark:bg-[#12151D]" style={{ minWidth: SHOP_COL_MIN_PX }}>Shop</th>
+                  <th className="px-2 py-1.5 text-right" style={{ minWidth: NUM_COL_MIN_PX }}>Opening</th>
+                  <th className="px-2 py-1.5 text-right" style={{ minWidth: NUM_COL_MIN_PX }}>Total DP</th>
+                  <th className="px-2 py-1.5 text-right" style={{ minWidth: NUM_COL_MIN_PX }}>Total WD</th>
+                  {topupCols.map((t) => (
+                    <th key={`topup:${t}`} className="px-2 py-1.5 text-right" style={{ minWidth: NUM_COL_MIN_PX }}>
+                      {t === OTHER_TYPE_LABEL ? 'Other TopUp' : t}
+                    </th>
+                  ))}
+                  {settlementCols.map((t) => (
+                    <th key={`stlm:${t}`} className="px-2 py-1.5 text-right" style={{ minWidth: NUM_COL_MIN_PX }}>
+                      {t === OTHER_TYPE_LABEL ? 'Other Settlement' : t}
+                    </th>
+                  ))}
+                  <th className="px-2 py-1.5 text-right" style={{ minWidth: NUM_COL_MIN_PX }}>Estimated Balance</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-[#EFF1F4] dark:divide-[#1A1E29]">
                 {pageRows.length === 0 ? (
                   <tr>
-                    <td colSpan={5} className="py-6 text-center text-[12px] text-muted-foreground">No shop matches &quot;{query}&quot;.</td>
+                    <td colSpan={colCount} className="py-6 text-center text-[12px] text-muted-foreground">No shop matches &quot;{query}&quot;.</td>
                   </tr>
                 ) : (
                   pageRows.map((r) => (
                     <tr key={`${r.agentCode}:${r.displayName}`}>
-                      <td className="whitespace-nowrap px-2 py-1.5 text-[11.5px] font-medium text-foreground">{r.displayName}</td>
+                      <td className="sticky left-0 z-10 whitespace-nowrap bg-white px-2 py-1.5 text-[11.5px] font-medium text-foreground dark:bg-[#12151D]" style={{ minWidth: SHOP_COL_MIN_PX }}>
+                        {r.displayName}
+                      </td>
                       <EstimatedNumCell value={r.openingBalance} />
                       <EstimatedNumCell value={r.deposit} />
                       <EstimatedNumCell value={r.withdrawal} />
-                      <EstimatedNumCell value={r.estimatedBalance} />
+                      {topupCols.map((t) => (
+                        <EstimatedNumCell key={`topup:${t}`} value={r.topupByType[t] ?? 0} />
+                      ))}
+                      {settlementCols.map((t) => (
+                        <EstimatedNumCell key={`stlm:${t}`} value={r.settlementByType[t] ?? 0} />
+                      ))}
+                      <EstimatedNumCell value={r.estimatedBalance} className="font-semibold" />
                     </tr>
                   ))
                 )}
@@ -1654,11 +1824,12 @@ function PgClosingBalancesCard({ onActivity }: { onActivity: () => void }) {
   );
 }
 
-const PAGE_TABS: { key: 'daily' | 'pg' | 'cashgo' | 'estimated'; label: string }[] = [
+const PAGE_TABS: { key: 'daily' | 'pg' | 'cashgo' | 'estimated1' | 'estimated2'; label: string }[] = [
   { key: 'daily', label: 'Operations' },
   { key: 'pg', label: 'Report' },
   { key: 'cashgo', label: 'CashGo' },
-  { key: 'estimated', label: 'Estimated' },
+  { key: 'estimated1', label: 'Estimated Line 1' },
+  { key: 'estimated2', label: 'Estimated Line 2' },
 ];
 
 // Whole-number formatting (no decimals) — this table's own convention,
@@ -2394,7 +2565,7 @@ function ScrollSpyDots({ sections }: { sections: SpySection[] }) {
 export default function DailyTxnEntryPage() {
   const { theme, toggleTheme } = useTheme();
   const [, setAutosaveLabel] = useState('Autosaved just now');
-  const [tab, setTab] = useState<'daily' | 'pg' | 'cashgo' | 'estimated'>('daily');
+  const [tab, setTab] = useState<'daily' | 'pg' | 'cashgo' | 'estimated1' | 'estimated2'>('daily');
   const [spinning, setSpinning] = useState(false);
 
   // Restores whichever tab was last active, but ONLY across an actual
@@ -2430,7 +2601,7 @@ export default function DailyTxnEntryPage() {
     window.sessionStorage.removeItem('daily-txn-entry:reloading');
     if (!wasReloading) return; // fresh SPA navigation into the page — stay on Operations
     const saved = window.localStorage.getItem('daily-txn-entry:tab');
-    if (saved === 'daily' || saved === 'pg' || saved === 'cashgo' || saved === 'estimated') setTab(saved);
+    if (saved === 'daily' || saved === 'pg' || saved === 'cashgo' || saved === 'estimated1' || saved === 'estimated2') setTab(saved);
   }, []);
 
   // Stamps the "about to reload" flag right before any genuine full-page
@@ -2446,7 +2617,7 @@ export default function DailyTxnEntryPage() {
     return () => window.removeEventListener('beforeunload', handleBeforeUnload);
   }, []);
 
-  function selectTab(next: 'daily' | 'pg' | 'cashgo' | 'estimated') {
+  function selectTab(next: 'daily' | 'pg' | 'cashgo' | 'estimated1' | 'estimated2') {
     setTab(next);
     window.localStorage.setItem('daily-txn-entry:tab', next);
   }
@@ -2620,8 +2791,10 @@ export default function DailyTxnEntryPage() {
             <div className="flex flex-col gap-5">
               <CashGoDailyTargetCard />
             </div>
+          ) : tab === 'estimated1' ? (
+            <EstimatedTabContent ledgerId="ssp1" title="SSP Line1 · Cashout" exportLabel="SSP_Line1" />
           ) : (
-            <EstimatedTabContent />
+            <EstimatedTabContent ledgerId="ssp2" title="SSP Line2 · Send Money" exportLabel="SSP_Line2" />
           )}
         </div>
       </main>
