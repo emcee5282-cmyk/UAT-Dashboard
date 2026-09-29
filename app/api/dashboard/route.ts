@@ -471,12 +471,24 @@ export async function GET() {
 
     cashoutWallets.forEach((row) => {
       const key = row.wallet.toLowerCase();
-      const dp = cashoutWalletDP.get(key) ?? 0;
-      const wd = cashoutWalletWD.get(key) ?? 0;
       const topUp = cashoutWalletTopUp.get(key) ?? 0;
       const stlm = cashoutWalletStlm.get(key) ?? 0;
-      if (dp) row.totalDP = dp;
-      if (wd) row.totalWD = -wd;
+      // .has(), not a truthy check on the summed value — cashoutWalletDP/WD
+      // are pre-populated for every wallet type agent_wallets has ANY rows
+      // for (see the forEach that builds them, keyed unconditionally per
+      // row), so a wallet with real rows that happen to sum to exactly 0
+      // today (e.g. right after the business-day rollover, before its first
+      // transaction) still has a real 0 entry — `if (dp)`/`if (wd)` treated
+      // that indistinguishably from "no live data at all" and silently kept
+      // dashboard_manual_balances' own STALE value instead (confirmed live:
+      // Rocket's WD sat at 0 during a transition window, so this fell back
+      // to a stale positive 6,154,247.00 that was never even sign-flipped,
+      // undercounting Today's Insights' Total WD by that exact amount).
+      // topUp/stlm keep the truthy check — those maps only ever gain a key
+      // from a real wallet_transactions row (never pre-populated), so an
+      // absent key and a genuine 0 are already the same thing there.
+      if (cashoutWalletDP.has(key)) row.totalDP = cashoutWalletDP.get(key)!;
+      if (cashoutWalletWD.has(key)) row.totalWD = -cashoutWalletWD.get(key)!;
       if (topUp) row.bdTransferIn = topUp;
       if (stlm) row.stlm = -stlm;
       // Opening overridden from the SAME 4-wallet cascade the KPI above
@@ -657,12 +669,12 @@ export async function GET() {
 
     sendMoneyWallets.forEach((row) => {
       const key = row.wallet.toUpperCase();
-      const dp = sendMoneyWalletDP.get(key) ?? 0;
-      const wd = sendMoneyWalletWD.get(key) ?? 0;
       const topUp = sendMoneyWalletTopUp.get(key) ?? 0;
       const stlm = sendMoneyWalletStlm.get(key) ?? 0;
-      if (dp) row.totalDP = dp;
-      if (wd) row.totalWD = -wd;
+      // .has(), not a truthy check — see cashoutWallets.forEach's own
+      // comment above for why (same bug class, same fix, same source shape).
+      if (sendMoneyWalletDP.has(key)) row.totalDP = sendMoneyWalletDP.get(key)!;
+      if (sendMoneyWalletWD.has(key)) row.totalWD = -sendMoneyWalletWD.get(key)!;
       if (topUp) row.bdTransferIn = topUp;
       if (stlm) row.stlm = -stlm;
       // Opening overridden from the SAME 4-wallet cascade the KPI above sums
