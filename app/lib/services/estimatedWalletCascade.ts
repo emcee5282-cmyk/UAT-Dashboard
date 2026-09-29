@@ -193,21 +193,27 @@ export async function computeWalletEstimates(
   return Promise.all(
     PG_WALLETS.map(async (wallet) => {
       const todayConfirmed = todayConfirmedByWallet.get(wallet);
+      const t = walletTotals.get(WALLET_TO_KEY[wallet]);
       if (todayConfirmed !== undefined) {
+        // amount stays the confirmed value as-is (no addition — the
+        // confirmed figure already reflects yesterday's activity, adding t
+        // on top would double-count it). totalDp/totalWd/settlement/topup
+        // still show t's real figures though — informational display only,
+        // not part of the arithmetic — so the card doesn't go blank just
+        // because Opening happened to come from a confirmed entry today.
         return {
           wallet,
           opening: todayConfirmed,
           openingSource: 'confirmed' as const,
           openingSourceDate: today,
-          totalDp: null,
-          totalWd: null,
-          settlement: null,
-          topup: null,
+          totalDp: t?.totalDP ?? null,
+          totalWd: t?.totalWD ?? null,
+          settlement: t?.settlement ?? null,
+          topup: t?.topUp ?? null,
           amount: todayConfirmed,
         };
       }
 
-      const t = walletTotals.get(WALLET_TO_KEY[wallet]);
       const resolution = await resolveWalletOpening(ledgerId, wallet, yesterday, cascadeData);
       const opening = resolution.amount;
       const amount = t ? opening + t.totalDP - t.totalWD + (t.topUp ?? 0) - (t.settlement ?? 0) : null;

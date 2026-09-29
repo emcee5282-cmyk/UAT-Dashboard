@@ -239,6 +239,13 @@
       "when": 1790600000000,
       "tag": "0033_add_estimated_upload_excluded_reason",
       "breakpoints": true
+    },
+    {
+      "idx": 34,
+      "version": "7",
+      "when": 1790700000000,
+      "tag": "0034_add_estimated_entries_opening",
+      "breakpoints": true
     }
   ]
 }

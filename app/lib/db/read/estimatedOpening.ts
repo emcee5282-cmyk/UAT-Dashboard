@@ -294,7 +294,7 @@ export async function readEstimatedOpeningDisplayPg(product: Product): Promise<{
   if (!latestUpload) return emptyResult;
 
   const entries = await db
-    .select({ agentCode: schema.agents.agentCode, deposit: schema.estimatedBalanceEntries.deposit, withdrawal: schema.estimatedBalanceEntries.withdrawal, assumedBalance: schema.estimatedBalanceEntries.assumedBalance })
+    .select({ agentCode: schema.agents.agentCode, deposit: schema.estimatedBalanceEntries.deposit, withdrawal: schema.estimatedBalanceEntries.withdrawal, assumedBalance: schema.estimatedBalanceEntries.assumedBalance, opening: schema.estimatedBalanceEntries.opening })
     .from(schema.estimatedBalanceEntries)
     .innerJoin(schema.agents, eq(schema.estimatedBalanceEntries.agentId, schema.agents.id))
     .where(eq(schema.estimatedBalanceEntries.uploadId, latestUpload.id));
@@ -303,8 +303,12 @@ export async function readEstimatedOpeningDisplayPg(product: Product): Promise<{
 
   const balances = new Map<string, number>();
   for (const e of entries) balances.set(e.agentCode, Number(e.assumedBalance));
-  const uploadedDepositWithdrawalByAgentCode = new Map<string, { deposit: number; withdrawal: number }>();
-  for (const e of entries) uploadedDepositWithdrawalByAgentCode.set(e.agentCode, { deposit: Number(e.deposit), withdrawal: Number(e.withdrawal) });
+  // opening here is the FROZEN baseline this upload was actually built
+  // against (estimatedBalanceEntries.opening) — null only for a row written
+  // before that column existed, in which case the roster-derived fallback
+  // below still applies (see its own comment).
+  const uploadedDepositWithdrawalByAgentCode = new Map<string, { deposit: number; withdrawal: number; opening: number | null }>();
+  for (const e of entries) uploadedDepositWithdrawalByAgentCode.set(e.agentCode, { deposit: Number(e.deposit), withdrawal: Number(e.withdrawal), opening: e.opening === null ? null : Number(e.opening) });
 
   const walletTotals = new Map<string, EstimatedOpeningWalletTotals>();
   for (const w of walletTotalsRows) walletTotals.set(w.walletType, { totalDP: Number(w.totalDp), totalWD: Number(w.totalWd), settlement: nOrNull(w.settlement), topUp: nOrNull(w.topup) });
@@ -351,13 +355,14 @@ export async function readEstimatedOpeningDisplayPg(product: Product): Promise<{
   // above as linesByAgentId), every time this is read. Opening owns the
   // name; this table only ever supplies which wallet and how much.
   const walletLineRows = await db
-    .select({ agentId: schema.estimatedBalanceWalletLines.agentId, walletType: schema.estimatedBalanceWalletLines.walletType, deposit: schema.estimatedBalanceWalletLines.deposit, withdrawal: schema.estimatedBalanceWalletLines.withdrawal, assumedBalance: schema.estimatedBalanceWalletLines.assumedBalance })
+    .select({ agentId: schema.estimatedBalanceWalletLines.agentId, walletType: schema.estimatedBalanceWalletLines.walletType, deposit: schema.estimatedBalanceWalletLines.deposit, withdrawal: schema.estimatedBalanceWalletLines.withdrawal, assumedBalance: schema.estimatedBalanceWalletLines.assumedBalance, opening: schema.estimatedBalanceWalletLines.opening })
     .from(schema.estimatedBalanceWalletLines)
     .where(eq(schema.estimatedBalanceWalletLines.uploadId, latestUpload.id));
-  const walletLinesByAgentId = new Map<number, { walletType: string; deposit: number; withdrawal: number; assumedBalance: number }[]>();
+  // opening: same frozen-baseline reasoning as uploadedDepositWithdrawalByAgentCode above.
+  const walletLinesByAgentId = new Map<number, { walletType: string; deposit: number; withdrawal: number; assumedBalance: number; opening: number | null }[]>();
   for (const l of walletLineRows) {
     if (!walletLinesByAgentId.has(l.agentId)) walletLinesByAgentId.set(l.agentId, []);
-    walletLinesByAgentId.get(l.agentId)!.push({ walletType: l.walletType, deposit: Number(l.deposit), withdrawal: Number(l.withdrawal), assumedBalance: Number(l.assumedBalance) });
+    walletLinesByAgentId.get(l.agentId)!.push({ walletType: l.walletType, deposit: Number(l.deposit), withdrawal: Number(l.withdrawal), assumedBalance: Number(l.assumedBalance), opening: l.opening === null ? null : Number(l.opening) });
   }
 
   // The per-shop TopUp/Settlement breakdown must describe the SAME activity
@@ -494,12 +499,22 @@ export async function readEstimatedOpeningDisplayPg(product: Product): Promise<{
         const suffix = extractOpeningWalletTypeSuffix(line.rawAgentName);
         const walletType = suffix ? OPENING_SUFFIX_TO_WALLET_TYPE[suffix] : null;
         const uploadedLine = walletType ? walletLines.find((wl) => wl.walletType === walletType) : undefined;
-        // previousOpeningBalance (the line's own opening as of the LAST
-        // upload before the current one), not the live column — see
-        // opening_wallet_lines.previousOpeningBalance's own schema comment.
-        // Falls back to the live value only when no previous snapshot
-        // exists yet (this line's very first upload since the fix shipped).
-        const lineOpening = line.previousOpeningBalance !== null ? parseFloat(line.previousOpeningBalance) : parseFloat(line.openingBalance);
+        // estimated_balance_wallet_lines.opening — the baseline THIS upload
+        // was actually built against, frozen at upload time. Must NOT be
+        // re-derived from opening_wallet_lines.previousOpeningBalance/
+        // openingBalance (the roster's own live fields) — those are also
+        // written by the separate Opening (roster) upload, which shifts
+        // them independently of any Estimated (BalanceLimit) upload, so
+        // re-deriving here made the "Each Shop" baseline drift every time
+        // Opening was re-uploaded even though the estimate itself hadn't
+        // changed (confirmed live — see estimatedBalanceEntries.opening's
+        // own schema comment for the full story). The roster-derived
+        // fallback only applies when this upload doesn't have a frozen
+        // value at all: either the shop wasn't covered by this upload, or
+        // the row predates this column (opening === null).
+        const lineOpening = uploadedLine?.opening !== undefined && uploadedLine?.opening !== null
+          ? uploadedLine.opening
+          : (line.previousOpeningBalance !== null ? parseFloat(line.previousOpeningBalance) : parseFloat(line.openingBalance));
         // deposit/withdrawal no longer fall back to live Top Up/Settlement
         // when the upload didn't cover this line (was walletTx.topUp/
         // walletTx.settlement) — that fallback is now redundant with, and
@@ -530,13 +545,15 @@ export async function readEstimatedOpeningDisplayPg(product: Product): Promise<{
     }
 
     // No Opening-defined wallet structure — whole-shop formula.
-    // previousOpeningBalance, not the live column — see
-    // agents.previousOpeningBalance's own schema comment. Falls back to the
-    // live value only when no previous snapshot exists yet.
-    const opening = roster.previousOpeningBalance !== null
-      ? parseFloat(roster.previousOpeningBalance)
-      : (roster.openingBalance === null ? 0 : parseFloat(roster.openingBalance));
     const uploadedDW = uploadedDepositWithdrawalByAgentCode.get(roster.agentCode);
+    // estimatedBalanceEntries.opening — same frozen-baseline reasoning as
+    // the split-shop branch's own lineOpening above. Falls back to the
+    // roster's own previousOpeningBalance/openingBalance only when this
+    // upload has no frozen value for this shop (uncovered by this upload,
+    // or a pre-migration row).
+    const opening = uploadedDW?.opening !== undefined && uploadedDW?.opening !== null
+      ? uploadedDW.opening
+      : (roster.previousOpeningBalance !== null ? parseFloat(roster.previousOpeningBalance) : (roster.openingBalance === null ? 0 : parseFloat(roster.openingBalance)));
     // deposit/withdrawal no longer fall back to live Top Up/Settlement (was
     // tx.topUp/tx.settlement) — see the split-shop branch's own comment
     // above for why: that fallback is now redundant with, and would

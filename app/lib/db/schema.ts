@@ -665,6 +665,21 @@ export const estimatedBalanceEntries = pgTable(
     deposit: numeric('deposit', { precision: 18, scale: 2 }).notNull(),
     withdrawal: numeric('withdrawal', { precision: 18, scale: 2 }).notNull(),
     assumedBalance: numeric('assumed_balance', { precision: 18, scale: 2 }).notNull(),
+    // The Opening baseline actually used to compute assumedBalance above,
+    // frozen at upload time — NOT re-derivable later from
+    // agents.previous_opening_balance/opening_balance, since those are
+    // shared, mutable fields the SEPARATE roster Opening upload
+    // (importOpeningFile) also writes to. Before this column existed, the
+    // Estimated Opening (Each Shop) display re-read the roster's live
+    // previousOpeningBalance as its "Opening" baseline every time — a later
+    // Opening (roster) upload shifted that field regardless of whether a new
+    // Estimated (BalanceLimit) upload had happened, silently corrupting the
+    // display (confirmed live: a shop's baseline became its OWN prior
+    // estimate's output after two roster uploads, double-applying that
+    // upload's deposit/withdrawal on read). Nullable, no default — NULL on
+    // rows written before this column existed; readers fall back to the old
+    // roster-derived value only for those.
+    opening: numeric('opening', { precision: 18, scale: 2 }),
   },
   (t) => [index('estimated_balance_entries_upload_id_idx').on(t.uploadId)]
 );
@@ -743,6 +758,9 @@ export const estimatedBalanceWalletLines = pgTable(
     deposit: numeric('deposit', { precision: 18, scale: 2 }).notNull(),
     withdrawal: numeric('withdrawal', { precision: 18, scale: 2 }).notNull(),
     assumedBalance: numeric('assumed_balance', { precision: 18, scale: 2 }).notNull(),
+    // Same frozen-baseline reasoning as estimatedBalanceEntries.opening
+    // above, at this wallet-line's own scope.
+    opening: numeric('opening', { precision: 18, scale: 2 }),
   },
   (t) => [index('estimated_balance_wallet_lines_upload_id_idx').on(t.uploadId), index('estimated_balance_wallet_lines_agent_id_idx').on(t.agentId)]
 );

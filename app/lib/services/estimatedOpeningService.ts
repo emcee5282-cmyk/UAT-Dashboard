@@ -246,8 +246,8 @@ export async function importEstimatedOpeningFromUpload(
     shopLinesByName.get(l.shopName)!.push(l);
   }
 
-  type NewEntry = { agentId: number; deposit: number; withdrawal: number; assumedBalance: number };
-  type NewWalletLineEntry = { agentId: number; walletType: string; deposit: number; withdrawal: number; assumedBalance: number };
+  type NewEntry = { agentId: number; deposit: number; withdrawal: number; assumedBalance: number; opening: number };
+  type NewWalletLineEntry = { agentId: number; walletType: string; deposit: number; withdrawal: number; assumedBalance: number; opening: number };
   const entries: NewEntry[] = [];
   const walletLineInserts: NewWalletLineEntry[] = [];
 
@@ -275,7 +275,7 @@ export async function importEstimatedOpeningFromUpload(
       const deposit = s.totalDP;
       const withdrawal = s.totalWD;
       const assumedBalance = opening + deposit + tx.topUp - withdrawal - tx.settlement;
-      entries.push({ agentId: agent.id, deposit, withdrawal, assumedBalance });
+      entries.push({ agentId: agent.id, deposit, withdrawal, assumedBalance, opening });
       continue;
     }
 
@@ -341,10 +341,10 @@ export async function importEstimatedOpeningFromUpload(
       shopDepositBlended += lineDepositBlended;
       shopWithdrawalBlended += lineWithdrawalBlended;
       if (walletTypeFull) {
-        walletLineInserts.push({ agentId: agent.id, walletType: walletTypeFull, deposit: lineDeposit, withdrawal: lineWithdrawal, assumedBalance: lineOpening + lineDepositBlended - lineWithdrawalBlended });
+        walletLineInserts.push({ agentId: agent.id, walletType: walletTypeFull, deposit: lineDeposit, withdrawal: lineWithdrawal, assumedBalance: lineOpening + lineDepositBlended - lineWithdrawalBlended, opening: lineOpening });
       }
     }
-    entries.push({ agentId: agent.id, deposit: shopDeposit, withdrawal: shopWithdrawal, assumedBalance: opening + shopDepositBlended - shopWithdrawalBlended });
+    entries.push({ agentId: agent.id, deposit: shopDeposit, withdrawal: shopWithdrawal, assumedBalance: opening + shopDepositBlended - shopWithdrawalBlended, opening });
   }
   if (entries.length === 0) {
     throw new Error('None of the uploaded shops matched a known agent — check the file is for the correct product.');
@@ -376,7 +376,7 @@ export async function importEstimatedOpeningFromUpload(
     // this app (importService.ts's bulkUpdateOpeningAgentsWithSdp,
     // balanceLimitService.ts's own agent_wallets insert).
     const INSERT_CHUNK_SIZE = 500;
-    const entryRows = entries.map((e) => ({ uploadId: upload.id, agentId: e.agentId, deposit: String(e.deposit), withdrawal: String(e.withdrawal), assumedBalance: String(e.assumedBalance) }));
+    const entryRows = entries.map((e) => ({ uploadId: upload.id, agentId: e.agentId, deposit: String(e.deposit), withdrawal: String(e.withdrawal), assumedBalance: String(e.assumedBalance), opening: String(e.opening) }));
     for (let i = 0; i < entryRows.length; i += INSERT_CHUNK_SIZE) {
       await tx.insert(schema.estimatedBalanceEntries).values(entryRows.slice(i, i + INSERT_CHUNK_SIZE));
     }
@@ -410,7 +410,7 @@ export async function importEstimatedOpeningFromUpload(
     if (walletLineInserts.length > 0) {
       // Same chunking, same reason — this one can have MORE rows than
       // estimatedBalanceEntries (one row per wallet line, not per shop).
-      const walletLineRows = walletLineInserts.map((l) => ({ uploadId: upload.id, agentId: l.agentId, walletType: l.walletType, deposit: String(l.deposit), withdrawal: String(l.withdrawal), assumedBalance: String(l.assumedBalance) }));
+      const walletLineRows = walletLineInserts.map((l) => ({ uploadId: upload.id, agentId: l.agentId, walletType: l.walletType, deposit: String(l.deposit), withdrawal: String(l.withdrawal), assumedBalance: String(l.assumedBalance), opening: String(l.opening) }));
       for (let i = 0; i < walletLineRows.length; i += INSERT_CHUNK_SIZE) {
         await tx.insert(schema.estimatedBalanceWalletLines).values(walletLineRows.slice(i, i + INSERT_CHUNK_SIZE));
       }
