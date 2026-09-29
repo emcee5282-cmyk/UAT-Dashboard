@@ -171,20 +171,26 @@ export async function computeWalletEstimates(
   ledgerId: 'ssp1' | 'ssp2',
   product: 'cashout' | 'sendmoney',
   yesterday: string,
-  walletTotals: Map<string, EstimatedOpeningWalletTotals>
-): Promise<WalletEstimate[]> {
+  walletTotals: Map<string, EstimatedOpeningWalletTotals>,
   // TODAY's own confirmed closing (Report tab's "Yesterday Closing" card,
   // saved under TODAY's businessDate — yesterday's closing IS today's
-  // opening) takes effect immediately, same Tier-1 rule resolveWalletOpening
-  // already applies to every earlier date ("used as-is, no addition") —
-  // per explicit instruction, a same-day confirmed entry should not have to
-  // wait until tomorrow's cascade run to be picked up. Checked here rather
-  // than inside resolveWalletOpening, which only ever resolves `yesterday`
-  // and earlier — today is one day past anything its own recursion reaches.
+  // opening) taking effect immediately is a Dashboard-only behavior (per
+  // explicit instruction: Today's Insights shouldn't wait until tomorrow's
+  // cascade run to reflect a same-day confirmation). The Estimated tab's own
+  // Wallet Breakdown card keeps the ORIGINAL rule instead — a fresh same-day
+  // entry must never become its own estimate's baseline (see
+  // resolveWalletOpening's own header comment), so that card can always be
+  // read as "yesterday's Opening + yesterday's own DP/WD/Settlement/TopUp",
+  // consistent regardless of what's been confirmed today. Sharing one
+  // function with a flag (not two copies) per this file's own "one shared
+  // computation" principle — only Tier-0 (today) differs, everything else
+  // (Tier 1-3 inside resolveWalletOpening) is identical for both callers.
+  useTodayConfirmed = false
+): Promise<WalletEstimate[]> {
   const today = subtractDays(yesterday, -1);
   const [cascadeData, todayConfirmedRows] = await Promise.all([
     fetchCascadeData(ledgerId, product, yesterday),
-    getDailyTxnWalletClosing(ledgerId, today),
+    useTodayConfirmed ? getDailyTxnWalletClosing(ledgerId, today) : Promise.resolve([]),
   ]);
   const todayConfirmedByWallet = new Map(
     todayConfirmedRows.filter((r): r is typeof r & { amount: number } => r.amount !== null).map((r) => [r.wallet, r.amount])

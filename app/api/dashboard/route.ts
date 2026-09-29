@@ -407,8 +407,8 @@ export async function GET() {
     // second, unrelated pot of money on top of an already-complete cascade.
     const yesterdayKey = formatCutoffDateKey(new Date(cutoff.getTime() - 24 * 60 * 60 * 1000));
     const [cashoutWalletEstimates, sendMoneyWalletEstimates] = await Promise.all([
-      computeWalletEstimates('ssp1', 'cashout', yesterdayKey, estimatedOpening.walletTotals),
-      computeWalletEstimates('ssp2', 'sendmoney', yesterdayKey, estimatedSendMoneyOpening.walletTotals),
+      computeWalletEstimates('ssp1', 'cashout', yesterdayKey, estimatedOpening.walletTotals, true),
+      computeWalletEstimates('ssp2', 'sendmoney', yesterdayKey, estimatedSendMoneyOpening.walletTotals, true),
     ]);
     const cashoutWalletEstimateByType = new Map(cashoutWalletEstimates.map((w) => [w.wallet.toUpperCase(), w]));
     const sendMoneyWalletEstimateByType = new Map(sendMoneyWalletEstimates.map((w) => [w.wallet.toUpperCase(), w]));
