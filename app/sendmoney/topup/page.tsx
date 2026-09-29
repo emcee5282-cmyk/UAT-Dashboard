@@ -326,18 +326,6 @@ const EMPTY_STATE_PRIMARY_BUTTON =
 
 const PAGE_SIZE_OPTIONS = [50, 100, 250, 500];
 
-// Range-based, not today/yesterday — the server resolves total/count for
-// whatever [from, to] was requested (default: Effective Today, see
-// transactionPageService.ts's getTopUpPageData) plus the equal-length
-// prior period's total/count for the delta badge's comparison baseline.
-type TopUpKpiStats = {
-  total: number;
-  count: number;
-  previousPeriodTotal: number;
-  previousPeriodCount: number;
-};
-
-const EMPTY_KPI_STATS: TopUpKpiStats = { total: 0, count: 0, previousPeriodTotal: 0, previousPeriodCount: 0 };
 
 // "vs yesterday" only when the applied range IS today; otherwise "vs
 // previous N days" (custom/week) or "vs same days last month" (month).
@@ -776,10 +764,11 @@ export default function SendMoneyTopUpPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<ClassifiedError | null>(null);
   const [spinning, setSpinning] = useState(false);
-  // KPI row's total/count/previous-period-baseline — resolved server-side
-  // by transactionPageService.ts's getTopUpPageData for whichever [from, to]
-  // range is currently applied (see dateRange below).
-  const [kpiStats, setKpiStats] = useState<TopUpKpiStats>(EMPTY_KPI_STATS);
+  // Prior-period's own rows (same shape as topUpRows), same Brand/Leader/
+  // Wallet/search filters applied client-side below — lets the "vs
+  // yesterday" delta compare apples-to-apples instead of a filtered total
+  // against an unfiltered one.
+  const [previousPeriodRows, setPreviousPeriodRows] = useState<TopUpRow[]>([]);
   // null until the first fetch resolves — server always returns its own
   // resolved {from, to, today} (Effective Today-anchored, see
   // getEffectiveBusinessToday), which becomes the source of truth here
@@ -893,12 +882,14 @@ export default function SendMoneyTopUpPage() {
         const body = await res.json().catch(() => null);
         throw new Error(body?.error || `Request failed with status ${res.status}`);
       }
+      type RawTopUpRow = { id: number; agentName: string; wallet: string; amount: string; date: string; type: string; leader: string; brand: string };
       const data: {
-        rows: { id: number; agentName: string; wallet: string; amount: string; date: string; type: string; leader: string; brand: string }[];
+        rows: RawTopUpRow[];
         total: number; count: number; previousPeriodTotal: number; previousPeriodCount: number;
+        previousPeriodRows: RawTopUpRow[];
         today: string; from: string; to: string;
       } = await res.json();
-      const topUp: TopUpRow[] = data.rows.map((r) => ({
+      const toTopUpRow = (r: RawTopUpRow): TopUpRow => ({
         agentName: r.agentName,
         wallet: r.wallet,
         amount: r.amount,
@@ -907,7 +898,8 @@ export default function SendMoneyTopUpPage() {
         leader: r.leader,
         brand: r.brand,
         _id: r.id,
-      }));
+      });
+      const topUp: TopUpRow[] = data.rows.map(toTopUpRow);
 
       // Roster for Add/Edit's Agent Name combobox and Bulk Import's
       // validation — /api/v2/sendmoney/opening is Today's Opening's own
@@ -923,13 +915,8 @@ export default function SendMoneyTopUpPage() {
       }
 
       setTopUpRows(topUp);
+      setPreviousPeriodRows(data.previousPeriodRows.map(toTopUpRow));
       setSelectedIds(new Set());
-      setKpiStats({
-        total: data.total,
-        count: data.count,
-        previousPeriodTotal: data.previousPeriodTotal,
-        previousPeriodCount: data.previousPeriodCount,
-      });
       setToday(data.today);
       setDateRange({ from: data.from, to: data.to });
     } catch (err) {
@@ -1037,6 +1024,22 @@ export default function SendMoneyTopUpPage() {
     }
     return list;
   }, [searchedRows, brandFilter, brandOptions, leaderFilter, leaderOptions, walletFilter, walletOptions]);
+
+  // Same Brand/Leader/Wallet/search predicate as filteredRows above, applied
+  // to the PRIOR period's own rows — feeds the "vs yesterday" delta so that
+  // comparison stays apples-to-apples with whatever's currently filtered in
+  // (per explicit instruction), instead of comparing a filtered total
+  // against yesterday's unfiltered one.
+  const previousPeriodFilteredRows = useMemo(() => {
+    return previousPeriodRows.filter((row) => {
+      const haystack = `${row.agentName} ${row.wallet} ${row.amount} ${row.date} ${row.type} ${row.leader}`.toLowerCase();
+      if (!haystack.includes(searchTerm.toLowerCase())) return false;
+      if (brandFilter[row.brand] === false) return false;
+      if (leaderFilter[row.leader] === false) return false;
+      if (walletFilter[row.wallet] === false) return false;
+      return true;
+    });
+  }, [previousPeriodRows, searchTerm, brandFilter, leaderFilter, walletFilter]);
 
   // Faceted option counts — each omits its own facet's clause so unchecking
   // an option in a dropdown doesn't shrink its own list toward zero.
@@ -1312,17 +1315,27 @@ export default function SendMoneyTopUpPage() {
   // Total Amount is no longer shown at all — its value only surfaces
   // inside the hero stat's delta chip. Matches Cashout Top Up
   // (app/topup/page.tsx) exactly.
-  const amountChange = kpiStats.total - kpiStats.previousPeriodTotal;
+  // Total Amount/Today's Count reflect the rows CURRENTLY VISIBLE in the
+  // table (filteredRows — after search, Brand/Leader/Wallet, and the
+  // applied date range), not the server's unfiltered range total — per
+  // explicit instruction, these two must always match what's actually on
+  // screen, recalculating on every filter/search change automatically since
+  // they're derived from filteredRows itself. previousPeriodFilteredRows
+  // gets the identical predicate applied to yesterday's (or the prior
+  // equal-length period's) own rows for the delta chip below.
+  const filteredTotal = useMemo(() => filteredRows.reduce((sum, r) => sum + parseAmount(r.amount), 0), [filteredRows]);
+  const filteredPreviousTotal = useMemo(() => previousPeriodFilteredRows.reduce((sum, r) => sum + parseAmount(r.amount), 0), [previousPeriodFilteredRows]);
+  const amountChange = filteredTotal - filteredPreviousTotal;
   const amountTrend: 'up' | 'down' | 'flat' = amountChange > 0 ? 'up' : amountChange < 0 ? 'down' : 'flat';
   const isTodayRange = !!dateRange && !!today && presetOf(dateRange, today) === 'today';
   const heroKpi = useMemo(() => ({
     label: 'Total Amount',
-    bigValue: fmtAbbrev(kpiStats.total),
-    subtitle: fmt(kpiStats.total),
-  }), [kpiStats]);
+    bigValue: fmtAbbrev(filteredTotal),
+    subtitle: fmt(filteredTotal),
+  }), [filteredTotal]);
   const countKpis = useMemo(() => [
-    { label: isTodayRange ? "Today's Count" : 'Count', bigValue: kpiStats.count.toLocaleString('en-US') },
-  ], [kpiStats, isTodayRange]);
+    { label: isTodayRange ? "Today's Count" : 'Count', bigValue: filteredRows.length.toLocaleString('en-US') },
+  ], [filteredRows, isTodayRange]);
 
   const hasAnyRecords = topUpRows.length > 0;
   const emptyStateNode = !hasAnyRecords ? (

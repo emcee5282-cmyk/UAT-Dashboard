@@ -132,25 +132,6 @@ async function getTransactionRowsRaw(product: Product, transactionType: Transact
     ));
 }
 
-// Lightweight aggregate (no row payload) — the delta badge's "previous
-// period" baseline never needs to reach the client as rows, just a total
-// and a count.
-async function getTransactionRangeSummary(product: Product, transactionType: TransactionType, range: DateRange): Promise<{ total: number; count: number }> {
-  const db = getDb();
-  const [row] = await db
-    .select({
-      total: sql<string>`coalesce(sum(${schema.walletTransactions.amount}), 0)`,
-      count: sql<number>`count(*)::int`,
-    })
-    .from(schema.walletTransactions)
-    .where(and(
-      eq(schema.walletTransactions.product, product),
-      eq(schema.walletTransactions.transactionType, transactionType),
-      gte(schema.walletTransactions.occurredOn, range.from),
-      lte(schema.walletTransactions.occurredOn, range.to)
-    ));
-  return { total: parseFloat(row?.total ?? '0'), count: row?.count ?? 0 };
-}
 
 // Distinct Manila business dates that have at least one row — powers the
 // date-range popover's calendar (disabled = not in this list) and Quick
@@ -184,6 +165,14 @@ export type TransactionPageData<Row> = {
   count: number;
   previousPeriodTotal: number;
   previousPeriodCount: number;
+  // Same row shape as `rows`, for the equal-length prior period — lets the
+  // client re-derive previousPeriodTotal/Count under its OWN active
+  // Brand/Leader/Wallet/search filters (an apples-to-apples "vs yesterday"
+  // comparison), the same way `rows` already lets it re-derive total/count.
+  // previousPeriodTotal/Count above stay as the UNFILTERED baseline (kept
+  // for any caller that still wants the plain aggregate) — the pages now
+  // read totals from `rows`/`previousPeriodRows` client-side instead.
+  previousPeriodRows: Row[];
   today: string; // Effective Today (see getEffectiveBusinessToday) — the client never computes "today" itself
   from: string;
   to: string;
@@ -210,10 +199,14 @@ export async function getSettlementRows(product: Product, range?: DateRange): Pr
 // fetches that period's full row set).
 export async function getSettlementPageData(product: Product, range?: DateRange): Promise<TransactionPageData<SettlementPgRow>> {
   const resolved = await resolveDateRange(product, range);
-  const rows = await getSettlementRows(product, resolved);
+  const prevRange = previousPeriod(resolved.from, resolved.to);
+  const [rows, previousPeriodRows] = await Promise.all([
+    getSettlementRows(product, resolved),
+    getSettlementRows(product, prevRange),
+  ]);
   const total = rows.reduce((sum, r) => sum + parseFloat(r.amount), 0);
-  const prevSummary = await getTransactionRangeSummary(product, 'settlement', previousPeriod(resolved.from, resolved.to));
-  return { rows, total, count: rows.length, previousPeriodTotal: prevSummary.total, previousPeriodCount: prevSummary.count, today: resolved.today, from: resolved.from, to: resolved.to };
+  const previousPeriodTotal = previousPeriodRows.reduce((sum, r) => sum + parseFloat(r.amount), 0);
+  return { rows, total, count: rows.length, previousPeriodTotal, previousPeriodCount: previousPeriodRows.length, previousPeriodRows, today: resolved.today, from: resolved.from, to: resolved.to };
 }
 
 export type TopUpPgRow = {
@@ -256,10 +249,14 @@ export async function getTopUpRows(product: Product, range?: DateRange): Promise
 
 export async function getTopUpPageData(product: Product, range?: DateRange): Promise<TransactionPageData<TopUpPgRow>> {
   const resolved = await resolveDateRange(product, range);
-  const rows = await getTopUpRows(product, resolved);
+  const prevRange = previousPeriod(resolved.from, resolved.to);
+  const [rows, previousPeriodRows] = await Promise.all([
+    getTopUpRows(product, resolved),
+    getTopUpRows(product, prevRange),
+  ]);
   const total = rows.reduce((sum, r) => sum + parseFloat(r.amount), 0);
-  const prevSummary = await getTransactionRangeSummary(product, 'topup', previousPeriod(resolved.from, resolved.to));
-  return { rows, total, count: rows.length, previousPeriodTotal: prevSummary.total, previousPeriodCount: prevSummary.count, today: resolved.today, from: resolved.from, to: resolved.to };
+  const previousPeriodTotal = previousPeriodRows.reduce((sum, r) => sum + parseFloat(r.amount), 0);
+  return { rows, total, count: rows.length, previousPeriodTotal, previousPeriodCount: previousPeriodRows.length, previousPeriodRows, today: resolved.today, from: resolved.from, to: resolved.to };
 }
 
 export type ExistingTransactionSignature = {

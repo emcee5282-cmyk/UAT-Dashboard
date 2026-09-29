@@ -350,19 +350,6 @@ const EMPTY_STATE_PRIMARY_BUTTON =
 
 const PAGE_SIZE_OPTIONS = [50, 100, 250, 500];
 
-// Range-based, not today/yesterday — the server resolves total/count for
-// whatever [from, to] was requested (default: Effective Today, see
-// transactionPageService.ts's getSettlementPageData) plus the equal-length
-// prior period's total/count for the delta badge's comparison baseline.
-type SettlementKpiStats = {
-  total: number;
-  count: number;
-  previousPeriodTotal: number;
-  previousPeriodCount: number;
-};
-
-const EMPTY_KPI_STATS: SettlementKpiStats = { total: 0, count: 0, previousPeriodTotal: 0, previousPeriodCount: 0 };
-
 // "vs yesterday" only when the applied range IS today; otherwise "vs
 // previous N days" (custom/week) or "vs same days last month" (month).
 function deltaVsLabel(range: DateRangeValue, today: string): string {
@@ -940,10 +927,11 @@ export default function StlmPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<ClassifiedError | null>(null);
   const [spinning, setSpinning] = useState(false);
-  // KPI row's total/count/previous-period-baseline — resolved server-side
-  // by transactionPageService.ts's getSettlementPageData for whichever
-  // [from, to] range is currently applied (see dateRange below).
-  const [kpiStats, setKpiStats] = useState<SettlementKpiStats>(EMPTY_KPI_STATS);
+  // Prior-period's own rows (same shape as stlmRows), same Brand/Leader/
+  // Wallet/search filters applied client-side below — lets the "vs
+  // yesterday" delta compare apples-to-apples instead of a filtered total
+  // against an unfiltered one.
+  const [previousPeriodRows, setPreviousPeriodRows] = useState<StlmRow[]>([]);
   // null until the first fetch resolves — server always returns its own
   // resolved {from, to, today} (Effective Today-anchored, see
   // getEffectiveBusinessToday), which becomes the source of truth here
@@ -1116,12 +1104,14 @@ export default function StlmPage() {
         const body = await res.json().catch(() => null);
         throw new Error(body?.error || `Request failed with status ${res.status}`);
       }
+      type RawStlmRow = { id: number; agentName: string; amount: string; remarks: string; date: string; wallet: string; brand: string; leader: string };
       const data: {
-        rows: { id: number; agentName: string; amount: string; remarks: string; date: string; wallet: string; brand: string; leader: string }[];
+        rows: RawStlmRow[];
         total: number; count: number; previousPeriodTotal: number; previousPeriodCount: number;
+        previousPeriodRows: RawStlmRow[];
         today: string; from: string; to: string;
       } = await res.json();
-      const stlm: StlmRow[] = data.rows.map((r) => ({
+      const toStlmRow = (r: RawStlmRow): StlmRow => ({
         agentName: r.agentName,
         amount: r.amount,
         remarks: r.remarks,
@@ -1130,7 +1120,8 @@ export default function StlmPage() {
         brand: r.brand,
         leader: r.leader,
         _id: r.id,
-      }));
+      });
+      const stlm: StlmRow[] = data.rows.map(toStlmRow);
 
       // Roster for Add/Edit's Agent Name combobox and Bulk Import's
       // validation — the full Balance Shop master list, not just agents who
@@ -1153,16 +1144,11 @@ export default function StlmPage() {
       const validStlm = stlm.filter(row => row.agentName && row.agentName !== '-' && row.agentName !== '0');
 
       setStlmRows(validStlm);
+      setPreviousPeriodRows(data.previousPeriodRows.map(toStlmRow));
       // A fresh fetch means brand-new row objects — any previous selection
       // may point at ids no longer present (e.g. after a Delete), so it
       // clears here rather than silently pointing at the wrong rows.
       setSelectedIds(new Set());
-      setKpiStats({
-        total: data.total,
-        count: data.count,
-        previousPeriodTotal: data.previousPeriodTotal,
-        previousPeriodCount: data.previousPeriodCount,
-      });
       setToday(data.today);
       setDateRange({ from: data.from, to: data.to });
     } catch (err) {
@@ -1239,6 +1225,22 @@ export default function StlmPage() {
     setLeaderMenuOpen(false);
     setWalletMenuOpen(false);
   }, []);
+
+  // Same Brand/Leader/Wallet/search predicate as filteredRows below, applied
+  // to the PRIOR period's own rows — feeds the "vs yesterday" delta so that
+  // comparison stays apples-to-apples with whatever's currently filtered in
+  // (per explicit instruction), instead of comparing a filtered total
+  // against yesterday's unfiltered one.
+  const previousPeriodFilteredRows = useMemo(() => {
+    return previousPeriodRows.filter((row) => {
+      const haystack = `${row.agentName} ${row.amount} ${row.remarks} ${row.date} ${row.wallet} ${row.brand} ${row.leader}`.toLowerCase();
+      if (!haystack.includes(searchTerm.toLowerCase())) return false;
+      if (brandFilter[row.brand] === false) return false;
+      if (leaderFilter[row.leader] === false) return false;
+      if (walletFilter[row.wallet] === false) return false;
+      return true;
+    });
+  }, [previousPeriodRows, searchTerm, brandFilter, leaderFilter, walletFilter]);
 
   const filteredRows = useMemo(() => {
     let list = searchedRows;
@@ -1550,18 +1552,28 @@ export default function StlmPage() {
   // Today's Count, inline in one thin row. Yesterday's Total Amount is no
   // longer shown at all — its value only surfaces inside the delta chip.
   // Yesterday's Count was dropped too (explicit instruction).
-  const amountChange = kpiStats.total - kpiStats.previousPeriodTotal;
+  // Total Amount/Today's Count reflect the rows CURRENTLY VISIBLE in the
+  // table (filteredRows — after search, Brand/Leader/Wallet, and the
+  // applied date range), not the server's unfiltered range total — per
+  // explicit instruction, these two must always match what's actually on
+  // screen, recalculating on every filter/search change automatically since
+  // they're derived from filteredRows itself. previousPeriodFilteredRows
+  // gets the identical predicate applied to yesterday's (or the prior
+  // equal-length period's) own rows for the delta chip below.
+  const filteredTotal = useMemo(() => filteredRows.reduce((sum, r) => sum + parseAmount(r.amount), 0), [filteredRows]);
+  const filteredPreviousTotal = useMemo(() => previousPeriodFilteredRows.reduce((sum, r) => sum + parseAmount(r.amount), 0), [previousPeriodFilteredRows]);
+  const amountChange = filteredTotal - filteredPreviousTotal;
   const amountTrend: 'up' | 'down' | 'flat' = amountChange > 0 ? 'up' : amountChange < 0 ? 'down' : 'flat';
   const isTodayRange = !!dateRange && !!today && presetOf(dateRange, today) === 'today';
   const heroKpi = useMemo(() => ({
     label: 'Total Amount',
-    bigValue: fmtAbbrev(kpiStats.total),
-    subtitle: fmt(kpiStats.total),
-  }), [kpiStats]);
+    bigValue: fmtAbbrev(filteredTotal),
+    subtitle: fmt(filteredTotal),
+  }), [filteredTotal]);
   const todayCountKpi = useMemo(() => ({
     label: isTodayRange ? "Today's Count" : 'Count',
-    bigValue: kpiStats.count.toLocaleString('en-US'),
-  }), [kpiStats, isTodayRange]);
+    bigValue: filteredRows.length.toLocaleString('en-US'),
+  }), [filteredRows, isTodayRange]);
 
   const hasAnyRecords = stlmRows.length > 0;
   const emptyStateNode = !hasAnyRecords ? (
