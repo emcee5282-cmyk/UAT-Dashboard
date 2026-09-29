@@ -27,7 +27,7 @@ import {
 import { getBusinessToday, manilaFields, formatManilaClockTime } from '../lib/businessDate';
 import { validateTopUpRows, checkTypeField, type TopUpValidationConfig } from '../lib/topupValidation';
 import { validateOpeningRows, checkOptionalAmountField, checkAgentNameFormat, checkAgentNameRequired, type OpeningValidationConfig } from '../lib/openingValidation';
-import { detectDuplicatesWithinFile, detectDuplicateAgentNames, detectAlreadyImportedDuplicates } from '../lib/duplicateDetector';
+import { detectDuplicateAgentNames } from '../lib/duplicateDetector';
 import type { ExistingTransactionSignature } from '../lib/services/transactionPageService';
 import { calculateImportSummary, calculateOpeningImportSummary, type ImportSummary } from '../lib/importSummary';
 import { mockImportRecords } from '../lib/importService';
@@ -162,25 +162,6 @@ function formatDateForEdit(dateStr: string): string {
   const [m, d, y] = parts.map(Number);
   if (!m || !d || !y) return dateStr;
   return `${MONTH_ABBR[m - 1]} ${d}, ${y}`;
-}
-
-// Normalizes a row's raw uploaded date string to 'YYYY-MM-DD' — the shape
-// wallet_transactions.occurred_on is stored in, and what the already-
-// imported duplicate check (runValidation, the scanning step's distinct-
-// dates extraction) both compare against. null for an unparseable date
-// (already flagged elsewhere via checkDateField — nothing to compare here).
-// Read via manilaFields(), not local getters — parseImportDate's "M/D/YYYY"
-// branch builds a Manila-anchored instant (manilaMidnight), and this key is
-// compared directly against occurredOn, a real Manila calendar-date string
-// from the DB. Local getters would only match that if the browser's own
-// timezone happened to be Manila — the same mismatch already fixed on the
-// server side (importService.ts's formatDateOnly, transactionActionsService.ts's
-// toStorageDate).
-function toDateKey(rawDate: string | undefined): string | null {
-  const parsed = parseImportDate((rawDate ?? '').trim());
-  if (!parsed) return null;
-  const { year, month, day } = manilaFields(parsed);
-  return `${year}-${String(month + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
 }
 
 // Proper-cases a raw uploaded value for display in the edit form (e.g.
@@ -497,41 +478,23 @@ export default function BulkImportModal({
   }), [brandOptions, walletOptions, agentRoster, remarksSuggestions, typeOptions]);
 
   // Shared by the initial scan AND every post-edit re-check — a single
-  // source of truth for "given these rows, what issues do they have," so
-  // an edit that resolves a duplicate genuinely clears it (see
-  // handleRowEditSave below) instead of the panel showing stale state.
+  // source of truth for "given these rows, what issues do they have."
   // Branches on moduleKind since Settlement/Top Up/Opening each have their
   // own typed validator (Remarks is a soft warning, Type a hard error,
-  // Opening Balance/SDP allow blank) — the within-file duplicate check
-  // below is already generic over every row shape (see duplicateDetector.ts);
-  // Opening uses its own agentName-only dedup key instead of Settlement/Top
-  // Up's brand+wallet+amount+date signature, since a roster snapshot has
-  // none of those.
-  //
-  // Round 3 — mockExistingRecordCheck() (a positional "every 7th row" stand-
-  // in for a real cross-upload "does this already exist in the DB" check,
-  // explicitly documented from the start as a prototype-phase placeholder,
-  // "do NOT implement backend yet") used to run here too. Removed: since it
-  // flagged rows purely by ARRAY INDEX, never by field values, editing a
-  // row's data could never clear it if that row's position happened to be a
-  // multiple of 7 — a row genuinely made unique would still show as
-  // "Duplicate" forever. The real "already exists" check now only ever
-  // happens server-side (the SHA-256 fingerprint check in importService.ts,
-  // at actual import time) — there's no live client-side equivalent to
-  // preview pre-upload without a per-row DB round trip, so this file only
-  // ever reports genuine within-file matches — UNTIL now (see
-  // existingRecords below): detectAlreadyImportedDuplicates is the REAL
-  // replacement, a genuine live check against wallet_transactions.
-  //
-  // existingRecords is passed in explicitly (not captured via closure) so
-  // the scanning step can hand it the just-fetched, definitely-current
-  // value without a state-update race — see the scanning effect below,
-  // which awaits the fetch and calls this with the local result directly,
-  // before existingRecords state has necessarily re-rendered yet.
-  // handleRowEditSave (post-edit re-validation) passes the already-settled
-  // existingRecords state — no new fetch per edit, an edited row's date
-  // is still checked correctly since the SIGNATURE comparison (not the
-  // fetch) is what re-runs.
+  // Opening Balance/SDP allow blank). Opening still runs its own
+  // agentName-based dedup (detectDuplicateAgentNames) — a roster/name check
+  // with nothing to do with Settlement/Top Up's own (now-removed) dedup.
+  // existingRecords stays as a parameter (ignored by both branches below)
+  // rather than being dropped from the signature — ExistingTransactionSignature/
+  // alreadyImportedMatchByRow are still real types other code around this
+  // function reads, and the server's own fingerprint check at actual import
+  // time (importService.ts) is unaffected by any of this either way.
+  // Duplicate detection (both within-file and "already imported") is
+  // deliberately NOT run for Settlement/Top Up — per explicit instruction,
+  // those two modules no longer flag or gate on duplicates at all, so a row
+  // matching an existing one just imports normally, no Skip/Import decision
+  // required. Opening keeps its own dedup (detectDuplicateAgentNames) —
+  // unrelated, a roster/name-based check, not touched by this change.
   const runValidation = useCallback((inputRows: ImportRow[], existingRecords: ExistingTransactionSignature[]): { entries: ValidationEntry[]; alreadyImportedMatchByRow: Map<number, ExistingTransactionSignature> } => {
     if (moduleKind === 'opening') {
       return {
@@ -542,33 +505,13 @@ export default function BulkImportModal({
         alreadyImportedMatchByRow: new Map(),
       };
     }
-    const sixthField = (row: SettlementImportRow | TopUpImportRow): string =>
-      (moduleKind === 'topup' ? (row as TopUpImportRow).type : (row as SettlementImportRow).remarks) ?? '';
-    const rows = inputRows as (SettlementImportRow | TopUpImportRow)[];
-    // Cashout Top Up only, per explicit instruction — "Bundle Transfer In"
-    // rows legitimately repeat (multiple real bundles landing with the same
-    // brand/agent/wallet/amount/date is expected, not an accidental double-
-    // entry), so they're excluded from the dedup pool entirely rather than
-    // flagged and requiring a manual Skip/Import-anyway decision every time.
-    // Excluded from the INPUT to both duplicate checks (not filtered out of
-    // the results after the fact) so a Bundle Transfer In row also never
-    // causes some OTHER row to be flagged as ITS duplicate. Send Money and
-    // every other Top Up type are completely unaffected.
-    const dedupCandidateRows = moduleKind === 'topup' && product === 'cashout'
-      ? rows.filter((row) => ((row as TopUpImportRow).type ?? '').trim().toLowerCase() !== 'bundle transfer in')
-      : rows;
-    const alreadyImported = detectAlreadyImportedDuplicates(dedupCandidateRows, existingRecords, sixthField, (row) => toDateKey(row.date));
     return {
-      entries: [
-        ...(moduleKind === 'topup'
-          ? validateTopUpRows(inputRows as TopUpImportRow[], validationConfig)
-          : validateSettlementRows(inputRows as SettlementImportRow[], validationConfig)),
-        ...detectDuplicatesWithinFile(dedupCandidateRows as SettlementImportRow[]),
-        ...alreadyImported.entries,
-      ],
-      alreadyImportedMatchByRow: alreadyImported.matchByRow,
+      entries: moduleKind === 'topup'
+        ? validateTopUpRows(inputRows as TopUpImportRow[], validationConfig)
+        : validateSettlementRows(inputRows as SettlementImportRow[], validationConfig),
+      alreadyImportedMatchByRow: new Map(),
     };
-  }, [validationConfig, moduleKind, product]);
+  }, [validationConfig, moduleKind]);
 
   // What counts as "the row's headline amount" for the Total Amount stat
   // card / Complete screen — Opening Balance for the 'opening' module,
@@ -899,37 +842,16 @@ export default function BulkImportModal({
       let parsedRows: ImportRow[] = [];
       let computedEntries: ValidationEntry[] = [];
       let computedMatches: Map<number, ExistingTransactionSignature> = new Map();
-      let fetchedExistingRecords: ExistingTransactionSignature[] = [];
       let failure: string | null = null;
       try {
         const parsed = await parseWorkbookFile(file);
         parsedRows = moduleKind === 'opening' ? mapOpeningRows(parsed, product) : moduleKind === 'topup' ? mapTopUpRows(parsed, product) : mapSettlementRows(parsed, product);
 
-        // "Already imported" cross-check — part of this same scan, not a
-        // separate step (no extra loading state). Settlement/Top Up only;
-        // dates come from the file's OWN rows (a file can span several
-        // dates), never a fixed "today" — a row is only ever compared
-        // against existing records sharing its own date.
-        if (moduleKind !== 'opening' && product) {
-          const distinctDates = Array.from(new Set(
-            (parsedRows as (SettlementImportRow | TopUpImportRow)[])
-              .map((row) => toDateKey(row.date))
-              .filter((key): key is string => key !== null)
-          ));
-          if (distinctDates.length > 0) {
-            const existingRes = await fetch('/api/v2/import/existing-records', {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ product, transactionType: moduleKind, dates: distinctDates }),
-            });
-            // A failed check here doesn't fail the whole scan — the in-file
-            // check and the server's own fingerprint check at actual import
-            // time still apply; this is an added safety net, not the only one.
-            if (existingRes.ok) fetchedExistingRecords = await existingRes.json();
-          }
-        }
-
-        const validated = runValidation(parsedRows, fetchedExistingRecords);
+        // No "already imported" cross-check for Settlement/Top Up (see
+        // runValidation's own comment — duplicate detection is off for
+        // those two entirely now), so there's nothing for this fetch to
+        // feed anymore; skipped rather than fetched-and-ignored.
+        const validated = runValidation(parsedRows, []);
         computedEntries = validated.entries;
         computedMatches = validated.alreadyImportedMatchByRow;
       } catch (err) {
@@ -951,7 +873,7 @@ export default function BulkImportModal({
       }
       setRows(parsedRows);
       setEntries(computedEntries);
-      setExistingRecords(fetchedExistingRecords);
+      setExistingRecords([]);
       setAlreadyImportedMatchByRow(computedMatches);
       setSummary(calculateSummary(parsedRows, computedEntries));
       setStep('validation');
