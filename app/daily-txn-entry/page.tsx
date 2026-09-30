@@ -1731,6 +1731,13 @@ function PgClosingBalancesCard({ onActivity }: { onActivity: () => void }) {
                   {PG_LABELS[pg]}
                 </th>
               ))}
+              {/* Per-brand Total — sum across every PG column for that
+                  brand's row, per explicit instruction. Derived only, never
+                  editable, so it always reads straight from `data` (live
+                  while editing, same as the bottom Total row already did). */}
+              <th className="sticky top-0 z-[3] whitespace-nowrap bg-[#FAFBFC] px-3 py-2.5 text-right text-[11.5px] font-bold uppercase tracking-[0.03em] text-muted-foreground dark:bg-[#0E1119]">
+                Total
+              </th>
             </tr>
             {/* Per-PG "last update" sub-row — see handleSave: one Save
                 action covers the whole table, so all six refresh together,
@@ -1747,6 +1754,9 @@ function PgClosingBalancesCard({ onActivity }: { onActivity: () => void }) {
                   {lastUpdate[pg]}
                 </th>
               ))}
+              {/* No per-column "last update" for a derived Total — blank,
+                  keeps this sub-row's cells aligned with the header above. */}
+              <th className="sticky top-[33px] z-[3] whitespace-nowrap border-b border-[#EFF1F4] bg-[#FAFBFC] px-3 pb-2 text-right text-[10px] font-normal normal-case text-muted-foreground dark:border-[#1A1E29] dark:bg-[#0E1119]" />
             </tr>
           </thead>
           <tbody>
@@ -1797,6 +1807,24 @@ function PgClosingBalancesCard({ onActivity }: { onActivity: () => void }) {
                     </td>
                   );
                 })}
+                {(() => {
+                  // Derived only, never an <input> — reads `data` directly so
+                  // it live-recomputes on every keystroke while editing, same
+                  // as the bottom grand-Total row already does.
+                  const rowTotal = PG_KEYS.reduce((s, pg) => s + (data[pg][brand] ?? 0), 0);
+                  return (
+                    <td className="border-b border-[#EFF1F4] p-[5px] dark:border-[#1A1E29]">
+                      <span
+                        style={{ lineHeight: '18px' }}
+                        className={`block w-full rounded-md border border-transparent px-2 py-1.5 text-right text-[12.5px] font-bold tabular-nums ${
+                          rowTotal < 0 ? 'text-[color:var(--dd-neg)]' : 'text-foreground'
+                        }`}
+                      >
+                        {fmt(rowTotal)}
+                      </span>
+                    </td>
+                  );
+                })()}
               </tr>
             ))}
             <tr className="bg-[#FBFBFD] dark:bg-[#0E1119]">
@@ -1816,6 +1844,19 @@ function PgClosingBalancesCard({ onActivity }: { onActivity: () => void }) {
                   </td>
                 );
               })}
+              {(() => {
+                // Grand total — every brand's every PG cell, summed once.
+                const grandTotal = PG_KEYS.reduce((s, pg) => s + BRANDS.reduce((s2, b) => s2 + (data[pg][b] ?? 0), 0), 0);
+                return (
+                  <td
+                    className={`whitespace-nowrap border-t border-[#DEE1E8] px-3.5 py-2.5 text-right text-[13px] font-extrabold tabular-nums dark:border-[#262B38] ${
+                      grandTotal < 0 ? 'text-[color:var(--dd-neg)]' : 'text-foreground'
+                    }`}
+                  >
+                    {fmt(grandTotal)}
+                  </td>
+                );
+              })()}
             </tr>
           </tbody>
         </table>
