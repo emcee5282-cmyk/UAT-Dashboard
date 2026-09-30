@@ -381,11 +381,21 @@ export async function GET() {
     // Balance upload exists. Deliberately independent of
     // estimatedOpeningValid/estimatedSendMoneyOpeningValid: those two gate
     // the Opening KPI override specifically, not this strip.
+    // cashoutCutoffDate/sendMoneyCutoffDate are precise completedAt
+    // timestamps (e.g. 2026-09-30T02:22:21.100Z), not business-day-rounded
+    // values — comparing .getTime() directly against cutoff (a rounded
+    // business-day anchor) could never match, even the same business day,
+    // unless the import happened to complete on the exact millisecond of
+    // the boundary. Needs the same toBusinessDate() wrapper the Estimated
+    // Opening check right after it already uses. Confirmed live: today's
+    // Opening import completed at 02:22 AM but this check still evaluated
+    // false, so the CashGo/Bundle Transfer "Today" strip kept showing
+    // yesterday's figure under yesterday's own date label.
     const cashoutHasTodayBalanceData =
-      (cashoutCutoffDate !== null && cashoutCutoffDate.getTime() === cutoff.getTime()) ||
+      (cashoutCutoffDate !== null && toBusinessDate(cashoutCutoffDate).getTime() === cutoff.getTime()) ||
       (estimatedOpening.uploadedAt !== null && toBusinessDate(estimatedOpening.uploadedAt).getTime() === cutoff.getTime());
     const sendMoneyHasTodayBalanceData =
-      (sendMoneyCutoffDate !== null && sendMoneyCutoffDate.getTime() === cutoff.getTime()) ||
+      (sendMoneyCutoffDate !== null && toBusinessDate(sendMoneyCutoffDate).getTime() === cutoff.getTime()) ||
       (estimatedSendMoneyOpening.uploadedAt !== null && toBusinessDate(estimatedSendMoneyOpening.uploadedAt).getTime() === cutoff.getTime());
 
     // Opening KPI / wallet tiles — per explicit instruction, driven ONLY by
