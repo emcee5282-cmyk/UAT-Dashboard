@@ -1,9 +1,10 @@
 'use client';
 
-import { RefreshCw, ShieldAlert, WifiOff, FileQuestion, AlertCircle } from 'lucide-react';
+import { RefreshCw, ShieldAlert, WifiOff, FileQuestion, AlertCircle, LogIn } from 'lucide-react';
 import type { ClassifiedError, ErrorKind } from '@/app/lib/errors';
 
 const ICONS: Record<ErrorKind, typeof AlertCircle> = {
+  session: LogIn,
   auth: ShieldAlert,
   network: WifiOff,
   notfound: FileQuestion,
@@ -18,6 +19,12 @@ export default function ConnectionErrorState({
   onRetry: () => void;
 }) {
   const Icon = ICONS[error.kind];
+  // A session error means every retry will fail the same way until the
+  // user actually logs in again — "Try Again" alone isn't an honest action
+  // here, so "Log In Again" (a real navigation to /login) leads instead,
+  // with Try Again kept only as a secondary option in case the session
+  // genuinely was just a transient blip.
+  const isSession = error.kind === 'session';
   return (
     <div className="flex flex-col gap-3 rounded-2xl border border-rose-200 bg-rose-50 px-5 py-4 dark:border-rose-900/60 dark:bg-rose-500/10">
       <div className="flex items-start gap-3">
@@ -28,6 +35,15 @@ export default function ConnectionErrorState({
         </div>
       </div>
       <div className="flex flex-wrap items-center gap-3 pl-[30px]">
+        {isSession && (
+          <a
+            href="/login"
+            className="inline-flex items-center gap-1.5 rounded-lg border border-transparent bg-rose-600 px-3 py-1.5 text-[12px] font-medium text-white transition-colors hover:bg-rose-700"
+          >
+            <LogIn size={12} />
+            Log In Again
+          </a>
+        )}
         <button
           type="button"
           onClick={onRetry}

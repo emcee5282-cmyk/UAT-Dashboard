@@ -5,7 +5,7 @@
 // non-technical user can act on, while keeping the raw text available for
 // anyone who needs to debug further.
 
-export type ErrorKind = 'auth' | 'network' | 'notfound' | 'unknown';
+export type ErrorKind = 'session' | 'auth' | 'network' | 'notfound' | 'unknown';
 
 export type ClassifiedError = {
   kind: ErrorKind;
@@ -14,7 +14,33 @@ export type ClassifiedError = {
   detail: string;
 };
 
+// Detects OUR OWN app's session/role check (middleware.ts) by its EXACT
+// JSON shape — { error: 'Unauthorized' } (no session) or { error:
+// 'Forbidden' } (wrong role) — rather than loosely matching the word
+// "unauthorized" anywhere in the text. Confirmed live: a page's own fetch
+// to e.g. /api/dashboard after the login session expired returns this
+// exact body, and the generic word-match below was mislabeling it
+// "Google Sheets access lost" — a confusing, wrong diagnosis for what's
+// actually just an expired login, unrelated to Sheets permissions at all.
+function isOwnSessionError(raw: string): boolean {
+  try {
+    const parsed = JSON.parse(raw);
+    return parsed?.error === 'Unauthorized' || parsed?.error === 'Forbidden';
+  } catch {
+    return false;
+  }
+}
+
 export function classifyFetchError(raw: string): ClassifiedError {
+  if (isOwnSessionError(raw)) {
+    return {
+      kind: 'session',
+      title: 'Session expired',
+      message: 'Your login session has expired or is no longer valid. Please log in again to continue.',
+      detail: raw,
+    };
+  }
+
   const lower = raw.toLowerCase();
 
   if (
