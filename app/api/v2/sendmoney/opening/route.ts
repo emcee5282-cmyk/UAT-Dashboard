@@ -4,9 +4,11 @@ import { updateOpeningAgents, deleteOpeningAgent, createOpeningAgent, OpeningAct
 
 // Phase 5 — Postgres-backed Today's Opening for Send Money
 // (app/sendmoney/opening).
-export async function GET() {
+// ?includeInactive=true — see app/api/v2/opening/route.ts's own comment.
+export async function GET(request: Request) {
   try {
-    const rows = await getSendMoneyOpeningPgRows();
+    const includeInactive = new URL(request.url).searchParams.get('includeInactive') === 'true';
+    const rows = await getSendMoneyOpeningPgRows(includeInactive);
     return NextResponse.json(rows, { headers: { 'Cache-Control': 'no-store' } });
   } catch (err) {
     const message = err instanceof Error ? err.message : 'Failed to load Opening data';

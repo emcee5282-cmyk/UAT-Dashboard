@@ -52,7 +52,13 @@ export type CashoutOpeningRow = {
   walletOpening: { id: number; rawAgentName: string; amount: number; sdp: number; walletTypeSuffix: string | null }[];
 };
 
-export async function getCashoutOpeningRows(): Promise<CashoutOpeningRow[]> {
+// includeInactive=true is used only by the Settlement/TopUp entry forms,
+// which need the full roster (a shop the automatic Opening-upload
+// reconciliation marked isActive=false — e.g. absent from the latest
+// Opening file with no Balance Limit DP/WD — must still be selectable for
+// a Settlement/TopUp entry). The Opening page itself always calls this
+// with the default (false), so its own displayed rows are unchanged.
+export async function getCashoutOpeningRows(includeInactive = false): Promise<CashoutOpeningRow[]> {
   const db = getDb();
 
   const agentRows = await db
@@ -69,7 +75,9 @@ export async function getCashoutOpeningRows(): Promise<CashoutOpeningRow[]> {
     .from(schema.agents)
     .leftJoin(schema.leaders, eq(schema.agents.leaderId, schema.leaders.id))
     .leftJoin(schema.brands, eq(schema.agents.brandId, schema.brands.id))
-    .where(and(eq(schema.agents.product, 'cashout'), eq(schema.agents.isActive, true)));
+    .where(includeInactive
+      ? eq(schema.agents.product, 'cashout')
+      : and(eq(schema.agents.product, 'cashout'), eq(schema.agents.isActive, true)));
 
   const walletRows = await db
     .select({
@@ -137,7 +145,8 @@ export type SendMoneyOpeningPgRow = {
   lastImportMatchedAt: string | null;
 };
 
-export async function getSendMoneyOpeningPgRows(): Promise<SendMoneyOpeningPgRow[]> {
+// includeInactive — see getCashoutOpeningRows' own comment.
+export async function getSendMoneyOpeningPgRows(includeInactive = false): Promise<SendMoneyOpeningPgRow[]> {
   const db = getDb();
 
   const agentRows = await db
@@ -153,7 +162,9 @@ export async function getSendMoneyOpeningPgRows(): Promise<SendMoneyOpeningPgRow
     .from(schema.agents)
     .leftJoin(schema.leaders, eq(schema.agents.leaderId, schema.leaders.id))
     .leftJoin(schema.brands, eq(schema.agents.brandId, schema.brands.id))
-    .where(and(eq(schema.agents.product, 'sendmoney'), eq(schema.agents.isActive, true)));
+    .where(includeInactive
+      ? eq(schema.agents.product, 'sendmoney')
+      : and(eq(schema.agents.product, 'sendmoney'), eq(schema.agents.isActive, true)));
 
   return agentRows.map((a) => ({
     agentCode: a.agentCode,

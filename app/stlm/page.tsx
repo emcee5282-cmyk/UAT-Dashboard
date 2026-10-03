@@ -1097,7 +1097,7 @@ export default function StlmPage() {
       const rangeParams = range ? `&from=${range.from}&to=${range.to}` : '';
       const [res, openingRes, availableRes] = await Promise.all([
         fetch(`/api/v2/settlement?t=${Date.now()}${rangeParams}`),
-        fetch(`/api/v2/opening?t=${Date.now()}`),
+        fetch(`/api/v2/opening?includeInactive=true&t=${Date.now()}`),
         fetch(`/api/v2/settlement/available-dates?t=${Date.now()}`),
       ]);
       if (!res.ok) {

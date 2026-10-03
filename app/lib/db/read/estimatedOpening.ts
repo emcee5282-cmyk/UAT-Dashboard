@@ -324,7 +324,7 @@ export async function readEstimatedOpeningDisplayPg(product: Product): Promise<{
   // table, same isActive gap already fixed elsewhere this session
   // (getAgentBalances, getCashoutOpeningRows) but missed here.
   const rosterRows = await db
-    .select({ id: schema.agents.id, agentCode: schema.agents.agentCode, openingBalance: schema.agents.openingBalance, previousOpeningBalance: schema.agents.previousOpeningBalance, leaderName: schema.leaders.name })
+    .select({ id: schema.agents.id, agentCode: schema.agents.agentCode, openingBalance: schema.agents.openingBalance, previousOpeningBalance: schema.agents.previousOpeningBalance, sdp: schema.agents.sdp, leaderName: schema.leaders.name })
     .from(schema.agents)
     .leftJoin(schema.leaders, eq(schema.agents.leaderId, schema.leaders.id))
     .where(and(eq(schema.agents.product, product), eq(schema.agents.isActive, true)));
@@ -391,6 +391,12 @@ export async function readEstimatedOpeningDisplayPg(product: Product): Promise<{
   const settlementByAgentCodeAndType = new Map<string, Record<string, number>>();
   const topupByAgentWalletAndType = new Map<string, Record<string, number>>();
   const settlementByAgentWalletAndType = new Map<string, Record<string, number>>();
+  // Row EXISTENCE for today (cutoffDateStr), not sum != 0 — a 0/0 shop with
+  // e.g. one +500 and one -500 Settlement row still has to count as "has
+  // activity" even though settlementTotal nets to 0. Used only by the
+  // zero-shop visibility gate below, never the balance math itself.
+  const agentCodesWithTopupRow = new Set<string>();
+  const agentCodesWithSettlementRow = new Set<string>();
   // Rows whose agent is inactive fall outside the roster loop below entirely
   // (rosterRows is isActive=true only) and would otherwise silently vanish —
   // per explicit instruction, tracked separately here and surfaced as an
@@ -440,6 +446,7 @@ export async function readEstimatedOpeningDisplayPg(product: Product): Promise<{
       (isTopup ? typeMaps.topup : typeMaps.settlement)[type] += amount;
       topupByAgentCodeAndType.set(t.agentCode, typeMaps.topup);
       settlementByAgentCodeAndType.set(t.agentCode, typeMaps.settlement);
+      (isTopup ? agentCodesWithTopupRow : agentCodesWithSettlementRow).add(t.agentCode);
 
       if (t.wallet) {
         const key = `${t.agentId}:${t.wallet}`;
@@ -565,6 +572,20 @@ export async function readEstimatedOpeningDisplayPg(product: Product): Promise<{
     const topupTotal = Object.values(topupByType).reduce((s, v) => s + v, 0);
     const settlementTotal = Object.values(settlementByType).reduce((s, v) => s + v, 0);
     const assumedBalance = opening + deposit - withdrawal + topupTotal - settlementTotal;
+
+    // Zero-shop visibility gate — a shop with 0 opening AND 0 SDP (missing
+    // opening row treated as 0, per roster.sdp's own null-coalesce below)
+    // stays hidden by default, UNLESS it has at least one Settlement row,
+    // one TopUp row, or DP/WD today (row existence, not sum != 0 — see
+    // agentCodesWith*Row's own comment above). A non-zero opening or SDP
+    // shop is never touched by this check.
+    const sdpValue = roster.sdp === null ? 0 : parseFloat(roster.sdp);
+    if (opening === 0 && sdpValue === 0) {
+      const hasActivity = agentCodesWithSettlementRow.has(roster.agentCode)
+        || agentCodesWithTopupRow.has(roster.agentCode)
+        || deposit !== 0 || withdrawal !== 0;
+      if (!hasActivity) continue;
+    }
 
     balancesWithFallback.set(roster.agentCode, assumedBalance);
     shopRows.push({ agentCode: roster.agentCode, displayName: shopDisplayName, openingBalance: opening, deposit, withdrawal, topupByType, settlementByType, estimatedBalance: assumedBalance });

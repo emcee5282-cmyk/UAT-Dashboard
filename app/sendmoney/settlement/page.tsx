@@ -936,7 +936,7 @@ export default function SendMoneySettlementPage() {
       const rangeParams = range ? `&from=${range.from}&to=${range.to}` : '';
       const [res, openingRes, availableRes] = await Promise.all([
         fetch(`/api/v2/sendmoney/settlement?t=${Date.now()}${rangeParams}`),
-        fetch(`/api/v2/sendmoney/opening?t=${Date.now()}`),
+        fetch(`/api/v2/sendmoney/opening?includeInactive=true&t=${Date.now()}`),
         fetch(`/api/v2/sendmoney/settlement/available-dates?t=${Date.now()}`),
       ]);
       if (!res.ok) {

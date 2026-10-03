@@ -3,9 +3,13 @@ import { getCashoutOpeningRows } from '@/app/lib/services/openingPageService';
 import { updateOpeningAgents, deleteOpeningAgent, createOpeningAgent, OpeningActionError, type OpeningFieldUpdates, type NewOpeningAgent } from '@/app/lib/services/openingActionsService';
 
 // Phase 5 — Postgres-backed Today's Opening for Cashout (app/summary).
-export async function GET() {
+// ?includeInactive=true — Settlement/TopUp's own roster fetch opts into
+// this so a shop the Opening-upload reconciliation deactivated is still
+// selectable there; the Opening page's own fetch never passes it.
+export async function GET(request: Request) {
   try {
-    const rows = await getCashoutOpeningRows();
+    const includeInactive = new URL(request.url).searchParams.get('includeInactive') === 'true';
+    const rows = await getCashoutOpeningRows(includeInactive);
     return NextResponse.json(rows, { headers: { 'Cache-Control': 'no-store' } });
   } catch (err) {
     const message = err instanceof Error ? err.message : 'Failed to load Opening data';
