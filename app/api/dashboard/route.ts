@@ -453,11 +453,17 @@ export async function GET() {
     // figures per-agent server-side.
     const cashoutWalletDP = new Map<string, number>();
     const cashoutWalletWD = new Map<string, number>();
+    // "Actual" / Balance Inside Wallet — same live source as DP/WD above.
+    // Σ balance where is_logged_in, the exact definition balanceService.ts's
+    // own balanceInside uses, so this reconciles with the Agent Balance
+    // page instead of drifting from it.
+    const cashoutWalletActual = new Map<string, number>();
     cashoutAgentWalletRaw.forEach((row) => {
       if (!row.walletTypeCode) return;
       const wType = row.walletTypeCode.toLowerCase();
       cashoutWalletDP.set(wType, (cashoutWalletDP.get(wType) ?? 0) + row.totalDp);
       cashoutWalletWD.set(wType, (cashoutWalletWD.get(wType) ?? 0) + row.totalWd);
+      cashoutWalletActual.set(wType, (cashoutWalletActual.get(wType) ?? 0) + (row.isLoggedIn ? row.balance : 0));
     });
 
     // Wallet-type Top Up/Settlement — Postgres (wallet_transactions via
@@ -499,6 +505,11 @@ export async function GET() {
       // absent key and a genuine 0 are already the same thing there.
       if (cashoutWalletDP.has(key)) row.totalDP = cashoutWalletDP.get(key)!;
       if (cashoutWalletWD.has(key)) row.totalWD = -cashoutWalletWD.get(key)!;
+      // Same .has() reasoning as DP/WD — dashboard_manual_balances was
+      // seeded once at migration and is never written again, so without
+      // this override "Actual" stays frozen on that snapshot forever
+      // (confirmed live: every row still read 2026-09-23 twelve days on).
+      if (cashoutWalletActual.has(key)) row.actualBal = cashoutWalletActual.get(key)!;
       if (topUp) row.bdTransferIn = topUp;
       if (stlm) row.stlm = -stlm;
       // Opening overridden from the SAME 4-wallet cascade the KPI above
@@ -615,6 +626,11 @@ export async function GET() {
     // figures per-agent server-side.
     const sendMoneyWalletDP = new Map<string, number>();
     const sendMoneyWalletWD = new Map<string, number>();
+    // "Actual" / Balance Inside Wallet — see cashoutWalletActual's comment.
+    // Kept on the WITH-BD side (same as sendMoneyWalletDP/WD, which feed the
+    // Wallet Summary ledger) — Top Performer's own non-BD split below is a
+    // separate concern this must not follow.
+    const sendMoneyWalletActual = new Map<string, number>();
     const walletDPNonBD = new Map<string, number>();
     const walletWDNonBD = new Map<string, number>();
     let bdKeywordDP = 0;
@@ -626,6 +642,7 @@ export async function GET() {
       if (label) {
         sendMoneyWalletDP.set(label, (sendMoneyWalletDP.get(label) ?? 0) + row.totalDp);
         sendMoneyWalletWD.set(label, (sendMoneyWalletWD.get(label) ?? 0) + row.totalWd);
+        sendMoneyWalletActual.set(label, (sendMoneyWalletActual.get(label) ?? 0) + (row.isLoggedIn ? row.balance : 0));
         if (!isBdKeyword) {
           walletDPNonBD.set(label, (walletDPNonBD.get(label) ?? 0) + row.totalDp);
           walletWDNonBD.set(label, (walletWDNonBD.get(label) ?? 0) + row.totalWd);
@@ -685,6 +702,7 @@ export async function GET() {
       // comment above for why (same bug class, same fix, same source shape).
       if (sendMoneyWalletDP.has(key)) row.totalDP = sendMoneyWalletDP.get(key)!;
       if (sendMoneyWalletWD.has(key)) row.totalWD = -sendMoneyWalletWD.get(key)!;
+      if (sendMoneyWalletActual.has(key)) row.actualBal = sendMoneyWalletActual.get(key)!;
       if (topUp) row.bdTransferIn = topUp;
       if (stlm) row.stlm = -stlm;
       // Opening overridden from the SAME 4-wallet cascade the KPI above sums
