@@ -46,8 +46,19 @@ function n(val: string | null): number {
   return val === null ? 0 : parseFloat(val);
 }
 
+// Manila-aware, NOT date.getFullYear()/getMonth()/getDate() — those read
+// the RUNTIME's own local timezone, which silently differs from Manila's
+// calendar date around the 2-10 PM Manila window on a UTC-default server
+// (the VPS, and Vercel per businessDate.ts's own header comment). Confirmed
+// live: on the VPS, cutoff=businessToday (Manila midnight, e.g. instant
+// "...T16:00:00.000Z") read back as the PREVIOUS day there, so every
+// Top Up/Settlement total below silently widened to include all of
+// yesterday on top of today — this function is the one place in this file
+// that bypassed businessDate.ts's Manila-safe helpers with its own naive
+// local-getter version.
 function dateOnlyStr(date: Date): string {
-  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
+  const { year, month, day } = manilaFields(date);
+  return `${year}-${String(month + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
 }
 
 // Cutoff signal for the Estimated Opening override + the Top Up/Settlement
