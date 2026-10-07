@@ -1054,6 +1054,15 @@ function useEstimatedLedgerData(ledgerId: 'ssp1' | 'ssp2'): EstimatedLedgerState
 
   useEffect(() => {
     let cancelled = false;
+    // Reset to true on every ledgerId change, not just the first mount —
+    // without this, switching Estimated Line 1 -> Line 2 left `loading`
+    // sitting on `false` from the PREVIOUS tab's completed fetch, so the
+    // skeleton never showed again and the figures only silently swapped
+    // once the new fetch resolved — looked like only the title/name
+    // updated (confirmed live: "nagbabago lang yung pangalan, hindi
+    // nagrerefresh yung data" was this card still showing the other
+    // ledger's stale rows for the whole fetch, not a wrong-product bug).
+    setLoading(true);
     (async () => {
       const res = await fetch(`/api/daily-txn-entry/estimated?ledgerId=${ledgerId}`);
       const json = await res.json();
