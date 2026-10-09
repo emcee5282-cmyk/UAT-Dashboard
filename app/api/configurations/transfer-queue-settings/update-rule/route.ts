@@ -25,7 +25,11 @@ export async function POST(request: Request) {
     // value — the whole point of Enabled is to let an admin say "don't
     // apply this yet" without needing a real Value/Queue Result first.
     if (enabled) {
-      if (!Number.isFinite(value1) || value1 <= 0 || !queueResult) {
+      // Negative (and zero) value1 is a real, intentional threshold now —
+      // e.g. "Company Balance Less Than 0" / "Less Than -50000" — per
+      // explicit instruction, only rejects a genuinely missing/non-numeric
+      // value, not a sign.
+      if (!Number.isFinite(value1) || !queueResult) {
         return NextResponse.json({ error: 'Missing or invalid value1/queueResult.' }, { status: 400 });
       }
       if (operator === 'Between' && (value2 === null || !Number.isFinite(value2) || value2 <= value1)) {
