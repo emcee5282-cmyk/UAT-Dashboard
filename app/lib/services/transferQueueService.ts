@@ -125,7 +125,7 @@ function computeSdpVsBalanceRaw(sdpNum: number, companyBalance: number): number 
   return sdpNum === 0 ? companyBalance : companyBalance - sdpNum;
 }
 
-type WalletGroupRow = { walletId: number; agentId: number; groupCode: string | null; rawAccount: string | null };
+type WalletGroupRow = { walletId: number; agentId: number; groupCode: string | null; rawAccount: string | null; isLoggedIn: boolean };
 
 async function loadWalletGroups(product: Product): Promise<WalletGroupRow[]> {
   const db = getDb();
@@ -135,6 +135,7 @@ async function loadWalletGroups(product: Product): Promise<WalletGroupRow[]> {
       agentId: schema.agentWallets.agentId,
       groupCode: schema.agentWallets.groupCode,
       rawAccount: schema.agentWallets.rawAccount,
+      isLoggedIn: schema.agentWallets.isLoggedIn,
     })
     .from(schema.agentWallets)
     .innerJoin(schema.agents, eq(schema.agentWallets.agentId, schema.agents.id))
@@ -165,6 +166,13 @@ export async function getCashoutTransferQueueRows(): Promise<TransferQueueRow[]>
     // JETT013).
     const walletStatus = b.walletStatus;
     if (EXCLUDED_WALLET_STATUSES.includes(walletStatus)) continue;
+    // walletStatus above is the AGENT-level rollup across every one of this
+    // shop's wallets — a shop with one logged-in wallet and one logged-out
+    // wallet can still roll up to e.g. "DP + WD", letting the logged-out
+    // wallet's own row through. This Login check is per-WALLET (matches how
+    // this loop already iterates), per explicit instruction: only show
+    // wallets that are actually logged in.
+    if (!w.isLoggedIn) continue;
 
     const currentGroup = (w.groupCode ?? '').trim();
     if (currentGroup.toLowerCase().includes('top up')) continue;
@@ -212,6 +220,8 @@ export async function getSendMoneyTransferQueueRows(): Promise<TransferQueueRow[
     // Balance page shows, Login override included, no independent computation.
     const walletStatus = b.walletStatus;
     if (EXCLUDED_WALLET_STATUSES.includes(walletStatus)) continue;
+    // Per-wallet Login check — see Cashout's own copy of this comment above.
+    if (!w.isLoggedIn) continue;
 
     const currentGroup = (w.groupCode ?? '').trim();
     if (currentGroup.toLowerCase().includes('top up')) continue;
