@@ -114,13 +114,28 @@ function fmt(n: number): string {
 
 // "Last update" display format — MM/DD - HH:MM AM/PM, per explicit
 // instruction (no year, 12-hour clock).
+// Manila-anchored, NOT date.getMonth()/getDate()/getHours() — those read
+// the viewer's own local timezone, which silently differs from Manila's
+// wall clock on anything not set to GMT+8 (confirmed live: the Telegram
+// screenshot bot's headless browser runs on the VPS, UTC, and showed this
+// 8 hours behind the real Manila time a normal browser displayed for the
+// exact same instant).
 function formatLastUpdate(date: Date): string {
-  const mm = String(date.getMonth() + 1).padStart(2, '0');
-  const dd = String(date.getDate()).padStart(2, '0');
-  const hours24 = date.getHours();
+  const parts = new Intl.DateTimeFormat('en-US', {
+    timeZone: 'Asia/Manila',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    hourCycle: 'h23',
+  }).formatToParts(date);
+  const get = (type: string) => parts.find((p) => p.type === type)?.value ?? '00';
+  const mm = get('month');
+  const dd = get('day');
+  const hours24 = Number(get('hour'));
+  const minutes = get('minute');
   const ampm = hours24 >= 12 ? 'PM' : 'AM';
   const hours12 = String(hours24 % 12 || 12).padStart(2, '0');
-  const minutes = String(date.getMinutes()).padStart(2, '0');
   return `${mm}/${dd} - ${hours12}:${minutes} ${ampm}`;
 }
 
@@ -527,7 +542,7 @@ function LedgerCard({ def, onActivity }: { def: LedgerMeta; onActivity: () => vo
               this ledger has nothing yet, same as Balance's own convention. */}
           {lastUpdateAt && (
             <span className="hidden text-[10.5px] text-muted-foreground sm:inline">
-              Last Update: <span className="font-[500]! tabular-nums">{lastUpdateAt.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', second: '2-digit', hour12: true })}</span>
+              Last Update: <span className="font-[500]! tabular-nums">{lastUpdateAt.toLocaleTimeString('en-US', { timeZone: 'Asia/Manila', hour: 'numeric', minute: '2-digit', second: '2-digit', hour12: true })}</span>
             </span>
           )}
           {editing ? (

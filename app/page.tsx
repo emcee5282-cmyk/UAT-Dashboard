@@ -463,7 +463,7 @@ function TodaysInsightCard({ product, label, overview }: { product: Product; lab
             upper-right of this card's title row per explicit instruction. */}
         {overview.lastUpdate && (
           <span className="text-[10.5px] text-muted-foreground">
-            Last Update: <span className="font-[500]! tabular-nums">{new Date(overview.lastUpdate).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', second: '2-digit', hour12: true })}</span>
+            Last Update: <span className="font-[500]! tabular-nums">{new Date(overview.lastUpdate).toLocaleTimeString('en-US', { timeZone: 'Asia/Manila', hour: 'numeric', minute: '2-digit', second: '2-digit', hour12: true })}</span>
           </span>
         )}
       </div>

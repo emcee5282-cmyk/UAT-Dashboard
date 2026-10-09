@@ -1526,7 +1526,7 @@ export default function SendMoneyAgentBalance() {
         titleExtra={
           lastBalanceLimitUpload && (
             <span className="hidden text-[10.5px] text-muted-foreground sm:inline">
-              Last Update: <span className="font-[500]! tabular-nums">{lastBalanceLimitUpload.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', second: '2-digit', hour12: true })}</span>
+              Last Update: <span className="font-[500]! tabular-nums">{lastBalanceLimitUpload.toLocaleTimeString('en-US', { timeZone: 'Asia/Manila', hour: 'numeric', minute: '2-digit', second: '2-digit', hour12: true })}</span>
             </span>
           )
         }
