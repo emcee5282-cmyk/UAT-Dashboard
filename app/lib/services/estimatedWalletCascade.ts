@@ -185,9 +185,20 @@ export async function computeWalletEstimates(
   // function with a flag (not two copies) per this file's own "one shared
   // computation" principle — only Tier-0 (today) differs, everything else
   // (Tier 1-3 inside resolveWalletOpening) is identical for both callers.
-  useTodayConfirmed = false
+  useTodayConfirmed = false,
+  // The upload `walletTotals` actually came from (readEstimatedOpeningDisplayPg's
+  // own uploadCutoffDate) — null if there's no upload at all. Confirmed live:
+  // without this check, a stale upload (no fresh file yet for today, e.g.
+  // right after the 2AM business-day rollover) still had its DP/WD/
+  // Settlement/Topup silently applied here, blended with a correctly-dated
+  // Opening baseline from resolveWalletOpening's own per-date cascade below —
+  // two different dates' numbers combined into one card with no indication
+  // anything was stale. The fix: only trust `walletTotals` when its own
+  // cutoff date actually IS today.
+  uploadCutoffDate: string | null = null
 ): Promise<WalletEstimate[]> {
   const today = subtractDays(yesterday, -1);
+  const walletTotalsAreForToday = uploadCutoffDate === today;
   const [cascadeData, todayConfirmedRows] = await Promise.all([
     fetchCascadeData(ledgerId, product, yesterday),
     useTodayConfirmed ? getDailyTxnWalletClosing(ledgerId, today) : Promise.resolve([]),
@@ -199,7 +210,7 @@ export async function computeWalletEstimates(
   return Promise.all(
     PG_WALLETS.map(async (wallet) => {
       const todayConfirmed = todayConfirmedByWallet.get(wallet);
-      const t = walletTotals.get(WALLET_TO_KEY[wallet]);
+      const t = walletTotalsAreForToday ? walletTotals.get(WALLET_TO_KEY[wallet]) : undefined;
       if (todayConfirmed !== undefined) {
         // amount stays the confirmed value as-is (no addition — the
         // confirmed figure already reflects yesterday's activity, adding t

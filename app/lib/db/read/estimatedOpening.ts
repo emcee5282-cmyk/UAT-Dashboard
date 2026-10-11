@@ -280,6 +280,15 @@ export async function readEstimatedOpeningDisplayPg(product: Product): Promise<{
   walletRows: EstimatedOpeningWalletRow[];
   walletTotals: Map<string, EstimatedOpeningWalletTotals>;
   uploadedAt: Date | null;
+  // The latest upload's own cutoff_date ('YYYY-MM-DD', already a plain
+  // string per this column's Drizzle type — no timezone conversion
+  // needed). Exposed so a caller computing "today's" wallet estimate
+  // (computeWalletEstimates) can verify this upload is actually FOR the
+  // date it's about to apply — see that function's own comment for the
+  // live bug this guards against (a stale, days-old upload's DP/WD/
+  // Settlement/Topup silently getting blended with a correctly-dated
+  // Opening baseline from the separate per-date cascade).
+  uploadCutoffDate: string | null;
   lastImport: ImportLogEntry | null;
 }> {
   const db = getDb();
@@ -290,7 +299,7 @@ export async function readEstimatedOpeningDisplayPg(product: Product): Promise<{
     .orderBy(desc(schema.estimatedBalanceUploads.uploadedAt))
     .limit(1);
 
-  const emptyResult = { balances: new Map<string, number>(), balancesWithFallback: new Map<string, number>(), rows: [] as EstimatedOpeningDisplayRow[], shopRows: [] as EstimatedOpeningShopRow[], walletRows: [] as EstimatedOpeningWalletRow[], walletTotals: new Map<string, EstimatedOpeningWalletTotals>(), uploadedAt: null, lastImport: null };
+  const emptyResult = { balances: new Map<string, number>(), balancesWithFallback: new Map<string, number>(), rows: [] as EstimatedOpeningDisplayRow[], shopRows: [] as EstimatedOpeningShopRow[], walletRows: [] as EstimatedOpeningWalletRow[], walletTotals: new Map<string, EstimatedOpeningWalletTotals>(), uploadedAt: null, uploadCutoffDate: null, lastImport: null };
   if (!latestUpload) return emptyResult;
 
   const entries = await db
@@ -628,5 +637,5 @@ export async function readEstimatedOpeningDisplayPg(product: Product): Promise<{
   shopRows.sort((a, b) => a.agentCode.localeCompare(b.agentCode));
   walletRows.sort((a, b) => a.agentCode.localeCompare(b.agentCode) || a.walletDisplayName.localeCompare(b.walletDisplayName));
 
-  return { balances, balancesWithFallback, rows, shopRows, walletRows, walletTotals, uploadedAt: latestUpload.uploadedAt, lastImport };
+  return { balances, balancesWithFallback, rows, shopRows, walletRows, walletTotals, uploadedAt: latestUpload.uploadedAt, uploadCutoffDate: latestUpload.cutoffDate, lastImport };
 }

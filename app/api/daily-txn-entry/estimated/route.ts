@@ -88,7 +88,7 @@ export async function GET(request: Request) {
   // computeWalletEstimates is the SAME function the Dashboard's own Opening/
   // wallet tiles call (estimatedWalletCascade.ts) — per explicit instruction,
   // not duplicated here.
-  const walletTypeCards = await computeWalletEstimates(ledgerId, product, yesterday, estimated.walletTotals);
+  const walletTypeCards = await computeWalletEstimates(ledgerId, product, yesterday, estimated.walletTotals, false, estimated.uploadCutoffDate);
 
   // Unmapped Settlement/Topup — wallet_transactions rows for this upload's
   // cutoffDate whose own `wallet` text didn't normalize to a known wallet
