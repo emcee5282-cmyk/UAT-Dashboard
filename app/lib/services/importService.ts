@@ -628,12 +628,7 @@ export async function importOpeningFile(params: { product: Product; file: File; 
         // display regardless, so this is a no-op there.
         const openingBalance = row.openingBalance.trim() === '' ? '0.00' : parseAmount(row.openingBalance).toFixed(2);
         const sdp = row.sdp.trim() === '' ? '0.00' : parseAmount(row.sdp).toFixed(2);
-
-        // A row with genuinely nothing in it (both Opening Balance and SDP
-        // are 0) is skipped entirely — no match, no insert, no wallet
-        // write. Either figure being non-zero still posts normally, per
-        // explicit instruction ("kapag may SDP need mo i-posted").
-        if (parseFloat(openingBalance) === 0 && parseFloat(sdp) === 0) continue;
+        const isZeroRow = parseFloat(openingBalance) === 0 && parseFloat(sdp) === 0;
 
         if (agentId) {
           if (!reconciledAgentIds.has(agentId)) {
@@ -679,12 +674,25 @@ export async function importOpeningFile(params: { product: Product; file: File; 
           continue;
         }
 
-        // No match — auto-inserted as a new shop directly, no manual
-        // per-row decision required. A 'link' decision (if the client still
-        // sends one) supplies its own Leader; otherwise the row's own
-        // Leader column is used, same find-or-create resolution either way.
-        // Left as a real per-row insert (not batched) — new shops are a
-        // small, bounded count per upload, not worth the added complexity.
+        // No match — a row with genuinely nothing in it (both Opening
+        // Balance and SDP are 0) isn't worth creating a brand-new shop
+        // for, so it's skipped entirely here: no insert, no wallet write.
+        // This is scoped to ONLY the no-match case — an EXISTING shop's
+        // own 0/0 row is handled by the `if (agentId)` branch above and is
+        // never skipped. (It used to be skipped unconditionally before
+        // that branch, which was a real bug, caught live: a shop whose
+        // balance correctly dropped to 0 in a later upload could never
+        // actually reach 0 in the database, since the update that should
+        // have reset it was silently thrown away every time, permanently
+        // freezing that shop's last non-zero value.)
+        if (isZeroRow) continue;
+
+        // Auto-inserted as a new shop directly, no manual per-row decision
+        // required. A 'link' decision (if the client still sends one)
+        // supplies its own Leader; otherwise the row's own Leader column
+        // is used, same find-or-create resolution either way. Left as a
+        // real per-row insert (not batched) — new shops are a small,
+        // bounded count per upload, not worth the added complexity.
         const rawLeaderName = decision?.action === 'insert' ? decision.leader : row.leader;
         // Placeholder ("New-TempAutoPlot"/"NEW SHOP"/blank) defers to a
         // same-family sibling's real Leader when one exists — see
