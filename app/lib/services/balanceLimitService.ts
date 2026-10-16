@@ -76,6 +76,19 @@ function resolveWalletTypeCode(product: Product, rawBank: string): string {
   return product === 'sendmoney' ? upper.replace(/C$/, '') : upper;
 }
 
+// Cashout only — stagnant_balance_wallet_streak's own BK/NG/RK/UP key, the
+// inverse of OPENING_SUFFIX_TO_WALLET_TYPE in estimatedOpeningService.ts
+// (not imported — same "reproduced here" convention this file already
+// follows for resolveWalletTypeCode above). THIS is the upload that
+// actually feeds the Balance tab's own Total WD/Company Balance (agent_
+// wallets) — a real per-wallet Withdrawal arriving here is the real-world
+// signal Stagnant Balances' same-day clear needs, not Estimated Balance's
+// separate upload (estimatedOpeningService.ts has its own, independent
+// clear for ITS own upload path — this is additive, not a replacement).
+const WALLET_TYPE_TO_SUFFIX: Record<string, string> = {
+  BKASH: 'BK', NAGAD: 'NG', ROCKET: 'RK', UPAY: 'UP',
+};
+
 export type ValidationEntry = { row: number; shopCode: string; field: string; value: string; issue: string };
 
 export type BalanceLimitImportOutcome = {
@@ -222,6 +235,7 @@ export async function importBalanceLimitFile(params: {
     await db.transaction(async (tx) => {
       console.time('[BalanceLimit] validate rows + new-shop inserts');
       const toInsert: NewAgentWallet[] = [];
+      const cashoutWalletWdClears: { agentId: number; walletSuffix: string }[] = [];
       for (const row of rows) {
         const check = validateRow(row);
         if (check) {
@@ -293,6 +307,10 @@ export async function importBalanceLimitFile(params: {
           isLoggedIn: ['yes', 'connected', 'login'].includes(row.login.toLowerCase()),
           updatedAt: new Date(),
         });
+        if (params.product === 'cashout' && n(row.totalWD) > 0) {
+          const suffix = WALLET_TYPE_TO_SUFFIX[walletTypeCode];
+          if (suffix) cashoutWalletWdClears.push({ agentId, walletSuffix: suffix });
+        }
         validCount++;
       }
       console.timeEnd('[BalanceLimit] validate rows + new-shop inserts');
@@ -376,6 +394,27 @@ export async function importBalanceLimitFile(params: {
         insertedWallets.push(...inserted);
       }
       console.timeEnd('[BalanceLimit] insert wallets');
+
+      // Cashout per-wallet stagnant clear (see cashoutWalletWdClears' own
+      // declaration above) — only ever touches a row that's CURRENTLY
+      // flagged (noDataStreakDays > 0), never inserts, never raises a
+      // streak. A wallet that goes idle again after this still needs the
+      // next manual file reseed to reappear.
+      if (cashoutWalletWdClears.length > 0) {
+        for (let i = 0; i < cashoutWalletWdClears.length; i += INSERT_CHUNK_SIZE) {
+          const chunk = cashoutWalletWdClears.slice(i, i + INSERT_CHUNK_SIZE);
+          const valuesSql = sql.join(
+            chunk.map((c) => sql`(${c.agentId}::integer, ${c.walletSuffix}::text)`),
+            sql`, `
+          );
+          await tx.execute(sql`
+            UPDATE stagnant_balance_wallet_streak AS t
+            SET no_data_streak_days = 0, updated_at = now()
+            FROM (VALUES ${valuesSql}) AS v(agent_id, wallet_suffix)
+            WHERE t.agent_id = v.agent_id AND t.wallet_suffix = v.wallet_suffix AND t.no_data_streak_days > 0
+          `);
+        }
+      }
 
       if (affectedOverrides.length > 0 || affectedHistory.length > 0) {
         console.time('[BalanceLimit] re-link wallet-status overrides/history');
