@@ -918,6 +918,34 @@ export const stagnantBalanceTracking = pgTable('stagnant_balance_tracking', {
   updatedAt: timestamp('updated_at', { withTimezone: true }),
 });
 
+// Cashout-only sibling of stagnant_balance_tracking, per-WALLET rather than
+// per-shop — per explicit instruction (2026-10-16): the real uploaded data
+// behind stagnant_balance_tracking only ever tracks ONE combined WD figure
+// per bare shop code, so a shop with one active wallet (e.g. "-RK" still
+// moving money) and one genuinely idle wallet (e.g. "-BK" untouched for
+// weeks) gets its live streak reset low for BOTH, masking the idle one. The
+// reference file tracks WD per wallet suffix instead, so for Cashout this
+// table — seeded ONLY from that file, NEVER touched by the live upload hook
+// — is now the sole source of Stagnant Balances' displayed streak. Re-
+// running the seed script overwrites old rows outright (walletSuffix '' is
+// the bare-shop fallback for a file row with no detectable wallet suffix).
+// Send Money is unaffected (no wallet split there) and keeps reading
+// stagnant_balance_tracking live, unchanged.
+export const stagnantBalanceWalletStreak = pgTable(
+  'stagnant_balance_wallet_streak',
+  {
+    id: serial('id').primaryKey(),
+    agentId: integer('agent_id').notNull().references(() => agents.id),
+    walletSuffix: text('wallet_suffix').notNull().default(''),
+    noDataStreakDays: integer('no_data_streak_days').notNull().default(0),
+    // The file's own run date — shown on the page as "days as of" so it's
+    // never mistaken for a live, continuously-updating figure.
+    fileAsOfDate: date('file_as_of_date'),
+    updatedAt: timestamp('updated_at', { withTimezone: true }),
+  },
+  (t) => [uniqueIndex('stagnant_balance_wallet_streak_agent_suffix_uq').on(t.agentId, t.walletSuffix)]
+);
+
 // NEW — was entirely missing. Replaces the "Opening AG" col G/I 'REPORT LAST
 // UPDATE' text card. That card is a single roster-wide timestamp (when the
 // whole Opening roster was last refreshed), read today in at least 3 places

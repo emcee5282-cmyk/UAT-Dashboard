@@ -125,7 +125,15 @@ function SummaryBandSkeleton() {
   return <div className="dt-skeleton h-[72px] w-full rounded-[10px]" />;
 }
 
-function SummaryBand({ view, buckets }: { view: StagnantView; buckets: StagnantBuckets }) {
+// Formats an ISO 'YYYY-MM-DD' date as "Oct 16, 2026" — no timezone
+// conversion needed/wanted here, this is just the file's own stored date
+// string, not a UTC instant.
+function formatFileDate(isoDate: string): string {
+  const [y, m, d] = isoDate.split('-').map(Number);
+  return new Date(y, m - 1, d).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+}
+
+function SummaryBand({ view, buckets, cashoutDaysAsOf }: { view: StagnantView; buckets: StagnantBuckets; cashoutDaysAsOf: string | null }) {
   const cells: { label: string; value: number }[] = [
     { label: '3 Days Above', value: buckets.threeDaysAbove },
     { label: '6 Days Above', value: buckets.sixDaysAbove },
@@ -136,8 +144,11 @@ function SummaryBand({ view, buckets }: { view: StagnantView; buckets: StagnantB
 
   return (
     <div className="shrink-0 overflow-hidden rounded-[10px] border border-[#DEE1E8] dark:border-[#262B38]">
-      <div className="px-4 py-1.5 text-[11px] font-semibold uppercase tracking-[0.03em] text-white" style={{ background: VIEW_COLOR[view] }}>
-        {VIEW_LABEL[view]} &middot; Company Balance by Days Stagnant
+      <div className="flex items-center justify-between px-4 py-1.5 text-[11px] font-semibold uppercase tracking-[0.03em] text-white" style={{ background: VIEW_COLOR[view] }}>
+        <span>{VIEW_LABEL[view]} &middot; Company Balance by Days Stagnant</span>
+        {cashoutDaysAsOf && (
+          <span className="font-normal normal-case tracking-normal text-white/80">Cashout days as of {formatFileDate(cashoutDaysAsOf)}</span>
+        )}
       </div>
       <div className="grid grid-cols-5 divide-x divide-[#ECEFF3] bg-white dark:divide-[#1A1E29] dark:bg-[#12151D]">
         {cells.map((c, i) => (
@@ -307,7 +318,7 @@ export default function StagnantBalancesTab() {
         <ExportButton views={views} exporting={exporting} onExport={handleExport} />
       </div>
 
-      {loading || !activeView ? <SummaryBandSkeleton /> : <SummaryBand view={selected} buckets={activeView.buckets} />}
+      {loading || !activeView ? <SummaryBandSkeleton /> : <SummaryBand view={selected} buckets={activeView.buckets} cashoutDaysAsOf={activeView.cashoutDaysAsOf} />}
 
       <div className="relative min-h-0 flex-1 overflow-auto rounded-[10px] border border-[#DEE1E8] dark:border-[#262B38]">
         {loading && <TableLoadingSpinner overlay />}

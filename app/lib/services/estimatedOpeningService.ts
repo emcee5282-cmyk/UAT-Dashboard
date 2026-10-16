@@ -44,6 +44,14 @@ import { invalidateBalanceCache } from './balanceService';
 const OPENING_SUFFIX_TO_WALLET_TYPE: Record<string, string> = {
   BK: 'BKASH', NG: 'NAGAD', RK: 'ROCKET', UP: 'UPAY',
 };
+// Inverse of the above — needed to turn a wallet LINE's own walletType
+// (full name) back into the BK/NG/RK/UP suffix stagnant_balance_wallet_
+// streak is keyed by, so a same-day real Withdrawal can clear that exact
+// wallet's frozen file streak (see this upload function's own "Cashout
+// per-wallet stagnant clear" block below).
+const WALLET_TYPE_TO_OPENING_SUFFIX: Record<string, string> = {
+  BKASH: 'BK', NAGAD: 'NG', ROCKET: 'RK', UPAY: 'UP',
+};
 
 const KNOWN_WALLET_TYPES = new Set(['BKASH', 'NAGAD', 'ROCKET', 'UPAY']);
 // wallet_transactions.wallet is free-text (typed by whoever uploaded the
@@ -252,6 +260,14 @@ export async function importEstimatedOpeningFromUpload(
   type NewWalletLineEntry = { agentId: number; walletType: string; deposit: number; withdrawal: number; assumedBalance: number; opening: number };
   const entries: NewEntry[] = [];
   const walletLineInserts: NewWalletLineEntry[] = [];
+  // Cashout only — a wallet with a real Withdrawal > 0 THIS upload clears
+  // its frozen stagnant_balance_wallet_streak row same-day (set to 0,
+  // dropping below the 3-day threshold) instead of waiting for the next
+  // manual file reseed, per explicit instruction (2026-10-16). Only ever
+  // CLEARS, never re-raises — a wallet that goes idle again afterward
+  // still needs the next file reseed to reappear, since this upload's own
+  // data can't tell us a sibling wallet stayed idle.
+  const cashoutWalletWdClears: { agentId: number; walletSuffix: string }[] = [];
 
   for (const s of shopTotals) {
     const agent = agentByCode.get(s.shopName);
@@ -278,6 +294,9 @@ export async function importEstimatedOpeningFromUpload(
       const withdrawal = s.totalWD;
       const assumedBalance = opening + deposit + tx.topUp - withdrawal - tx.settlement;
       entries.push({ agentId: agent.id, deposit, withdrawal, assumedBalance, opening });
+      if (product === 'cashout' && withdrawal > 0) {
+        cashoutWalletWdClears.push({ agentId: agent.id, walletSuffix: '' });
+      }
       continue;
     }
 
@@ -344,6 +363,9 @@ export async function importEstimatedOpeningFromUpload(
       shopWithdrawalBlended += lineWithdrawalBlended;
       if (walletTypeFull) {
         walletLineInserts.push({ agentId: agent.id, walletType: walletTypeFull, deposit: lineDeposit, withdrawal: lineWithdrawal, assumedBalance: lineOpening + lineDepositBlended - lineWithdrawalBlended, opening: lineOpening });
+        if (product === 'cashout' && lineWithdrawal > 0) {
+          cashoutWalletWdClears.push({ agentId: agent.id, walletSuffix: WALLET_TYPE_TO_OPENING_SUFFIX[walletTypeFull] });
+        }
       }
     }
     entries.push({ agentId: agent.id, deposit: shopDeposit, withdrawal: shopWithdrawal, assumedBalance: opening + shopDepositBlended - shopWithdrawalBlended, opening });
@@ -460,6 +482,23 @@ export async function importEstimatedOpeningFromUpload(
             updatedAt: sql`excluded.updated_at`,
           },
         });
+    }
+
+    // Cashout per-wallet stagnant clear (see cashoutWalletWdClears' own
+    // declaration above) — only ever touches a row that's CURRENTLY
+    // flagged (noDataStreakDays > 0), never inserts, never raises.
+    for (let i = 0; i < cashoutWalletWdClears.length; i += INSERT_CHUNK_SIZE) {
+      const chunk = cashoutWalletWdClears.slice(i, i + INSERT_CHUNK_SIZE);
+      const valuesSql = sql.join(
+        chunk.map((c) => sql`(${c.agentId}::integer, ${c.walletSuffix}::text)`),
+        sql`, `
+      );
+      await tx.execute(sql`
+        UPDATE stagnant_balance_wallet_streak AS t
+        SET no_data_streak_days = 0, updated_at = ${uploadedAtDate}
+        FROM (VALUES ${valuesSql}) AS v(agent_id, wallet_suffix)
+        WHERE t.agent_id = v.agent_id AND t.wallet_suffix = v.wallet_suffix AND t.no_data_streak_days > 0
+      `);
     }
   });
 
