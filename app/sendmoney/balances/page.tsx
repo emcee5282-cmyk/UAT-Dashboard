@@ -31,6 +31,7 @@ import {
   resolveBrand,
   computeSendMoneyWalletStatus,
   SENDMONEY_REACH_LIMIT_STATUSES,
+  isLockedStatus,
 } from '@/app/lib/balanceEngine';
 import { getPreference, setPreference } from '@/app/lib/preferences';
 import type { BalanceLimitWalletRow } from '@/app/lib/db/read/balanceLimit';
@@ -1071,7 +1072,10 @@ export default function SendMoneyAgentBalance() {
           walletStatusValues.set(name, statuses);
         }
 
-        if (bal.isLoggedIn) {
+        // Login=Yes alone isn't enough — a wallet whose own Account Status
+        // reads exactly "Locked" is excluded from Balance Inside regardless
+        // (same gate as balanceService.ts's own server-side version).
+        if (bal.isLoggedIn && !isLockedStatus(bal.accountStatus)) {
           balanceInsideTotals.set(name, (balanceInsideTotals.get(name) ?? 0) + bal.balance);
         }
       });

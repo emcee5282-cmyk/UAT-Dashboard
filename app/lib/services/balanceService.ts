@@ -21,10 +21,12 @@ import {
   computeSdpVsBalance,
   computeWalletStatus,
   computeSendMoneyWalletStatus,
+  isLockedStatus,
 } from '../balanceEngine';
 import { getBusinessToday, toBusinessDate, manilaFields } from '../businessDate';
 import { readEstimatedOpeningPg } from '../db/read/estimatedOpening';
 import { extractOpeningWalletTypeSuffix } from '../realShopName';
+import { MemoCache } from '../server/memoCache';
 
 export type Product = 'cashout' | 'sendmoney';
 
@@ -233,7 +235,43 @@ export type AgentBalanceRow = {
   walletType: string[];
 };
 
-export async function getAgentBalances(product: Product): Promise<AgentBalanceRow[]> {
+// Cache for getAgentBalances()/getAgentBalancesForBalancePage() — profiled
+// at 0.7-2.3s per call (full roster + wallet joins + transaction
+// aggregation over up to ~16,700 Send Money shops), and every Pending
+// Balance tab (Discrepancy Summary, Unreconciled Balance, Stagnant
+// Balances) independently calls one or both of these for the SAME
+// product, so without this they'd each recompute the identical result from
+// scratch — confirmed live: visiting all 3 tabs cold took ~4.9s combined.
+// In-flight dedup means 3 near-simultaneous calls for the same product
+// share ONE query instead of 3; the 60s TTL means revisiting a tab shortly
+// after is instant. Keyed by product + Manila business date (not just
+// product) since these formulas depend on "today" for the Top Up/
+// Settlement window and the Estimated Opening override — a cached result
+// from one business day must never serve a later one.
+const BALANCE_CACHE_TTL_MS = 60_000;
+const agentBalancesCache = new MemoCache<AgentBalanceRow[]>(BALANCE_CACHE_TTL_MS);
+const agentBalancesForBalancePageCache = new MemoCache<AgentBalanceSplitRow[]>(BALANCE_CACHE_TTL_MS);
+
+function balanceCacheKey(product: Product): string {
+  return `${product}:${dateOnlyStr(getBusinessToday())}`;
+}
+
+// Called by every write path that changes agents/agent_wallets/
+// wallet_transactions/estimated_balance_* data these formulas read —
+// Opening/Settlement/Top Up/Balance Limit/Estimated Balance uploads, and
+// every manual Opening page edit/create/delete action. Clears both caches
+// entirely (not scoped to one product) since a shared roster/leader change
+// can't always be cleanly attributed to just one product's cache key.
+export function invalidateBalanceCache(): void {
+  agentBalancesCache.invalidate();
+  agentBalancesForBalancePageCache.invalidate();
+}
+
+export async function getAgentBalances(product: Product, options?: { force?: boolean }): Promise<AgentBalanceRow[]> {
+  return agentBalancesCache.get(balanceCacheKey(product), () => getAgentBalancesUncached(product), options?.force ?? false);
+}
+
+async function getAgentBalancesUncached(product: Product): Promise<AgentBalanceRow[]> {
   const db = getDb();
   const businessToday = getBusinessToday(); // Date, Manila-midnight — see businessDate.ts, reused unchanged
 
@@ -309,7 +347,9 @@ export async function getAgentBalances(product: Product): Promise<AgentBalanceRo
     // agent_wallets.is_logged_in is already a clean boolean (parsed once
     // at sync time via isLoggedIn() against the raw "Login" cell) — no
     // need to round-trip it back through that same string-based helper.
-    const balanceInside = wallets.reduce((sum, w) => sum + (w.isLoggedIn ? n(w.balance) : 0), 0);
+    // Second gate: Login=Yes alone isn't enough — a wallet whose own Account
+    // Status reads "Locked" is excluded from Balance Inside regardless.
+    const balanceInside = wallets.reduce((sum, w) => sum + (w.isLoggedIn && !isLockedStatus(w.accountStatus) ? n(w.balance) : 0), 0);
     const tx = txByAgent.get(agent.id) ?? { topUp: 0, settlement: 0 };
     const rawOpening = n(agent.openingBalance);
     const assumedBalance = estimatedOpeningValid ? estimated.balances.get(agent.agentCode) : undefined;
@@ -431,7 +471,10 @@ function computeBalanceFields(params: {
   const { opening, sdp, sdpRawText, leaderName, wallets, tx, excludedSdpLeaders, product } = params;
   const totalDp = wallets.reduce((sum, w) => sum + n(w.totalDp), 0);
   const totalWd = wallets.reduce((sum, w) => sum + n(w.totalWd), 0);
-  const balanceInside = wallets.reduce((sum, w) => sum + (w.isLoggedIn ? n(w.balance) : 0), 0);
+  // Login=Yes alone isn't enough — a wallet whose own Account Status reads
+  // "Locked" is excluded from Balance Inside regardless (same gate as
+  // getAgentBalances' own inline version above).
+  const balanceInside = wallets.reduce((sum, w) => sum + (w.isLoggedIn && !isLockedStatus(w.accountStatus) ? n(w.balance) : 0), 0);
 
   const companyBalance = computeCompanyBalance(opening, totalDp, tx.topUp, totalWd, tx.settlement);
   const agentWithdrawal = computeAgentWithdrawal(companyBalance, balanceInside);
@@ -472,7 +515,11 @@ export type AgentBalanceSplitRow = AgentBalanceRow & {
 // aggregate), completely unchanged — this function must never combine
 // shops that were already separate in Opening, but must also never split a
 // shop Opening itself doesn't split.
-export async function getAgentBalancesForBalancePage(product: Product): Promise<AgentBalanceSplitRow[]> {
+export async function getAgentBalancesForBalancePage(product: Product, options?: { force?: boolean }): Promise<AgentBalanceSplitRow[]> {
+  return agentBalancesForBalancePageCache.get(balanceCacheKey(product), () => getAgentBalancesForBalancePageUncached(product), options?.force ?? false);
+}
+
+async function getAgentBalancesForBalancePageUncached(product: Product): Promise<AgentBalanceSplitRow[]> {
   const db = getDb();
   const businessToday = getBusinessToday();
 

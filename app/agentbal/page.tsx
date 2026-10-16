@@ -30,6 +30,7 @@ import {
   computeAgentWithdrawal,
   computeSdpVsBalance,
   resolveBrand,
+  isLockedStatus,
 } from '../lib/balanceEngine';
 import { getPreference, setPreference } from '../lib/preferences';
 import type { BalanceLimitWalletRow } from '../lib/db/read/balanceLimit';
@@ -1207,7 +1208,10 @@ export default function AgentBalance() {
           }
         }
 
-        if (bal.isLoggedIn) {
+        // Login=Yes alone isn't enough — a wallet whose own Account Status
+        // reads exactly "Locked" is excluded from Balance Inside regardless
+        // (same gate as balanceService.ts's own server-side version).
+        if (bal.isLoggedIn && !isLockedStatus(bal.accountStatus)) {
           balanceInsideTotals.set(name, (balanceInsideTotals.get(name) ?? 0) + bal.balance);
         }
       });

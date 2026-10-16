@@ -1,0 +1,39 @@
+/* Discrepancy Summary tab — scoped styles only (this tab, nowhere else). */
+
+.linePillCashout {
+  color: #2563eb;
+  background: rgba(59, 130, 246, 0.1);
+}
+.linePillSendMoney {
+  color: #b45309;
+  background: rgba(245, 158, 11, 0.12);
+}
+
+.leaderRow {
+  cursor: pointer;
+}
+.leaderRowExpanded {
+  background: rgba(59, 130, 246, 0.05);
+}
+:global(.dark) .leaderRowExpanded {
+  background: rgba(59, 130, 246, 0.08);
+}
+
+/* The row's own `dt-row-stagger-in` class (app/globals.css) leaves a
+   lingering `transform: translateY(0)` on the <tr> forever via
+   `animation-fill-mode: both` — any transform on an ancestor creates a new
+   containing block for `position: sticky` descendants, which broke the
+   expanded row's sticky cells (they stuck relative to this row instead of
+   the real scrolling box, rendering on top of the row above it). `!important`
+   is required here: per the CSS cascade, a running animation's value beats
+   a normal author declaration, but not an `!important` one. */
+.stickyLeaderRow {
+  transform: none !important;
+}
+
+.shopRow {
+  background: rgba(100, 116, 139, 0.035);
+}
+:global(.dark) .shopRow {
+  background: rgba(148, 163, 184, 0.045);
+}

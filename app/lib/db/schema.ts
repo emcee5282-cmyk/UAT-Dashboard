@@ -480,6 +480,137 @@ export const transferQueueMetaConfig = pgTable('transfer_queue_meta_config', {
 });
 
 // ---------------------------------------------------------------------------
+// Settings > Discrepancy TG — admin-only table of Telegram group IDs per
+// leader, feeding a later (not-yet-built) phase that sends each leader
+// their Discrepancy Summary image. Sending itself isn't built yet; this is
+// settings storage only.
+// ---------------------------------------------------------------------------
+
+export const discrepancyTgGroups = pgTable('discrepancy_tg_groups', {
+  id: serial('id').primaryKey(),
+  // Always stored UPPERCASE (enforced app-side) — not necessarily a real
+  // `leaders.name` match; "Leader not found" is a warning, not a constraint,
+  // so this can't be a foreign key.
+  groupName: text('group_name').notNull().unique(),
+  // TEXT, never numeric — a numeric column risks losing the leading minus
+  // or truncating a long Telegram group id (e.g. -1001234567890).
+  tgIdCashout: text('tg_id_cashout'),
+  tgIdSendmoney: text('tg_id_sendmoney'),
+  updatedBy: text('updated_by'),
+  updatedAt: timestamp('updated_at', { withTimezone: true }),
+});
+
+// Singleton-row table (same convention as transferQueueMetaConfig above) —
+// holds just the one bot token shared by every group row.
+export const discrepancyTgConfig = pgTable('discrepancy_tg_config', {
+  id: serial('id').primaryKey(),
+  botToken: text('bot_token'),
+  // Send to TG v2 — Agent Withdrawal thresholds deciding which shops go
+  // into the Telegram photos (the Full Shop List PDF always has every
+  // shop, threshold or not). Defaults match the plan's own: 20,000 for
+  // Cashout, 10,000 for Send Money.
+  cashoutThreshold: integer('cashout_threshold').notNull().default(20000),
+  sendmoneyThreshold: integer('sendmoney_threshold').notNull().default(10000),
+  updatedBy: text('updated_by'),
+  updatedAt: timestamp('updated_at', { withTimezone: true }),
+  // Server-side "Send to TG" lock — set (via an atomic conditional UPDATE,
+  // not just an application-level flag) when a run starts, cleared when it
+  // finishes. A stale lock (a previous run that crashed mid-send) is
+  // reclaimed after 10 minutes — see acquireDiscrepancyTgSendLock. Separate
+  // from the admin-visible token/groups fields on purpose: this is
+  // operational state, not a setting.
+  sendLockedAt: timestamp('send_locked_at', { withTimezone: true }),
+});
+
+// One row per actual Telegram message attempted by a "Send to TG" run
+// (Settings > Discrepancy TG's data, sent from the Discrepancy Summary
+// tab) — never the images or the token, per explicit instruction. `runAt`
+// is shared by every row of the same run (one send click). Send to TG v2:
+// one leader+line can now send up to two messages (a photo album/albums,
+// then a Full Shop List PDF), so this is per-MESSAGE, not per-line —
+// `photosCount`/`albumsCount`/`pdfSent`/`shopsTotal`/`shopsInPhotos`/
+// `thresholdUsed` describe that LINE's whole outcome and are repeated on
+// every one of its rows, so any single row is self-describing without a
+// join back to its sibling rows.
+export const discrepancyTgSendLog = pgTable(
+  'discrepancy_tg_send_log',
+  {
+    id: serial('id').primaryKey(),
+    runAt: timestamp('run_at', { withTimezone: true }).notNull(),
+    triggeredBy: text('triggered_by').notNull(),
+    leader: text('leader').notNull(),
+    line: text('line').notNull(), // 'cashout' | 'sendmoney'
+    chatId: text('chat_id'),
+    imageCount: integer('image_count').notNull().default(0),
+    // Kept for historical continuity with pre-v2 rows — 'photos' | 'pdf',
+    // and the page count of THIS row's own message (an album's own image
+    // count, or the PDF's own page count).
+    format: text('format').notNull().default('photos'),
+    pages: integer('pages').notNull().default(0),
+    status: text('status').notNull(), // 'sent' | 'failed' | 'skipped'
+    reason: text('reason'),
+    // Send to TG v2 columns — the line's whole outcome, not just this row.
+    photosCount: integer('photos_count').notNull().default(0),
+    albumsCount: integer('albums_count').notNull().default(0),
+    pdfSent: boolean('pdf_sent').notNull().default(false),
+    shopsTotal: integer('shops_total').notNull().default(0),
+    shopsInPhotos: integer('shops_in_photos').notNull().default(0),
+    thresholdUsed: integer('threshold_used').notNull().default(0),
+  },
+  (t) => [index('discrepancy_tg_send_log_run_at_idx').on(t.runAt)]
+);
+
+// ---------------------------------------------------------------------------
+// Unreconciled Balance TG — a separate feature from Discrepancy TG above
+// (own token, own groups, own send log), per explicit instruction. A group
+// here is free text (no leader search/dropdown/forced uppercase, unlike
+// discrepancy_tg_groups), and every configured group gets the SAME
+// broadcast (Cashout + Send Money + Group Total images), not a per-leader
+// routed send — so there's no tg_id_cashout/tg_id_sendmoney split, just
+// one tg_id per group.
+export const unreconciledTgGroups = pgTable('unreconciled_tg_groups', {
+  id: serial('id').primaryKey(),
+  groupName: text('group_name').notNull().unique(),
+  tgId: text('tg_id').notNull(),
+  updatedBy: text('updated_by'),
+  updatedAt: timestamp('updated_at', { withTimezone: true }),
+});
+
+// Singleton-row table, same convention as discrepancyTgConfig — its own
+// token (a user may paste the same bot token into both, but the two are
+// stored and read independently) and its own send lock, so an
+// in-progress Discrepancy send and an in-progress Unreconciled send never
+// block each other.
+export const unreconciledTgConfig = pgTable('unreconciled_tg_config', {
+  id: serial('id').primaryKey(),
+  botToken: text('bot_token'),
+  updatedBy: text('updated_by'),
+  updatedAt: timestamp('updated_at', { withTimezone: true }),
+  sendLockedAt: timestamp('send_locked_at', { withTimezone: true }),
+});
+
+// One row per actual Telegram message (one album) attempted by a send run
+// — `runAt` shared by every row of the same run. No per-leader/line
+// concept here (unlike discrepancy_tg_send_log): every row is just
+// "this group, this album".
+export const unreconciledTgSendLog = pgTable(
+  'unreconciled_tg_send_log',
+  {
+    id: serial('id').primaryKey(),
+    runAt: timestamp('run_at', { withTimezone: true }).notNull(),
+    triggeredBy: text('triggered_by').notNull(),
+    groupName: text('group_name').notNull(),
+    chatId: text('chat_id'),
+    albumIndex: integer('album_index').notNull().default(1),
+    albumsTotal: integer('albums_total').notNull().default(1),
+    imageCount: integer('image_count').notNull().default(0),
+    status: text('status').notNull(), // 'sent' | 'failed'
+    reason: text('reason'),
+  },
+  (t) => [index('unreconciled_tg_send_log_run_at_idx').on(t.runAt)]
+);
+
+// ---------------------------------------------------------------------------
 // Sync monitoring — one row per scheduled/manual sync invocation (see
 // scripts/migrate-data.ts's runFastSync()/runSlowSync(), triggered by
 // app/api/admin/sync-postgres/route.ts). A 'running' row also doubles as
@@ -764,6 +895,28 @@ export const estimatedBalanceWalletLines = pgTable(
   },
   (t) => [index('estimated_balance_wallet_lines_upload_id_idx').on(t.uploadId), index('estimated_balance_wallet_lines_agent_id_idx').on(t.agentId)]
 );
+
+// Pending Balance > Stagnant Balances — one row per agent, a running streak
+// of consecutive Estimated Balance uploads where THIS agent's own upload
+// row had Withdrawal at 0 (or no row at all that upload). Deposit plays no
+// part in this at all (per explicit instruction — Withdrawal only).
+// Incremented/reset by importEstimatedOpeningFromUpload() itself (see that
+// file's own comment) every time an Estimated Balance upload completes, for
+// either product — NOT computed on read, since a "WD was 0 on day X" fact
+// about a day that's since scrolled out of estimated_balance_entries' own
+// retention can't be recovered after the fact otherwise.
+export const stagnantBalanceTracking = pgTable('stagnant_balance_tracking', {
+  id: serial('id').primaryKey(),
+  agentId: integer('agent_id').notNull().unique().references(() => agents.id),
+  noDataStreakDays: integer('no_data_streak_days').notNull().default(0),
+  // The Manila business-date (see businessDate.ts) this streak was last
+  // evaluated for — a second Estimated Balance upload for the SAME date
+  // (a same-day correction re-upload) must not advance the streak twice, so
+  // the update only applies when this is strictly before the new upload's
+  // own cutoffDate.
+  lastCheckedCutoffDate: date('last_checked_cutoff_date'),
+  updatedAt: timestamp('updated_at', { withTimezone: true }),
+});
 
 // NEW — was entirely missing. Replaces the "Opening AG" col G/I 'REPORT LAST
 // UPDATE' text card. That card is a single roster-wide timestamp (when the

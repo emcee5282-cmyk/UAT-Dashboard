@@ -34,6 +34,7 @@ import { getBrandsForProduct } from '../db/read/brands';
 import { getBusinessToday, manilaFields } from '../businessDate';
 import { extractRawWalletFamily, extractShopSeriesFamily, extractOpeningWalletTypeSuffix } from '../realShopName';
 import { buildGhostAgentMap, reconcileGhostsForImport } from './shopIdentityReconciliation';
+import { invalidateBalanceCache } from './balanceService';
 
 export type Product = 'cashout' | 'sendmoney';
 const WALLET_OPTIONS = ['BKASH', 'NAGAD', 'ROCKET', 'UPAY'];
@@ -218,6 +219,7 @@ export async function importSettlementFile(params: { product: Product; file: Fil
       errorSummary: JSON.stringify(allIssues.filter((e) => e.type === 'error')),
     }).where(eq(schema.importBatches.id, batch.id));
 
+    invalidateBalanceCache();
     return { batchId: batch.id, status: 'completed', rowCount: rows.length, ...result, errors: allIssues };
   } catch (err) {
     await db.update(schema.importBatches).set({ status: 'failed', completedAt: new Date(), errorSummary: err instanceof Error ? err.message : String(err) }).where(eq(schema.importBatches.id, batch.id));
@@ -286,6 +288,7 @@ export async function importTopUpFile(params: { product: Product; file: File; fi
       errorSummary: JSON.stringify(allIssues.filter((e) => e.type === 'error')),
     }).where(eq(schema.importBatches.id, batch.id));
 
+    invalidateBalanceCache();
     return { batchId: batch.id, status: 'completed', rowCount: rows.length, ...result, errors: allIssues };
   } catch (err) {
     await db.update(schema.importBatches).set({ status: 'failed', completedAt: new Date(), errorSummary: err instanceof Error ? err.message : String(err) }).where(eq(schema.importBatches.id, batch.id));
@@ -813,6 +816,7 @@ export async function importOpeningFile(params: { product: Product; file: File; 
         set: { totalAmount: openingTotal },
       });
 
+    invalidateBalanceCache();
     console.timeEnd('[Opening] TOTAL');
     return { batchId: batch.id, status: 'completed', rowCount: rows.length, validCount, duplicateCount, errorCount, insertedIds: updatedAgentIds, flaggedDuplicateIds: [], errors: allIssues };
   } catch (err) {

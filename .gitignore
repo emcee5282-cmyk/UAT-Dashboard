@@ -43,3 +43,19 @@ yarn-error.log*
 *.tsbuildinfo
 next-env.d.ts
 .playwright-mcp/
+
+# standalone bot processes (bots/*/ — own package.json, never imported by
+# the Next.js app) — real credentials, persisted browser sessions, and
+# per-run logs stay local-only; the committed .env.example template is
+# exempted from the global .env* ignore above so it still ships with the
+# bot folder.
+bots/**/.env
+!bots/**/.env.example
+bots/**/browser-data/
+bots/**/approvals.log
+bots/**/node_modules
+# inspect-page.js's own generated output (inspect-deposit.png/.txt,
+# inspect-makeup.png/.txt) — NOT inspect-page.js itself, the source script,
+# which the bare "inspect-*" pattern would otherwise also catch.
+bots/**/inspect-*
+!bots/**/inspect-*.js

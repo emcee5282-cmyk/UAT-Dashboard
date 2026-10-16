@@ -12,6 +12,9 @@ const eslintConfig = defineConfig([
     "out/**",
     "build/**",
     "next-env.d.ts",
+    // Standalone bot processes — own package.json, own CommonJS runtime,
+    // never imported by or bundled with the Next.js app.
+    "bots/**",
   ]),
 ]);
 

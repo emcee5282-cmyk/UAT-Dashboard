@@ -246,6 +246,55 @@
       "when": 1790700000000,
       "tag": "0034_add_estimated_entries_opening",
       "breakpoints": true
+    },
+    {
+      "idx": 35,
+      "version": "7",
+      "when": 1791900000000,
+      "tag": "0035_add_discrepancy_tg_tables",
+      "breakpoints": true
+    },
+    {
+      "idx": 36,
+      "version": "7",
+      "when": 1792000000000,
+      "tag": "0036_add_discrepancy_tg_send_log",
+      "breakpoints": true
+    },
+    {
+      "idx": 37,
+      "version": "7",
+      "when": 1792100000000,
+      "tag": "0037_add_discrepancy_tg_send_lock",
+      "breakpoints": true
+    },
+    {
+      "idx": 38,
+      "version": "7",
+      "when": 1792200000000,
+      "tag": "0038_add_discrepancy_tg_send_log_format_pages",
+      "breakpoints": true
+    },
+    {
+      "idx": 39,
+      "version": "7",
+      "when": 1792300000000,
+      "tag": "0039_add_discrepancy_tg_v2_thresholds",
+      "breakpoints": true
+    },
+    {
+      "idx": 40,
+      "version": "7",
+      "when": 1792400000000,
+      "tag": "0040_add_unreconciled_tg_tables",
+      "breakpoints": true
+    },
+    {
+      "idx": 41,
+      "version": "7",
+      "when": 1792500000000,
+      "tag": "0041_add_stagnant_balance_tracking",
+      "breakpoints": true
     }
   ]
 }

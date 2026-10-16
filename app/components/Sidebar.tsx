@@ -6,7 +6,7 @@ import { usePathname, useSearchParams } from 'next/navigation';
 import { useEffect, useState, type ComponentType } from 'react';
 import { getActiveProduct, getCounterpartPath } from '@/app/lib/productRoutes';
 import { fetchTransferQueueCount, fetchSendMoneyTransferQueueCount } from '@/app/lib/transferQueueCount';
-import { Menu, X, ChevronLeft } from 'lucide-react';
+import { Menu, X, ChevronLeft, Hourglass } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { cn } from '@/lib/utils';
 import { SIDEBAR_SYNC_DURATION_CLASS } from '@/app/design-system/transitions';
@@ -231,6 +231,16 @@ const MONITORING_ITEMS = [
   { href: '/wallet-status', label: 'Wallet Status', icon: IconWalletStatus, isTransferQueue: false },
 ];
 
+// Product-agnostic (one page hosts Cashout + Send Money + Group Total via
+// its own in-page selector, like Daily Entry hosts both products' ledgers)
+// — a plain fixed href, NOT run through resolveHref()/ROUTE_MAP the same
+// way DAILY_ENTRY_ITEM above isn't; there's no per-product counterpart
+// route to switch to. Lucide's Hourglass (not a custom inline SVG like the
+// other Monitoring icons) per explicit instruction — DockRow already draws
+// every icon at the same fixed 15px/1.6-stroke-width regardless of source,
+// so it matches the existing outline style without a bespoke SVG.
+const PENDING_BALANCE_ITEM = { href: '/monitoring/pending-balance', label: 'Pending Balance', icon: Hourglass };
+
 // Staff/admin only — the leader-facing ticket flow (/tickets, /tickets/create)
 // stays a completely separate standalone destination, not in this nav.
 const SUPPORT_ITEMS = [{ href: '/staff/tickets', label: 'Tickets', icon: IconTickets }];
@@ -407,6 +417,15 @@ export default function Sidebar() {
                   onClick={() => setMobileOpen(false)}
                 />
               ))}
+              <DockRow
+                href={PENDING_BALANCE_ITEM.href}
+                icon={PENDING_BALANCE_ITEM.icon}
+                label={PENDING_BALANCE_ITEM.label}
+                active={pathname === PENDING_BALANCE_ITEM.href}
+                expanded
+                tooltip={false}
+                onClick={() => setMobileOpen(false)}
+              />
 
               {canSeeTickets && (
                 <>
@@ -542,6 +561,13 @@ export default function Sidebar() {
                   badge={item.isTransferQueue ? displayCount : null}
                 />
               ))}
+              <DockRow
+                href={PENDING_BALANCE_ITEM.href}
+                icon={PENDING_BALANCE_ITEM.icon}
+                label={PENDING_BALANCE_ITEM.label}
+                active={pathname === PENDING_BALANCE_ITEM.href}
+                expanded={panelOpen}
+              />
 
               {canSeeTickets && (
                 <>

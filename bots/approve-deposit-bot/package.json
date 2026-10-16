@@ -1,0 +1,17 @@
+{
+  "name": "approve-deposit-bot",
+  "version": "1.0.0",
+  "description": "Telegram bot that approves SBO deposits via Makeup Deposit",
+  "main": "bot.js",
+  "type": "commonjs",
+  "scripts": {
+    "start": "node bot.js",
+    "inspect": "node inspect-page.js",
+    "inspect:makeup": "HEADLESS=false node inspect-page.js --makeup"
+  },
+  "dependencies": {
+    "dotenv": "^18.0.3",
+    "playwright": "^1.63.0",
+    "telegraf": "^4.16.3"
+  }
+}

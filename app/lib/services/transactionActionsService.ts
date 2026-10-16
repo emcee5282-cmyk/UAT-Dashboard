@@ -28,6 +28,7 @@ import * as schema from '../db/schema';
 import { checkWalletField, checkAmountField, checkDateField, parseImportDate } from '../settlementValidation';
 import { parseAmount } from '../format';
 import { manilaFields } from '../businessDate';
+import { invalidateBalanceCache } from './balanceService';
 
 export type Product = 'cashout' | 'sendmoney';
 export type TransactionType = 'settlement' | 'topup';
@@ -128,6 +129,7 @@ export async function updateTransactions(
     updatedCount = ids.length;
   });
 
+  invalidateBalanceCache();
   return { updatedCount };
 }
 
@@ -176,6 +178,7 @@ export async function createTransaction(product: Product, transactionType: Trans
     insertedId = inserted.id;
   });
 
+  invalidateBalanceCache();
   return { id: insertedId };
 }
 
@@ -208,5 +211,6 @@ export async function deleteTransaction(product: Product, transactionType: Trans
     await tx.delete(schema.walletTransactions).where(eq(schema.walletTransactions.id, id));
   });
 
+  invalidateBalanceCache();
   return { deleted: true };
 }

@@ -11,7 +11,9 @@
     "db:generate": "node --env-file=.env.local node_modules/drizzle-kit/bin.cjs generate",
     "db:migrate": "node --env-file=.env.local node_modules/drizzle-kit/bin.cjs migrate",
     "db:studio": "node --env-file=.env.local node_modules/drizzle-kit/bin.cjs studio",
-    "migrate:data": "tsx scripts/migrate-data.ts"
+    "migrate:data": "tsx scripts/migrate-data.ts",
+    "bot:approve": "cd bots/approve-deposit-bot && node bot.js",
+    "bot:approve:test": "cd bots/approve-deposit-bot && node test-approve.js"
   },
   "dependencies": {
     "@base-ui/react": "^1.6.0",
@@ -19,9 +21,11 @@
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
     "drizzle-orm": "^0.45.2",
+    "exceljs": "^4.4.0",
     "googleapis": "^173.0.0",
     "lucide-react": "^1.20.0",
     "next": "16.3.1",
+    "pdf-lib": "^1.17.1",
     "pg": "^8.23.0",
     "puppeteer-core": "^25.3.0",
     "react": "19.2.4",

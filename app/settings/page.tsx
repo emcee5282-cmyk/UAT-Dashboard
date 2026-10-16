@@ -5,6 +5,18 @@ import { SlidersHorizontal, Check, X, Loader2 } from 'lucide-react';
 import SettlementHeader from '../components/SettlementHeader';
 import ConnectionErrorState from '../components/ConnectionErrorState';
 import { classifyFetchError, type ClassifiedError, assertAllOk } from '../lib/errors';
+import DiscrepancyTgTab from './DiscrepancyTgTab';
+import UnreconciledTgTab from './UnreconciledTgTab';
+
+// Same pill/badge tab switcher style as Daily Transaction Entry's own
+// PAGE_TABS row (app/daily-txn-entry/page.tsx) — duplicated locally per
+// explicit instruction to "use that same component and style" (it isn't a
+// shared/importable component there either, just an inline pattern).
+const SETTINGS_TABS: { key: 'transfer-queue' | 'discrepancy-tg' | 'unreconciled-tg'; label: string }[] = [
+  { key: 'transfer-queue', label: 'Transfer Queue Settings' },
+  { key: 'discrepancy-tg', label: 'Discrepancy TG' },
+  { key: 'unreconciled-tg', label: 'Unreconciled TG' },
+];
 
 // Mirrors app/lib/transferQueueSettings.ts's own types — not imported
 // directly since that file pulls in `googleapis` (Node-only, breaks the
@@ -531,6 +543,19 @@ function ModeStatusCard({
 }
 
 export default function SettingsPage() {
+  const [tab, setTab] = useState<'transfer-queue' | 'discrepancy-tg' | 'unreconciled-tg'>('transfer-queue');
+  // Same fetch('/api/auth/me') -> role convention Sidebar.tsx already uses
+  // to hide the Tickets nav entry from non-staff — the Discrepancy TG tab
+  // is admin-only, both here (visibility) and server-side (the route
+  // itself 403s non-admins regardless of what this shows).
+  const [isAdmin, setIsAdmin] = useState(false);
+  useEffect(() => {
+    fetch('/api/auth/me')
+      .then((res) => (res.ok ? res.json() : null))
+      .then((data) => setIsAdmin(data?.role === 'admin'))
+      .catch(() => setIsAdmin(false));
+  }, []);
+
   const [rules, setRules] = useState<RuleRow[]>([]);
   const [drafts, setDrafts] = useState<RuleRow[]>([]);
   const [bundle, setBundle] = useState<BundleField[]>([]);
@@ -745,8 +770,8 @@ export default function SettingsPage() {
           already explains each section. */}
       <SettlementHeader
         icon={SlidersHorizontal}
-        title="TRANSFER QUEUE SETTINGS"
-        isRefreshing={loading}
+        title="SETTINGS"
+        isRefreshing={tab === 'transfer-queue' && loading}
         onRefresh={fetchData}
       />
 
@@ -754,39 +779,69 @@ export default function SettingsPage() {
           longer needed now that SettlementHeader is a flush, non-floating
           bar (own border-b, own spacing) sitting directly above this. */}
       <main className="mx-auto max-w-4xl px-4 pb-10 pt-6 md:px-8">
-        <ModeStatusCard meta={meta} saving={savingMode} onToggle={toggleMode} />
+        {/* Left-aligned pill tabs, same component/style as Daily Transaction
+            Entry's own tab row. Discrepancy TG is admin-only — the tab
+            button itself is hidden from non-admins (the route 403s them
+            too, so this is a visibility convenience, not the real gate). */}
+        <div className="mb-5 flex items-center gap-2">
+          {SETTINGS_TABS.filter((t) => t.key !== 'discrepancy-tg' || isAdmin).map((t) => (
+            <button
+              key={t.key}
+              onClick={() => setTab(t.key)}
+              className={`rounded-[8px] border px-3.5 py-1.5 text-[12px] transition-colors ${
+                tab === t.key
+                  ? 'border-[#C7D2FE] bg-[#EEF2FF] font-medium text-[#4F46E5] dark:border-[#3A3F6B] dark:bg-[#1E2140] dark:text-[#A5B4FC]'
+                  : 'border-[#DEE1E8] bg-white font-normal text-muted-foreground hover:bg-[#F1F2F5] dark:border-[#262B38] dark:bg-[#12151D] dark:hover:bg-[#1A1E29]'
+              }`}
+            >
+              {t.label}
+            </button>
+          ))}
+        </div>
 
-        {error && <ConnectionErrorState error={error} onRetry={fetchData} />}
-
-        {!error && loading && (
-          <div className="flex items-center justify-center py-16 text-[13px] text-muted-foreground">
-            <Loader2 size={18} className="mr-2 animate-spin" /> Loading configuration…
-          </div>
-        )}
-
-        {!error && !loading && (
+        {tab === 'transfer-queue' ? (
           <>
-            <p className="mb-3 text-[13px] font-bold text-foreground">🟣 CASHOUT — SSP Transfer Queue Configuration (SH)</p>
-            <RuleSectionCard section="cashout_sh_day" rules={rules} drafts={drafts} saving={savingSection === 'cashout_sh_day'} onChangeRow={updateDraftRow} onSave={saveSection} onCancel={cancelSection} />
-            <RuleSectionCard section="cashout_sh_early_extended" rules={rules} drafts={drafts} saving={savingSection === 'cashout_sh_early_extended'} onChangeRow={updateDraftRow} onSave={saveSection} onCancel={cancelSection} />
-            <RuleSectionCard section="cashout_sh_extended" rules={rules} drafts={drafts} saving={savingSection === 'cashout_sh_extended'} onChangeRow={updateDraftRow} onSave={saveSection} onCancel={cancelSection} />
-            <RuleSectionCard section="cashout_sh_247" rules={rules} drafts={drafts} saving={savingSection === 'cashout_sh_247'} onChangeRow={updateDraftRow} onSave={saveSection} onCancel={cancelSection} />
-            <StaticGroupsCard emoji="⚠️" title="Wallet With Issue" rows={['SH Wallet with Issue', 'SH DC Account']} />
+            <ModeStatusCard meta={meta} saving={savingMode} onToggle={toggleMode} />
 
-            <p className="mb-3 mt-8 text-[13px] font-bold text-foreground">🟢 SEND MONEY — SSP Transfer Queue Configuration (SH)</p>
-            <RuleSectionCard section="sendmoney_sh_247" rules={rules} drafts={drafts} saving={savingSection === 'sendmoney_sh_247'} onChangeRow={updateDraftRow} onSave={saveSection} onCancel={cancelSection} excludeMetric="Cashout Account Balance" />
-            <RuleSectionCard section="sendmoney_sh_day" rules={rules} drafts={drafts} saving={savingSection === 'sendmoney_sh_day'} onChangeRow={updateDraftRow} onSave={saveSection} onCancel={cancelSection} excludeMetric="Cashout Account Balance" />
-            <BundleTypeCard title="Bundle DP Only" operator="Less Than" rules={rules} drafts={drafts} savingRowIndex={savingRowIndex} onChangeRow={updateDraftRow} onSaveRow={saveRow} onCancelRow={cancelRow} />
-            <BundleTypeCard title="Bundle WD Only" operator="Greater Than" rules={rules} drafts={drafts} savingRowIndex={savingRowIndex} onChangeRow={updateDraftRow} onSaveRow={saveRow} onCancelRow={cancelRow} />
-            <StaticGroupsCard emoji="⚠️" title="Special Groups" rows={['SH - DC Account', 'SH - Wallet with Issue']} />
-            <BundleSectionCard saved={bundle} drafts={bundleDraft} saving={savingSection === 'bundle'} onChangeField={updateBundleField} onSave={saveBundle} onCancel={cancelBundle} />
+            {error && <ConnectionErrorState error={error} onRetry={fetchData} />}
+
+            {!error && loading && (
+              <div className="flex items-center justify-center py-16 text-[13px] text-muted-foreground">
+                <Loader2 size={18} className="mr-2 animate-spin" /> Loading configuration…
+              </div>
+            )}
+
+            {!error && !loading && (
+              <>
+                <p className="mb-3 text-[13px] font-bold text-foreground">🟣 CASHOUT — SSP Transfer Queue Configuration (SH)</p>
+                <RuleSectionCard section="cashout_sh_day" rules={rules} drafts={drafts} saving={savingSection === 'cashout_sh_day'} onChangeRow={updateDraftRow} onSave={saveSection} onCancel={cancelSection} />
+                <RuleSectionCard section="cashout_sh_early_extended" rules={rules} drafts={drafts} saving={savingSection === 'cashout_sh_early_extended'} onChangeRow={updateDraftRow} onSave={saveSection} onCancel={cancelSection} />
+                <RuleSectionCard section="cashout_sh_extended" rules={rules} drafts={drafts} saving={savingSection === 'cashout_sh_extended'} onChangeRow={updateDraftRow} onSave={saveSection} onCancel={cancelSection} />
+                <RuleSectionCard section="cashout_sh_247" rules={rules} drafts={drafts} saving={savingSection === 'cashout_sh_247'} onChangeRow={updateDraftRow} onSave={saveSection} onCancel={cancelSection} />
+                <StaticGroupsCard emoji="⚠️" title="Wallet With Issue" rows={['SH Wallet with Issue', 'SH DC Account']} />
+
+                <p className="mb-3 mt-8 text-[13px] font-bold text-foreground">🟢 SEND MONEY — SSP Transfer Queue Configuration (SH)</p>
+                <RuleSectionCard section="sendmoney_sh_247" rules={rules} drafts={drafts} saving={savingSection === 'sendmoney_sh_247'} onChangeRow={updateDraftRow} onSave={saveSection} onCancel={cancelSection} excludeMetric="Cashout Account Balance" />
+                <RuleSectionCard section="sendmoney_sh_day" rules={rules} drafts={drafts} saving={savingSection === 'sendmoney_sh_day'} onChangeRow={updateDraftRow} onSave={saveSection} onCancel={cancelSection} excludeMetric="Cashout Account Balance" />
+                <BundleTypeCard title="Bundle DP Only" operator="Less Than" rules={rules} drafts={drafts} savingRowIndex={savingRowIndex} onChangeRow={updateDraftRow} onSaveRow={saveRow} onCancelRow={cancelRow} />
+                <BundleTypeCard title="Bundle WD Only" operator="Greater Than" rules={rules} drafts={drafts} savingRowIndex={savingRowIndex} onChangeRow={updateDraftRow} onSaveRow={saveRow} onCancelRow={cancelRow} />
+                <StaticGroupsCard emoji="⚠️" title="Special Groups" rows={['SH - DC Account', 'SH - Wallet with Issue']} />
+                <BundleSectionCard saved={bundle} drafts={bundleDraft} saving={savingSection === 'bundle'} onChangeField={updateBundleField} onSave={saveBundle} onCancel={cancelBundle} />
+              </>
+            )}
           </>
+        ) : tab === 'discrepancy-tg' ? (
+          <DiscrepancyTgTab />
+        ) : (
+          <UnreconciledTgTab />
         )}
       </main>
 
-      <div className="fixed inset-x-0 bottom-0 z-40 border-t border-border bg-white px-4 py-2.5 text-center text-[12px] text-muted-foreground dark:bg-[#12151D]">
-        <span className="font-semibold text-foreground">Live Configuration</span> — Saved changes take effect on the real Transfer Queue (Cashout, Send Money, and the Sidebar badge counts) within about a minute. Use the Production/Configuration switch above for an instant rollback.
-      </div>
+      {tab === 'transfer-queue' && (
+        <div className="fixed inset-x-0 bottom-0 z-40 border-t border-border bg-white px-4 py-2.5 text-center text-[12px] text-muted-foreground dark:bg-[#12151D]">
+          <span className="font-semibold text-foreground">Live Configuration</span> — Saved changes take effect on the real Transfer Queue (Cashout, Send Money, and the Sidebar badge counts) within about a minute. Use the Production/Configuration switch above for an instant rollback.
+        </div>
+      )}
     </div>
   );
 }

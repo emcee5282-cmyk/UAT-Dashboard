@@ -35,8 +35,26 @@
 // the correct short brand+number form, 0 regressions against the existing
 // 47). See scripts/migrate-data.ts's shadow-agent reconciliation notes for
 // the full incident writeup.
+//
+// Expanded again 2026-10-16 — same bug class, caught live via a user
+// report ("NICO shops keep showing as New Shop, should be under RAJ").
+// A shop-code prefix changed in that day's Opening file (e.g.
+// "N-M1AG-R6-NICO015-NG" -> "U-M1AG-R6-NICO015-NG"); since NICO (and 16
+// other real brands) weren't in this list, normalizeOpeningAgentName()
+// never stripped either form down to a shared bare "NICO015" identity, so
+// the prefix swap alone looked like a brand-new, unrelated shop — and the
+// family-based leader auto-assignment (buildFamilyLeaderMap, which only
+// operates on an already-bare code) never got a chance to run at all.
+// Confirmed via a full roster scan: 659 Cashout agents across these 17
+// brands were stored under their raw, un-normalized identity as a direct
+// result — NICO (306), SANJI (73), RANGER (51), SWEET (50), SHANKS (47),
+// WEATHER (26), PHANTOM (20), KOMOLA (17), BITTER (14), CHOPPER (13),
+// CLAW (12), ROKEYA (10), PRUNE (10), SONIC (4), TECHIES (3), SOUR (2),
+// KOGORO (1). Fixes normalization going forward only — the 659 already-
+// wrong existing rows still need a separate reconciliation pass to merge
+// onto their correct identity/leader (not done by this change alone).
 const KNOWN_BRAND_NAMES =
-  '(AEGIS|AEROX|ASTRA|BRIM|KONAN|BREACH|CLOVE|CYPHER|DOOM|FADE|GARNET|GEKKO|GREED|GROCK|HAYA|HYPER|ISO|JETT|KAYO|KJ|MARBLE|NEON|OBSIDIAN|OMEN|OWL|PHOENIX|PINGU|RAZE|REYNA|RONY|RYUMEN|SAGE|SATAN|SKYE|SOVA|TEJO|VALE|VIPER|VYSE|WAYLAY|WISE|YORU|CALAMARI|ZARA|SUPER|YUJI|SERPENT|SHAKER|TOXIC|EGYPT|DAGON|BLUESTONE|SMOKER|BLITZ|MOONSTONE|SANGE|DRAGON|REAVER|URN|KAIDO|DIAMOND|FRANCH|GENTEL|AGHANIMS|KNIGHT|ATOS|TARRASQUE|EULS|YASHA|DECEIT|SALVE|BLOOD|GRANDI|PROFESSOR|ALFA|QOP|WAND|RADIANCE|CLINKZ|DAGGER|VLADS|DRUID|PALERMO|SIREN|TOKYO|TREADS|DAZZLE|AGATE|GENIE|CLOAK|PUGNA|AVENT|ABYSSAL|ALADDIN|WARD|DOGG|WOOD|MEODONI|FAMAN|PEARL|EORO|DIOR|DENVER|HAITI|ITALY|BURMA|BEAST|MAYA|LUFFY|GHOST|GOJO|BEARD|JINBE|SWORD|PULSE|RIDON|SAPPHIRE|TURQ|TOME|AZURITE|MOSCOW|CODEX|GRANITE|RIO|RIAN|CALI)';
+  '(AEGIS|AEROX|ASTRA|BRIM|KONAN|BREACH|CLOVE|CYPHER|DOOM|FADE|GARNET|GEKKO|GREED|GROCK|HAYA|HYPER|ISO|JETT|KAYO|KJ|MARBLE|NEON|OBSIDIAN|OMEN|OWL|PHOENIX|PINGU|RAZE|REYNA|RONY|RYUMEN|SAGE|SATAN|SKYE|SOVA|TEJO|VALE|VIPER|VYSE|WAYLAY|WISE|YORU|CALAMARI|ZARA|SUPER|YUJI|SERPENT|SHAKER|TOXIC|EGYPT|DAGON|BLUESTONE|SMOKER|BLITZ|MOONSTONE|SANGE|DRAGON|REAVER|URN|KAIDO|DIAMOND|FRANCH|GENTEL|AGHANIMS|KNIGHT|ATOS|TARRASQUE|EULS|YASHA|DECEIT|SALVE|BLOOD|GRANDI|PROFESSOR|ALFA|QOP|WAND|RADIANCE|CLINKZ|DAGGER|VLADS|DRUID|PALERMO|SIREN|TOKYO|TREADS|DAZZLE|AGATE|GENIE|CLOAK|PUGNA|AVENT|ABYSSAL|ALADDIN|WARD|DOGG|WOOD|MEODONI|FAMAN|PEARL|EORO|DIOR|DENVER|HAITI|ITALY|BURMA|BEAST|MAYA|LUFFY|GHOST|GOJO|BEARD|JINBE|SWORD|PULSE|RIDON|SAPPHIRE|TURQ|TOME|AZURITE|MOSCOW|CODEX|GRANITE|RIO|RIAN|CALI|NICO|SANJI|RANGER|SWEET|SHANKS|WEATHER|PHANTOM|KOMOLA|BITTER|CHOPPER|CLAW|ROKEYA|PRUNE|SONIC|TECHIES|SOUR|KOGORO)';
 
 // Case-insensitive (/i) on all four — the sheets these get read from mix
 // casing inconsistently (e.g. "Clove003" next to "SATAN002"), which the

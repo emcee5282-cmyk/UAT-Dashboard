@@ -12,6 +12,7 @@ import { Manrope, Space_Grotesk } from 'next/font/google';
 import { Moon, Pencil, Sun, TriangleAlert, Download, Search, ChevronLeft, ChevronRight } from 'lucide-react';
 import * as XLSX from 'xlsx';
 import PageHeader from '@/app/components/PageHeader';
+import PillTabs from '@/app/components/PillTabs';
 import AccountMenu from '@/app/components/AccountMenu';
 import TableLoadingSpinner from '@/app/components/TableLoadingSpinner';
 import DateRangeFilter from '@/app/components/DateRangeFilter';
@@ -1889,6 +1890,11 @@ function PgClosingBalancesCard({ onActivity }: { onActivity: () => void }) {
   );
 }
 
+// "Discrepancy Summary" moved out to its own Monitoring page (see
+// app/monitoring/pending-balance/page.tsx) — it's a monitoring view, not a
+// data-entry step, and that page needed the same pill switcher, which is why
+// this is now a shared component (PillTabs) instead of this page's own
+// hardcoded switcher.
 const PAGE_TABS: { key: 'daily' | 'pg' | 'cashgo' | 'estimated1' | 'estimated2'; label: string }[] = [
   { key: 'daily', label: 'Operations' },
   { key: 'pg', label: 'Report' },
@@ -2666,6 +2672,10 @@ export default function DailyTxnEntryPage() {
     window.sessionStorage.removeItem('daily-txn-entry:reloading');
     if (!wasReloading) return; // fresh SPA navigation into the page — stay on Operations
     const saved = window.localStorage.getItem('daily-txn-entry:tab');
+    // 'discrepancy' is no longer a valid value here (moved to its own page,
+    // see PAGE_TABS' comment above) — an old saved value of 'discrepancy'
+    // simply fails this check and falls through to the 'daily' default,
+    // rather than being special-cased.
     if (saved === 'daily' || saved === 'pg' || saved === 'cashgo' || saved === 'estimated1' || saved === 'estimated2') setTab(saved);
   }, []);
 
@@ -2807,25 +2817,7 @@ export default function DailyTxnEntryPage() {
             }
           />
 
-          {/* Pill/badge tab switcher — mimics the reference screenshot's
-              switcher style exactly (bordered white pill idle, tinted-indigo
-              pill active), same rounded-full badge convention used
-              elsewhere in this app rather than an underlined tab bar. */}
-          <div className="mb-4 flex items-center gap-2">
-            {PAGE_TABS.map((t) => (
-              <button
-                key={t.key}
-                onClick={() => selectTab(t.key)}
-                className={`rounded-[8px] border px-3.5 py-1.5 text-[12px] transition-colors ${
-                  tab === t.key
-                    ? 'border-[#C7D2FE] bg-[#EEF2FF] font-medium text-[#4F46E5] dark:border-[#3A3F6B] dark:bg-[#1E2140] dark:text-[#A5B4FC]'
-                    : 'border-[#DEE1E8] bg-white font-normal text-muted-foreground hover:bg-[#F1F2F5] dark:border-[#262B38] dark:bg-[#12151D] dark:hover:bg-[#1A1E29]'
-                }`}
-              >
-                {t.label}
-              </button>
-            ))}
-          </div>
+          <PillTabs tabs={PAGE_TABS} active={tab} onSelect={selectTab} />
 
           {tab === 'daily' ? (
             <div className="flex flex-col gap-5">

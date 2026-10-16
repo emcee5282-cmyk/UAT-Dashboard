@@ -21,6 +21,7 @@ export type AgentWalletRawRow = {
   totalWd: number;
   balance: number;
   isLoggedIn: boolean;
+  accountStatus: string | null;
 };
 
 export async function getAgentWalletRawRows(product: Product): Promise<AgentWalletRawRow[]> {
@@ -33,6 +34,7 @@ export async function getAgentWalletRawRows(product: Product): Promise<AgentWall
       totalWd: schema.agentWallets.totalWd,
       balance: schema.agentWallets.balance,
       isLoggedIn: schema.agentWallets.isLoggedIn,
+      accountStatus: schema.agentWallets.accountStatus,
     })
     .from(schema.agentWallets)
     .innerJoin(schema.agents, eq(schema.agentWallets.agentId, schema.agents.id))
@@ -46,5 +48,6 @@ export async function getAgentWalletRawRows(product: Product): Promise<AgentWall
     totalWd: Number(r.totalWd ?? 0),
     balance: Number(r.balance ?? 0),
     isLoggedIn: r.isLoggedIn,
+    accountStatus: r.accountStatus,
   }));
 }

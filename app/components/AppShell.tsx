@@ -26,7 +26,13 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
   // only, no DB/API) built to pixel-match an external design spec with its
   // own fonts/tokens/dark-default theme/sidebar — bypassed the same way so
   // it isn't double-chromed by this AppShell's own Sidebar/theme.
-  if (pathname === '/login' || pathname.startsWith('/tickets') || pathname.startsWith('/ticket-settlement')) {
+  //
+  // /internal is a server-only render target (currently just the
+  // Discrepancy TG image template) — Puppeteer navigates here to screenshot
+  // a page, a real person never does. Still behind normal session auth
+  // (not in PUBLIC_PAGE_PATHS), just with no sidebar/nav to screenshot
+  // around.
+  if (pathname === '/login' || pathname.startsWith('/tickets') || pathname.startsWith('/ticket-settlement') || pathname.startsWith('/internal')) {
     return <>{children}</>;
   }
 

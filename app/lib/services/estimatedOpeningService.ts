@@ -26,7 +26,7 @@
 // computeCompanyBalance() already applies for the live dashboard's own
 // Company Balance formula. Verified numerically against the old formula in
 // this task's own testing, not just reasoned about.
-import { eq, and, inArray } from 'drizzle-orm';
+import { eq, and, inArray, sql } from 'drizzle-orm';
 import { getDb } from '../db/client';
 import * as schema from '../db/schema';
 import { aggregateByShop, aggregateByShopWithLines, aggregateByWalletType, formatUploadTimestamp } from '../estimatedOpening';
@@ -34,6 +34,8 @@ import { extractRealShopName, extractSendMoneyShopName, extractOpeningWalletType
 import { readLatestOpeningImportCutoffPg } from '../db/read/rosterSyncLog';
 import { toBusinessDate, manilaFields } from '../businessDate';
 import { subtractDays } from './estimatedWalletCascade';
+import { computeStreakUpdate } from '../stagnantBalanceTracking';
+import { invalidateBalanceCache } from './balanceService';
 
 // Same abbreviation<->full-name mapping balanceService.ts's own
 // OPENING_SUFFIX_TO_WALLET_TYPE uses — needed here to match a raw upload
@@ -350,6 +352,31 @@ export async function importEstimatedOpeningFromUpload(
     throw new Error('None of the uploaded shops matched a known agent — check the file is for the correct product.');
   }
 
+  // Stagnant Balances streak (Pending Balance) — "Withdrawal was 0 this
+  // upload" (or this agent had no row at all, same thing) advances every
+  // agent's own streak by 1; a non-zero Withdrawal resets it to 0. Deposit
+  // is NOT part of this condition at all (per explicit instruction — WD
+  // only, never DP). Computed here (not derived later from
+  // estimated_balance_entries' own history) since that table's retention
+  // isn't guaranteed to hold every past upload forever — the streak is the
+  // durable record of it. One entry per agent at most (see the `entries`
+  // builder above), so this Map lookup is safe.
+  const entryByAgentId = new Map(entries.map((e) => [e.agentId, e]));
+  const existingStreakRows = agentRows.length > 0
+    ? await db
+        .select({ agentId: schema.stagnantBalanceTracking.agentId, noDataStreakDays: schema.stagnantBalanceTracking.noDataStreakDays, lastCheckedCutoffDate: schema.stagnantBalanceTracking.lastCheckedCutoffDate })
+        .from(schema.stagnantBalanceTracking)
+        .where(inArray(schema.stagnantBalanceTracking.agentId, agentRows.map((a) => a.id)))
+    : [];
+  const streakByAgentId = new Map(existingStreakRows.map((r) => [r.agentId, { noDataStreakDays: r.noDataStreakDays, lastCheckedCutoffDate: r.lastCheckedCutoffDate }]));
+
+  const stagnantRows = agentRows.map((agent) => {
+    const entry = entryByAgentId.get(agent.id);
+    const hadActivityThisUpload = entry ? entry.withdrawal !== 0 : false;
+    const update = computeStreakUpdate(streakByAgentId.get(agent.id) ?? null, cutoffDateStr, hadActivityThisUpload);
+    return { agentId: agent.id, noDataStreakDays: update.noDataStreakDays, lastCheckedCutoffDate: update.lastCheckedCutoffDate, updatedAt: uploadedAtDate };
+  });
+
   // Reuses the SAME uploadedAtDate computed above for cutoffDateStr — the
   // stored upload row and the cutoff it was derived from must be the exact
   // same instant, not two separate `new Date()` calls a few queries apart.
@@ -415,7 +442,27 @@ export async function importEstimatedOpeningFromUpload(
         await tx.insert(schema.estimatedBalanceWalletLines).values(walletLineRows.slice(i, i + INSERT_CHUNK_SIZE));
       }
     }
+
+    // Stagnant Balances streak upsert — one row per agent of this product
+    // (every agent, not just entries.length — an agent entirely missing
+    // from this upload's file still needs its streak advanced, since "no
+    // row at all" counts the same as "0 and 0"). Same chunk size/reasoning
+    // as the inserts above.
+    for (let i = 0; i < stagnantRows.length; i += INSERT_CHUNK_SIZE) {
+      await tx
+        .insert(schema.stagnantBalanceTracking)
+        .values(stagnantRows.slice(i, i + INSERT_CHUNK_SIZE))
+        .onConflictDoUpdate({
+          target: schema.stagnantBalanceTracking.agentId,
+          set: {
+            noDataStreakDays: sql`excluded.no_data_streak_days`,
+            lastCheckedCutoffDate: sql`excluded.last_checked_cutoff_date`,
+            updatedAt: sql`excluded.updated_at`,
+          },
+        });
+    }
   });
 
+  invalidateBalanceCache();
   return { uploadedAt: formatUploadTimestamp(uploadedAtDate), shopCount: shopTotals.length };
 }

@@ -21,6 +21,7 @@ import * as schema from '../db/schema';
 import { checkOptionalAmountField } from '../openingValidation';
 import { parseAmount } from '../format';
 import { buildGhostAgentMap, reconcileGhostsOntoAgent } from './shopIdentityReconciliation';
+import { invalidateBalanceCache } from './balanceService';
 
 export type Product = 'cashout' | 'sendmoney';
 
@@ -136,6 +137,7 @@ export async function updateOpeningAgents(product: Product, agentCodes: string[]
     updatedCount = ids.length;
   });
 
+  invalidateBalanceCache();
   return { updatedCount };
 }
 
@@ -203,6 +205,7 @@ export async function createOpeningAgent(product: Product, input: NewOpeningAgen
     if (ghosts.length > 0) await reconcileGhostsOntoAgent(tx, ghosts, inserted.id);
   });
 
+  invalidateBalanceCache();
   return { agentCode };
 }
 
@@ -249,6 +252,7 @@ export async function deleteOpeningAgent(product: Product, agentCode: string): P
     await tx.delete(schema.agents).where(eq(schema.agents.id, agent.id));
   });
 
+  invalidateBalanceCache();
   return { deleted: true };
 }
 
@@ -296,6 +300,7 @@ export async function updateOpeningWalletLine(lineId: number, updates: { opening
     await recomputeAgentOpeningFromLines(tx, agentId);
   });
 
+  invalidateBalanceCache();
   return { agentId };
 }
 
@@ -312,5 +317,6 @@ export async function deleteOpeningWalletLine(lineId: number): Promise<{ agentId
     await recomputeAgentOpeningFromLines(tx, agentId);
   });
 
+  invalidateBalanceCache();
   return { agentId };
 }

@@ -77,6 +77,14 @@ export function isLoggedIn(login: string): boolean {
   return login.trim().toLowerCase() === 'yes';
 }
 
+// Second, independent gate on the same "Balance Inside" rule — a wallet
+// whose Account Status reads exactly "Locked" is excluded even when it's
+// logged in. Per explicit instruction: Login=Yes is necessary but no longer
+// sufficient on its own.
+export function isLockedStatus(accountStatus: string | null): boolean {
+  return (accountStatus ?? '').trim().toLowerCase() === 'locked';
+}
+
 export function computeCompanyBalance(opening: number, totalDP: number, totalTopUp: number, totalWD: number, totalStlm: number): number {
   return opening + totalDP + totalTopUp - totalWD - totalStlm;
 }

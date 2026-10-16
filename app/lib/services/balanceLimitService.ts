@@ -43,6 +43,7 @@ import { resolveBrand, type BrandResolutionConfig } from '../balanceEngine';
 import { BRAND_CODES } from '../transferQueueCount';
 import { resolveOrCreateLeaderId } from './openingActionsService';
 import { extractShopFamily } from '../realShopName';
+import { invalidateBalanceCache } from './balanceService';
 
 // The literal sentinel this whole app understands as "auto-created by the
 // Balance Limit upload, not a real roster shop yet" — a real Leader row
@@ -283,7 +284,13 @@ export async function importBalanceLimitFile(params: {
           totalDp: String(n(row.totalDP)),
           totalWd: String(n(row.totalWD)),
           dpLimit: String(n(row.dpLimit)),
-          isLoggedIn: row.login.toLowerCase() === 'yes',
+          // Balance Inside/Actual Balance gate is the raw "Login" cell only
+          // — "Connected" and "Login" are this file's own real values for a
+          // logged-in wallet (its Status column, e.g. "Active", is a
+          // separate field and must never factor into this), per explicit
+          // instruction. "Yes" kept too in case an older-format file is
+          // re-uploaded.
+          isLoggedIn: ['yes', 'connected', 'login'].includes(row.login.toLowerCase()),
           updatedAt: new Date(),
         });
         validCount++;
@@ -462,6 +469,7 @@ export async function importBalanceLimitFile(params: {
       })
       .where(eq(schema.importBatches.id, batch.id));
 
+    invalidateBalanceCache();
     console.timeEnd('[BalanceLimit] TOTAL');
     return { batchId: batch.id, status: 'completed', rowCount: rows.length, validCount, errorCount, errors };
   } catch (err) {

@@ -14,6 +14,7 @@ import { computeClosingTotal, DAILY_TXN_LEDGER_BRANDS } from '@/app/lib/services
 import { getAgentBalances, getLatestOpeningImportCutoff } from '@/app/lib/services/balanceService';
 import { getAgentWalletRawRows } from '@/app/lib/db/read/agentWalletRaw';
 import { getBalanceLimitLastImport } from '@/app/lib/db/read/balanceLimit';
+import { isLockedStatus } from '@/app/lib/balanceEngine';
 
 // Production Dashboard data route — supersedes app/api/dashboard-demo/route.ts
 // (left untouched, still feeds public/dashboard-demo.html) for the new "/"
@@ -463,7 +464,7 @@ export async function GET() {
       const wType = row.walletTypeCode.toLowerCase();
       cashoutWalletDP.set(wType, (cashoutWalletDP.get(wType) ?? 0) + row.totalDp);
       cashoutWalletWD.set(wType, (cashoutWalletWD.get(wType) ?? 0) + row.totalWd);
-      cashoutWalletActual.set(wType, (cashoutWalletActual.get(wType) ?? 0) + (row.isLoggedIn ? row.balance : 0));
+      cashoutWalletActual.set(wType, (cashoutWalletActual.get(wType) ?? 0) + (row.isLoggedIn && !isLockedStatus(row.accountStatus) ? row.balance : 0));
     });
 
     // Wallet-type Top Up/Settlement — Postgres (wallet_transactions via
@@ -642,7 +643,7 @@ export async function GET() {
       if (label) {
         sendMoneyWalletDP.set(label, (sendMoneyWalletDP.get(label) ?? 0) + row.totalDp);
         sendMoneyWalletWD.set(label, (sendMoneyWalletWD.get(label) ?? 0) + row.totalWd);
-        sendMoneyWalletActual.set(label, (sendMoneyWalletActual.get(label) ?? 0) + (row.isLoggedIn ? row.balance : 0));
+        sendMoneyWalletActual.set(label, (sendMoneyWalletActual.get(label) ?? 0) + (row.isLoggedIn && !isLockedStatus(row.accountStatus) ? row.balance : 0));
         if (!isBdKeyword) {
           walletDPNonBD.set(label, (walletDPNonBD.get(label) ?? 0) + row.totalDp);
           walletWDNonBD.set(label, (walletWDNonBD.get(label) ?? 0) + row.totalWd);
