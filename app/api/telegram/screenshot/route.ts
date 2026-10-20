@@ -1,10 +1,16 @@
-import { NextRequest, NextResponse } from 'next/server';
+import { NextRequest, NextResponse, after } from 'next/server';
 import type { Browser } from 'puppeteer-core';
-import { SESSION_COOKIE_NAME } from '@/app/lib/auth/session';
+import { SESSION_COOKIE_NAME, verifySessionToken } from '@/app/lib/auth/session';
 import { launchBrowser, waitForRealData, captureElement } from '@/app/lib/server/puppeteerCapture';
+import { checkDiscrepancyTgAutoSend, runDiscrepancyTgSend } from '@/app/lib/server/discrepancyTgSendService';
+import { autoSendTriggeredBy } from '@/app/lib/discrepancyTgAutoSlot';
 
 export const runtime = 'nodejs';
-export const maxDuration = 60;
+// after() runs within this same ceiling on platforms that enforce one —
+// raised from 60 to the manual Discrepancy send route's own 300 so an
+// auto-triggered run isn't cut short there (the self-hosted VPS has no
+// per-request timeout either way).
+export const maxDuration = 300;
 
 export async function POST(request: NextRequest) {
   const botToken = process.env.TELEGRAM_BOT_TOKEN;
@@ -119,7 +125,40 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ ok: false, error: description }, { status: 502 });
     }
 
-    return NextResponse.json({ ok: true });
+    // Operations Overview only (this route also serves a demo page) — a
+    // successful CIH send inside a 12/3/6/9PM (GMT+8) window with a fresh
+    // Balance Limit upload also fires the Discrepancy TG send, once per
+    // slot (see discrepancyTgAutoSlot.ts). Anyone logged in can trigger it,
+    // per explicit instruction. Runs in after() so this response returns
+    // as soon as the CIH photos are out.
+    let discrepancyAutoSend: { triggered: boolean; slot: string | null; reason?: string } | undefined;
+    if (path === '/') {
+      try {
+        const decision = await checkDiscrepancyTgAutoSend();
+        discrepancyAutoSend = decision.send
+          ? { triggered: true, slot: decision.slot.key }
+          : { triggered: false, slot: decision.slot?.key ?? null, reason: decision.reason };
+        if (decision.send) {
+          const session = await verifySessionToken(sessionToken);
+          const triggeredBy = autoSendTriggeredBy(decision.slot, session?.username ?? 'unknown');
+          after(async () => {
+            try {
+              const outcome = await runDiscrepancyTgSend(triggeredBy, origin, sessionToken);
+              console.log(`[DiscrepancyTG auto] ${triggeredBy}: ${outcome.totalMessagesSent} messages, ${outcome.failed.length} failed${outcome.invalidToken ? ', invalid token' : ''}`);
+            } catch (err) {
+              // e.g. "A send is already in progress" (a manual run holding
+              // the lock) — skipped, nothing to retry automatically.
+              console.error(`[DiscrepancyTG auto] ${triggeredBy} not sent:`, err instanceof Error ? err.message : err);
+            }
+          });
+        }
+      } catch (err) {
+        // Never fail the CIH send over the auto-send check itself.
+        console.error('[DiscrepancyTG auto] check failed:', err instanceof Error ? err.message : err);
+      }
+    }
+
+    return NextResponse.json({ ok: true, discrepancyAutoSend });
   } catch (err) {
     const message = err instanceof Error ? err.message : 'Failed to capture or send screenshot.';
     return NextResponse.json({ ok: false, error: message }, { status: 500 });

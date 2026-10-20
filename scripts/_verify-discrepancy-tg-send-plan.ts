@@ -24,7 +24,7 @@ function check(label: string, actual: unknown, expected: unknown) {
 function makeShops(line: 'cashout' | 'sendmoney', total: number, aboveCount: number, threshold: number): DiscrepancyShopEntry[] {
   return Array.from({ length: total }, (_, i) => {
     const agentWithdrawal = i < aboveCount ? threshold + (aboveCount - i) : threshold - 1 - (i - aboveCount);
-    return { line, shopName: `SHOP${i + 1}`, sdp: 100000, companyBalance: agentWithdrawal + 1000, balanceInside: 0, agentWithdrawal };
+    return { line, shopName: `SHOP${i + 1}`, sdp: 100000, companyBalance: agentWithdrawal + 1000, balanceInside: 0, walletStatus: 'DP+WD', agentWithdrawal };
   });
 }
 
@@ -55,15 +55,15 @@ const thresholds = { cashout: 20000, sendmoney: 10000 };
   check('22 shops, 0 above -> messagesCount 1', job.messagesCount, 1);
 }
 
-// --- 30 at/above -> exactly 1 photo, no PDF ---
+// --- 30 at/above -> exactly 1 photo + PDF (PDF always goes out now) ---
 {
   const cashout = makeShops('cashout', 30, 30, 20000);
   const plan = buildSendPlan([makeLeader('MR LEE', cashout, [])], [tgRow], timestamps, thresholds);
   const job = plan.jobs.find((j) => j.line === 'cashout')!;
-  check('30 above -> kind photosOnly', plan.leaders[0].cashout.kind, 'photosOnly');
+  check('30 above -> kind photosAndPdf', plan.leaders[0].cashout.kind, 'photosAndPdf');
   check('30 above -> 1 photo page', job.photoPages.length, 1);
-  check('30 above -> no pdf', job.pdfPages.length, 0);
-  check('30 above -> messagesCount 1', job.messagesCount, 1);
+  check('30 above -> pdf has 1 page (30 shops)', job.pdfPages.length, 1);
+  check('30 above -> messagesCount 2', job.messagesCount, 2);
 }
 
 // --- 31 above out of 130 total -> 2 photos (30+1) + PDF (130 shops, 5 pages) ---
@@ -81,20 +81,21 @@ const thresholds = { cashout: 20000, sendmoney: 10000 };
 // --- a shop at exactly the threshold is included; threshold-1 is not ---
 {
   const shops: DiscrepancyShopEntry[] = [
-    { line: 'cashout', shopName: 'AT_THRESHOLD', sdp: 0, companyBalance: 0, balanceInside: 0, agentWithdrawal: 20000 },
-    { line: 'cashout', shopName: 'BELOW_THRESHOLD', sdp: 0, companyBalance: 0, balanceInside: 0, agentWithdrawal: 19999 },
+    { line: 'cashout', shopName: 'AT_THRESHOLD', sdp: 0, companyBalance: 0, balanceInside: 0, walletStatus: 'DP+WD', agentWithdrawal: 20000 },
+    { line: 'cashout', shopName: 'BELOW_THRESHOLD', sdp: 0, companyBalance: 0, balanceInside: 0, walletStatus: 'DP+WD', agentWithdrawal: 19999 },
   ];
   const plan = buildSendPlan([makeLeader('MR LEE', shops, [])], [tgRow], timestamps, thresholds);
   const job = plan.jobs.find((j) => j.line === 'cashout')!;
   check('exactly-20,000 shop included in photos, 19,999 excluded (>=)', job.photoPages[0].rows.map((r) => r.row.shopName), ['AT_THRESHOLD']);
-  check('1 shop above (the threshold one) -> photosOnly, no pdf', plan.leaders[0].cashout.kind, 'photosOnly');
+  check('1 shop above (the threshold one) -> photosAndPdf', plan.leaders[0].cashout.kind, 'photosAndPdf');
+  check('1 shop above -> pdf lists both shops (above + below)', job.pdfPages[0].rows.map((r) => r.row.shopName), ['AT_THRESHOLD', 'BELOW_THRESHOLD']);
 }
 
 // --- Send Money threshold (10,000) applied separately from Cashout (20,000) ---
 {
   const sendmoney: DiscrepancyShopEntry[] = [
-    { line: 'sendmoney', shopName: 'SM1', sdp: 0, companyBalance: 0, balanceInside: 0, agentWithdrawal: 10000 },
-    { line: 'sendmoney', shopName: 'SM2', sdp: 0, companyBalance: 0, balanceInside: 0, agentWithdrawal: 19000 }, // would fail the Cashout threshold, passes Send Money's
+    { line: 'sendmoney', shopName: 'SM1', sdp: 0, companyBalance: 0, balanceInside: 0, walletStatus: 'DP+WD', agentWithdrawal: 10000 },
+    { line: 'sendmoney', shopName: 'SM2', sdp: 0, companyBalance: 0, balanceInside: 0, walletStatus: 'DP+WD', agentWithdrawal: 19000 }, // would fail the Cashout threshold, passes Send Money's
   ];
   const plan = buildSendPlan([makeLeader('MR LEE', [], sendmoney)], [tgRow], timestamps, thresholds);
   const job = plan.jobs.find((j) => j.line === 'sendmoney')!;
@@ -139,10 +140,10 @@ const thresholds = { cashout: 20000, sendmoney: 10000 };
 // --- totalMessages sums messagesCount across jobs, not just job count ---
 {
   const leaderA = makeLeader('MR LEE', makeShops('cashout', 130, 31, 20000), []); // 2 photos + pdf = 2 messages
-  const leaderB = makeLeader('SHAKIL', makeShops('cashout', 30, 30, 20000), []); // 1 photo = 1 message
+  const leaderB = makeLeader('SHAKIL', makeShops('cashout', 30, 30, 20000), []); // 1 photo + pdf = 2 messages
   const rowB: DiscrepancyTgRowLike = { groupName: 'SHAKIL', tgIdCashout: '-200222', tgIdSendmoney: null };
   const plan = buildSendPlan([leaderA, leaderB], [tgRow, rowB], timestamps, thresholds);
-  check('totalMessages = 2 (MR LEE) + 1 (SHAKIL) = 3, not 2 jobs', plan.totalMessages, 3);
+  check('totalMessages = 2 (MR LEE) + 2 (SHAKIL) = 4, not 2 jobs', plan.totalMessages, 4);
 }
 
 // --- unconfigured leader never appears, not even as "skipped" ---

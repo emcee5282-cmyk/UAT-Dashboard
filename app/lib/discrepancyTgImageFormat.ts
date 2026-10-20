@@ -1,3 +1,5 @@
+import type { TgAccountStatus } from './discrepancyTgImageTypes';
+
 // Formatting helpers for the Discrepancy TG image template — shared by the
 // render page (app/internal/discrepancy-tg-image/page.tsx) and anything
 // that builds the page-data payload fed into it.
@@ -59,4 +61,14 @@ export function formatBangladeshCaptionTimestamp(date: Date): string {
 // but otherwise unvalidated), so this is defensive, not just decorative.
 export function sanitizeFilenamePart(s: string): string {
   return s.replace(/[/\\:*?"<>|]/g, '').trim();
+}
+
+// The image's "Account Status" column — the Balance tab's Wallet Status
+// collapsed to two values, per explicit instruction (never shows DP+WD /
+// WD Only / etc.). walletStatus already reads "Disconnected" for a shop
+// whose wallets aren't logged in (balanceService's login override); "No
+// Record" means no wallet rows at all, so it can't be logged in either.
+// Anything else is a logged-in wallet -> Active.
+export function toTgAccountStatus(walletStatus: string): TgAccountStatus {
+  return walletStatus === 'Disconnected' || walletStatus === 'No Record' ? 'Disconnected' : 'Active';
 }

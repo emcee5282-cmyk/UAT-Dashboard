@@ -12,7 +12,8 @@
 // dark-blue-gradient header with "GROUP WALLET DISCREPANCY REPORT" +
 // leader + line chip on the left, "TOTAL GROUP DISCREPANCY" + the big
 // total + shop count on the right; table columns are
-// # | Shop Name | Company Balance | Balance Inside | Agent Withdrawal (no
+// # | Shop Name | Company Balance | Balance Inside | Agent Withdrawal |
+// Account Status (no
 // Line/Leader/SDP columns); footer is "Account Managing Operations" +
 // "X / N", same gradient as the header. The card is a flex column with a
 // `.grow` spacer between the table and the footer so a short page (fewer
@@ -56,6 +57,14 @@ export const TGIMG_STYLES = `
   .tgimg th.n, .tgimg td.n { text-align: center; width: 70px; padding-left: 28px; padding-right: 0; color: #94a3b8; font-weight: 500; }
   .tgimg td.n { font-weight: 400; }
   .tgimg th.l2, .tgimg td.l2 { text-align: left; padding-left: 10px; }
+  .tgimg td.st { font-weight: 600; vertical-align: middle; }
+  .tgimg td.st.on { color: #047857; }
+  .tgimg td.st.off { color: #64748b; }
+  .tgimg td.st.has-la { padding-top: 2px; padding-bottom: 2px; line-height: 1.15; }
+  .tgimg td.st .la { font-size: 11px; font-weight: 400; line-height: 1.2; margin-top: 2px; text-align: right; color: #64748b; white-space: nowrap; }
+  .tgimg td.st .la .muted { color: #64748b; }
+  .tgimg td.st .la .amber { color: #d97706; }
+  .tgimg td.st .la .red { color: #c81e3a; }
   .tgimg .foot { display: flex; justify-content: space-between; align-items: center; padding: 20px 36px; font-size: 16px; font-weight: 600; color: #dbe3f8; background: linear-gradient(135deg,#0f1e3d 0%,#1e3a8a 60%,#2b4fb8 100%); letter-spacing: .3px; }
   .tgimg .foot b { color: #fff; font-weight: 700; font-size: 17px; }
 `;
@@ -94,6 +103,7 @@ export function DiscrepancyTgCard({ data, fillHeight = true }: { data: TgImagePa
             <th>Company Balance</th>
             <th>Balance Inside</th>
             <th>Agent Withdrawal</th>
+            <th>Account Status</th>
           </tr>
         </thead>
         <tbody>
@@ -108,6 +118,18 @@ export function DiscrepancyTgCard({ data, fillHeight = true }: { data: TgImagePa
                 <td className={cb.zero ? 'z' : ''}>{cb.text}</td>
                 <td className={bi.zero ? 'z' : ''}>{bi.text}</td>
                 <td className="wd">{aw.text}</td>
+                {/* Subline cell trims its own vertical padding so the two
+                    stacked lines fit inside the normal row height — every
+                    row stays the same height, so the 30-row page calibration
+                    (TG_IMAGE_PAGE_HEIGHT_PX) still holds. */}
+                <td className={`st ${row.accountStatus === 'Active' ? 'on' : 'off'}${row.lastActive ? ' has-la' : ''}`}>
+                  {row.accountStatus}
+                  {row.lastActive && (
+                    <div className="la">
+                      Last active: <span className={row.lastActive.tone}>{row.lastActive.text}</span>
+                    </div>
+                  )}
+                </td>
               </tr>
             );
           })}

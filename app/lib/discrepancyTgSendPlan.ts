@@ -13,8 +13,10 @@
 // Total; "above" = the shops at/above that line's own threshold.
 //   shops = 0                      -> nothing
 //   shops > 0, above = 0           -> Full Shop List PDF only (all shops)
-//   1 <= above <= 30 (1 photo)     -> that 1 photo only, no PDF
-//   above >= 31 (2+ photos)        -> all photos (no max) + the PDF
+//   above >= 1                     -> all photos (no max) + the PDF
+// (The old "1 photo only, no PDF" case for 1-30 above shops is gone — per
+// explicit instruction, the PDF now always goes out, however few shops are
+// above the threshold.)
 // The PDF, when sent, always contains ALL shops (above and below the
 // threshold) — never just the photo shops. Telegram caps one album at 10
 // photos, so a photo page count above 10 splits into multiple albums; that
@@ -41,7 +43,7 @@ export type DiscrepancyTgThresholds = {
 // this one.
 export const MAX_PHOTOS_PER_ALBUM = 10;
 
-export type LineOutcomeKind = 'none' | 'pdfOnly' | 'photosOnly' | 'photosAndPdf';
+export type LineOutcomeKind = 'none' | 'pdfOnly' | 'photosAndPdf';
 
 export type LineOutcome = {
   kind: LineOutcomeKind;
@@ -83,7 +85,7 @@ export type SendJob = {
   // could drift from it.
   albumsCount: number;
   // ALL positive shops, above and below the threshold, 30/page — empty
-  // when this line sends no PDF ('none' or 'photosOnly').
+  // only when this line sends nothing ('none').
   pdfPages: ImagePage<DiscrepancyShopEntry>[];
   // The header's "TOTAL GROUP DISCREPANCY" + "{N} shops" — sum/count over
   // ALL of this line's positive shops, identical on every photo AND PDF
@@ -134,17 +136,8 @@ function buildLineResult(
   const photoPages = above.length > 0 ? paginate(above) : [];
   const albumsCount = Math.ceil(photoPages.length / MAX_PHOTOS_PER_ALBUM);
 
-  let kind: LineOutcomeKind;
-  let pdfPages: ImagePage<DiscrepancyShopEntry>[] = [];
-  if (above.length === 0) {
-    kind = 'pdfOnly';
-    pdfPages = paginate(shops);
-  } else if (photoPages.length === 1) {
-    kind = 'photosOnly';
-  } else {
-    kind = 'photosAndPdf';
-    pdfPages = paginate(shops);
-  }
+  const kind: LineOutcomeKind = above.length === 0 ? 'pdfOnly' : 'photosAndPdf';
+  const pdfPages = paginate(shops);
 
   const pdfSent = pdfPages.length > 0;
   const messagesCount = albumsCount + (pdfSent ? 1 : 0);

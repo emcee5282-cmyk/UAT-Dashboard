@@ -8,6 +8,7 @@
 import { getAgentBalances, getAgentBalancesForBalancePage, type Product } from './balanceService';
 
 export type DiscrepancySummaryRow = {
+  agentId: number;
   line: Product;
   leader: string;
   shopName: string;
@@ -15,6 +16,12 @@ export type DiscrepancySummaryRow = {
   companyBalance: number;
   balanceInside: number;
   agentWithdrawal: number;
+  // The Balance tab's own Wallet Status, verbatim (login override already
+  // applied) — the TG image collapses it to Active/Disconnected.
+  walletStatus: string;
+  // 'YYYY-MM-DD' last WD day (lastActiveLabel.ts) — never set here; only
+  // the TG send attaches it (one extra query the Summary tab doesn't need).
+  lastActiveDate?: string | null;
 };
 
 // Two distinct placeholder leader names exist in the data (see
@@ -37,6 +44,7 @@ export async function getDiscrepancySummaryRows(options?: { force?: boolean }): 
   for (const r of cashoutRows) {
     if (EXCLUDED_LEADER_NAMES.has(r.leader)) continue;
     rows.push({
+      agentId: r.agentId,
       line: 'cashout',
       leader: r.leader,
       shopName: r.displayName,
@@ -44,12 +52,14 @@ export async function getDiscrepancySummaryRows(options?: { force?: boolean }): 
       companyBalance: r.companyBalance,
       balanceInside: r.balanceInside,
       agentWithdrawal: r.agentWithdrawal,
+      walletStatus: r.walletStatus,
     });
   }
 
   for (const r of sendMoneyRows) {
     if (EXCLUDED_LEADER_NAMES.has(r.leader)) continue;
     rows.push({
+      agentId: r.agentId,
       line: 'sendmoney',
       leader: r.leader,
       shopName: r.agentCode,
@@ -57,6 +67,7 @@ export async function getDiscrepancySummaryRows(options?: { force?: boolean }): 
       companyBalance: r.companyBalance,
       balanceInside: r.balanceInside,
       agentWithdrawal: r.agentWithdrawal,
+      walletStatus: r.walletStatus,
     });
   }
 

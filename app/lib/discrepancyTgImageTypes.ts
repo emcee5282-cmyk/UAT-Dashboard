@@ -3,12 +3,20 @@
 // deliberately flat and serializable — no Date objects, no class instances.
 // Send to TG v2: no SDP column in the new design (dropped per the v2 page
 // template).
+import type { LastActiveLabel } from './lastActiveLabel';
+
+export type TgAccountStatus ='Active' | 'Disconnected';
+
 export type TgImageRow = {
   rowNumber: number;
   shopName: string;
   companyBalance: number;
   balanceInside: number;
   agentWithdrawal: number;
+  accountStatus: TgAccountStatus;
+  // Disconnected rows only — the small "Today"/"Yesterday"/date subline
+  // under the status (lastActiveLabel.ts). Absent/null for Active.
+  lastActive?: LastActiveLabel | null;
 };
 
 export type TgImagePageData = {

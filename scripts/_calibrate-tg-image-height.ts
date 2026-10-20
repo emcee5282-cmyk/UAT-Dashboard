@@ -29,6 +29,7 @@ async function main() {
       companyBalance: 658298,
       balanceInside: 777,
       agentWithdrawal: 657521,
+      accountStatus: 'Active',
     })),
   };
 

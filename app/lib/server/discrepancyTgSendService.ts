@@ -5,7 +5,7 @@
 // Synchronous — runs inside the admin's own POST request and returns the
 // full result (per the build-plan decision: no job-queue infrastructure
 // exists anywhere else in this app).
-import { sql } from 'drizzle-orm';
+import { like, sql } from 'drizzle-orm';
 import { getDb } from '../db/client';
 import * as schema from '../db/schema';
 import { getDiscrepancySummaryRows } from '../services/discrepancySummaryService';
@@ -20,8 +20,10 @@ import {
   type DiscrepancyTgTimestamps,
   type DiscrepancyTgThresholds,
 } from '../discrepancyTgSendPlan';
-import { formatTgImageTimestamp, formatBangladeshCaptionTimestamp, sanitizeFilenamePart } from '../discrepancyTgImageFormat';
+import { formatTgImageTimestamp, formatBangladeshCaptionTimestamp, sanitizeFilenamePart, toTgAccountStatus } from '../discrepancyTgImageFormat';
 import type { TgImagePageData } from '../discrepancyTgImageTypes';
+import { bdTodayYmd, deriveLastActiveDate, formatLastActiveLabel } from '../lastActiveLabel';
+import { findAutoSendSlot, decideAutoSend, autoSendTriggeredByPrefix, type AutoSendDecision } from '../discrepancyTgAutoSlot';
 import type { ImagePage } from '../discrepancyTgImagePagination';
 import type { DiscrepancyShopEntry } from '../discrepancySummaryAggregate';
 import { launchBrowser } from './puppeteerCapture';
@@ -59,8 +61,24 @@ function buildPdfFilename(leader: string, line: 'cashout' | 'sendmoney'): string
   return `${sanitizeFilenamePart(leader)} ${lineLabel} Full List.pdf`;
 }
 
+// Last WD day per shop from stagnant_balance_tracking (per explicit
+// confirmation, the "last active" source — no login-history table exists).
+// No row -> null -> "Never".
+async function getLastActiveDateByAgentId(): Promise<Map<number, string | null>> {
+  const db = getDb();
+  const rows = await db
+    .select({
+      agentId: schema.stagnantBalanceTracking.agentId,
+      noDataStreakDays: schema.stagnantBalanceTracking.noDataStreakDays,
+      lastCheckedCutoffDate: schema.stagnantBalanceTracking.lastCheckedCutoffDate,
+    })
+    .from(schema.stagnantBalanceTracking);
+  return new Map(rows.map((r) => [r.agentId, deriveLastActiveDate(r.lastCheckedCutoffDate, r.noDataStreakDays)]));
+}
+
 async function getGroupTotalLeaders() {
-  const rows = await getDiscrepancySummaryRows();
+  const [summaryRows, lastActiveByAgentId] = await Promise.all([getDiscrepancySummaryRows(), getLastActiveDateByAgentId()]);
+  const rows = summaryRows.map((r) => ({ ...r, lastActiveDate: lastActiveByAgentId.get(r.agentId) ?? null }));
   const views = buildAllDiscrepancySummaryViews(rows);
   return views.group.leaders;
 }
@@ -75,7 +93,29 @@ async function getLineTimestamps(): Promise<DiscrepancyTgTimestamps> {
   };
 }
 
-export type DiscrepancyTgPreview = DiscrepancyTgSendPlan & { thresholds: DiscrepancyTgThresholds };
+// Auto-send gate for Operations Overview's "Send to Telegram" (see
+// discrepancyTgAutoSlot.ts for the rules). Only decides — the caller runs
+// runDiscrepancyTgSend itself (in after(), so the CIH send's own response
+// isn't held up by a multi-minute run). "Already sent" is read from the send
+// log's own triggered_by marker; a run still in progress hasn't written its
+// rows yet, but the send lock already turns a second concurrent run away.
+export async function checkDiscrepancyTgAutoSend(now: Date = new Date()): Promise<AutoSendDecision> {
+  const slot = findAutoSendSlot(now);
+  if (!slot) return decideAutoSend(now, null, { cashout: null, sendmoney: null }, false);
+
+  const db = getDb();
+  const [timestamps, sentRows] = await Promise.all([
+    getLineTimestamps(),
+    db
+      .select({ id: schema.discrepancyTgSendLog.id })
+      .from(schema.discrepancyTgSendLog)
+      .where(like(schema.discrepancyTgSendLog.triggeredBy, `${autoSendTriggeredByPrefix(slot)} ·%`))
+      .limit(1),
+  ]);
+  return decideAutoSend(now, slot, timestamps, sentRows.length > 0);
+}
+
+export type DiscrepancyTgPreview =DiscrepancyTgSendPlan & { thresholds: DiscrepancyTgThresholds };
 
 export async function buildDiscrepancyTgPreview(): Promise<DiscrepancyTgPreview> {
   const [leaders, tgData, timestamps] = await Promise.all([getGroupTotalLeaders(), getDiscrepancyTgData(), getLineTimestamps()]);
@@ -132,15 +172,17 @@ export type DiscrepancyTgSendOutcome = {
 
 function buildPhotoPageDatas(job: SendJob): TgImagePageData[] {
   const timestampText = formatTgImageTimestamp(job.dataTimestamp);
-  return job.photoPages.map((page) => toPageData(job, page, timestampText));
+  const todayBd = bdTodayYmd();
+  return job.photoPages.map((page) => toPageData(job, page, timestampText, todayBd));
 }
 
 function buildPdfPageDatas(job: SendJob): TgImagePageData[] {
   const timestampText = formatTgImageTimestamp(job.dataTimestamp);
-  return job.pdfPages.map((page) => toPageData(job, page, timestampText));
+  const todayBd = bdTodayYmd();
+  return job.pdfPages.map((page) => toPageData(job, page, timestampText, todayBd));
 }
 
-function toPageData(job: SendJob, page: ImagePage<DiscrepancyShopEntry>, timestampText: string): TgImagePageData {
+function toPageData(job: SendJob, page: ImagePage<DiscrepancyShopEntry>, timestampText: string, todayBd: string): TgImagePageData {
   return {
     leader: job.leader,
     line: job.line,
@@ -149,13 +191,18 @@ function toPageData(job: SendJob, page: ImagePage<DiscrepancyShopEntry>, timesta
     timestamp: timestampText,
     headerTotal: job.headerTotal,
     headerShopCount: job.headerShopCount,
-    rows: page.rows.map((r) => ({
-      rowNumber: r.rowNumber,
-      shopName: r.row.shopName,
-      companyBalance: r.row.companyBalance,
-      balanceInside: r.row.balanceInside,
-      agentWithdrawal: r.row.agentWithdrawal,
-    })),
+    rows: page.rows.map((r) => {
+      const accountStatus = toTgAccountStatus(r.row.walletStatus);
+      return {
+        rowNumber: r.rowNumber,
+        shopName: r.row.shopName,
+        companyBalance: r.row.companyBalance,
+        balanceInside: r.row.balanceInside,
+        agentWithdrawal: r.row.agentWithdrawal,
+        accountStatus,
+        lastActive: accountStatus === 'Disconnected' ? formatLastActiveLabel(r.row.lastActiveDate ?? null, todayBd) : null,
+      };
+    }),
   };
 }
 

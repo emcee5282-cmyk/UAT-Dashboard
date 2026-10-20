@@ -13,6 +13,8 @@ export type DiscrepancyShopEntry = {
   companyBalance: number;
   balanceInside: number;
   agentWithdrawal: number;
+  walletStatus: string;
+  lastActiveDate?: string | null;
 };
 
 export type DiscrepancyLeaderGroup = {
@@ -69,6 +71,8 @@ function toShopEntry(r: DiscrepancySummaryRow): DiscrepancyShopEntry {
     companyBalance: r.companyBalance,
     balanceInside: r.balanceInside,
     agentWithdrawal: r.agentWithdrawal,
+    walletStatus: r.walletStatus,
+    lastActiveDate: r.lastActiveDate,
   };
 }
 

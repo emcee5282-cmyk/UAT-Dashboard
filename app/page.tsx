@@ -1596,7 +1596,15 @@ export default function DashboardPage() {
       if (!res.ok || !json.ok) {
         throw new Error(json.error || 'Failed to send screenshot.');
       }
-      setToast({ type: 'success', message: 'Sent to Telegram.' });
+      // The route may also have started the Discrepancy TG auto-send (12/3/
+      // 6/9PM GMT+8 window + fresh Balance Limit upload) in the background.
+      const auto = json.discrepancyAutoSend as { triggered: boolean; slot: string | null } | undefined;
+      setToast({
+        type: 'success',
+        message: auto?.triggered
+          ? `Sent to Telegram. Discrepancy report (${auto.slot?.split(' ')[1]}) is now sending to leader groups.`
+          : 'Sent to Telegram.',
+      });
     } catch (err) {
       setToast({ type: 'error', message: err instanceof Error ? err.message : 'Failed to send screenshot.' });
     } finally {
