@@ -9,12 +9,12 @@
 //   - Send Money reads stagnant_balance_tracking, kept live by
 //     importEstimatedOpeningFromUpload() on every Estimated Balance
 //     upload — unchanged, since its real upload data is shop-level 1:1.
-//   - Cashout reads stagnant_balance_wallet_streak instead — seeded ONLY
-//     from the reference file, per wallet, NEVER touched by the live
-//     hook, since the live hook can only ever track one combined WD figure
-//     per bare shop code (masking a genuinely idle wallet whenever a
-//     sibling wallet is still active). daysAsOf carries the file's own run
-//     date so the UI can label it as a file snapshot, not a live figure.
+//   - Cashout reads stagnant_balance_wallet_streak instead — per wallet,
+//     since a per-shop streak masks a genuinely idle wallet whenever a
+//     sibling wallet is still active. Seeded once from the reference file
+//     (2026-10-16), then kept live per wallet by the same Estimated
+//     Balance upload hook (no longer frozen, as of 2026-10-20). daysAsOf
+//     is the last upload cutoff date the row was evaluated against.
 import { eq, and, gte, inArray } from 'drizzle-orm';
 import { getDb } from '../db/client';
 import * as schema from '../db/schema';

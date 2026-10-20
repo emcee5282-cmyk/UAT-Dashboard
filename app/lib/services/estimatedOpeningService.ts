@@ -46,9 +46,8 @@ const OPENING_SUFFIX_TO_WALLET_TYPE: Record<string, string> = {
 };
 // Inverse of the above — needed to turn a wallet LINE's own walletType
 // (full name) back into the BK/NG/RK/UP suffix stagnant_balance_wallet_
-// streak is keyed by, so a same-day real Withdrawal can clear that exact
-// wallet's frozen file streak (see this upload function's own "Cashout
-// per-wallet stagnant clear" block below).
+// streak is keyed by (see this upload function's own "Cashout per-wallet
+// Stagnant Balances streak" block below).
 const WALLET_TYPE_TO_OPENING_SUFFIX: Record<string, string> = {
   BKASH: 'BK', NAGAD: 'NG', ROCKET: 'RK', UPAY: 'UP',
 };
@@ -178,7 +177,7 @@ export async function importEstimatedOpeningFromUpload(
   const activityDateStr = subtractDays(cutoffDateStr, 1);
 
   const agentRows = await db
-    .select({ id: schema.agents.id, agentCode: schema.agents.agentCode, openingBalance: schema.agents.openingBalance })
+    .select({ id: schema.agents.id, agentCode: schema.agents.agentCode, openingBalance: schema.agents.openingBalance, isActive: schema.agents.isActive })
     .from(schema.agents)
     .where(eq(schema.agents.product, product));
   const agentByCode = new Map(agentRows.map((a) => [a.agentCode, a]));
@@ -260,14 +259,11 @@ export async function importEstimatedOpeningFromUpload(
   type NewWalletLineEntry = { agentId: number; walletType: string; deposit: number; withdrawal: number; assumedBalance: number; opening: number };
   const entries: NewEntry[] = [];
   const walletLineInserts: NewWalletLineEntry[] = [];
-  // Cashout only — a wallet with a real Withdrawal > 0 THIS upload clears
-  // its frozen stagnant_balance_wallet_streak row same-day (set to 0,
-  // dropping below the 3-day threshold) instead of waiting for the next
-  // manual file reseed, per explicit instruction (2026-10-16). Only ever
-  // CLEARS, never re-raises — a wallet that goes idle again afterward
-  // still needs the next file reseed to reappear, since this upload's own
-  // data can't tell us a sibling wallet stayed idle.
-  const cashoutWalletWdClears: { agentId: number; walletSuffix: string }[] = [];
+  // Cashout only — this upload's own per-wallet Withdrawal, keyed
+  // `${agentId}|${BK/NG/RK/UP}`, feeding the live per-wallet Stagnant
+  // Balances streak below (stagnant_balance_wallet_streak). An unsplit
+  // shop's '' key reads its shop-level withdrawal from `entries` instead.
+  const cashoutWalletWd = new Map<string, number>();
 
   for (const s of shopTotals) {
     const agent = agentByCode.get(s.shopName);
@@ -294,9 +290,6 @@ export async function importEstimatedOpeningFromUpload(
       const withdrawal = s.totalWD;
       const assumedBalance = opening + deposit + tx.topUp - withdrawal - tx.settlement;
       entries.push({ agentId: agent.id, deposit, withdrawal, assumedBalance, opening });
-      if (product === 'cashout' && withdrawal > 0) {
-        cashoutWalletWdClears.push({ agentId: agent.id, walletSuffix: '' });
-      }
       continue;
     }
 
@@ -363,8 +356,9 @@ export async function importEstimatedOpeningFromUpload(
       shopWithdrawalBlended += lineWithdrawalBlended;
       if (walletTypeFull) {
         walletLineInserts.push({ agentId: agent.id, walletType: walletTypeFull, deposit: lineDeposit, withdrawal: lineWithdrawal, assumedBalance: lineOpening + lineDepositBlended - lineWithdrawalBlended, opening: lineOpening });
-        if (product === 'cashout' && lineWithdrawal > 0) {
-          cashoutWalletWdClears.push({ agentId: agent.id, walletSuffix: WALLET_TYPE_TO_OPENING_SUFFIX[walletTypeFull] });
+        if (product === 'cashout') {
+          const key = `${agent.id}|${WALLET_TYPE_TO_OPENING_SUFFIX[walletTypeFull]}`;
+          cashoutWalletWd.set(key, (cashoutWalletWd.get(key) ?? 0) + lineWithdrawal);
         }
       }
     }
@@ -398,6 +392,56 @@ export async function importEstimatedOpeningFromUpload(
     const update = computeStreakUpdate(streakByAgentId.get(agent.id) ?? null, cutoffDateStr, hadActivityThisUpload);
     return { agentId: agent.id, noDataStreakDays: update.noDataStreakDays, lastCheckedCutoffDate: update.lastCheckedCutoffDate, updatedAt: uploadedAtDate };
   });
+
+  // Cashout per-wallet Stagnant Balances streak — live, same +1/reset/
+  // same-cutoff-dedup rule as above (computeStreakUpdate), but per wallet
+  // (agentId + BK/NG/RK/UP suffix, '' for an unsplit shop) since Cashout's
+  // Stagnant tab reads stagnant_balance_wallet_streak, not the per-agent
+  // table. No longer frozen to the reference-file seed, per explicit
+  // instruction (2026-10-20). file_as_of_date doubles as the row's own
+  // last-evaluated cutoff date. Keys = every ACTIVE cashout agent's Opening
+  // wallet structure (all active agents, not just this file's — an agent
+  // missing from the file still advances) plus any existing row's key.
+  // Inactive agents are skipped entirely (the Stagnant tab never shows
+  // them; ~3,000 of them would otherwise each get a junk row).
+  const cashoutWalletStreakRows: { agentId: number; walletSuffix: string; noDataStreakDays: number; fileAsOfDate: string | null; updatedAt: Date }[] = [];
+  const activeAgentIds = agentRows.filter((a) => a.isActive).map((a) => a.id);
+  if (product === 'cashout' && activeAgentIds.length > 0) {
+    const [allOpeningLines, existingWalletRows] = await Promise.all([
+      db
+        .select({ agentId: schema.openingWalletLines.agentId, rawAgentName: schema.openingWalletLines.rawAgentName })
+        .from(schema.openingWalletLines)
+        .where(inArray(schema.openingWalletLines.agentId, activeAgentIds)),
+      db
+        .select({ agentId: schema.stagnantBalanceWalletStreak.agentId, walletSuffix: schema.stagnantBalanceWalletStreak.walletSuffix, noDataStreakDays: schema.stagnantBalanceWalletStreak.noDataStreakDays, fileAsOfDate: schema.stagnantBalanceWalletStreak.fileAsOfDate })
+        .from(schema.stagnantBalanceWalletStreak)
+        .where(inArray(schema.stagnantBalanceWalletStreak.agentId, activeAgentIds)),
+    ]);
+
+    const keys = new Set<string>();
+    const agentsWithLines = new Set<number>();
+    for (const l of allOpeningLines) {
+      agentsWithLines.add(l.agentId);
+      keys.add(`${l.agentId}|${extractOpeningWalletTypeSuffix(l.rawAgentName) ?? ''}`);
+    }
+    for (const id of activeAgentIds) if (!agentsWithLines.has(id)) keys.add(`${id}|`);
+    const existingByKey = new Map(existingWalletRows.map((r) => [`${r.agentId}|${r.walletSuffix}`, r]));
+    for (const k of existingByKey.keys()) keys.add(k);
+
+    for (const key of keys) {
+      const sep = key.indexOf('|');
+      const agentId = Number(key.slice(0, sep));
+      const walletSuffix = key.slice(sep + 1);
+      const wd = walletSuffix === '' ? (entryByAgentId.get(agentId)?.withdrawal ?? 0) : (cashoutWalletWd.get(key) ?? 0);
+      const hadActivityThisUpload = wd !== 0;
+      const existing = existingByKey.get(key);
+      const update = computeStreakUpdate(existing ? { noDataStreakDays: existing.noDataStreakDays, lastCheckedCutoffDate: existing.fileAsOfDate } : null, cutoffDateStr, hadActivityThisUpload);
+      // A real Withdrawal still clears a same-cutoff re-upload (the dedup
+      // above only blocks a second +1), same as the old clear-only hook.
+      const noDataStreakDays = hadActivityThisUpload ? 0 : update.noDataStreakDays;
+      cashoutWalletStreakRows.push({ agentId, walletSuffix, noDataStreakDays, fileAsOfDate: update.lastCheckedCutoffDate, updatedAt: uploadedAtDate });
+    }
+  }
 
   // Reuses the SAME uploadedAtDate computed above for cutoffDateStr — the
   // stored upload row and the cutoff it was derived from must be the exact
@@ -484,21 +528,20 @@ export async function importEstimatedOpeningFromUpload(
         });
     }
 
-    // Cashout per-wallet stagnant clear (see cashoutWalletWdClears' own
-    // declaration above) — only ever touches a row that's CURRENTLY
-    // flagged (noDataStreakDays > 0), never inserts, never raises.
-    for (let i = 0; i < cashoutWalletWdClears.length; i += INSERT_CHUNK_SIZE) {
-      const chunk = cashoutWalletWdClears.slice(i, i + INSERT_CHUNK_SIZE);
-      const valuesSql = sql.join(
-        chunk.map((c) => sql`(${c.agentId}::integer, ${c.walletSuffix}::text)`),
-        sql`, `
-      );
-      await tx.execute(sql`
-        UPDATE stagnant_balance_wallet_streak AS t
-        SET no_data_streak_days = 0, updated_at = ${uploadedAtDate}
-        FROM (VALUES ${valuesSql}) AS v(agent_id, wallet_suffix)
-        WHERE t.agent_id = v.agent_id AND t.wallet_suffix = v.wallet_suffix AND t.no_data_streak_days > 0
-      `);
+    // Cashout per-wallet Stagnant Balances streak upsert (see
+    // cashoutWalletStreakRows' own builder above).
+    for (let i = 0; i < cashoutWalletStreakRows.length; i += INSERT_CHUNK_SIZE) {
+      await tx
+        .insert(schema.stagnantBalanceWalletStreak)
+        .values(cashoutWalletStreakRows.slice(i, i + INSERT_CHUNK_SIZE))
+        .onConflictDoUpdate({
+          target: [schema.stagnantBalanceWalletStreak.agentId, schema.stagnantBalanceWalletStreak.walletSuffix],
+          set: {
+            noDataStreakDays: sql`excluded.no_data_streak_days`,
+            fileAsOfDate: sql`excluded.file_as_of_date`,
+            updatedAt: sql`excluded.updated_at`,
+          },
+        });
     }
   });
 

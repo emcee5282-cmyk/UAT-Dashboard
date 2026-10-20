@@ -42,10 +42,9 @@ export type StagnantViewResult = {
   leaders: StagnantLeaderGroup[];
   totals: { companyBalance: number; balanceInside: number; sdp: number; shopCount: number };
   buckets: StagnantBuckets;
-  // Cashout's streak is now file-seeded and frozen, not live (see
-  // stagnantBalanceService.ts's own header comment) — this is that file's
-  // run date, for the UI to label it as a snapshot. null when the view has
-  // no Cashout rows (a pure Send Money view, or an empty result).
+  // Cashout's per-wallet streak (see stagnantBalanceService.ts's own header
+  // comment) — the latest upload cutoff date it was evaluated against. null
+  // when the view has no Cashout rows (a pure Send Money view, or empty).
   cashoutDaysAsOf: string | null;
 };
 
@@ -106,7 +105,9 @@ export function buildStagnantView(rows: StagnantBalanceRow[], view: StagnantView
     { companyBalance: 0, balanceInside: 0, sdp: 0, shopCount: 0 }
   );
 
-  const cashoutDaysAsOf = scoped.find((r) => r.line === 'cashout' && r.daysAsOf)?.daysAsOf ?? null;
+  // Latest evaluated cutoff across rows — live-updated per wallet now, so
+  // rows can legitimately carry different dates (e.g. a stale key).
+  const cashoutDaysAsOf = scoped.reduce<string | null>((max, r) => (r.line === 'cashout' && r.daysAsOf && (!max || r.daysAsOf > max) ? r.daysAsOf : max), null);
 
   return { leaders: sortedLeaders, totals, buckets: buildBuckets(scoped), cashoutDaysAsOf };
 }

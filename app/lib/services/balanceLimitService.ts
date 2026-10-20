@@ -398,8 +398,8 @@ export async function importBalanceLimitFile(params: {
       // Cashout per-wallet stagnant clear (see cashoutWalletWdClears' own
       // declaration above) — only ever touches a row that's CURRENTLY
       // flagged (noDataStreakDays > 0), never inserts, never raises a
-      // streak. A wallet that goes idle again after this still needs the
-      // next manual file reseed to reappear.
+      // streak. A wallet that goes idle again after this climbs back via
+      // the next Estimated Balance upload's own +1 (estimatedOpeningService.ts).
       if (cashoutWalletWdClears.length > 0) {
         for (let i = 0; i < cashoutWalletWdClears.length; i += INSERT_CHUNK_SIZE) {
           const chunk = cashoutWalletWdClears.slice(i, i + INSERT_CHUNK_SIZE);
