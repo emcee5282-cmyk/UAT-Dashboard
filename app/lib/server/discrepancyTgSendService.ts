@@ -222,11 +222,32 @@ export type DiscrepancyTgSendProgress = {
   current?: { leader: string; line: 'cashout' | 'sendmoney'; kind: 'photos' | 'pdf' };
 };
 
+// One message of a run: a leader+line's photos, or its PDF.
+export type DiscrepancyTgSendPart = { leader: string; line: 'cashout' | 'sendmoney'; kind: 'photos' | 'pdf' };
+
+// Narrows a full plan to just the listed parts — for finishing a run that
+// stopped partway (2026-10-21 6PM) without re-sending to the groups that
+// already got theirs. The manual button never passes a list, so it always
+// sends the full plan.
+export function restrictPlan(plan: DiscrepancyTgSendPlan, only: DiscrepancyTgSendPart[]): DiscrepancyTgSendPlan {
+  const wanted = new Set(only.map((p) => `${p.leader}|${p.line}|${p.kind}`));
+  const jobs = plan.jobs
+    .map((job) => {
+      const photoPages = wanted.has(`${job.leader}|${job.line}|photos`) ? job.photoPages : [];
+      const pdfPages = wanted.has(`${job.leader}|${job.line}|pdf`) ? job.pdfPages : [];
+      const albumsCount = Math.ceil(photoPages.length / MAX_PHOTOS_PER_ALBUM);
+      return { ...job, photoPages, pdfPages, albumsCount, messagesCount: albumsCount + (pdfPages.length > 0 ? 1 : 0) };
+    })
+    .filter((job) => job.messagesCount > 0);
+  return { ...plan, jobs, totalMessages: jobs.reduce((sum, j) => sum + j.messagesCount, 0) };
+}
+
 export async function runDiscrepancyTgSend(
   triggeredBy: string,
   origin: string,
   sessionToken: string | undefined,
-  onProgress?: (progress: DiscrepancyTgSendProgress) => void
+  onProgress?: (progress: DiscrepancyTgSendProgress) => void,
+  options?: { only?: DiscrepancyTgSendPart[] }
 ): Promise<DiscrepancyTgSendOutcome> {
   const locked = await acquireSendLock();
   if (!locked) throw new Error('A send is already in progress');
@@ -243,7 +264,7 @@ export async function runDiscrepancyTgSend(
     const token = tgData.token;
     const thresholds: DiscrepancyTgThresholds = { cashout: tgData.cashoutThreshold, sendmoney: tgData.sendmoneyThreshold };
 
-    const plan = buildSendPlan(leaders, tgData.rows, timestamps, thresholds);
+    const plan = options?.only ? restrictPlan(buildSendPlan(leaders, tgData.rows, timestamps, thresholds), options.only) : buildSendPlan(leaders, tgData.rows, timestamps, thresholds);
     let sentMessages = 0;
     const reportProgress = (current?: DiscrepancyTgSendProgress['current']) =>
       onProgress?.({ sentMessages, totalMessages: plan.totalMessages, current });
