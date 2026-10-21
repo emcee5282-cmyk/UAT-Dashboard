@@ -144,7 +144,8 @@ export async function POST(request: NextRequest) {
           after(async () => {
             try {
               const outcome = await runDiscrepancyTgSend(triggeredBy, origin, sessionToken);
-              console.log(`[DiscrepancyTG auto] ${triggeredBy}: ${outcome.totalMessagesSent} messages, ${outcome.failed.length} failed${outcome.invalidToken ? ', invalid token' : ''}`);
+              const failures = outcome.failed.map((f) => `${f.leader}/${f.line}/${f.kind}: ${f.reason}`).join(' | ');
+              console.log(`[DiscrepancyTG auto] ${triggeredBy}: ${outcome.totalMessagesSent} messages, ${outcome.failed.length} failed${outcome.invalidToken ? ', invalid token' : ''}${failures ? ` — ${failures}` : ''}`);
             } catch (err) {
               // e.g. "A send is already in progress" (a manual run holding
               // the lock) — skipped, nothing to retry automatically.
