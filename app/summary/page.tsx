@@ -736,7 +736,6 @@ export default function Summary() {
   // multi-wallet shop. openingBal is fine to sum over `rows` (each split
   // row's own figure is genuinely distinct, never repeated) but SDP/
   // Accounts/No-Opening-Yet all need the per-shop view instead.
-  const [shopKpiSource, setShopKpiSource] = useState<{ openingBal: number; sdp: number }[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<ClassifiedError | null>(null);
   const [spinning, setSpinning] = useState(false);
@@ -873,11 +872,6 @@ export default function Summary() {
         })
         .filter((row) => row.agentName && row.agentName !== '-' && row.agentName !== 'OLD');
       setRows(parsed);
-      setShopKpiSource(
-        pgRows
-          .filter((r) => r.agentCode && r.agentCode !== '-' && r.agentCode !== 'OLD')
-          .map((r) => ({ openingBal: r.openingBal, sdp: r.sdp }))
-      );
       setSelectedIds(new Set());
     } catch (err) {
       setError(classifyFetchError(err instanceof Error ? err.message : String(err)));
@@ -1078,10 +1072,9 @@ export default function Summary() {
     return list;
   }, [facetFilteredRows, sortColumn, sortDirection]);
 
-  // Unique shop count WITHIN the current filtered/searched view — distinct
-  // from shopKpiSource (the page-wide KPI bar's own total, unaffected by
-  // search/filters). Used only for the footer's "(N shops)" clarifier so it
-  // stays correct even when the table is filtered down.
+  // Unique shop count WITHIN the current filtered/searched view — used for
+  // the footer's "(N shops)" clarifier (the KPI bar's Total Accounts counts
+  // the same filtered shops).
   const sortedRowsShopCount = useMemo(
     () => new Set(sortedRows.map((row) => row.parentAgentCode)).size,
     [sortedRows]
@@ -1332,17 +1325,23 @@ export default function Summary() {
   // Top Up's Amount stat): opening balances are a snapshot, not a daily
   // transaction total, so there's no "vs yesterday" to compare against.
   const kpis = useMemo(() => {
-    // Total Opening Balance sums `rows` (the split/display list) — safe,
-    // since each split row's own figure is genuinely distinct and they sum
-    // to the shop's real total. Total Accounts/Total SDP/No Opening Yet all
-    // use shopKpiSource (one entry per real shop) instead — summing those
-    // over `rows` would count a multi-wallet shop once per wallet.
-    const totalOpening = rows.reduce((sum, row) => sum + row.openingBal, 0);
-    const totalSdp = shopKpiSource.reduce((sum, shop) => sum + shop.sdp, 0);
+    // Follows the current Brand/Leader/Wallet Type filters + search (per
+    // explicit instruction: only what's filtered gets counted), so it sums
+    // facetFilteredRows — the same rows the table shows. Each split row
+    // carries its OWN wallet line's Opening and SDP (not the shop total
+    // repeated), so summing rows never double-counts a multi-wallet shop.
+    // Accounts / No Opening Yet are per SHOP (parentAgentCode), not per row.
+    const totalOpening = facetFilteredRows.reduce((sum, row) => sum + row.openingBal, 0);
+    const totalSdp = facetFilteredRows.reduce((sum, row) => sum + row.sdp, 0);
+    const openingByShop = new Map<string, number>();
+    for (const row of facetFilteredRows) {
+      openingByShop.set(row.parentAgentCode, (openingByShop.get(row.parentAgentCode) ?? 0) + row.openingBal);
+    }
+    const noOpeningShops = Array.from(openingByShop.values()).filter((total) => total === 0).length;
     return [
       {
         label: 'Total Accounts',
-        bigValue: shopKpiSource.length.toLocaleString('en-US'), subtitle: undefined as string | undefined,
+        bigValue: openingByShop.size.toLocaleString('en-US'), subtitle: undefined as string | undefined,
       },
       {
         label: 'Total Opening Balance',
@@ -1354,10 +1353,10 @@ export default function Summary() {
       },
       {
         label: 'No Opening Yet',
-        bigValue: shopKpiSource.filter((shop) => shop.openingBal === 0).length.toLocaleString('en-US'), subtitle: undefined as string | undefined,
+        bigValue: noOpeningShops.toLocaleString('en-US'), subtitle: undefined as string | undefined,
       },
     ];
-  }, [rows, shopKpiSource]);
+  }, [facetFilteredRows]);
 
   const hasAnyRecords = rows.length > 0;
   const emptyStateNode = !hasAnyRecords ? (

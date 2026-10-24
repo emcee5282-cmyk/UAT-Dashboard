@@ -1170,13 +1170,16 @@ export default function SendMoneyOpeningPage() {
   // Opening Bal/SDP), Total SDP (same), No Opening Yet — just inline in one
   // thin row instead of separate bordered/icon cards. No delta chip: opening
   // balances are a snapshot, not a daily transaction total.
+  // Follows the current filters + search (per explicit instruction: only
+  // what's filtered gets counted) — same rows the table shows. One row per
+  // shop here, so no per-shop dedup is needed.
   const kpis = useMemo(() => {
-    const totalOpening = rows.reduce((sum, row) => sum + (row.openingBalance ?? 0), 0);
-    const totalSdp = rows.reduce((sum, row) => sum + (row.securityDeposit ?? 0), 0);
+    const totalOpening = facetFilteredRows.reduce((sum, row) => sum + (row.openingBalance ?? 0), 0);
+    const totalSdp = facetFilteredRows.reduce((sum, row) => sum + (row.securityDeposit ?? 0), 0);
     return [
       {
         label: 'Total Accounts',
-        bigValue: rows.length.toLocaleString('en-US'), subtitle: undefined as string | undefined,
+        bigValue: facetFilteredRows.length.toLocaleString('en-US'), subtitle: undefined as string | undefined,
       },
       {
         label: 'Total Opening Balance',
@@ -1188,10 +1191,10 @@ export default function SendMoneyOpeningPage() {
       },
       {
         label: 'No Opening Yet',
-        bigValue: rows.filter((row) => row.openingBalance === null).length.toLocaleString('en-US'), subtitle: undefined as string | undefined,
+        bigValue: facetFilteredRows.filter((row) => row.openingBalance === null).length.toLocaleString('en-US'), subtitle: undefined as string | undefined,
       },
     ];
-  }, [rows]);
+  }, [facetFilteredRows]);
 
   const hasAnyRecords = rows.length > 0;
   const emptyStateNode = !hasAnyRecords ? (

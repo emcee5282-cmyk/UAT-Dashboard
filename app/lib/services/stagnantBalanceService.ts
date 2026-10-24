@@ -48,7 +48,7 @@ export type StagnantBalanceRow = {
 // NAME — as Discrepancy Summary/Unreconciled Balance, per explicit
 // instruction: whatever name the Balance tab shows for a shop is what this
 // page must show too, not the bare agentCode.
-type NamedBalanceLine = { agentId: number; displayName: string; companyBalance: number; balanceInside: number };
+type NamedBalanceLine = { agentId: number; displayName: string; companyBalance: number; balanceInside: number; sdp: number };
 
 async function getCashoutStreakRows(options?: { force?: boolean }): Promise<StagnantBalanceRow[]> {
   const db = getDb();
@@ -57,7 +57,6 @@ async function getCashoutStreakRows(options?: { force?: boolean }): Promise<Stag
     .select({
       agentId: schema.agents.id,
       walletSuffix: schema.stagnantBalanceWalletStreak.walletSuffix,
-      sdp: schema.agents.sdp,
       leaderName: schema.leaders.name,
       noDataStreakDays: schema.stagnantBalanceWalletStreak.noDataStreakDays,
       fileAsOfDate: schema.stagnantBalanceWalletStreak.fileAsOfDate,
@@ -72,7 +71,7 @@ async function getCashoutStreakRows(options?: { force?: boolean }): Promise<Stag
     ));
 
   const balanceLinesPromise = getAgentBalancesForBalancePage('cashout', options).then((rows) =>
-    rows.map((b) => ({ agentId: b.agentId, displayName: b.displayName, companyBalance: b.companyBalance, balanceInside: b.balanceInside }))
+    rows.map((b) => ({ agentId: b.agentId, displayName: b.displayName, companyBalance: b.companyBalance, balanceInside: b.balanceInside, sdp: b.sdp }))
   );
 
   const [streakRows, balanceLines] = await Promise.all([streakRowsPromise, balanceLinesPromise]);
@@ -108,7 +107,11 @@ async function getCashoutStreakRows(options?: { force?: boolean }): Promise<Stag
       shopName: balance.displayName,
       companyBalance: balance.companyBalance,
       balanceInside: balance.balanceInside,
-      sdp: n(r.sdp),
+      // This wallet line's OWN SDP (same figure Opening and the Balance tab
+      // show for it), not the whole shop's agents.sdp — that total repeated
+      // on every wallet row of a split shop double-counted it in the
+      // leader/group SDP totals (e.g. BERLIN 6.0M shown vs 2.2M real).
+      sdp: balance.sdp,
       noDataStreakDays: r.noDataStreakDays,
       daysAsOf: r.fileAsOfDate,
     });
@@ -139,7 +142,7 @@ async function getSendMoneyStreakRows(options?: { force?: boolean }): Promise<St
   // getAgentBalancesForBalancePage's own header comment), so it keeps the
   // plain getAgentBalances() source, one line per agent.
   const balanceLinesPromise: Promise<NamedBalanceLine[]> = getAgentBalances('sendmoney', options).then((rows) =>
-    rows.map((b) => ({ agentId: b.agentId, displayName: b.agentCode, companyBalance: b.companyBalance, balanceInside: b.balanceInside }))
+    rows.map((b) => ({ agentId: b.agentId, displayName: b.agentCode, companyBalance: b.companyBalance, balanceInside: b.balanceInside, sdp: b.sdp }))
   );
 
   const [streakRows, balanceLines] = await Promise.all([streakRowsPromise, balanceLinesPromise]);
