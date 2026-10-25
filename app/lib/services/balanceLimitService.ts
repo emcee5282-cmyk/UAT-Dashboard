@@ -42,7 +42,8 @@ import { isValidNumericCell } from '../uploadValidation';
 import { resolveBrand, type BrandResolutionConfig } from '../balanceEngine';
 import { BRAND_CODES } from '../transferQueueCount';
 import { resolveOrCreateLeaderId } from './openingActionsService';
-import { extractShopFamily } from '../realShopName';
+import { extractShopFamily, extractRawWalletFamily, extractShopSeriesFamily } from '../realShopName';
+import { buildFamilyLeaderMap, buildSeriesFamilyLeaderMap } from './importService';
 import { invalidateBalanceCache } from './balanceService';
 
 // The literal sentinel this whole app understands as "auto-created by the
@@ -166,6 +167,16 @@ export async function importBalanceLimitFile(params: {
     if (!fam || leaderNameByFamily.has(fam)) continue;
     leaderNameByFamily.set(fam, r.leaderName);
   }
+  // extractShopFamily above only understands bare codes ("CASIO110"), so
+  // for Send Money's full codes ("N-M2PS1-CASIO110-BK") it never matched
+  // and every auto-created shop landed on NEW SHOP (confirmed live
+  // 2026-10-25: 149 Send Money shops). Same two fallbacks the Opening
+  // import already uses for a placeholder leader — exact wallet family
+  // first, then the looser shop series.
+  const [walletFamilyLeaderMap, seriesFamilyLeaderMap] = await Promise.all([
+    buildFamilyLeaderMap(db, params.product),
+    buildSeriesFamilyLeaderMap(db, params.product),
+  ]);
   console.timeEnd('[BalanceLimit] fetch roster+wallet types');
 
   // Step 2 — an unmatched-but-format-valid shop code only gets created when
@@ -264,7 +275,9 @@ export async function importBalanceLimitFile(params: {
           // Family match (see leaderNameByFamily above) wins over the
           // placeholder whenever a real sibling shop already resolved one —
           // falls back to NEW SHOP only when no sibling exists yet.
-          const familyLeaderName = leaderNameByFamily.get(extractShopFamily(row.shopCode) ?? '');
+          const familyLeaderName = leaderNameByFamily.get(extractShopFamily(row.shopCode) ?? '')
+            ?? walletFamilyLeaderMap.get(extractRawWalletFamily(row.shopCode))
+            ?? seriesFamilyLeaderMap.get(extractShopSeriesFamily(row.shopCode) ?? '');
           const leaderId = await resolveOrCreateLeaderId(tx, familyLeaderName ?? NEW_SHOP_LEADER_NAME);
           const [inserted] = await tx.insert(schema.agents).values({
             product: params.product,
