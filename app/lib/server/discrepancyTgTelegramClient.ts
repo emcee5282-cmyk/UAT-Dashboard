@@ -91,7 +91,8 @@ export async function sendDocument(
   chatId: string,
   pdf: Buffer,
   filename: string,
-  caption: string | undefined
+  caption: string | undefined,
+  mimeType = 'application/pdf'
 ): Promise<SendAlbumResult> {
   const MAX_ATTEMPTS = 3;
 
@@ -99,7 +100,7 @@ export async function sendDocument(
     const form = new FormData();
     form.append('chat_id', chatId);
     if (caption) form.append('caption', caption);
-    form.append('document', new Blob([new Uint8Array(pdf)], { type: 'application/pdf' }), filename);
+    form.append('document', new Blob([new Uint8Array(pdf)], { type: mimeType }), filename);
 
     const { ok, status, json, networkError } = await postForm(`https://api.telegram.org/bot${token}/sendDocument`, form);
     if (ok && json.ok) return { ok: true };

@@ -20,7 +20,7 @@ import { getDb } from '../db/client';
 import * as schema from '../db/schema';
 import { getAgentBalances, getAgentBalancesForBalancePage } from './balanceService';
 import { extractOpeningWalletTypeSuffix } from '../realShopName';
-import { getBusinessMonthStart, getBusinessToday, manilaFields } from '../businessDate';
+import { getBusinessToday, manilaFields } from '../businessDate';
 
 export type Product = 'cashout' | 'sendmoney';
 
@@ -242,10 +242,14 @@ function settlementMatches(tx: SettlementTx, walletSuffix: string): boolean {
 
 export type StagnantBalanceResult = { rows: StagnantBalanceRow[]; recovered: StagnantRecoveredEntry[] };
 
-export async function getStagnantBalanceRows(options?: { force?: boolean }): Promise<StagnantBalanceResult> {
+// `asOfDate` ('YYYY-MM-DD') pins "today" to a given business date instead
+// of the current one — the 2AM Telegram send runs right after the business
+// day rolls over, so it reports the day that just ended (its Settlement,
+// and Recovered month-to-date through it).
+export async function getStagnantBalanceRows(options?: { force?: boolean; asOfDate?: string }): Promise<StagnantBalanceResult> {
   const db = getDb();
-  const today = isoDate(getBusinessToday());
-  const monthStart = isoDate(getBusinessMonthStart());
+  const today = options?.asOfDate ?? isoDate(getBusinessToday());
+  const monthStart = `${today.slice(0, 7)}-01`;
 
   const [cashoutRows, sendMoneyRows, settlementRows] = await Promise.all([
     getCashoutStreakRows(options),

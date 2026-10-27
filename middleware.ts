@@ -40,6 +40,13 @@ export async function middleware(request: NextRequest) {
     return NextResponse.next();
   }
 
+  // Server-to-server cron triggers (VPS crontab) — no session cookie
+  // exists for them; every /api/cron/* route checks its own CRON_SECRET
+  // bearer token instead and fails closed without it.
+  if (pathname.startsWith('/api/cron/')) {
+    return NextResponse.next();
+  }
+
   const session = await verifySessionToken(request.cookies.get(SESSION_COOKIE_NAME)?.value);
 
   if (pathname === PRODUCTION_PARITY_PAGE || pathname.startsWith(PRODUCTION_PARITY_API_PREFIX)) {
