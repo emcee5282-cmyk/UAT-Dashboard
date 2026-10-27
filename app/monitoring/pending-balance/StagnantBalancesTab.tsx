@@ -4,14 +4,14 @@
 // DiscrepancySummaryTab.tsx (accordion per leader, sticky expanded-leader
 // row, scroll-release sentinel) — see that file's own comments for why the
 // sticky-release mechanism works the way it does. Columns: Leader/Shop
-// Name, Company Balance, Balance Inside, SDP, Shops/Days — no Agent
-// Withdrawal column here. Shops within an expanded leader sort by streak
+// Name, Company Balance, Balance Inside, SDP, Settlement (today only),
+// Shops/Days — no Agent Withdrawal column here. Shops within an expanded leader sort by streak
 // length, never by any balance figure.
 import { useEffect, useRef, useState, type CSSProperties } from 'react';
 import { ChevronRight, ChevronDown, Download, Loader2, Search } from 'lucide-react';
 import styles from './discrepancySummary.module.css';
 import { buildAllStagnantViews, type StagnantAllViews, type StagnantLeaderGroup, type StagnantView, type StagnantBuckets } from '@/app/lib/stagnantBalanceAggregate';
-import type { StagnantBalanceRow } from '@/app/lib/services/stagnantBalanceService';
+import type { StagnantBalanceRow, StagnantRecoveredEntry } from '@/app/lib/services/stagnantBalanceService';
 import { downloadStagnantBalanceExport } from '@/app/lib/stagnantBalanceExport';
 import TableLoadingSpinner from '@/app/components/TableLoadingSpinner';
 import { consumeForceRefresh } from './forceRefresh';
@@ -34,6 +34,12 @@ function fmtOrDash(n: number): string {
 // Balance column.
 function companyBalanceStyle(n: number): CSSProperties {
   return n < 0 ? { color: 'var(--dd-neg)' } : {};
+}
+
+// Settlement column color (orange) — app-wide convention, only when there
+// is actually a figure to show.
+function settlementClass(n: number): string {
+  return Math.round(n) === 0 ? 'text-muted-foreground' : 'text-orange-600 dark:text-orange-400';
 }
 
 const CARDS: { key: StagnantView; label: string }[] = [
@@ -140,6 +146,7 @@ function SummaryBand({ view, buckets, cashoutDaysAsOf }: { view: StagnantView; b
     { label: '10 Days Above', value: buckets.tenDaysAbove },
     { label: '15 Days Above', value: buckets.fifteenDaysAbove },
     { label: 'Total', value: buckets.total },
+    { label: 'Recovered', value: buckets.recovered },
   ];
 
   return (
@@ -150,11 +157,19 @@ function SummaryBand({ view, buckets, cashoutDaysAsOf }: { view: StagnantView; b
           <span className="font-normal normal-case tracking-normal text-white/80">Cashout days as of {formatFileDate(cashoutDaysAsOf)}</span>
         )}
       </div>
-      <div className="grid grid-cols-5 divide-x divide-[#ECEFF3] bg-white dark:divide-[#1A1E29] dark:bg-[#12151D]">
-        {cells.map((c, i) => (
-          <div key={c.label} className={`px-3 py-2.5 text-center ${i === cells.length - 1 ? 'bg-[#FAFBFC] dark:bg-[#0E1119]' : ''}`}>
+      <div className="grid grid-cols-6 divide-x divide-[#ECEFF3] bg-white dark:divide-[#1A1E29] dark:bg-[#12151D]">
+        {cells.map((c) => (
+          <div
+            key={c.label}
+            className={`px-3 py-2.5 text-center ${c.label === 'Total' ? 'bg-[#FAFBFC] dark:bg-[#0E1119]' : ''}`}
+            title={c.label === 'Recovered' ? 'Settlement this month from every shop, counted from the day it was posted here' : undefined}
+          >
             <div className="text-[9.5px] font-semibold uppercase tracking-wide text-muted-foreground">{c.label}</div>
-            <div className={`mt-0.5 text-[13px] tabular-nums text-foreground ${i === cells.length - 1 ? 'font-bold' : 'font-semibold'}`}>{fmtOrDash(c.value)}</div>
+            <div
+              className={`mt-0.5 text-[13px] tabular-nums ${c.label === 'Total' ? 'font-bold' : 'font-semibold'} ${c.label === 'Recovered' && Math.round(c.value) !== 0 ? 'text-emerald-600 dark:text-emerald-400' : 'text-foreground'}`}
+            >
+              {fmtOrDash(c.value)}
+            </div>
           </div>
         ))}
       </div>
@@ -232,6 +247,7 @@ function LeaderRows({
         </td>
         <td className={`whitespace-nowrap px-5 py-2 text-right tabular-nums text-foreground ${stickyCell}`}>{fmtOrDash(leader.balanceInside)}</td>
         <td className={`whitespace-nowrap px-5 py-2 text-right tabular-nums text-foreground ${stickyCell}`}>{fmtOrDash(leader.sdp)}</td>
+        <td className={`whitespace-nowrap px-5 py-2 text-right tabular-nums ${settlementClass(leader.settlementToday)} ${stickyCell}`}>{fmtOrDash(leader.settlementToday)}</td>
         <td className={`whitespace-nowrap px-5 py-2 text-right font-medium tabular-nums text-foreground ${stickyCell}`}>{leader.shopCount}</td>
       </tr>
       {isExpanded &&
@@ -248,6 +264,7 @@ function LeaderRows({
             </td>
             <td className="whitespace-nowrap px-5 py-1.5 text-right tabular-nums text-muted-foreground">{fmtOrDash(shop.balanceInside)}</td>
             <td className="whitespace-nowrap px-5 py-1.5 text-right tabular-nums text-muted-foreground">{fmtOrDash(shop.sdp)}</td>
+            <td className={`whitespace-nowrap px-5 py-1.5 text-right tabular-nums ${settlementClass(shop.settlementToday)}`}>{fmtOrDash(shop.settlementToday)}</td>
             <td className="whitespace-nowrap px-5 py-1.5 text-right tabular-nums" style={{ color: 'var(--dd-neg)' }}>
               {shop.noDataStreakDays} day{shop.noDataStreakDays === 1 ? '' : 's'}
             </td>
@@ -255,7 +272,7 @@ function LeaderRows({
         ))}
       {isExpanded && (
         <tr ref={sentinelRef} aria-hidden="true">
-          <td colSpan={showLine ? 6 : 5} style={{ padding: 0, border: 'none', height: 0, lineHeight: 0 }} />
+          <td colSpan={showLine ? 7 : 6} style={{ padding: 0, border: 'none', height: 0, lineHeight: 0 }} />
         </tr>
       )}
     </tbody>
@@ -264,6 +281,7 @@ function LeaderRows({
 
 export default function StagnantBalancesTab() {
   const [rawRows, setRawRows] = useState<StagnantBalanceRow[] | null>(null);
+  const [rawRecovered, setRawRecovered] = useState<StagnantRecoveredEntry[]>([]);
   const [loading, setLoading] = useState(true);
   const [selected, setSelected] = useState<StagnantView>('cashout');
   // Accordion — only one leader open at a time, same convention as
@@ -281,6 +299,7 @@ export default function StagnantBalancesTab() {
       const json = await res.json();
       if (cancelled) return;
       setRawRows(json.rows ?? []);
+      setRawRecovered(json.recovered ?? []);
       setLoading(false);
     })();
     return () => {
@@ -290,7 +309,8 @@ export default function StagnantBalancesTab() {
 
   const query = searchTerm.trim().toLowerCase();
   const searchedRows = rawRows && query ? rawRows.filter((r) => r.leader.toLowerCase().includes(query) || r.shopName.toLowerCase().includes(query)) : rawRows;
-  const views = searchedRows ? buildAllStagnantViews(searchedRows) : null;
+  const searchedRecovered = query ? rawRecovered.filter((e) => e.leader.toLowerCase().includes(query) || e.shopName.toLowerCase().includes(query)) : rawRecovered;
+  const views = searchedRows ? buildAllStagnantViews(searchedRows, searchedRecovered) : null;
   const activeView = views ? views[selected] : null;
   const showLine = selected === 'group';
 
@@ -325,11 +345,12 @@ export default function StagnantBalancesTab() {
         <table className="w-full min-w-[480px] table-fixed border-separate border-spacing-0 text-xs">
           <colgroup>
             {showLine && <col style={{ width: '8%' }} />}
-            <col style={{ width: showLine ? '28%' : '36%' }} />
-            <col style={{ width: showLine ? '18%' : '18%' }} />
-            <col style={{ width: showLine ? '18%' : '18%' }} />
-            <col style={{ width: showLine ? '14%' : '14%' }} />
-            <col style={{ width: showLine ? '14%' : '14%' }} />
+            <col style={{ width: showLine ? '24%' : '30%' }} />
+            <col style={{ width: showLine ? '15%' : '16%' }} />
+            <col style={{ width: showLine ? '15%' : '16%' }} />
+            <col style={{ width: showLine ? '13%' : '13%' }} />
+            <col style={{ width: showLine ? '13%' : '13%' }} />
+            <col style={{ width: showLine ? '12%' : '12%' }} />
           </colgroup>
           <thead>
             <tr className="h-[38px]">
@@ -349,6 +370,9 @@ export default function StagnantBalancesTab() {
               </th>
               <th className="sticky top-0 z-[2] border-b border-[#E2E8F0] bg-[#FAFBFC] px-5 text-right text-[10px] font-semibold uppercase tracking-[0.03em] text-muted-foreground dark:border-[#262B38] dark:bg-[#0E1119]">
                 SDP
+              </th>
+              <th className="sticky top-0 z-[2] border-b border-[#E2E8F0] bg-[#FAFBFC] px-5 text-right text-[10px] font-semibold uppercase tracking-[0.03em] text-muted-foreground dark:border-[#262B38] dark:bg-[#0E1119]" title="Settlement dated today">
+                Settlement
               </th>
               <th className="sticky top-0 z-[2] border-b border-[#E2E8F0] bg-[#FAFBFC] px-5 text-right text-[10px] font-semibold uppercase tracking-[0.03em] text-muted-foreground dark:border-[#262B38] dark:bg-[#0E1119]">
                 Shops / Days
@@ -370,7 +394,7 @@ export default function StagnantBalancesTab() {
               {activeView.leaders.length === 0 && (
                 <tbody>
                   <tr>
-                    <td colSpan={showLine ? 6 : 5} className="px-5 py-10 text-center text-muted-foreground">
+                    <td colSpan={showLine ? 7 : 6} className="px-5 py-10 text-center text-muted-foreground">
                       No shops have crossed the 3-day no-data threshold right now.
                     </td>
                   </tr>
@@ -388,6 +412,9 @@ export default function StagnantBalancesTab() {
                   </td>
                   <td className="whitespace-nowrap border-t-2 border-[#CBD5E1] bg-white px-5 text-right tabular-nums text-foreground dark:border-[#334155] dark:bg-[#12151D]">
                     {fmtOrDash(activeView.totals.sdp)}
+                  </td>
+                  <td className={`whitespace-nowrap border-t-2 border-[#CBD5E1] bg-white px-5 text-right tabular-nums dark:border-[#334155] dark:bg-[#12151D] ${settlementClass(activeView.totals.settlementToday)}`}>
+                    {fmtOrDash(activeView.totals.settlementToday)}
                   </td>
                   <td className="whitespace-nowrap border-t-2 border-[#CBD5E1] bg-white px-5 text-right tabular-nums text-foreground dark:border-[#334155] dark:bg-[#12151D]">
                     {activeView.totals.shopCount}

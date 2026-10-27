@@ -15,11 +15,12 @@
 //     (2026-10-16), then kept live per wallet by the same Estimated
 //     Balance upload hook (no longer frozen, as of 2026-10-20). daysAsOf
 //     is the last upload cutoff date the row was evaluated against.
-import { eq, and, gte, inArray } from 'drizzle-orm';
+import { eq, and, gte, lte, inArray, sql } from 'drizzle-orm';
 import { getDb } from '../db/client';
 import * as schema from '../db/schema';
 import { getAgentBalances, getAgentBalancesForBalancePage } from './balanceService';
 import { extractOpeningWalletTypeSuffix } from '../realShopName';
+import { getBusinessMonthStart, getBusinessToday, manilaFields } from '../businessDate';
 
 export type Product = 'cashout' | 'sendmoney';
 
@@ -29,6 +30,12 @@ const EXCLUDED_LEADER_NAMES = new Set(['NEW SHOP', 'NEW-TEMPAUTOPLOT']);
 
 function n(val: string | null): number {
   return val === null ? 0 : parseFloat(val);
+}
+
+// Positive AND still positive once rounded the way the page displays it —
+// a sub-0.5 leftover would otherwise show as a "–" Company Balance row.
+function hasDisplayableBalance(companyBalance: number): boolean {
+  return Math.round(companyBalance) > 0;
 }
 
 export type StagnantBalanceRow = {
@@ -42,6 +49,32 @@ export type StagnantBalanceRow = {
   // The file's own run date, Cashout only — null for Send Money (still
   // live). Lets the UI label Cashout's figures as a file snapshot.
   daysAsOf: string | null;
+  // This shop's (wallet line's, for a split Cashout shop) Settlement dated
+  // today (Manila business date) — 0 when none.
+  settlementToday: number;
+  // This shop's month-to-date Settlement since it was first posted here
+  // (same figure as its StagnantRecoveredEntry) — Excel export only.
+  recovered: number;
+};
+
+// One shop/wallet line's month-to-date Settlement since it was first
+// posted on Stagnant Balances this month — includes shops that have since
+// dropped off the page (usually BECAUSE that settlement took Company
+// Balance to <= 0). Feeds the summary band's "Recovered" figure.
+export type StagnantRecoveredEntry = {
+  line: Product;
+  leader: string;
+  shopName: string;
+  amount: number;
+};
+
+// Internal: a page row plus the keys needed to match it against
+// settlements/postings — stripped before leaving this file.
+type KeyedStagnantRow = Omit<StagnantBalanceRow, 'settlementToday' | 'recovered'> & {
+  agentId: number;
+  walletSuffix: string;
+  // Cutoff date the streak was last evaluated against ('YYYY-MM-DD').
+  streakAsOf: string | null;
 };
 
 // Same Company Balance/Balance Inside source — AND the same displayed shop
@@ -50,7 +83,7 @@ export type StagnantBalanceRow = {
 // page must show too, not the bare agentCode.
 type NamedBalanceLine = { agentId: number; displayName: string; companyBalance: number; balanceInside: number; sdp: number };
 
-async function getCashoutStreakRows(options?: { force?: boolean }): Promise<StagnantBalanceRow[]> {
+async function getCashoutStreakRows(options?: { force?: boolean }): Promise<KeyedStagnantRow[]> {
   const db = getDb();
 
   const streakRowsPromise = db
@@ -90,7 +123,7 @@ async function getCashoutStreakRows(options?: { force?: boolean }): Promise<Stag
     balanceLinesByKey.set(`${b.agentId}|${suffix}`, b);
   }
 
-  const out: StagnantBalanceRow[] = [];
+  const out: KeyedStagnantRow[] = [];
   for (const r of streakRows) {
     const leader = (r.leaderName ?? '').trim();
     if (!leader || EXCLUDED_LEADER_NAMES.has(leader.toUpperCase())) continue;
@@ -99,8 +132,9 @@ async function getCashoutStreakRows(options?: { force?: boolean }): Promise<Stag
     // Positive Company Balance only — per explicit instruction, a
     // wallet/shop sitting at zero or negative has no idle money to flag
     // here, so it's excluded entirely rather than shown with a
-    // negative/zero figure.
-    if (balance.companyBalance <= 0) continue;
+    // negative/zero figure. "Zero" = rounds to 0 on the page (e.g. 0.36
+    // displays as "–"), not just exactly 0.
+    if (!hasDisplayableBalance(balance.companyBalance)) continue;
     out.push({
       line: 'cashout',
       leader,
@@ -114,12 +148,15 @@ async function getCashoutStreakRows(options?: { force?: boolean }): Promise<Stag
       sdp: balance.sdp,
       noDataStreakDays: r.noDataStreakDays,
       daysAsOf: r.fileAsOfDate,
+      agentId: r.agentId,
+      walletSuffix: r.walletSuffix,
+      streakAsOf: r.fileAsOfDate,
     });
   }
   return out;
 }
 
-async function getSendMoneyStreakRows(options?: { force?: boolean }): Promise<StagnantBalanceRow[]> {
+async function getSendMoneyStreakRows(options?: { force?: boolean }): Promise<KeyedStagnantRow[]> {
   const db = getDb();
 
   const streakRowsPromise = db
@@ -128,6 +165,7 @@ async function getSendMoneyStreakRows(options?: { force?: boolean }): Promise<St
       sdp: schema.agents.sdp,
       leaderName: schema.leaders.name,
       noDataStreakDays: schema.stagnantBalanceTracking.noDataStreakDays,
+      lastCheckedCutoffDate: schema.stagnantBalanceTracking.lastCheckedCutoffDate,
     })
     .from(schema.stagnantBalanceTracking)
     .innerJoin(schema.agents, eq(schema.stagnantBalanceTracking.agentId, schema.agents.id))
@@ -148,12 +186,12 @@ async function getSendMoneyStreakRows(options?: { force?: boolean }): Promise<St
   const [streakRows, balanceLines] = await Promise.all([streakRowsPromise, balanceLinesPromise]);
   const balanceByAgentId = new Map(balanceLines.map((b) => [b.agentId, b]));
 
-  const out: StagnantBalanceRow[] = [];
+  const out: KeyedStagnantRow[] = [];
   for (const r of streakRows) {
     const leader = (r.leaderName ?? '').trim();
     if (!leader || EXCLUDED_LEADER_NAMES.has(leader.toUpperCase())) continue;
     const balance = balanceByAgentId.get(r.agentId);
-    if (!balance || balance.companyBalance <= 0) continue;
+    if (!balance || !hasDisplayableBalance(balance.companyBalance)) continue;
     out.push({
       line: 'sendmoney',
       leader,
@@ -163,17 +201,148 @@ async function getSendMoneyStreakRows(options?: { force?: boolean }): Promise<St
       sdp: n(r.sdp),
       noDataStreakDays: r.noDataStreakDays,
       daysAsOf: null,
+      agentId: r.agentId,
+      walletSuffix: '',
+      streakAsOf: r.lastCheckedCutoffDate,
     });
   }
   return out;
 }
 
-export async function getStagnantBalanceRows(options?: { force?: boolean }): Promise<StagnantBalanceRow[]> {
-  const [cashoutRows, sendMoneyRows] = await Promise.all([
+// Same abbreviation -> wallet_transactions.wallet mapping as
+// balanceService.ts's own (used there to attribute a split shop's Top Up/
+// Settlement to the one wallet line it belongs to).
+const SUFFIX_TO_WALLET: Record<string, string> = { BK: 'BKASH', NG: 'NAGAD', RK: 'ROCKET', UP: 'UPAY' };
+
+function isoDate(date: Date): string {
+  const { year, month, day } = manilaFields(date);
+  return `${year}-${String(month + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+}
+
+function shiftIsoDate(iso: string, days: number): string {
+  const [y, m, d] = iso.split('-').map(Number);
+  return new Date(Date.UTC(y, m - 1, d + days)).toISOString().slice(0, 10);
+}
+
+// The day this shop crossed the threshold, estimated from its streak: a
+// streak of N evaluated at cutoff X first reached the threshold N -
+// threshold days before X. Only an estimate (the streak tables keep no
+// history) — the earliest value seen within a month is the one kept.
+function estimateFirstPostedOn(row: KeyedStagnantRow, today: string): string {
+  return shiftIsoDate(row.streakAsOf ?? today, -(row.noDataStreakDays - STAGNANT_THRESHOLD_DAYS));
+}
+
+type SettlementTx = { agentId: number; wallet: string | null; amount: number; occurredOn: string };
+
+function settlementMatches(tx: SettlementTx, walletSuffix: string): boolean {
+  // '' = unsplit shop (or Send Money) — every wallet's settlement is its own.
+  if (!walletSuffix) return true;
+  return (tx.wallet ?? '').toUpperCase() === SUFFIX_TO_WALLET[walletSuffix];
+}
+
+export type StagnantBalanceResult = { rows: StagnantBalanceRow[]; recovered: StagnantRecoveredEntry[] };
+
+export async function getStagnantBalanceRows(options?: { force?: boolean }): Promise<StagnantBalanceResult> {
+  const db = getDb();
+  const today = isoDate(getBusinessToday());
+  const monthStart = isoDate(getBusinessMonthStart());
+
+  const [cashoutRows, sendMoneyRows, settlementRows] = await Promise.all([
     getCashoutStreakRows(options),
     getSendMoneyStreakRows(options),
+    db
+      .select({
+        agentId: schema.walletTransactions.agentId,
+        wallet: schema.walletTransactions.wallet,
+        amount: schema.walletTransactions.amount,
+        occurredOn: schema.walletTransactions.occurredOn,
+      })
+      .from(schema.walletTransactions)
+      .where(and(
+        eq(schema.walletTransactions.transactionType, 'settlement'),
+        gte(schema.walletTransactions.occurredOn, monthStart),
+        lte(schema.walletTransactions.occurredOn, today)
+      )),
   ]);
-  return [...cashoutRows, ...sendMoneyRows];
+  const keyedRows = [...cashoutRows, ...sendMoneyRows];
+
+  const settlementsByAgent = new Map<number, SettlementTx[]>();
+  for (const t of settlementRows) {
+    if (!settlementsByAgent.has(t.agentId)) settlementsByAgent.set(t.agentId, []);
+    settlementsByAgent.get(t.agentId)!.push({ agentId: t.agentId, wallet: t.wallet, amount: n(t.amount), occurredOn: t.occurredOn });
+  }
+  const sumSettlement = (agentId: number, walletSuffix: string, from: string) =>
+    (settlementsByAgent.get(agentId) ?? [])
+      .filter((t) => t.occurredOn >= from && settlementMatches(t, walletSuffix))
+      .reduce((sum, t) => sum + t.amount, 0);
+
+  // Remember every shop on the page right now (see stagnantBalancePostings'
+  // own schema comment). A posting last seen before this month starts the
+  // month fresh from this read's estimate; otherwise the earliest estimate
+  // this month wins.
+  const postings = schema.stagnantBalancePostings;
+  for (let i = 0; i < keyedRows.length; i += 500) {
+    const chunk = keyedRows.slice(i, i + 500);
+    await db
+      .insert(postings)
+      .values(chunk.map((r) => ({
+        product: r.line,
+        agentId: r.agentId,
+        walletSuffix: r.walletSuffix,
+        shopName: r.shopName,
+        firstPostedOn: estimateFirstPostedOn(r, today),
+        lastSeenOn: today,
+      })))
+      .onConflictDoUpdate({
+        target: [postings.agentId, postings.walletSuffix],
+        set: {
+          product: sql`excluded.product`,
+          shopName: sql`excluded.shop_name`,
+          firstPostedOn: sql`CASE WHEN ${postings.lastSeenOn} < ${monthStart} THEN excluded.first_posted_on ELSE LEAST(${postings.firstPostedOn}, excluded.first_posted_on) END`,
+          lastSeenOn: sql`GREATEST(${postings.lastSeenOn}, excluded.last_seen_on)`,
+          updatedAt: sql`now()`,
+        },
+      });
+  }
+
+  const monthPostings = await db
+    .select({
+      product: postings.product,
+      agentId: postings.agentId,
+      walletSuffix: postings.walletSuffix,
+      shopName: postings.shopName,
+      firstPostedOn: postings.firstPostedOn,
+      leaderName: schema.leaders.name,
+    })
+    .from(postings)
+    .innerJoin(schema.agents, eq(postings.agentId, schema.agents.id))
+    .leftJoin(schema.leaders, eq(schema.agents.leaderId, schema.leaders.id))
+    .where(gte(postings.lastSeenOn, monthStart));
+
+  const recovered: StagnantRecoveredEntry[] = [];
+  const recoveredByKey = new Map<string, number>();
+  for (const p of monthPostings) {
+    const leader = (p.leaderName ?? '').trim();
+    if (!leader || EXCLUDED_LEADER_NAMES.has(leader.toUpperCase())) continue;
+    const from = p.firstPostedOn > monthStart ? p.firstPostedOn : monthStart;
+    const amount = sumSettlement(p.agentId, p.walletSuffix, from);
+    recoveredByKey.set(`${p.agentId}|${p.walletSuffix}`, amount);
+    if (amount > 0) recovered.push({ line: p.product, leader, shopName: p.shopName, amount });
+  }
+
+  const rows: StagnantBalanceRow[] = keyedRows.map((r) => ({
+    line: r.line,
+    leader: r.leader,
+    shopName: r.shopName,
+    companyBalance: r.companyBalance,
+    balanceInside: r.balanceInside,
+    sdp: r.sdp,
+    noDataStreakDays: r.noDataStreakDays,
+    daysAsOf: r.daysAsOf,
+    settlementToday: sumSettlement(r.agentId, r.walletSuffix, today),
+    recovered: recoveredByKey.get(`${r.agentId}|${r.walletSuffix}`) ?? 0,
+  }));
+  return { rows, recovered };
 }
 
 // Used by the one-time seed script — agentId lookup by product + agentCode,

@@ -1,0 +1,33 @@
+// One-off, idempotent apply of
+// drizzle/0043_add_stagnant_balance_postings.sql — drizzle-kit migrate
+// has a known pre-existing gap in this project (see migration 0041's own
+// apply script). Run with:
+// npx tsx --env-file=.env.local scripts/_apply-stagnant-balance-postings-migration.ts
+import { getDb } from '../app/lib/db/client';
+import { sql } from 'drizzle-orm';
+
+async function main() {
+  const db = getDb();
+  await db.execute(sql`
+    CREATE TABLE IF NOT EXISTS "stagnant_balance_postings" (
+      "id" serial PRIMARY KEY NOT NULL,
+      "product" "product" NOT NULL,
+      "agent_id" integer NOT NULL REFERENCES "agents"("id"),
+      "wallet_suffix" text DEFAULT '' NOT NULL,
+      "shop_name" text NOT NULL,
+      "first_posted_on" date NOT NULL,
+      "last_seen_on" date NOT NULL,
+      "updated_at" timestamp with time zone DEFAULT now() NOT NULL
+    )
+  `);
+  await db.execute(sql`
+    CREATE UNIQUE INDEX IF NOT EXISTS "stagnant_balance_postings_agent_suffix_uq" ON "stagnant_balance_postings" USING btree ("agent_id","wallet_suffix")
+  `);
+  console.log('Migration 0043 (stagnant_balance_postings) applied (idempotent).');
+  process.exit(0);
+}
+
+main().catch((err) => {
+  console.error(err);
+  process.exit(1);
+});

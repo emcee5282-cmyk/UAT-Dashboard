@@ -946,6 +946,32 @@ export const stagnantBalanceWalletStreak = pgTable(
   (t) => [uniqueIndex('stagnant_balance_wallet_streak_agent_suffix_uq').on(t.agentId, t.walletSuffix)]
 );
 
+// Stagnant Balances' "Recovered" figure — when each shop (per wallet line
+// for Cashout, walletSuffix '' otherwise) was first posted on the page this
+// month. Neither streak table keeps that history (only the current streak
+// count), and a shop usually DROPS OFF the page once settled (Company
+// Balance <= 0), so it has to be remembered here for its settlement to
+// still count. Upserted on every Stagnant Balances read
+// (stagnantBalanceService.ts): firstPostedOn is estimated from the streak
+// (asOf - (streak - threshold) days), kept at its earliest value within a
+// month and reset once lastSeenOn falls before the current month.
+export const stagnantBalancePostings = pgTable(
+  'stagnant_balance_postings',
+  {
+    id: serial('id').primaryKey(),
+    product: productEnum('product').notNull(),
+    agentId: integer('agent_id').notNull().references(() => agents.id),
+    walletSuffix: text('wallet_suffix').notNull().default(''),
+    // Last displayed name — a shop that has left the page has no other
+    // source for it.
+    shopName: text('shop_name').notNull(),
+    firstPostedOn: date('first_posted_on').notNull(),
+    lastSeenOn: date('last_seen_on').notNull(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [uniqueIndex('stagnant_balance_postings_agent_suffix_uq').on(t.agentId, t.walletSuffix)]
+);
+
 // NEW — was entirely missing. Replaces the "Opening AG" col G/I 'REPORT LAST
 // UPDATE' text card. That card is a single roster-wide timestamp (when the
 // whole Opening roster was last refreshed), read today in at least 3 places

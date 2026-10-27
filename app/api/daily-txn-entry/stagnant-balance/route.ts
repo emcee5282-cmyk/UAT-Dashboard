@@ -11,8 +11,8 @@ import { getStagnantBalanceRows } from '@/app/lib/services/stagnantBalanceServic
 export async function GET(request: NextRequest) {
   try {
     const force = request.nextUrl.searchParams.get('force') === '1';
-    const rows = await getStagnantBalanceRows({ force });
-    return NextResponse.json({ rows }, { headers: { 'Cache-Control': 'no-store' } });
+    const { rows, recovered } = await getStagnantBalanceRows({ force });
+    return NextResponse.json({ rows, recovered },{ headers: { 'Cache-Control': 'no-store' } });
   } catch (err) {
     const message = err instanceof Error ? err.message : 'Failed to load Stagnant Balances';
     return NextResponse.json({ error: message }, { status: 500 });

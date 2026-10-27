@@ -47,9 +47,9 @@ function buildSheet(workbook: ExcelJS.Workbook, name: string, view: StagnantView
   const worksheet = workbook.addWorksheet(name, { views: [{ state: 'frozen', ySplit: 1 }] });
 
   const headers = hasLine
-    ? ['Line', 'Leader', 'Shop Name', 'Company Balance', 'Balance Inside', 'SDP', 'Shops / Days']
-    : ['Leader', 'Shop Name', 'Company Balance', 'Balance Inside', 'SDP', 'Shops / Days'];
-  const numericCols = hasLine ? [4, 5, 6, 7] : [3, 4, 5, 6];
+    ? ['Line', 'Leader', 'Shop Name', 'Company Balance', 'Balance Inside', 'SDP', 'Settlement', 'Shops / Days', 'Recovered']
+    : ['Leader', 'Shop Name', 'Company Balance', 'Balance Inside', 'SDP', 'Settlement', 'Shops / Days', 'Recovered'];
+  const numericCols = hasLine ? [4, 5, 6, 7, 8, 9] : [3, 4, 5, 6, 7, 8];
   const leaderColIndex = hasLine ? 2 : 1;
 
   worksheet.columns = headers.map(() => ({ width: 20 }));
@@ -58,21 +58,21 @@ function buildSheet(workbook: ExcelJS.Workbook, name: string, view: StagnantView
 
   for (const leader of view.leaders) {
     const leaderValues = hasLine
-      ? [null, leader.leader, null, leader.companyBalance, leader.balanceInside, leader.sdp, leader.shopCount]
-      : [leader.leader, null, leader.companyBalance, leader.balanceInside, leader.sdp, leader.shopCount];
+      ? [null, leader.leader, null, leader.companyBalance, leader.balanceInside, leader.sdp, leader.settlementToday, leader.shopCount, leader.recovered]
+      : [leader.leader, null, leader.companyBalance, leader.balanceInside, leader.sdp, leader.settlementToday, leader.shopCount, leader.recovered];
     styleUniformRow(worksheet.addRow(leaderValues), { bold: true, color: BLACK, fill: GRAY, numericCols });
 
     for (const shop of leader.shops) {
       const shopValues = hasLine
-        ? [shop.line === 'cashout' ? 'Cashout' : 'Send Money', leader.leader, shop.shopName, shop.companyBalance, shop.balanceInside, shop.sdp, shop.noDataStreakDays]
-        : [leader.leader, shop.shopName, shop.companyBalance, shop.balanceInside, shop.sdp, shop.noDataStreakDays];
+        ? [shop.line === 'cashout' ? 'Cashout' : 'Send Money', leader.leader, shop.shopName, shop.companyBalance, shop.balanceInside, shop.sdp, shop.settlementToday, shop.noDataStreakDays, shop.recovered]
+        : [leader.leader, shop.shopName, shop.companyBalance, shop.balanceInside, shop.sdp, shop.settlementToday, shop.noDataStreakDays, shop.recovered];
       styleShopRow(worksheet.addRow(shopValues), leaderColIndex, numericCols);
     }
   }
 
   const totalValues = hasLine
-    ? [null, 'TOTAL', null, view.totals.companyBalance, view.totals.balanceInside, view.totals.sdp, view.totals.shopCount]
-    : ['TOTAL', null, view.totals.companyBalance, view.totals.balanceInside, view.totals.sdp, view.totals.shopCount];
+    ? [null, 'TOTAL', null, view.totals.companyBalance, view.totals.balanceInside, view.totals.sdp, view.totals.settlementToday, view.totals.shopCount, view.totals.recovered]
+    : ['TOTAL', null, view.totals.companyBalance, view.totals.balanceInside, view.totals.sdp, view.totals.settlementToday, view.totals.shopCount, view.totals.recovered];
   styleUniformRow(worksheet.addRow(totalValues), { bold: true, color: WHITE, fill: NAVY, numericCols });
 }
 
