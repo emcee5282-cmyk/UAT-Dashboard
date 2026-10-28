@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import { getAgentBalancesForBalancePage } from '@/app/lib/services/balanceService';
 import { getBalanceLimitLastImport } from '@/app/lib/db/read/balanceLimit';
+import { authorizeApi } from '@/app/lib/auth/guard';
 
 // Postgres-backed equivalent of /api/agentbal + client-side balanceEngine.ts
 // calculations, all now computed server-side. Used by app/agentbal/page.tsx
@@ -10,7 +11,9 @@ import { getBalanceLimitLastImport } from '@/app/lib/db/read/balanceLimit';
 // /api/v2/balance-limit's own shape, and lets the header's "Updated {time}"
 // indicator (Bulk Import Balance Limit's last upload) work on this path too
 // without a second, separate rows fetch just for the timestamp.
-export async function GET() {
+export async function GET(request: Request) {
+  const auth = await authorizeApi(request);
+  if (auth instanceof NextResponse) return auth;
   try {
     const [rows, lastImport] = await Promise.all([
       getAgentBalancesForBalancePage('cashout'),

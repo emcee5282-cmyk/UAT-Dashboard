@@ -1,11 +1,14 @@
 import { NextResponse } from 'next/server';
 import { importOpeningFile, type Product, type NewShopDecision } from '@/app/lib/services/importService';
+import { authorizeApi } from '@/app/lib/auth/guard';
 
 // LOCAL/FOUNDATION ONLY — see app/api/v2/import/settlement/route.ts for the
 // full explanation. Opening is structurally different (updates
 // agents.opening_balance/sdp directly, no wallet_transactions rows) — see
 // importOpeningFile()'s own comment in importService.ts.
 export async function POST(request: Request) {
+  const auth = await authorizeApi(request);
+  if (auth instanceof NextResponse) return auth;
   try {
     const formData = await request.formData();
     const file = formData.get('file');

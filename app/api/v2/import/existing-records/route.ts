@@ -1,11 +1,14 @@
 import { NextResponse } from 'next/server';
 import { getTransactionSignaturesForDates, type Product, type TransactionType } from '@/app/lib/services/transactionPageService';
+import { authorizeApi } from '@/app/lib/auth/guard';
 
 // Bulk Import's "already imported" duplicate check — POST (not GET) because
 // the distinct-dates list comes from the uploaded file's own contents, not
 // a fixed param. See BulkImportModal.tsx's scanning step, which calls this
 // alongside its existing parse/validate work (no separate loading state).
 export async function POST(request: Request) {
+  const auth = await authorizeApi(request);
+  if (auth instanceof NextResponse) return auth;
   try {
     const body = await request.json();
     const product = body?.product;

@@ -19,6 +19,7 @@ import DateRangeFilter from '@/app/components/DateRangeFilter';
 import { useTheme } from '@/app/components/ThemeProvider';
 import { TOPUP_TYPE_OPTIONS } from '@/app/lib/topupOptions';
 import { SETTLEMENT_REMARKS_SUGGESTIONS } from '@/app/lib/settlementOptions';
+import { useCan } from '@/app/lib/auth/useSession';
 
 // Explicit, scoped exception to this app's app-wide Inter rule — per
 // explicit instruction, this page only: Manrope for UI text/labels/body
@@ -288,6 +289,8 @@ function sumTotals(rows: Partial<Record<RowKey, BrandMap>>, kind: LedgerKind): n
 }
 
 function LedgerCard({ def, onActivity }: { def: LedgerMeta; onActivity: () => void }) {
+  // UI-only: Supervisor/Viewer see Daily Entry read-only (the API enforces dailyEntry.edit).
+  const canEdit = useCan('page.dailyEntry.edit');
   const isEss = def.kind === 'ess';
   // Starts empty and is populated by the fetch effect below (GET
   // /api/daily-txn-entry/ledger) — real React state (not a ref) so render
@@ -565,13 +568,15 @@ function LedgerCard({ def, onActivity }: { def: LedgerMeta; onActivity: () => vo
               </button>
             </div>
           ) : (
-            <button
-              onClick={handleEdit}
-              className="inline-flex shrink-0 items-center gap-1.5 whitespace-nowrap rounded-[9px] border border-[#DEE1E8] bg-white px-4 py-[9px] text-[12.5px] font-bold text-muted-foreground hover:border-[#5B57E0] hover:text-[#5B57E0] dark:border-[#262B38] dark:bg-[#1A1E29]"
-            >
-              <Pencil size={12} strokeWidth={2.25} />
-              Edit
-            </button>
+            canEdit ? (
+              <button
+                onClick={handleEdit}
+                className="inline-flex shrink-0 items-center gap-1.5 whitespace-nowrap rounded-[9px] border border-[#DEE1E8] bg-white px-4 py-[9px] text-[12.5px] font-bold text-muted-foreground hover:border-[#5B57E0] hover:text-[#5B57E0] dark:border-[#262B38] dark:bg-[#1A1E29]"
+              >
+                <Pencil size={12} strokeWidth={2.25} />
+                Edit
+              </button>
+            ) : null
           )}
         </div>
       </div>
@@ -757,6 +762,8 @@ function YesterdayClosingCard({
   title: string;
   onActivity: () => void;
 }) {
+  // UI-only: Supervisor/Viewer see Daily Entry read-only (the API enforces dailyEntry.edit).
+  const canEdit = useCan('page.dailyEntry.edit');
   const [values, setValues] = useState<Partial<Record<PgWallet, number>>>({});
   const [editing, setEditing] = useState(false);
   const [saved, setSaved] = useState(false);
@@ -939,13 +946,15 @@ function YesterdayClosingCard({
             </button>
           </div>
         ) : (
-          <button
-            onClick={handleEdit}
-            className="inline-flex shrink-0 items-center gap-1 whitespace-nowrap rounded-[8px] border border-[#DEE1E8] bg-white px-3 py-[6px] text-[11px] font-bold text-muted-foreground hover:border-[#5B57E0] hover:text-[#5B57E0] dark:border-[#262B38] dark:bg-[#1A1E29]"
-          >
-            <Pencil size={10.5} strokeWidth={2.25} />
-            Edit
-          </button>
+          canEdit ? (
+            <button
+              onClick={handleEdit}
+              className="inline-flex shrink-0 items-center gap-1 whitespace-nowrap rounded-[8px] border border-[#DEE1E8] bg-white px-3 py-[6px] text-[11px] font-bold text-muted-foreground hover:border-[#5B57E0] hover:text-[#5B57E0] dark:border-[#262B38] dark:bg-[#1A1E29]"
+            >
+              <Pencil size={10.5} strokeWidth={2.25} />
+              Edit
+            </button>
+          ) : null
         )}
       </div>
       <div className="flex items-center justify-between border-b border-[#EFF1F4] pb-1.5 text-[10px] font-bold uppercase tracking-[0.03em] text-muted-foreground dark:border-[#1A1E29]">
@@ -1521,6 +1530,8 @@ function EstimatedOpeningTable({ title, rows, loading, exportLabel }: { title: s
 // /api/daily-txn-entry/pg-balance — self-contained (see that table's
 // schema.ts comment), NOT derived from the Operations tab's ledgers.
 function PgClosingBalancesCard({ onActivity }: { onActivity: () => void }) {
+  // UI-only: Supervisor/Viewer see Daily Entry read-only (the API enforces dailyEntry.edit).
+  const canEdit = useCan('page.dailyEntry.edit');
   const [data, setData] = useState<Record<PgKey, BrandMap>>(
     () => Object.fromEntries(PG_KEYS.map((k) => [k, {}])) as Record<PgKey, BrandMap>
   );
@@ -1731,13 +1742,15 @@ function PgClosingBalancesCard({ onActivity }: { onActivity: () => void }) {
             </button>
           </div>
         ) : (
-          <button
-            onClick={handleEdit}
-            className="inline-flex shrink-0 items-center gap-1.5 whitespace-nowrap rounded-[9px] border border-[#DEE1E8] bg-white px-4 py-[9px] text-[12.5px] font-bold text-muted-foreground hover:border-[#5B57E0] hover:text-[#5B57E0] dark:border-[#262B38] dark:bg-[#1A1E29]"
-          >
-            <Pencil size={12} strokeWidth={2.25} />
-            Edit
-          </button>
+          canEdit ? (
+            <button
+              onClick={handleEdit}
+              className="inline-flex shrink-0 items-center gap-1.5 whitespace-nowrap rounded-[9px] border border-[#DEE1E8] bg-white px-4 py-[9px] text-[12.5px] font-bold text-muted-foreground hover:border-[#5B57E0] hover:text-[#5B57E0] dark:border-[#262B38] dark:bg-[#1A1E29]"
+            >
+              <Pencil size={12} strokeWidth={2.25} />
+              Edit
+            </button>
+          ) : null
         )}
       </div>
 
@@ -1935,6 +1948,8 @@ type CashGoDailyRecord = {
 // separate KPI tiles here so the table itself is the only thing that needs
 // to stay live/reflect Save.
 function CashGoHourlyCard({ onActivity }: { onActivity: () => void }) {
+  // UI-only: Supervisor/Viewer see Daily Entry read-only (the API enforces dailyEntry.edit).
+  const canEdit = useCan('page.dailyEntry.edit');
   const containerRef = useRef<HTMLDivElement>(null);
   const [rows, setRows] = useState<CashGoDailyRecord[]>([]);
   const [editing, setEditing] = useState(false);
@@ -2091,13 +2106,15 @@ function CashGoHourlyCard({ onActivity }: { onActivity: () => void }) {
             </button>
           </div>
         ) : (
-          <button
-            onClick={handleEdit}
-            className="inline-flex shrink-0 items-center gap-1.5 whitespace-nowrap rounded-[9px] border border-[#DEE1E8] bg-white px-4 py-[9px] text-[12.5px] font-bold text-muted-foreground hover:border-[#5B57E0] hover:text-[#5B57E0] dark:border-[#262B38] dark:bg-[#1A1E29]"
-          >
-            <Pencil size={12} strokeWidth={2.25} />
-            Edit
-          </button>
+          canEdit ? (
+            <button
+              onClick={handleEdit}
+              className="inline-flex shrink-0 items-center gap-1.5 whitespace-nowrap rounded-[9px] border border-[#DEE1E8] bg-white px-4 py-[9px] text-[12.5px] font-bold text-muted-foreground hover:border-[#5B57E0] hover:text-[#5B57E0] dark:border-[#262B38] dark:bg-[#1A1E29]"
+            >
+              <Pencil size={12} strokeWidth={2.25} />
+              Edit
+            </button>
+          ) : null
         )}
       </div>
 

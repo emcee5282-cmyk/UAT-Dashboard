@@ -4,7 +4,7 @@
 // since 30 rows is already the tallest a page ever gets. Read-only against
 // a local dev server; renders nothing a real user would ever see.
 // Run with: npx tsx --env-file=.env.local scripts/_calibrate-tg-image-height.ts
-import { createSessionToken } from '../app/lib/auth/session';
+import { createSession } from '../app/lib/auth/session';
 import { launchBrowser } from '../app/lib/server/puppeteerCapture';
 import type { TgImagePageData } from '../app/lib/discrepancyTgImageTypes';
 
@@ -13,7 +13,8 @@ function base64UrlEncode(json: string): string {
 }
 
 async function main() {
-  const { token } = await createSessionToken({ id: 1, username: 'admin', role: 'admin', leaderId: null }, false);
+  // A real (DB-backed) session for user id 1; expires on its own after 12h.
+  const { token } = await createSession(1, { ip: null, userAgent: 'calibrate-tg-image-height' });
 
   const pageData: TgImagePageData = {
     leader: 'CALIBRATION',

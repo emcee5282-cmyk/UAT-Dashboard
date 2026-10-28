@@ -2,11 +2,14 @@ import { NextResponse } from 'next/server';
 import { getSettlementPageData } from '@/app/lib/services/transactionPageService';
 import { updateTransactions, deleteTransaction, createTransaction, TransactionActionError, type TransactionFieldUpdates, type NewTransaction } from '@/app/lib/services/transactionActionsService';
 import { parseDateRangeParams } from '@/app/lib/api/dateRangeParams';
+import { authorizeApi, requireBulkEdit } from '@/app/lib/auth/guard';
 
 // Phase 7 — Postgres-backed Settlement for Cashout (app/stlm).
 // ?from=&to= (both, 'YYYY-MM-DD') filters to that Manila date range;
 // omitted defaults to Effective Today (see getEffectiveBusinessToday).
 export async function GET(request: Request) {
+  const auth = await authorizeApi(request);
+  if (auth instanceof NextResponse) return auth;
   try {
     const { range, error } = parseDateRangeParams(new URL(request.url));
     if (error) return NextResponse.json({ error }, { status: 400 });
@@ -22,6 +25,8 @@ export async function GET(request: Request) {
 // Single Edit, or the full selection for Bulk Edit — both resolve to the
 // same one-transaction, all-or-nothing service call.
 export async function PATCH(request: Request) {
+  const auth = await authorizeApi(request);
+  if (auth instanceof NextResponse) return auth;
   try {
     const body = await request.json();
     const ids = body?.ids;
@@ -29,6 +34,8 @@ export async function PATCH(request: Request) {
     if (!Array.isArray(ids) || ids.some((id) => typeof id !== 'number')) {
       return NextResponse.json({ error: 'ids must be a non-empty array of numbers.' }, { status: 400 });
     }
+    const bulkDenied = requireBulkEdit(auth.session, 'settlement', ids.length);
+    if (bulkDenied) return bulkDenied;
     const result = await updateTransactions('cashout', 'settlement', ids, updates);
     return NextResponse.json(result);
   } catch (err) {
@@ -39,6 +46,8 @@ export async function PATCH(request: Request) {
 }
 
 export async function DELETE(request: Request) {
+  const auth = await authorizeApi(request);
+  if (auth instanceof NextResponse) return auth;
   try {
     const body = await request.json();
     const id = body?.id;
@@ -55,6 +64,8 @@ export async function DELETE(request: Request) {
 }
 
 export async function POST(request: Request) {
+  const auth = await authorizeApi(request);
+  if (auth instanceof NextResponse) return auth;
   try {
     const body = await request.json();
     const input: NewTransaction = body ?? {};

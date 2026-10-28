@@ -13,6 +13,7 @@ import WaveTrendChart, { type WaveTrendDataPoint, type WaveTrendSeriesDef } from
 import Toast, { type ToastState } from './components/Toast';
 import { useTheme } from './components/ThemeProvider';
 import { classifyFetchError, type ClassifiedError } from './lib/errors';
+import { useCan } from '@/app/lib/auth/useSession';
 
 /* =============================================================================
    Production Dashboard ("/") — full replacement per the approved plan
@@ -1535,6 +1536,8 @@ function CashInHandSkeleton() {
 // ---------------------------------------------------------------------------
 
 export default function DashboardPage() {
+  // UI-only: the screenshot/send API enforces telegram.send (Admin, OPS).
+  const canSendTelegram = useCan('page.dashboard.telegram');
   const { theme, toggleTheme } = useTheme();
   const [data, setData] = useState<DashboardData | null>(null);
   const [loading, setLoading] = useState(true);
@@ -1665,21 +1668,23 @@ export default function DashboardPage() {
           containerless
           actions={
             <>
-              <button
-                onClick={handleSendToTelegram}
-                disabled={telegramSending || loading}
-                aria-label="Send to Telegram"
-                title="Send to Telegram"
-                className={`flex h-[22px] w-[22px] items-center justify-center rounded-md border border-[#DEE1E8] dark:border-[#262B38] bg-[#F1F2F5] dark:bg-[#1A1E29] text-[#6B7280] hover:text-[var(--ui-accent)] hover:border-[var(--ui-accent)] disabled:opacity-50 dark:text-[#9198AC] ${
-                  // Pulse (not spin) while sending — same dt-skeleton-pulse
-                  // rhythm used for every other loading placeholder in the
-                  // app, per explicit instruction: the icon shouldn't
-                  // rotate, the whole button should shimmer in place.
-                  telegramSending ? 'pointer-events-none animate-[dt-skeleton-pulse_1.3s_ease-in-out_infinite]' : ''
-                }`}
-              >
-                <Send size={11} />
-              </button>
+              {canSendTelegram && (
+                <button
+                  onClick={handleSendToTelegram}
+                  disabled={telegramSending || loading}
+                  aria-label="Send to Telegram"
+                  title="Send to Telegram"
+                  className={`flex h-[22px] w-[22px] items-center justify-center rounded-md border border-[#DEE1E8] dark:border-[#262B38] bg-[#F1F2F5] dark:bg-[#1A1E29] text-[#6B7280] hover:text-[var(--ui-accent)] hover:border-[var(--ui-accent)] disabled:opacity-50 dark:text-[#9198AC] ${
+                    // Pulse (not spin) while sending — same dt-skeleton-pulse
+                    // rhythm used for every other loading placeholder in the
+                    // app, per explicit instruction: the icon shouldn't
+                    // rotate, the whole button should shimmer in place.
+                    telegramSending ? 'pointer-events-none animate-[dt-skeleton-pulse_1.3s_ease-in-out_infinite]' : ''
+                  }`}
+                >
+                  <Send size={11} />
+                </button>
+              )}
               <button
                 onClick={fetchData}
                 disabled={spinning}

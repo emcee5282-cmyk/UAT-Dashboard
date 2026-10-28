@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server';
 import { importEstimatedOpeningFromUpload } from '@/app/lib/services/estimatedOpeningService';
+import { authorizeApi } from '@/app/lib/auth/guard';
 
 // Body: { headerRow: string[], dataRows: string[][], fileName: string } —
 // already parsed client-side from the uploaded Excel file (same xlsx
@@ -10,6 +11,8 @@ import { importEstimatedOpeningFromUpload } from '@/app/lib/services/estimatedOp
 // A failed PostgreSQL transaction now correctly returns an error — no
 // "Sheets succeeded, Postgres silently failed" split-brain response.
 export async function POST(request: Request) {
+  const auth = await authorizeApi(request);
+  if (auth instanceof NextResponse) return auth;
   try {
     const body = await request.json();
     const headerRow: unknown = body?.headerRow;

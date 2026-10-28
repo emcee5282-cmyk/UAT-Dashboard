@@ -6,11 +6,13 @@ import { usePathname, useSearchParams } from 'next/navigation';
 import { useEffect, useState, type ComponentType } from 'react';
 import { getActiveProduct, getCounterpartPath } from '@/app/lib/productRoutes';
 import { fetchTransferQueueCount, fetchSendMoneyTransferQueueCount } from '@/app/lib/transferQueueCount';
-import { Menu, X, ChevronLeft, Hourglass } from 'lucide-react';
+import { Menu, X, ChevronLeft, Hourglass, Users } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { cn } from '@/lib/utils';
 import { SIDEBAR_SYNC_DURATION_CLASS } from '@/app/design-system/transitions';
 import AccountMenu from './AccountMenu';
+import { useSession } from '@/app/lib/auth/useSession';
+import { canOpenPage } from '@/app/lib/auth/permissions';
 
 const BrandLogo = () => (
   <Image src="/kibo-ui-light.svg" alt="" width={36} height={36} className="h-full w-full rounded-lg object-contain p-1.5" unoptimized />
@@ -267,10 +269,19 @@ export default function Sidebar() {
   const activeProduct = getActiveProduct(pathname, searchParams.get('product'));
   const [cashoutTransferQueueCount, setCashoutTransferQueueCount] = useState<number | null>(null);
   const [sendMoneyTransferQueueCount, setSendMoneyTransferQueueCount] = useState<number | null>(null);
-  // Gates the "Tickets" nav entry below — staff/admin only (leaders have
-  // their own separate standalone ticket flow, never this dock).
-  const [role, setRole] = useState<string | null>(null);
-  const canSeeTickets = role === 'staff' || role === 'admin';
+  // Nav entries follow app/lib/auth/permissions.ts (the proxy blocks the
+  // pages themselves regardless — this only avoids showing dead links).
+  // Leaders never see this dock; they have their own standalone ticket flow.
+  const session = useSession();
+  const permissions = session?.permissions ?? [];
+  // Same check the proxy applies to the page itself (roles are edited on
+  // Users → Roles, so this list is never hardcoded per role).
+  const canSee = (href: string) => canOpenPage(permissions, href);
+  const canSeeTickets = canSee('/staff/tickets');
+  const canSeeDailyEntry = canSee(DAILY_ENTRY_ITEM.href);
+  const canSeePending = canSee(PENDING_BALANCE_ITEM.href);
+  const canSeeSettings = canSee('/settings');
+  const canManageUsers = canSee('/admin/users');
 
   const resolveHref = (canonicalCashoutHref: string) =>
     activeProduct === 'cashout' ? canonicalCashoutHref : getCounterpartPath(canonicalCashoutHref, 'sendmoney');
@@ -278,13 +289,6 @@ export default function Sidebar() {
   useEffect(() => {
     setMounted(true);
     if (localStorage.getItem('sidebarPanelOpen') === 'true') setPanelOpen(true);
-  }, []);
-
-  useEffect(() => {
-    fetch('/api/auth/me')
-      .then((res) => (res.ok ? res.json() : null))
-      .then((data) => setRole(data?.role ?? null))
-      .catch(() => setRole(null));
   }, []);
 
   // Persist the expanded/collapsed choice across reloads — gated on
@@ -304,7 +308,9 @@ export default function Sidebar() {
     document.documentElement.style.setProperty('--sidebar-width', panelOpen ? '216px' : '60px');
   }, [panelOpen]);
 
+  const canSeeTransferQueue = canSee('/transfer-queue');
   useEffect(() => {
+    if (!canSeeTransferQueue) return;
     const load = () => {
       fetchTransferQueueCount()
         .then(setCashoutTransferQueueCount)
@@ -317,7 +323,7 @@ export default function Sidebar() {
     load();
     const interval = setInterval(load, 3 * 60 * 1000);
     return () => clearInterval(interval);
-  }, []);
+  }, [canSeeTransferQueue]);
 
   const isMockup = pathname.startsWith('/mockup');
   const rawCount = activeProduct === 'cashout' ? cashoutTransferQueueCount : sendMoneyTransferQueueCount;
@@ -325,6 +331,9 @@ export default function Sidebar() {
 
   const overviewHref = resolveHref('/');
   const overviewActive = pathname === overviewHref;
+  const canSeeDashboard = canSee(overviewHref);
+  const visibleOperations = OPERATIONS_ITEMS.filter((item) => canSee(resolveHref(item.href)));
+  const visibleMonitoring = MONITORING_ITEMS.filter((item) => canSee(resolveHref(item.href)));
 
   return (
     <>
@@ -370,18 +379,22 @@ export default function Sidebar() {
                   (DockRow, expanded=true) — kept in sync by reusing the
                   exact NavSection/DockRow components instead of a parallel
                   markup. */}
-              <NavSection label="Overview" expanded first />
-              <DockRow
-                href={overviewHref}
-                icon={IconDashboard}
-                label="Dashboard"
-                active={overviewActive}
-                expanded
-                tooltip={false}
-                onClick={() => setMobileOpen(false)}
-              />
-              <NavSection label="Operations" expanded />
-              {OPERATIONS_ITEMS.map((item) => (
+              {canSeeDashboard && (
+                <>
+                  <NavSection label="Overview" expanded first />
+                  <DockRow
+                    href={overviewHref}
+                    icon={IconDashboard}
+                    label="Dashboard"
+                    active={overviewActive}
+                    expanded
+                    tooltip={false}
+                    onClick={() => setMobileOpen(false)}
+                  />
+                </>
+              )}
+              {(visibleOperations.length > 0 || canSeeDailyEntry) && <NavSection label="Operations" expanded />}
+              {visibleOperations.map((item) => (
                 <DockRow
                   key={item.href}
                   href={resolveHref(item.href)}
@@ -393,18 +406,20 @@ export default function Sidebar() {
                   onClick={() => setMobileOpen(false)}
                 />
               ))}
-              <DockRow
-                href={DAILY_ENTRY_ITEM.href}
-                icon={DAILY_ENTRY_ITEM.icon}
-                label={DAILY_ENTRY_ITEM.label}
-                active={pathname === DAILY_ENTRY_ITEM.href}
-                expanded
-                tooltip={false}
-                onClick={() => setMobileOpen(false)}
-              />
+              {canSeeDailyEntry && (
+                <DockRow
+                  href={DAILY_ENTRY_ITEM.href}
+                  icon={DAILY_ENTRY_ITEM.icon}
+                  label={DAILY_ENTRY_ITEM.label}
+                  active={pathname === DAILY_ENTRY_ITEM.href}
+                  expanded
+                  tooltip={false}
+                  onClick={() => setMobileOpen(false)}
+                />
+              )}
 
-              <NavSection label="Monitoring" expanded />
-              {MONITORING_ITEMS.map((item) => (
+              {(visibleMonitoring.length > 0 || canSeePending) && <NavSection label="Monitoring" expanded />}
+              {visibleMonitoring.map((item) => (
                 <DockRow
                   key={item.href}
                   href={resolveHref(item.href)}
@@ -417,15 +432,17 @@ export default function Sidebar() {
                   onClick={() => setMobileOpen(false)}
                 />
               ))}
-              <DockRow
-                href={PENDING_BALANCE_ITEM.href}
-                icon={PENDING_BALANCE_ITEM.icon}
-                label={PENDING_BALANCE_ITEM.label}
-                active={pathname === PENDING_BALANCE_ITEM.href}
-                expanded
-                tooltip={false}
-                onClick={() => setMobileOpen(false)}
-              />
+              {canSeePending && (
+                <DockRow
+                  href={PENDING_BALANCE_ITEM.href}
+                  icon={PENDING_BALANCE_ITEM.icon}
+                  label={PENDING_BALANCE_ITEM.label}
+                  active={pathname === PENDING_BALANCE_ITEM.href}
+                  expanded
+                  tooltip={false}
+                  onClick={() => setMobileOpen(false)}
+                />
+              )}
 
               {canSeeTickets && (
                 <>
@@ -445,16 +462,29 @@ export default function Sidebar() {
                 </>
               )}
 
-              <NavSection label="Settings" expanded />
-              <DockRow
-                href="/settings"
-                icon={IconSettings}
-                label="Settings"
-                active={pathname === '/settings'}
-                expanded
-                tooltip={false}
-                onClick={() => setMobileOpen(false)}
-              />
+              {(canSeeSettings || canManageUsers) && <NavSection label="Settings" expanded />}
+              {canSeeSettings && (
+                <DockRow
+                  href="/settings"
+                  icon={IconSettings}
+                  label="Settings"
+                  active={pathname === '/settings'}
+                  expanded
+                  tooltip={false}
+                  onClick={() => setMobileOpen(false)}
+                />
+              )}
+              {canManageUsers && (
+                <DockRow
+                  href="/admin/users"
+                  icon={Users}
+                  label="Users"
+                  active={pathname.startsWith('/admin/users')}
+                  expanded
+                  tooltip={false}
+                  onClick={() => setMobileOpen(false)}
+                />
+              )}
             </>
           )}
         </div>
@@ -471,7 +501,7 @@ export default function Sidebar() {
           <div className="shrink-0 border-t border-[#E7E9EE] px-3 py-3 dark:border-[#262B38]">
             <div className="flex items-center gap-3 rounded-lg px-2 py-1.5">
               <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-[#4F46E5] text-[11px] font-bold text-white dark:bg-[#D9A441] dark:text-[#100C02]">
-                OP
+                {(session?.name || session?.username || '··').slice(0, 2).toUpperCase()}
               </div>
               <div className="min-w-0 overflow-hidden whitespace-nowrap">
                 <p className="truncate text-[12px] font-semibold text-[#1A1D23] dark:text-[#F3F4F7]">Operations Admin</p>
@@ -525,13 +555,17 @@ export default function Sidebar() {
             </div>
           </div>
 
-          <NavSection label="Overview" expanded={panelOpen} first />
-          <DockRow href={overviewHref} icon={IconDashboard} label="Dashboard" active={overviewActive} expanded={panelOpen} />
+          {canSeeDashboard && (
+            <>
+              <NavSection label="Overview" expanded={panelOpen} first />
+              <DockRow href={overviewHref} icon={IconDashboard} label="Dashboard" active={overviewActive} expanded={panelOpen} />
+            </>
+          )}
 
           {mounted && (
             <>
-              <NavSection label="Operations" expanded={panelOpen} />
-              {OPERATIONS_ITEMS.map((item) => (
+              {(visibleOperations.length > 0 || canSeeDailyEntry) && <NavSection label="Operations" expanded={panelOpen} />}
+              {visibleOperations.map((item) => (
                 <DockRow
                   key={item.href}
                   href={resolveHref(item.href)}
@@ -541,16 +575,18 @@ export default function Sidebar() {
                   expanded={panelOpen}
                 />
               ))}
-              <DockRow
-                href={DAILY_ENTRY_ITEM.href}
-                icon={DAILY_ENTRY_ITEM.icon}
-                label={DAILY_ENTRY_ITEM.label}
-                active={pathname === DAILY_ENTRY_ITEM.href}
-                expanded={panelOpen}
-              />
+              {canSeeDailyEntry && (
+                <DockRow
+                  href={DAILY_ENTRY_ITEM.href}
+                  icon={DAILY_ENTRY_ITEM.icon}
+                  label={DAILY_ENTRY_ITEM.label}
+                  active={pathname === DAILY_ENTRY_ITEM.href}
+                  expanded={panelOpen}
+                />
+              )}
 
-              <NavSection label="Monitoring" expanded={panelOpen} />
-              {MONITORING_ITEMS.map((item) => (
+              {(visibleMonitoring.length > 0 || canSeePending) && <NavSection label="Monitoring" expanded={panelOpen} />}
+              {visibleMonitoring.map((item) => (
                 <DockRow
                   key={item.href}
                   href={resolveHref(item.href)}
@@ -561,13 +597,15 @@ export default function Sidebar() {
                   badge={item.isTransferQueue ? displayCount : null}
                 />
               ))}
-              <DockRow
-                href={PENDING_BALANCE_ITEM.href}
-                icon={PENDING_BALANCE_ITEM.icon}
-                label={PENDING_BALANCE_ITEM.label}
-                active={pathname === PENDING_BALANCE_ITEM.href}
-                expanded={panelOpen}
-              />
+              {canSeePending && (
+                <DockRow
+                  href={PENDING_BALANCE_ITEM.href}
+                  icon={PENDING_BALANCE_ITEM.icon}
+                  label={PENDING_BALANCE_ITEM.label}
+                  active={pathname === PENDING_BALANCE_ITEM.href}
+                  expanded={panelOpen}
+                />
+              )}
 
               {canSeeTickets && (
                 <>
@@ -587,14 +625,25 @@ export default function Sidebar() {
             </>
           )}
 
-          <NavSection label="Settings" expanded={panelOpen} />
-          <DockRow
-            href="/settings"
-            icon={IconSettings}
-            label="Settings"
-            active={pathname === '/settings'}
-            expanded={panelOpen}
-          />
+          {(canSeeSettings || canManageUsers) && <NavSection label="Settings" expanded={panelOpen} />}
+          {canSeeSettings && (
+            <DockRow
+              href="/settings"
+              icon={IconSettings}
+              label="Settings"
+              active={pathname === '/settings'}
+              expanded={panelOpen}
+            />
+          )}
+          {canManageUsers && (
+            <DockRow
+              href="/admin/users"
+              icon={Users}
+              label="Users"
+              active={pathname.startsWith('/admin/users')}
+              expanded={panelOpen}
+            />
+          )}
 
           {!isDemoMode && (
             <div className="relative mt-auto flex items-center gap-2 border-t border-[#E7E9EE] pb-1 pt-3 dark:border-[#262B38]">
@@ -606,8 +655,8 @@ export default function Sidebar() {
                   panelOpen ? 'translate-x-0 opacity-100' : '-translate-x-1 opacity-0'
                 }`}
               >
-                <p className="truncate text-[9.5px] font-semibold text-[#1A1D23] dark:text-[#F3F4F7]">Operations Admin</p>
-                <p className="truncate text-[7.5px] text-[#6B7280] dark:text-[#9198AC]">admin@operations.com</p>
+                <p className="truncate text-[9.5px] font-semibold text-[#1A1D23] dark:text-[#F3F4F7]">{session?.name || session?.username || ''}</p>
+                <p className="truncate text-[7.5px] text-[#6B7280] dark:text-[#9198AC]">{session?.roleLabel ?? ''}</p>
                 <div className="mt-1 flex items-center gap-1">
                   <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-[#16A34A] dark:bg-[#34D399]" />
                   <span className="text-[7.5px] font-medium text-[#16A34A] dark:text-[#34D399]">Online</span>

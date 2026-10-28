@@ -1,11 +1,14 @@
 import { NextResponse } from 'next/server';
 import { fetchRange, toCSV } from '@/app/lib/googleSheets';
+import { authorizeApi } from '@/app/lib/auth/guard';
 
 // "Brand Balance" sheet, "SSP Line 1 Agent CashOut" table: row 0 is the
 // header (Brand, Opening Balance, Deposit, Withdrawal, Adjustment, Total),
 // rows 1-10 are one row per brand (M1/M2/K1/B1-B5/T1/J1) — no footer row,
 // confirmed range from the user directly (B3:G13).
-export async function GET() {
+export async function GET(request: Request) {
+  const auth = await authorizeApi(request);
+  if (auth instanceof NextResponse) return auth;
   try {
     const rows = await fetchRange('Brand Balance!B3:G13');
     return new NextResponse(toCSV(rows), {

@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server';
 import { importTopUpFile, type Product } from '@/app/lib/services/importService';
+import { authorizeApi } from '@/app/lib/auth/guard';
 
 // Live upload path for Top Up's real Upload button — wired via
 // BulkImportModal's importApiBasePath on app/topup/page.tsx and
@@ -7,6 +8,8 @@ import { importTopUpFile, type Product } from '@/app/lib/services/importService'
 // for the full explanation (identical pattern, Top Up-specific import
 // function).
 export async function POST(request: Request) {
+  const auth = await authorizeApi(request);
+  if (auth instanceof NextResponse) return auth;
   try {
     const formData = await request.formData();
     const file = formData.get('file');

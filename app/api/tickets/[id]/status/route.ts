@@ -2,7 +2,8 @@ import { NextRequest, NextResponse } from 'next/server';
 import { eq } from 'drizzle-orm';
 import { getDb } from '@/app/lib/db/client';
 import { ticketMessages, tickets } from '@/app/lib/db/schema';
-import { verifySessionToken, SESSION_COOKIE_NAME } from '@/app/lib/auth/session';
+import { authorizeApi } from '@/app/lib/auth/guard';
+import { canSettleTicket } from '@/app/lib/auth/permissions';
 
 const VALID_STATUSES = ['pending', 'ongoing', 'settled'] as const;
 const STATUS_LABEL: Record<(typeof VALID_STATUSES)[number], string> = {
@@ -16,10 +17,9 @@ const STATUS_LABEL: Record<(typeof VALID_STATUSES)[number], string> = {
 // in the same thread) rather than a separate history table — simplest
 // option that still answers "who changed it, when."
 export async function PATCH(request: NextRequest, { params }: { params: Promise<{ id: string }> }) {
-  const session = await verifySessionToken(request.cookies.get(SESSION_COOKIE_NAME)?.value);
-  if (!session || (session.role !== 'staff' && session.role !== 'admin')) {
-    return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
-  }
+  const auth = await authorizeApi(request);
+  if (auth instanceof NextResponse) return auth;
+  const { session } = auth;
 
   const ticketId = Number((await params).id);
   if (!Number.isInteger(ticketId)) {
@@ -39,8 +39,10 @@ export async function PATCH(request: NextRequest, { params }: { params: Promise<
   }
 
   const db = getDb();
-  const [ticket] = await db.select({ status: tickets.status }).from(tickets).where(eq(tickets.id, ticketId)).limit(1);
-  if (!ticket) {
+  const [ticket] = await db.select({ status: tickets.status, title: tickets.title }).from(tickets).where(eq(tickets.id, ticketId)).limit(1);
+  // OPS settles Agent concern; ACC settles Shop replacement + Adding new
+  // account (see TICKET_SETTLE_PERMISSION in permissions.ts).
+  if (!ticket || !canSettleTicket(session.permissions, ticket.title)) {
     return NextResponse.json({ error: 'Not found' }, { status: 404 });
   }
 

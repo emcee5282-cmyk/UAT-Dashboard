@@ -1,11 +1,14 @@
 import { NextResponse } from 'next/server';
 import { getLatestOpeningImportCutoff } from '@/app/lib/services/balanceService';
+import { authorizeApi } from '@/app/lib/auth/guard';
 
 // Send Money Opening page's own header "Last update" indicator — sibling of
 // /api/v2/opening/last-upload (Cashout), same reasoning: a separate,
 // additive endpoint rather than folding this into GET /api/v2/sendmoney/opening's
 // own bare-array response, which other pages also consume unchanged.
-export async function GET() {
+export async function GET(request: Request) {
+  const auth = await authorizeApi(request);
+  if (auth instanceof NextResponse) return auth;
   try {
     const lastOpeningUpload = await getLatestOpeningImportCutoff('sendmoney');
     return NextResponse.json({ lastOpeningUpload }, { headers: { 'Cache-Control': 'no-store' } });

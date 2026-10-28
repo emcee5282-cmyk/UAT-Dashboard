@@ -12,6 +12,8 @@ import {
   date,
   uniqueIndex,
   index,
+  jsonb,
+  primaryKey,
   type AnyPgColumn,
 } from 'drizzle-orm/pg-core';
 import { relations, sql } from 'drizzle-orm';
@@ -82,12 +84,25 @@ export const users = pgTable('users', {
   // "shop replacement" search to that leader's own agents (agents.leaderId)
   // without any string-matching between users.name and leaders.name.
   leaderId: integer('leader_id').references(() => leaders.id),
+  // 'active' | 'deactivated' — users are never hard-deleted (audit history
+  // references them). "Locked" is not a status value; it's derived from
+  // lockedUntil being in the future.
   status: text('status').notNull().default('active'),
+  // Free-text team label shown on User Management (no team table exists).
+  team: text('team'),
+  // Set on create and on admin reset — the user is held on /change-password
+  // until they pick a new one (see proxy.ts).
+  mustChangePassword: boolean('must_change_password').notNull().default(false),
+  failedLoginCount: integer('failed_login_count').notNull().default(0),
+  lockedUntil: timestamp('locked_until', { withTimezone: true }),
+  passwordChangedAt: timestamp('password_changed_at', { withTimezone: true }),
   createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
   lastLoginAt: timestamp('last_login_at', { withTimezone: true }),
 });
 
+// One row per login. The cookie carries a random token; only its SHA-256
+// is stored here, so a DB leak can't be replayed as a session.
 export const sessions = pgTable(
   'sessions',
   {
@@ -98,8 +113,63 @@ export const sessions = pgTable(
     lastActiveAt: timestamp('last_active_at', { withTimezone: true }).notNull().defaultNow(),
     expiresAt: timestamp('expires_at', { withTimezone: true }).notNull(),
     revokedAt: timestamp('revoked_at', { withTimezone: true }),
+    ip: text('ip'),
+    userAgent: text('user_agent'),
   },
-  (t) => [index('sessions_user_id_idx').on(t.userId)]
+  (t) => [index('sessions_user_id_idx').on(t.userId), uniqueIndex('sessions_token_hash_uq').on(t.tokenHash)]
+);
+
+// Roles and what each may do. users.role holds roles.key (stable slug;
+// renaming a role only changes `name`). The permission strings are the
+// catalog in app/lib/auth/permissions.ts. 'admin' is locked (always full
+// access, enforced in code); 'system' is hidden (scheduler account).
+export const roles = pgTable(
+  'roles',
+  {
+    id: serial('id').primaryKey(),
+    key: text('key').notNull(),
+    name: text('name').notNull(),
+    description: text('description'),
+    locked: boolean('locked').notNull().default(false),
+    hidden: boolean('hidden').notNull().default(false),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+    updatedBy: integer('updated_by').references(() => users.id),
+  },
+  (t) => [uniqueIndex('roles_key_uq').on(t.key), uniqueIndex('roles_name_uq').on(sql`lower(${t.name})`)]
+);
+
+export const rolePermissions = pgTable(
+  'role_permissions',
+  {
+    roleId: integer('role_id')
+      .notNull()
+      .references(() => roles.id, { onDelete: 'cascade' }),
+    permission: text('permission').notNull(),
+  },
+  (t) => [primaryKey({ columns: [t.roleId, t.permission] })]
+);
+
+// Append-only security log. actorUserId is who did it (null for a failed
+// login against an unknown username); targetUserId is whose account it
+// touched. usernameAttempted keeps the typed username for failed logins.
+export const authAuditLog = pgTable(
+  'auth_audit_log',
+  {
+    id: bigserial('id', { mode: 'number' }).primaryKey(),
+    event: text('event').notNull(),
+    actorUserId: integer('actor_user_id').references(() => users.id),
+    targetUserId: integer('target_user_id').references(() => users.id),
+    usernameAttempted: text('username_attempted'),
+    ip: text('ip'),
+    userAgent: text('user_agent'),
+    details: jsonb('details'),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    index('auth_audit_log_created_at_idx').on(t.createdAt),
+    index('auth_audit_log_target_user_idx').on(t.targetUserId),
+  ]
 );
 
 // ---------------------------------------------------------------------------

@@ -19,6 +19,9 @@ import { useParams, useRouter } from 'next/navigation';
 import { createPortal } from 'react-dom';
 import { AlertTriangle, ArrowLeft, ImagePlus, Loader2, Moon, RefreshCw, Send, Sun, X } from 'lucide-react';
 import { useVisibilityPolling } from '@/app/lib/useVisibilityPolling';
+import { useSession } from '@/app/lib/auth/useSession';
+import { canSettleTicket } from '@/app/lib/auth/permissions';
+import { BACKGROUND_POLL_HEADERS } from '@/app/lib/auth/backgroundPoll';
 import { useTheme } from '@/app/components/ThemeProvider';
 import AccountMenu from '@/app/components/AccountMenu';
 import { MODAL_OVERLAY_CLASS, MODAL_CARD_CLASS, MODAL_GHOST_BUTTON_CLASS, MODAL_PRIMARY_BUTTON_SHAPE_CLASS, MODAL_ESC_HINT_CLASS, MODAL_ESC_KBD_CLASS } from '@/app/components/modalTheme';
@@ -144,6 +147,7 @@ function deriveStatusHistory(ticket: TicketDetail, messages: Message[]): History
 }
 
 export default function StaffTicketDetailPage() {
+  const session = useSession();
   const router = useRouter();
   const params = useParams<{ id: string }>();
   const { theme, toggleTheme } = useTheme();
@@ -166,7 +170,7 @@ export default function StaffTicketDetailPage() {
   const wasNearBottomRef = useRef(true);
 
   const loadTicket = useCallback(() => {
-    return fetch(`/api/tickets/${params.id}`)
+    return fetch(`/api/tickets/${params.id}`, { headers: BACKGROUND_POLL_HEADERS })
       .then(async (res) => {
         if (res.status === 404) {
           setNotFound(true);
@@ -340,6 +344,10 @@ export default function StaffTicketDetailPage() {
   const leaderMessageReceipt = receiptFor(lastLeaderMessage, ticket?.staffLastViewedAt ?? null);
   const isRejected = ticket?.status === 'rejected';
   const closed = ticket?.status === 'settled' || isRejected;
+  // OPS settles Agent concern; ACC settles Shop replacement + Adding new
+  // account; Supervisor is read-only. UI-only — the status/reject/messages
+  // routes enforce the same rule server-side.
+  const canSettle = !!session && !!ticket && canSettleTicket(session.permissions, ticket.title);
   const statusMeta = ticket ? STATUS_META[ticket.status] : null;
 
   return (
@@ -503,7 +511,9 @@ export default function StaffTicketDetailPage() {
               )}
 
               <div className="shrink-0 border-t border-border p-3">
-                {closed ? (
+                {!canSettle && !closed ? (
+                  <p className="py-2 text-center text-[10px] font-medium text-muted-foreground">View only — your role can&apos;t reply to this ticket.</p>
+                ) : closed ? (
                   <p className="py-2 text-center text-[10px] font-medium text-muted-foreground">
                     {isRejected ? 'This ticket was rejected — conversation is closed.' : 'This ticket is settled — conversation is closed.'}
                   </p>
@@ -602,6 +612,7 @@ export default function StaffTicketDetailPage() {
                 </div>
               </div>
 
+              {canSettle && (
               <div className="mb-3 rounded-2xl border border-[#DDE0E7] bg-[#FFFFFF] px-4 py-[14px] dark:border-[#262B38] dark:bg-[#12151D]">
                 <h3 className="mb-3 text-[10px] font-bold uppercase tracking-wide text-muted-foreground">Settle This Ticket</h3>
                 {statusError && <p className="mb-2 text-[9.5px] font-medium text-rose-600">{statusError}</p>}
@@ -656,6 +667,7 @@ export default function StaffTicketDetailPage() {
                   />
                 </div>
               </div>
+              )}
 
               <div className="rounded-2xl border border-[#DDE0E7] bg-[#FFFFFF] px-4 py-[14px] dark:border-[#262B38] dark:bg-[#12151D]">
                 <h3 className="mb-3 text-[10px] font-bold uppercase tracking-wide text-muted-foreground">Status History</h3>

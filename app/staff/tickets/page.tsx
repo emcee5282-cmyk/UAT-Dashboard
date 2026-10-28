@@ -9,6 +9,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { Loader2, Moon, RefreshCw, Search, Sun } from 'lucide-react';
 import { useVisibilityPolling } from '@/app/lib/useVisibilityPolling';
+import { BACKGROUND_POLL_HEADERS } from '@/app/lib/auth/backgroundPoll';
 import { useTheme } from '@/app/components/ThemeProvider';
 import AccountMenu from '@/app/components/AccountMenu';
 
@@ -94,7 +95,7 @@ export default function StaffTicketsIndexPage() {
   const [filter, setFilter] = useState<FilterValue>('all');
 
   const load = useCallback(() => {
-    return fetch('/api/tickets')
+    return fetch('/api/tickets', { headers: BACKGROUND_POLL_HEADERS })
       .then((res) => {
         if (!res.ok) throw new Error('Failed to load tickets');
         return res.json();

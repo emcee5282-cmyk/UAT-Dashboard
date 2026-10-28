@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server';
 import { getBusinessToday, manilaFields } from '@/app/lib/businessDate';
 import { readEstimatedOpeningDisplayPg, type EstimatedOpeningWalletTotals } from '@/app/lib/db/read/estimatedOpening';
 import { computeWalletEstimates } from '@/app/lib/services/estimatedWalletCascade';
+import { authorizeApi } from '@/app/lib/auth/guard';
 
 // Daily Txn Entry's own "Estimated" tab (4th tab, alongside Operations/
 // Report/CashGo) — READ-ONLY. Per explicit instruction, there is no upload
@@ -71,6 +72,8 @@ function isValidLedgerId(v: unknown): v is 'ssp1' | 'ssp2' {
 }
 
 export async function GET(request: Request) {
+  const auth = await authorizeApi(request);
+  if (auth instanceof NextResponse) return auth;
   const url = new URL(request.url);
   const ledgerId = url.searchParams.get('ledgerId');
   if (!isValidLedgerId(ledgerId)) {

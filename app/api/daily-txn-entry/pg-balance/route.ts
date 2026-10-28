@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server';
 import { getBusinessToday, manilaFields } from '@/app/lib/businessDate';
 import { getDailyTxnPgBalance, getLatestPgBalanceSnapshot } from '@/app/lib/db/read/dailyTxnPgBalance';
 import { upsertPgBalanceEntries } from '@/app/lib/services/dailyTxnEntryService';
+import { authorizeApi } from '@/app/lib/auth/guard';
 
 // Report tab's "PG Closing Balances" (PgClosingBalancesCard) — all 6 PG
 // keys x brand in one table with one Save button, "today" only.
@@ -15,7 +16,9 @@ function todayStr(): string {
   return `${year}-${String(month + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
 }
 
-export async function GET() {
+export async function GET(request: Request) {
+  const auth = await authorizeApi(request);
+  if (auth instanceof NextResponse) return auth;
   const businessDate = todayStr();
   const allRows = await getDailyTxnPgBalance(businessDate);
 
@@ -64,6 +67,8 @@ export async function GET() {
 }
 
 export async function POST(request: Request) {
+  const auth = await authorizeApi(request);
+  if (auth instanceof NextResponse) return auth;
   const body = await request.json().catch(() => null);
   const rows = body?.rows;
   if (!Array.isArray(rows)) {

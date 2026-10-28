@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getDiscrepancySummaryRows } from '@/app/lib/services/discrepancySummaryService';
+import { authorizeApi } from '@/app/lib/auth/guard';
 
 // Daily Txn Entry's "Discrepancy Summary" tab — always live, same source as
 // the Balance tab (no snapshot, no date picker, no separate table). Raw rows
@@ -12,6 +13,8 @@ import { getDiscrepancySummaryRows } from '@/app/lib/services/discrepancySummary
 // Pending Balance Refresh button's own one-shot signal) — see that file's
 // own comment for why the cache exists and how it's keyed.
 export async function GET(request: NextRequest) {
+  const auth = await authorizeApi(request);
+  if (auth instanceof NextResponse) return auth;
   try {
     const force = request.nextUrl.searchParams.get('force') === '1';
     const rows = await getDiscrepancySummaryRows({ force });

@@ -28,6 +28,7 @@ import { getPreference, setPreference } from '@/app/lib/preferences';
 import { SETTLEMENT_BRAND_OPTIONS } from '@/app/lib/topupOptions';
 import { fmtAbbrev, exportNum } from '@/app/lib/format';
 import type { SendMoneyOpeningPgRow } from '@/app/lib/services/openingPageService';
+import { useCan } from '@/app/lib/auth/useSession';
 
 // Phase 6 — Today's Opening is PostgreSQL-only at runtime (no opt-in flag,
 // no Sheets fallback). See app/summary/page.tsx for the same cutover on the
@@ -153,6 +154,7 @@ function BulkActionsMenu({
   onExportSelected: () => void;
   onClearSelection: () => void;
 }) {
+  const canEdit = useCan('page.opening.bulkEdit');
   const [open, setOpen] = useState(false);
   const [pos, setPos] = useState({ top: 0, left: 0 });
   const btnRef = useRef<HTMLButtonElement>(null);
@@ -202,14 +204,16 @@ function BulkActionsMenu({
             className="z-[9999] w-48 rounded-xl border border-[#e5e5e7] bg-white p-1 shadow-xl dark:border-[#262B38] dark:bg-[#12151D]"
             onClick={(event) => event.stopPropagation()}
           >
-            <button
-              type="button"
-              onClick={() => { setOpen(false); onBulkEdit(); }}
-              className="flex w-full items-center gap-2 rounded-lg px-2.5 py-1.5 text-left text-[12px] font-normal text-[#475569] transition-colors hover:bg-[#F1F5F9] dark:text-[#9CA3AF] dark:hover:bg-white/5"
-            >
-              <Pencil size={13} />
-              Bulk Edit
-            </button>
+            {canEdit && (
+              <button
+                type="button"
+                onClick={() => { setOpen(false); onBulkEdit(); }}
+                className="flex w-full items-center gap-2 rounded-lg px-2.5 py-1.5 text-left text-[12px] font-normal text-[#475569] transition-colors hover:bg-[#F1F5F9] dark:text-[#9CA3AF] dark:hover:bg-white/5"
+              >
+                <Pencil size={13} />
+                Bulk Edit
+              </button>
+            )}
             <button
               type="button"
               onClick={() => { setOpen(false); onExportSelected(); }}
@@ -523,6 +527,8 @@ function headerCellClasses(align: 'left' | 'right' | 'center', paddingCls: strin
 
 // Row actions menu (⋮) — copied from Settlement/Top Up/Cashout Opening.
 function RowActionsCell({ row, onEdit, onDelete }: { row: Row; onEdit: (row: Row) => void; onDelete: (row: Row) => void }) {
+  const canEdit = useCan('page.opening.edit');
+  const canDelete = useCan('page.opening.delete');
   const [open, setOpen] = useState(false);
   const [pos, setPos] = useState({ top: 0, left: 0 });
   const btnRef = useRef<HTMLButtonElement>(null);
@@ -556,6 +562,7 @@ function RowActionsCell({ row, onEdit, onDelete }: { row: Row; onEdit: (row: Row
     setOpen(false);
   };
 
+  if (!canEdit && !canDelete) return null;
   return (
     <span className="relative inline-flex" onClick={(event) => event.stopPropagation()}>
       <button
@@ -579,14 +586,16 @@ function RowActionsCell({ row, onEdit, onDelete }: { row: Row; onEdit: (row: Row
           className="z-[9999] w-36 rounded-xl border border-[#e5e5e7] bg-white p-1 shadow-xl dark:border-[#262B38] dark:bg-[#12151D]"
           onClick={(event) => event.stopPropagation()}
         >
-          <button
-            type="button"
-            onClick={() => { setOpen(false); onEdit(row); }}
-            className="flex w-full items-center gap-2 rounded-lg px-2.5 py-1.5 text-left text-[12px] font-normal text-[#475569] transition-colors hover:bg-[#F1F5F9] dark:text-[#9CA3AF] dark:hover:bg-white/5"
-          >
-            <Pencil size={13} />
-            Edit
-          </button>
+          {canEdit && (
+            <button
+              type="button"
+              onClick={() => { setOpen(false); onEdit(row); }}
+              className="flex w-full items-center gap-2 rounded-lg px-2.5 py-1.5 text-left text-[12px] font-normal text-[#475569] transition-colors hover:bg-[#F1F5F9] dark:text-[#9CA3AF] dark:hover:bg-white/5"
+            >
+              <Pencil size={13} />
+              Edit
+            </button>
+          )}
           <button
             type="button"
             onClick={copyRow}
@@ -605,14 +614,16 @@ function RowActionsCell({ row, onEdit, onDelete }: { row: Row; onEdit: (row: Row
             <Eye size={13} />
             View Details
           </button>
-          <button
-            type="button"
-            onClick={() => { setOpen(false); onDelete(row); }}
-            className="flex w-full items-center gap-2 rounded-lg px-2.5 py-1.5 text-left text-[12px] font-normal text-rose-600 transition-colors hover:bg-rose-50 dark:text-rose-400 dark:hover:bg-rose-950/30"
-          >
-            <Trash2 size={13} />
-            Delete
-          </button>
+          {canDelete && (
+            <button
+              type="button"
+              onClick={() => { setOpen(false); onDelete(row); }}
+              className="flex w-full items-center gap-2 rounded-lg px-2.5 py-1.5 text-left text-[12px] font-normal text-rose-600 transition-colors hover:bg-rose-50 dark:text-rose-400 dark:hover:bg-rose-950/30"
+            >
+              <Trash2 size={13} />
+              Delete
+            </button>
+          )}
         </div>,
         document.body
       )}
@@ -691,6 +702,10 @@ function compareNullableNumber(a: number | null, b: number | null, direction: 'a
 }
 
 export default function SendMoneyOpeningPage() {
+  // UI-only: hides New/Upload/Edit/Delete for read-only roles; the API
+  // routes enforce the same permissions server-side.
+  const canEdit = useCan('page.opening.edit');
+  const canUpload = useCan('page.opening.upload');
   const [rows, setRows] = useState<Row[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<ClassifiedError | null>(null);
@@ -1203,7 +1218,7 @@ export default function SendMoneyOpeningPage() {
       title="No Accounts"
       description="Accounts will appear here once they are created or imported."
       action={
-        <button type="button" onClick={() => setNewRecordOpen(true)} className={EMPTY_STATE_PRIMARY_BUTTON}>
+        !canEdit ? undefined : <button type="button" onClick={() => setNewRecordOpen(true)} className={EMPTY_STATE_PRIMARY_BUTTON}>
           Add Record
         </button>
       }
@@ -1406,20 +1421,24 @@ export default function SendMoneyOpeningPage() {
                 </div>
               ) : (
                 <div className="ml-[10px] flex shrink-0 items-center gap-[10px]">
-                  <div className="relative">
-                    <button type="button" ref={newButtonRef} onClick={() => setNewRecordOpen(true)} aria-label="New" {...newTooltip.handlers} className={NEW_BUTTON}>
-                      <Plus size={13} />
-                      <span className="hidden xl:inline">New</span>
-                    </button>
-                    {newTooltip.rendered && <Tooltip label="New" open={newTooltip.open} pos={newTooltip.pos} onlyWhenCompact />}
-                  </div>
-                  <div className="relative">
-                    <button type="button" ref={uploadButtonRef} onClick={() => setBulkImportOpen(true)} aria-label="Upload" {...uploadTooltip.handlers} className={ICON_BUTTON}>
-                      <Upload size={13} />
-                      <span className="hidden xl:inline">Upload</span>
-                    </button>
-                    {uploadTooltip.rendered && <Tooltip label="Upload" open={uploadTooltip.open} pos={uploadTooltip.pos} onlyWhenCompact />}
-                  </div>
+                  {canEdit && (
+                    <div className="relative">
+                      <button type="button" ref={newButtonRef} onClick={() => setNewRecordOpen(true)} aria-label="New" {...newTooltip.handlers} className={NEW_BUTTON}>
+                        <Plus size={13} />
+                        <span className="hidden xl:inline">New</span>
+                      </button>
+                      {newTooltip.rendered && <Tooltip label="New" open={newTooltip.open} pos={newTooltip.pos} onlyWhenCompact />}
+                    </div>
+                  )}
+                  {canUpload && (
+                    <div className="relative">
+                      <button type="button" ref={uploadButtonRef} onClick={() => setBulkImportOpen(true)} aria-label="Upload" {...uploadTooltip.handlers} className={ICON_BUTTON}>
+                        <Upload size={13} />
+                        <span className="hidden xl:inline">Upload</span>
+                      </button>
+                      {uploadTooltip.rendered && <Tooltip label="Upload" open={uploadTooltip.open} pos={uploadTooltip.pos} onlyWhenCompact />}
+                    </div>
+                  )}
                   <div className="relative">
                     <button type="button" ref={exportButtonRef} onClick={() => handleExport()} aria-label="Export to Excel" {...exportTooltip.handlers} className={ICON_BUTTON}>
                       <Download size={13} />

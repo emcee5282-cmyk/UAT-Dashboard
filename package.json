@@ -11,12 +11,16 @@
     "db:generate": "node --env-file=.env.local node_modules/drizzle-kit/bin.cjs generate",
     "db:migrate": "node --env-file=.env.local node_modules/drizzle-kit/bin.cjs migrate",
     "db:studio": "node --env-file=.env.local node_modules/drizzle-kit/bin.cjs studio",
+    "auth:migrate": "tsx --env-file=.env.local scripts/_apply-auth-security-migration.ts",
+    "create-admin": "tsx --env-file=.env.local scripts/create-user.ts --role=admin",
+    "create-system-user": "tsx --env-file=.env.local scripts/create-user.ts --role=system",
     "migrate:data": "tsx scripts/migrate-data.ts",
     "bot:approve": "cd bots/approve-deposit-bot && node bot.js",
     "bot:approve:test": "cd bots/approve-deposit-bot && node test-approve.js"
   },
   "dependencies": {
     "@base-ui/react": "^1.6.0",
+    "@node-rs/argon2": "^2.2.2",
     "@sparticuz/chromium": "^149.0.0",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",

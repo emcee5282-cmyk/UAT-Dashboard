@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getPdfPageData } from '@/app/lib/server/discrepancyTgPdfDataStore';
+import { authorizeApi } from '@/app/lib/auth/guard';
 
 // Fetched client-side by app/internal/discrepancy-tg-pdf/page.tsx (running
 // inside Puppeteer's own browser context, which carries the same session
@@ -12,6 +13,8 @@ import { getPdfPageData } from '@/app/lib/server/discrepancyTgPdfDataStore';
 // destination — this isn't admin-only on its own merits, it just can't be
 // reached without already being inside an authenticated send run.
 export async function GET(request: NextRequest) {
+  const auth = await authorizeApi(request);
+  if (auth instanceof NextResponse) return auth;
   const id = request.nextUrl.searchParams.get('id');
   if (!id) return NextResponse.json({ error: 'Missing id' }, { status: 400 });
 

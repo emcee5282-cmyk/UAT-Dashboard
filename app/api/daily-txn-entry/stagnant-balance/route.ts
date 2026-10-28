@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getStagnantBalanceRows } from '@/app/lib/services/stagnantBalanceService';
+import { authorizeApi } from '@/app/lib/auth/guard';
 
 // Pending Balance's "Stagnant Balances" tab — raw (already 3+ day
 // threshold-filtered) rows only; the group/sort/totals logic lives in
@@ -9,6 +10,8 @@ import { getStagnantBalanceRows } from '@/app/lib/services/stagnantBalanceServic
 // `?force=1` bypasses balanceService.ts's own in-memory cache (the
 // Pending Balance Refresh button's own one-shot signal).
 export async function GET(request: NextRequest) {
+  const auth = await authorizeApi(request);
+  if (auth instanceof NextResponse) return auth;
   try {
     const force = request.nextUrl.searchParams.get('force') === '1';
     const { rows, recovered } = await getStagnantBalanceRows({ force });

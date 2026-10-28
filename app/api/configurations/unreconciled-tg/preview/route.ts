@@ -1,12 +1,12 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { requireAdmin } from '@/app/lib/auth/requireAdmin';
+import { requirePermission } from '@/app/lib/auth/requireAdmin';
 import { buildUnreconciledTgPreview } from '@/app/lib/server/unreconciledTgSendService';
 
 // Admin-only. Returns the SAME plan the confirmation pop-up renders AND the
 // actual send consumes — same contract as Discrepancy TG's own preview
 // route. Never returns the token itself, only whether one is saved.
 export async function GET(request: NextRequest) {
-  const session = await requireAdmin(request);
+  const session = await requirePermission(request, 'page.pendingBalance.telegram');
   if (!session) return NextResponse.json({ error: 'Unauthorized' }, { status: 403 });
 
   try {

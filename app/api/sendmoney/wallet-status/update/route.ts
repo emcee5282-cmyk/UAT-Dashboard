@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import { updateSendMoneyWalletStatusField, type WalletStatusField } from '@/app/lib/walletStatus';
 import { updateWalletStatusFieldPg } from '@/app/lib/services/walletStatusConfigService';
+import { authorizeApi } from '@/app/lib/auth/guard';
 
 // Send Money-only flag — see app/api/sendmoney/wallet-status/route.ts's
 // own comment.
@@ -11,6 +12,8 @@ function isPostgresSourceEnabled(): boolean {
 const VALID_FIELDS: WalletStatusField[] = ['deposit', 'withdrawal', 'priority', 'walletStatus'];
 
 export async function POST(request: Request) {
+  const auth = await authorizeApi(request);
+  if (auth instanceof NextResponse) return auth;
   try {
     const body = await request.json();
     const shopName = String(body?.shopName ?? '').trim();

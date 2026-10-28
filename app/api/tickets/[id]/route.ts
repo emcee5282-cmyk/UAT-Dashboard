@@ -2,19 +2,19 @@ import { NextRequest, NextResponse } from 'next/server';
 import { asc, eq, inArray } from 'drizzle-orm';
 import { getDb } from '@/app/lib/db/client';
 import { agents, leaders, ticketMessages, tickets, users } from '@/app/lib/db/schema';
-import { verifySessionToken, SESSION_COOKIE_NAME } from '@/app/lib/auth/session';
+import { authorizeApi } from '@/app/lib/auth/guard';
+import { can, canViewQueueTicket } from '@/app/lib/auth/permissions';
 
 // Ticket detail + full message thread. Leaders are scoped to their own
-// ticket only; staff/admin can view any ticket (cross-leader queue — admin
-// now shares the staff queue, see middleware.ts). Returns 404 (not 403)
+// ticket only; staff roles can view the ticket titles their role covers
+// (see canViewQueueTicket in app/lib/auth/permissions.ts). Returns 404 (not 403)
 // whenever access isn't allowed — same response as a nonexistent id, so a
 // caller can't probe which ticket ids exist by watching for a different
 // error code.
 export async function GET(request: NextRequest, { params }: { params: Promise<{ id: string }> }) {
-  const session = await verifySessionToken(request.cookies.get(SESSION_COOKIE_NAME)?.value);
-  if (!session || (session.role !== 'leader' && session.role !== 'staff' && session.role !== 'admin')) {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-  }
+  const auth = await authorizeApi(request);
+  if (auth instanceof NextResponse) return auth;
+  const { session } = auth;
 
   const ticketId = Number((await params).id);
   if (!Number.isInteger(ticketId)) {
@@ -22,10 +22,10 @@ export async function GET(request: NextRequest, { params }: { params: Promise<{ 
   }
 
   const db = getDb();
-  const isStaff = session.role === 'staff' || session.role === 'admin';
+  const isStaff = !can(session.permissions, 'tickets.raise');
 
   const [ticket] = await db.select().from(tickets).where(eq(tickets.id, ticketId)).limit(1);
-  if (!ticket || (!isStaff && ticket.createdBy !== session.userId)) {
+  if (!ticket || (isStaff ? !canViewQueueTicket(session.permissions, ticket.title) : ticket.createdBy !== session.userId)) {
     return NextResponse.json({ error: 'Not found' }, { status: 404 });
   }
 

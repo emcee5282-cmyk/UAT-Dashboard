@@ -52,8 +52,12 @@ const SLOW_INTERVAL_MS = 2 * 60 * 60 * 1000; // 2 hours
 // production recommendation.
 const FAST_INTERVAL_MS = 5 * 60 * 1000; // 5 minutes — LOCAL TESTING ONLY
 
-const DEV_USERNAME = 'admin';
-const DEV_PASSWORD = 'admin123';
+// Credentials of the dedicated 'system' service account (npm run
+// create-system-user) — read from .env.local, never hardcoded. That role can
+// only reach the sync endpoint (system.sync in app/lib/auth/permissions.ts),
+// so a leaked scheduler password can't open any dashboard page or data API.
+const SCHEDULER_USERNAME = process.env.SCHEDULER_USERNAME ?? '';
+const SCHEDULER_PASSWORD = process.env.SCHEDULER_PASSWORD ?? '';
 
 type SyncGroup = 'fast' | 'slow';
 
@@ -120,11 +124,15 @@ function extractSessionCookie(res: Response): string | null {
 }
 
 async function login(): Promise<void> {
+  if (!SCHEDULER_USERNAME || !SCHEDULER_PASSWORD) {
+    console.error('[AUTH] SCHEDULER_USERNAME / SCHEDULER_PASSWORD are not set in .env.local (create the account with npm run create-system-user).');
+    process.exit(1);
+  }
   console.log('[AUTH] Logging in...');
   const res = await fetch(`${BASE_URL}/api/auth/login`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ username: DEV_USERNAME, password: DEV_PASSWORD, rememberMe: true }),
+    body: JSON.stringify({ username: SCHEDULER_USERNAME, password: SCHEDULER_PASSWORD }),
   });
   if (!res.ok) {
     console.error(`[AUTH] Login failed — HTTP ${res.status}`);

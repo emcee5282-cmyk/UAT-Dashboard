@@ -28,6 +28,7 @@ import {
 } from '@/app/lib/balanceEngine';
 import type { BalanceLimitWalletRow } from '@/app/lib/db/read/balanceLimit';
 import { BRAND_CODES as CASHOUT_BRAND_CODES } from '@/app/lib/transferQueueCount';
+import { useCan } from '@/app/lib/auth/useSession';
 
 // Page-scoped font override (Manrope for body/labels, Space Grotesk for
 // tabular-nums) — per explicit instruction, matching the Balance page's own
@@ -344,6 +345,7 @@ function BulkActionsMenu({
   onExportSelected: () => void;
   onClearSelection: () => void;
 }) {
+  const canEdit = useCan('page.walletStatus.bulkEdit');
   const [open, setOpen] = useState(false);
   const [pos, setPos] = useState({ top: 0, left: 0 });
   const btnRef = useRef<HTMLButtonElement>(null);
@@ -396,10 +398,12 @@ function BulkActionsMenu({
             className="z-[9999] w-48 rounded-xl border border-[#e5e5e7] bg-white p-1 shadow-xl dark:border-[#262B38] dark:bg-[#12151D]"
             onClick={(event) => event.stopPropagation()}
           >
-            <button type="button" onClick={() => { setOpen(false); onBulkEdit(); }} className="flex w-full items-center gap-2 rounded-lg px-2.5 py-1.5 text-left text-[12px] font-normal text-[#475569] transition-colors hover:bg-[#F1F5F9] dark:text-[#9CA3AF] dark:hover:bg-white/5">
-              <Pencil size={13} />
-              Bulk Edit
-            </button>
+            {canEdit && (
+              <button type="button" onClick={() => { setOpen(false); onBulkEdit(); }} className="flex w-full items-center gap-2 rounded-lg px-2.5 py-1.5 text-left text-[12px] font-normal text-[#475569] transition-colors hover:bg-[#F1F5F9] dark:text-[#9CA3AF] dark:hover:bg-white/5">
+                <Pencil size={13} />
+                Bulk Edit
+              </button>
+            )}
             <button type="button" onClick={() => { setOpen(false); onExportSelected(); }} className="flex w-full items-center gap-2 rounded-lg px-2.5 py-1.5 text-left text-[12px] font-normal text-[#475569] transition-colors hover:bg-[#F1F5F9] dark:text-[#9CA3AF] dark:hover:bg-white/5">
               <Download size={13} />
               Export Selected
@@ -1142,6 +1146,9 @@ function RemarksCell({
 // more per-cell inline editing or independent Remarks popover.
 
 export default function SendMoneyWalletStatus() {
+  // UI-only: hides Edit / Bulk Edit for read-only roles (the wallet-status
+  // write APIs enforce data.edit server-side).
+  const canEdit = useCan('page.walletStatus.edit');
   const [rows, setRows] = useState<WalletStatusRow[]>([]);
 
   // Fixed width per column — sized to each column's own longest real value
@@ -2004,15 +2011,17 @@ export default function SendMoneyWalletStatus() {
         const stickyBg = stickyCellBg(selectedIds.has(row._id));
         return (
           <td key={key} style={cellStyle} className={`${base} sticky right-0 z-[40] ${stickyBg}`}>
-            <button
-              type="button"
-              onClick={() => openEditModal(row)}
-              aria-label="Edit"
-              title="Edit"
-              className="inline-flex h-[26px] w-[26px] items-center justify-center rounded-md text-muted-foreground transition-colors duration-150 ease-out hover:bg-muted hover:text-foreground"
-            >
-              <SquarePen size={12} />
-            </button>
+            {canEdit && (
+              <button
+                type="button"
+                onClick={() => openEditModal(row)}
+                aria-label="Edit"
+                title="Edit"
+                className="inline-flex h-[26px] w-[26px] items-center justify-center rounded-md text-muted-foreground transition-colors duration-150 ease-out hover:bg-muted hover:text-foreground"
+              >
+                <SquarePen size={12} />
+              </button>
+            )}
           </td>
         );
       }
@@ -2504,13 +2513,15 @@ export default function SendMoneyWalletStatus() {
                           </div>
                         )}
                         <div className="mt-2.5 flex items-center gap-1.5 border-t border-border pt-2.5">
-                          <button
-                            type="button"
-                            onClick={() => openEditModal(row)}
-                            className="flex h-8 flex-1 items-center justify-center gap-1 rounded-md text-[12px] font-semibold text-muted-foreground transition-colors duration-150 ease-out hover:bg-muted hover:text-foreground"
-                          >
-                            <SquarePen size={14} /> Edit
-                          </button>
+                          {canEdit && (
+                            <button
+                              type="button"
+                              onClick={() => openEditModal(row)}
+                              className="flex h-8 flex-1 items-center justify-center gap-1 rounded-md text-[12px] font-semibold text-muted-foreground transition-colors duration-150 ease-out hover:bg-muted hover:text-foreground"
+                            >
+                              <SquarePen size={14} /> Edit
+                            </button>
+                          )}
                         </div>
                       </div>
                     );

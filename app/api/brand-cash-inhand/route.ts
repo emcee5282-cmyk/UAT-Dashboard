@@ -1,11 +1,14 @@
 import { NextResponse } from 'next/server';
 import { fetchRange, toCSV } from '@/app/lib/googleSheets';
+import { authorizeApi } from '@/app/lib/auth/guard';
 
 // "Brand Balance" sheet: row 28 is a merged title ("BDT PG & BRAND
 // SUMMARY"), skipped entirely. Row 29 is the header (Brand, SSP AG, SSP PS,
 // ESS, AUTOPAY, EXPAY, Total Brand CIH), rows 30-39 are per-brand
 // cash-in-hand totals, row 40 is the "Total PG CIH" column-totals footer.
-export async function GET() {
+export async function GET(request: Request) {
+  const auth = await authorizeApi(request);
+  if (auth instanceof NextResponse) return auth;
   try {
     const rows = await fetchRange('Brand Balance!B29:H40');
     return new NextResponse(toCSV(rows), {

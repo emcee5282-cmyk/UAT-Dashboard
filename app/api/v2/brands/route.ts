@@ -1,11 +1,14 @@
 import { NextResponse } from 'next/server';
 import { getBrandsForProduct, type Product } from '@/app/lib/db/read/brands';
+import { authorizeApi } from '@/app/lib/auth/guard';
 
 // Phase 10 — real brands list for the Settlement/Top Up upload wizard's
 // client-side Brand validation (previously a hardcoded array). Server-side
 // validation (importService.ts) queries the same table directly, not via
 // this route — this exists only so the browser preview can match it.
 export async function GET(request: Request) {
+  const auth = await authorizeApi(request);
+  if (auth instanceof NextResponse) return auth;
   try {
     const product = new URL(request.url).searchParams.get('product');
     if (product !== 'cashout' && product !== 'sendmoney') {

@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server';
 import { getCashoutTransferQueueRows, getSendMoneyTransferQueueRows } from '@/app/lib/services/transferQueueService';
+import { authorizeApi } from '@/app/lib/auth/guard';
 
 // Transfer Queue's Postgres-mode read — wraps transferQueueService.ts's
 // per-wallet queue builders (Phase 1, restructured to iterate per wallet
@@ -9,6 +10,8 @@ import { getCashoutTransferQueueRows, getSendMoneyTransferQueueRows } from '@/ap
 // Current Group via agent_wallets.group_code, rule thresholds via
 // transfer_queue_rules — zero Google Sheets calls in this runtime path.
 export async function GET(request: Request) {
+  const auth = await authorizeApi(request);
+  if (auth instanceof NextResponse) return auth;
   try {
     const product = new URL(request.url).searchParams.get('product');
     if (product !== 'cashout' && product !== 'sendmoney') {

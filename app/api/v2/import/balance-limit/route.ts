@@ -1,11 +1,14 @@
 import { NextResponse } from 'next/server';
 import { importBalanceLimitFile, type Product } from '@/app/lib/services/balanceLimitService';
+import { authorizeApi } from '@/app/lib/auth/guard';
 
 // Phase 8b — Balance Limit's real upload endpoint. Same shape as
 // /api/v2/import/settlement and /api/v2/import/topup: one shared route,
 // `product` carried in the form data rather than a separate route per
 // product. Writes to PostgreSQL only — never touches Google Sheets.
 export async function POST(request: Request) {
+  const auth = await authorizeApi(request);
+  if (auth instanceof NextResponse) return auth;
   try {
     const formData = await request.formData();
     const file = formData.get('file');

@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import { readTransferQueueRules, readBundleConfig, readMetaConfig } from '@/app/lib/transferQueueSettings';
 import { readTransferQueueRulesPg, readBundleConfigPg, readMetaConfigPg } from '@/app/lib/db/read/transferQueue';
+import { authorizeApi } from '@/app/lib/auth/guard';
 
 // Phase 4 — page-scoped data-source override, server-only (no NEXT_PUBLIC_
 // prefix needed: this route decides internally, the client never branches
@@ -13,7 +14,9 @@ function isPostgresSourceEnabled(): boolean {
   return process.env.TRANSFER_QUEUE_CONFIG_SOURCE === 'postgres';
 }
 
-export async function GET() {
+export async function GET(request: Request) {
+  const auth = await authorizeApi(request);
+  if (auth instanceof NextResponse) return auth;
   try {
     const [rules, bundle, meta] = isPostgresSourceEnabled()
       ? await Promise.all([readTransferQueueRulesPg(), readBundleConfigPg(), readMetaConfigPg()])

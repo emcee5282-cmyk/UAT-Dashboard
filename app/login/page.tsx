@@ -27,7 +27,6 @@ export default function LoginPage() {
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
-  const [rememberMe, setRememberMe] = useState(false);
   const [loading, setLoading] = useState(false);
   const [fieldErrors, setFieldErrors] = useState<FieldErrors>({});
   const [formError, setFormError] = useState('');
@@ -54,7 +53,7 @@ export default function LoginPage() {
       const response = await fetch('/api/auth/login', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ username: username.trim(), password, rememberMe }),
+        body: JSON.stringify({ username: username.trim(), password }),
       });
       if (!response.ok) {
         const data = await response.json().catch(() => ({}));
@@ -64,11 +63,12 @@ export default function LoginPage() {
         return;
       }
       const data = await response.json().catch(() => ({}));
-      // Hard navigation (not next/navigation's router) so middleware
+      // Hard navigation (not next/navigation's router) so the proxy
       // re-evaluates the fresh session cookie on a real request rather than
-      // relying on the client router cache. Leaders land on their ticket
-      // history; everyone else keeps the existing dashboard landing page.
-      window.location.href = data.role === 'leader' ? '/tickets' : '/';
+      // relying on the client router cache. The server picks the target:
+      // /change-password on first login / after a reset, otherwise the
+      // role's home page (see homePathFor in app/lib/auth/permissions.ts).
+      window.location.href = typeof data.redirectTo === 'string' && data.redirectTo.startsWith('/') ? data.redirectTo : '/';
     } catch {
       setFormError('Something went wrong. Please try again.');
       submittingRef.current = false;
@@ -255,22 +255,12 @@ export default function LoginPage() {
                 )}
               </div>
 
-              <div className="flex items-center justify-between pt-1">
-                <label className="flex cursor-pointer items-center gap-2 text-[12.5px] font-medium text-muted-foreground">
-                  <input
-                    type="checkbox"
-                    checked={rememberMe}
-                    onChange={(event) => setRememberMe(event.target.checked)}
-                    className="h-3.5 w-3.5 cursor-pointer accent-[#4f46e5]"
-                  />
-                  Remember me
-                </label>
-                {/* Not wired to a recovery flow — the app has none yet — so
-                    this stays a plain span, not a dead link/button, per
-                    explicit instruction not to fake functionality. Styled
-                    as a subtle blue link per the visual spec regardless. */}
-                <span className="text-[12.5px] font-medium text-[#4f46e5] dark:text-indigo-400">Forgot password?</span>
-              </div>
+              {/* No "Remember me": every session ends after 12 hours (or 2
+                  hours idle). No self-service recovery either — an Admin
+                  resets forgotten passwords from User Management. */}
+              <p className="pt-1 text-[12px] text-muted-foreground">
+                Forgot your password? Ask an Admin to reset it.
+              </p>
 
               <button
                 type="submit"

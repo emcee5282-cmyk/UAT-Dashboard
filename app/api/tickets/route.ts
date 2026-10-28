@@ -2,7 +2,8 @@ import { NextRequest, NextResponse } from 'next/server';
 import { and, desc, eq, inArray } from 'drizzle-orm';
 import { getDb } from '@/app/lib/db/client';
 import { agents, leaders, ticketMessages, tickets, users } from '@/app/lib/db/schema';
-import { verifySessionToken, SESSION_COOKIE_NAME } from '@/app/lib/auth/session';
+import { authorizeApi } from '@/app/lib/auth/guard';
+import { can, queueTitlesFor } from '@/app/lib/auth/permissions';
 import { classifyTicketPriority } from '@/app/lib/ticketPriorityClassifier';
 
 const PRIORITY_RANK = { urgent: 0, moderate: 1, normal: 2 } as const;
@@ -40,24 +41,26 @@ async function idsBelongToLeader(ids: number[], leaderId: number): Promise<boole
 
 // Leader's own ticket history (scoped to the logged-in user, not the
 // broader leader entity — matches how ownership is checked everywhere else
-// here, createdBy = session.userId) — OR staff/admin's cross-leader queue,
-// branched by role (admin now shares the staff queue view — see
-// middleware.ts's STAFF_OR_ADMIN_ONLY_PATH_PREFIXES). Query params
-// (staff/admin only): ?status=pending|ongoing|settled to filter,
+// here, createdBy = session.userId) — OR the staff cross-leader queue,
+// branched by permission (see app/lib/auth/permissions.ts). The queue is
+// limited to the ticket types the role may view (tickets.<type>.view /
+// .settle, set per role on Users → Roles). Query params (queue only): ?status=pending|ongoing|settled to filter,
 // ?sort=unread to surface unread-from-leader tickets first.
 export async function GET(request: NextRequest) {
-  const session = await verifySessionToken(request.cookies.get(SESSION_COOKIE_NAME)?.value);
-  if (!session || (session.role !== 'leader' && session.role !== 'staff' && session.role !== 'admin')) {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-  }
+  const auth = await authorizeApi(request);
+  if (auth instanceof NextResponse) return auth;
+  const { session } = auth;
 
   const db = getDb();
-  const isStaffQueue = session.role === 'staff' || session.role === 'admin';
+  const isStaffQueue = !can(session.permissions, 'tickets.raise');
+  const visibleTitles = queueTitlesFor(session.permissions);
 
   let rows: (typeof tickets.$inferSelect & { leaderName?: string | null; submittedByUsername?: string | null })[];
   if (isStaffQueue) {
     const statusFilter = request.nextUrl.searchParams.get('status');
-    const whereClause = statusFilter && VALID_STATUSES.includes(statusFilter) ? eq(tickets.status, statusFilter as 'pending' | 'ongoing' | 'settled' | 'rejected') : undefined;
+    const statusClause = statusFilter && VALID_STATUSES.includes(statusFilter) ? eq(tickets.status, statusFilter as 'pending' | 'ongoing' | 'settled' | 'rejected') : undefined;
+    const titleClause = inArray(tickets.title, visibleTitles.length > 0 ? visibleTitles : ['__none__' as never]);
+    const whereClause = and(statusClause, titleClause);
     const joined = await db
       .select({ ticket: tickets, leaderName: leaders.name, submittedByUsername: users.username })
       .from(tickets)
@@ -130,9 +133,11 @@ export async function GET(request: NextRequest) {
 }
 
 export async function POST(request: NextRequest) {
-  const session = await verifySessionToken(request.cookies.get(SESSION_COOKIE_NAME)?.value);
-  if (!session || session.role !== 'leader' || !session.leaderId) {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+  const auth = await authorizeApi(request, ['tickets.raise']);
+  if (auth instanceof NextResponse) return auth;
+  const { session } = auth;
+  if (!session.leaderId) {
+    return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
   }
 
   let body: CreateTicketBody;

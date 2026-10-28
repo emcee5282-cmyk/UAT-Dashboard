@@ -1,12 +1,15 @@
 import { NextResponse } from 'next/server';
 import { getCashoutOpeningRows } from '@/app/lib/services/openingPageService';
 import { updateOpeningAgents, deleteOpeningAgent, createOpeningAgent, OpeningActionError, type OpeningFieldUpdates, type NewOpeningAgent } from '@/app/lib/services/openingActionsService';
+import { authorizeApi, requireBulkEdit } from '@/app/lib/auth/guard';
 
 // Phase 5 — Postgres-backed Today's Opening for Cashout (app/summary).
 // ?includeInactive=true — Settlement/TopUp's own roster fetch opts into
 // this so a shop the Opening-upload reconciliation deactivated is still
 // selectable there; the Opening page's own fetch never passes it.
 export async function GET(request: Request) {
+  const auth = await authorizeApi(request);
+  if (auth instanceof NextResponse) return auth;
   try {
     const includeInactive = new URL(request.url).searchParams.get('includeInactive') === 'true';
     const rows = await getCashoutOpeningRows(includeInactive);
@@ -21,6 +24,8 @@ export async function GET(request: Request) {
 // is [oneCode] for Single Edit, or the full selection for Bulk Edit. Both
 // always resolve to the same one-transaction, all-or-nothing service call.
 export async function PATCH(request: Request) {
+  const auth = await authorizeApi(request);
+  if (auth instanceof NextResponse) return auth;
   try {
     const body = await request.json();
     const agentCodes = body?.agentCodes;
@@ -28,6 +33,8 @@ export async function PATCH(request: Request) {
     if (!Array.isArray(agentCodes) || agentCodes.some((c) => typeof c !== 'string')) {
       return NextResponse.json({ error: 'agentCodes must be a non-empty array of strings.' }, { status: 400 });
     }
+    const bulkDenied = requireBulkEdit(auth.session, 'opening', agentCodes.length);
+    if (bulkDenied) return bulkDenied;
     const result = await updateOpeningAgents('cashout', agentCodes, updates);
     return NextResponse.json(result);
   } catch (err) {
@@ -38,6 +45,8 @@ export async function PATCH(request: Request) {
 }
 
 export async function DELETE(request: Request) {
+  const auth = await authorizeApi(request);
+  if (auth instanceof NextResponse) return auth;
   try {
     const body = await request.json();
     const agentCode = body?.agentCode;
@@ -57,6 +66,8 @@ export async function DELETE(request: Request) {
 // agentCode already exists for this product (see createOpeningAgent's own
 // comment).
 export async function POST(request: Request) {
+  const auth = await authorizeApi(request);
+  if (auth instanceof NextResponse) return auth;
   try {
     const body = await request.json();
     const input: NewOpeningAgent = body ?? {};

@@ -2,9 +2,11 @@
 
 import { createPortal } from 'react-dom';
 import { useEffect, useRef, useState } from 'react';
-import { KeyRound, LogOut, Sun, Moon, ChevronDown } from 'lucide-react';
+import Link from 'next/link';
+import { KeyRound, LogOut, Sun, Moon, ChevronDown, Users } from 'lucide-react';
 import ThemeSwitch from './ThemeSwitch';
 import { useTheme } from './ThemeProvider';
+import { useSession } from '@/app/lib/auth/useSession';
 
 // Global, persistent account control — rendered inline as the last item in
 // each page's own header actions row (SettlementHeader/PageHeader/
@@ -23,18 +25,14 @@ export default function AccountMenu({
   compact = false,
 }: { className?: string; compact?: boolean }) {
   const { theme } = useTheme();
-  const [username, setUsername] = useState<string | null>(null);
+  const session = useSession();
+  const username = session?.username ?? null;
+  const roleLabel = session?.roleLabel ?? '';
+  const canManageUsers = !!session?.permissions.includes('users.manage');
   const [open, setOpen] = useState(false);
   const [pos, setPos] = useState({ top: 0, right: 0, width: 0 });
   const buttonRef = useRef<HTMLButtonElement>(null);
   const menuRef = useRef<HTMLDivElement>(null);
-
-  useEffect(() => {
-    fetch('/api/auth/me')
-      .then((res) => (res.ok ? res.json() : null))
-      .then((data) => setUsername(data?.username ?? null))
-      .catch(() => setUsername(null));
-  }, []);
 
   useEffect(() => {
     if (!open) return;
@@ -73,8 +71,8 @@ export default function AccountMenu({
     window.location.href = '/login';
   };
 
-  const displayName = username ? username.charAt(0).toUpperCase() + username.slice(1) : 'Account';
-  const initials = (username ?? 'AD').slice(0, 2).toUpperCase();
+  const displayName = session?.name || (username ? username.charAt(0).toUpperCase() + username.slice(1) : 'Account');
+  const initials = (session?.name || username || '··').slice(0, 2).toUpperCase();
 
   return (
     <>
@@ -98,7 +96,7 @@ export default function AccountMenu({
         </span>
         <span className="hidden min-w-0 sm:block">
           <span className="block truncate text-[12px] font-semibold leading-tight text-foreground">{displayName}</span>
-          <span className={`block truncate leading-snug text-muted-foreground ${compact ? 'text-[10.5px]' : 'text-[10px]'}`}>Administrator</span>
+          <span className={`block truncate leading-snug text-muted-foreground ${compact ? 'text-[10.5px]' : 'text-[10px]'}`}>{roleLabel}</span>
         </span>
         <ChevronDown size={13} className={`shrink-0 text-muted-foreground transition-transform ${open ? 'rotate-180' : ''}`} />
       </button>
@@ -112,25 +110,34 @@ export default function AccountMenu({
         >
           <div className="border-b border-border px-3 py-2 dark:border-[#3a3a3d]">
             <p className="truncate text-[12px] font-semibold text-foreground">{displayName}</p>
-            <p className="truncate text-[10px] text-muted-foreground">Administrator</p>
+            <p className="truncate text-[10px] text-muted-foreground">{roleLabel}</p>
             <div className="mt-1 flex items-center gap-1">
               <span className="h-1.5 w-1.5 rounded-full bg-emerald-500" />
               <span className="text-[9px] font-medium text-emerald-600 dark:text-emerald-400">Online</span>
             </div>
           </div>
 
-          {/* No password-change flow exists yet (dev-only hardcoded
-              credentials) — present but inert, same pattern already used
-              elsewhere for not-yet-built features (e.g. the login page's
-              own "Forgot password?"). */}
-          <button
-            type="button"
+          {canManageUsers && (
+            <Link
+              href="/admin/users"
+              role="menuitem"
+              onClick={() => setOpen(false)}
+              className="flex w-full items-center gap-2 px-3 py-2 text-left text-[12px] font-medium text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+            >
+              <Users size={14} />
+              User Management
+            </Link>
+          )}
+
+          <Link
+            href="/change-password"
+            role="menuitem"
             onClick={() => setOpen(false)}
             className="flex w-full items-center gap-2 px-3 py-2 text-left text-[12px] font-medium text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
           >
             <KeyRound size={14} />
             Change Password
-          </button>
+          </Link>
 
           <div className="flex items-center justify-between px-3 py-2">
             <span className="flex items-center gap-2 text-[12px] font-medium text-muted-foreground">

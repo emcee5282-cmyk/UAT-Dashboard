@@ -6,6 +6,7 @@
 // (hides the button) and server-side (every route it calls 403s non-admins
 // regardless).
 import { useEffect, useRef, useState } from 'react';
+import { useSession } from '@/app/lib/auth/useSession';
 import {
   Send,
   Loader2,
@@ -474,7 +475,6 @@ function ConfirmModal({
 }
 
 export default function SendToTgButton() {
-  const [isAdmin, setIsAdmin] = useState(false);
   const [hasToken, setHasToken] = useState<boolean | null>(null);
 
   const [modalOpen, setModalOpen] = useState(false);
@@ -514,21 +514,21 @@ export default function SendToTgButton() {
     return () => clearInterval(interval);
   }, [sending]);
 
+  // Visible to anyone with telegram.send (Admin, OPS — they handle the
+  // 12/3/6/9 PM sends); the send/preview routes enforce the same. The
+  // bot-token pre-check reads the Settings config, which is Admin-only
+  // (it holds the token), so for OPS the button stays enabled and a missing
+  // token surfaces from the send itself instead.
+  const session = useSession();
+  const isAdmin = !!session?.permissions.includes('page.pendingBalance.telegram');
+  const canReadConfig = !!session?.permissions.includes('settings.manage');
   useEffect(() => {
-    fetch('/api/auth/me')
+    if (!canReadConfig) return;
+    fetch(`/api/configurations/discrepancy-tg?t=${Date.now()}`)
       .then((res) => (res.ok ? res.json() : null))
-      .then((data) => {
-        const admin = data?.role === 'admin';
-        setIsAdmin(admin);
-        if (admin) {
-          fetch(`/api/configurations/discrepancy-tg?t=${Date.now()}`)
-            .then((res) => (res.ok ? res.json() : null))
-            .then((data) => setHasToken(Boolean(data?.token)))
-            .catch(() => setHasToken(false));
-        }
-      })
-      .catch(() => setIsAdmin(false));
-  }, []);
+      .then((data) => setHasToken(Boolean(data?.token)))
+      .catch(() => setHasToken(false));
+  }, [canReadConfig]);
 
   async function openModal() {
     setModalOpen(true);

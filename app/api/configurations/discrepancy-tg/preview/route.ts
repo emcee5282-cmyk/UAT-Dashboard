@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { requireAdmin } from '@/app/lib/auth/requireAdmin';
+import { requirePermission } from '@/app/lib/auth/requireAdmin';
 import { buildDiscrepancyTgPreview } from '@/app/lib/server/discrepancyTgSendService';
 import { getDiscrepancyTgData } from '@/app/lib/services/discrepancyTgService';
 
@@ -8,7 +8,7 @@ import { getDiscrepancyTgData } from '@/app/lib/services/discrepancyTgService';
 // — the preview can't drift from what's really sent. Never returns the
 // token itself, only whether one is saved (the button's disabled state).
 export async function GET(request: NextRequest) {
-  const session = await requireAdmin(request);
+  const session = await requirePermission(request, 'page.pendingBalance.telegram');
   if (!session) return NextResponse.json({ error: 'Unauthorized' }, { status: 403 });
 
   try {

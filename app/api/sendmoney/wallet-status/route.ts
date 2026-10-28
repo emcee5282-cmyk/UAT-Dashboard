@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import { readSendMoneyWalletStatus, readSendMoneyWalletRemarks, readSendMoneyWalletOverrides, mergeWalletStatusRemarksAndOverrides } from '@/app/lib/walletStatus';
 import { readWalletStatusOverridesPg } from '@/app/lib/db/read/walletStatus';
+import { authorizeApi } from '@/app/lib/auth/guard';
 
 // Send Money-only flag, deliberately separate from Cashout's own — the two
 // products cut over independently (Send Money has no roster gap blocking
@@ -12,7 +13,9 @@ function isPostgresSourceEnabled(): boolean {
   return process.env.NEXT_PUBLIC_WALLET_STATUS_SOURCE_SENDMONEY === 'postgres';
 }
 
-export async function GET() {
+export async function GET(request: Request) {
+  const auth = await authorizeApi(request);
+  if (auth instanceof NextResponse) return auth;
   try {
     if (isPostgresSourceEnabled()) {
       const data = await readWalletStatusOverridesPg('sendmoney');

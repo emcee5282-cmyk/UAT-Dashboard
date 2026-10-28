@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server';
 import { updateOpeningWalletLine, deleteOpeningWalletLine, OpeningActionError } from '@/app/lib/services/openingActionsService';
+import { authorizeApi } from '@/app/lib/auth/guard';
 
 // Edit/Delete for a single opening_wallet_lines row — the per-wallet
 // Opening Balance breakdown a multi-wallet shop's file rows produce (e.g.
@@ -7,6 +8,8 @@ import { updateOpeningWalletLine, deleteOpeningWalletLine, OpeningActionError } 
 // own PATCH/DELETE (which key by agentCode): a wallet line has no
 // agentCode of its own to match against, only its own row id.
 export async function PATCH(request: Request) {
+  const auth = await authorizeApi(request);
+  if (auth instanceof NextResponse) return auth;
   try {
     const body = await request.json();
     const lineId = body?.lineId;
@@ -29,6 +32,8 @@ export async function PATCH(request: Request) {
 }
 
 export async function DELETE(request: Request) {
+  const auth = await authorizeApi(request);
+  if (auth instanceof NextResponse) return auth;
   try {
     const body = await request.json();
     const lineId = body?.lineId;

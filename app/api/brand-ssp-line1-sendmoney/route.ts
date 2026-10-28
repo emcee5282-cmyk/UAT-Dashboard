@@ -1,11 +1,14 @@
 import { NextResponse } from 'next/server';
 import { fetchRange, toCSV } from '@/app/lib/googleSheets';
+import { authorizeApi } from '@/app/lib/auth/guard';
 
 // "Brand Balance" sheet, Send Money's own "SSP Line 1" table: same shape as
 // Cashout's (Brand, Opening Balance, Deposit, Withdrawal, Adjustment,
 // Total), just a different range on the same tab — confirmed from the user
 // directly (B16:G26).
-export async function GET() {
+export async function GET(request: Request) {
+  const auth = await authorizeApi(request);
+  if (auth instanceof NextResponse) return auth;
   try {
     const rows = await fetchRange('Brand Balance!B16:G26');
     return new NextResponse(toCSV(rows), {

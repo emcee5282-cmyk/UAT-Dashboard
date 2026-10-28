@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import { getBalanceLimitRows, getBalanceLimitLastImport } from '@/app/lib/db/read/balanceLimit';
 import type { Product } from '@/app/lib/services/balanceLimitService';
+import { authorizeApi } from '@/app/lib/auth/guard';
 
 // Phase 8B — Balance Limit's own read endpoint. Shared by both products
 // (?product=cashout|sendmoney) since app/lib/db/read/balanceLimit.ts's
@@ -9,6 +10,8 @@ import type { Product } from '@/app/lib/services/balanceLimitService';
 // Balance Limit upload pipeline (Phase 8/8A) — zero Google Sheets calls in
 // this runtime path.
 export async function GET(request: Request) {
+  const auth = await authorizeApi(request);
+  if (auth instanceof NextResponse) return auth;
   try {
     const product = new URL(request.url).searchParams.get('product');
     if (product !== 'cashout' && product !== 'sendmoney') {

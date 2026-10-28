@@ -21,6 +21,7 @@ import { displayNum, parseAmount, fmtAbbrev, fmt, exportNum } from '@/app/lib/fo
 import { getPreference, setPreference } from '@/app/lib/preferences';
 import DateRangeFilter, { presetOf, daysInRange, type DateRangeValue } from '@/app/components/DateRangeFilter';
 import { SETTLEMENT_BRAND_OPTIONS, SENDMONEY_WALLET_OPTIONS, TOPUP_TYPE_OPTIONS } from '@/app/lib/topupOptions';
+import { useCan } from '@/app/lib/auth/useSession';
 
 // Explicit, scoped exception to this app-wide Inter rule (see CLAUDE.md) —
 // per explicit instruction, matches Daily Txn Entry's own font treatment
@@ -224,6 +225,7 @@ function BulkActionsMenu({
   onExportSelected: () => void;
   onClearSelection: () => void;
 }) {
+  const canEdit = useCan('page.topup.bulkEdit');
   const [open, setOpen] = useState(false);
   const [pos, setPos] = useState({ top: 0, left: 0 });
   const btnRef = useRef<HTMLButtonElement>(null);
@@ -276,14 +278,16 @@ function BulkActionsMenu({
             className="z-[9999] w-48 rounded-xl border border-[#e5e5e7] bg-white p-1 shadow-xl dark:border-[#262B38] dark:bg-[#12151D]"
             onClick={(event) => event.stopPropagation()}
           >
-            <button
-              type="button"
-              onClick={() => { setOpen(false); onBulkEdit(); }}
-              className="flex w-full items-center gap-2 rounded-lg px-2.5 py-1.5 text-left text-[12px] font-normal text-[#475569] transition-colors hover:bg-[#F1F5F9] dark:text-[#9CA3AF] dark:hover:bg-white/5"
-            >
-              <Pencil size={13} />
-              Bulk Edit
-            </button>
+            {canEdit && (
+              <button
+                type="button"
+                onClick={() => { setOpen(false); onBulkEdit(); }}
+                className="flex w-full items-center gap-2 rounded-lg px-2.5 py-1.5 text-left text-[12px] font-normal text-[#475569] transition-colors hover:bg-[#F1F5F9] dark:text-[#9CA3AF] dark:hover:bg-white/5"
+              >
+                <Pencil size={13} />
+                Bulk Edit
+              </button>
+            )}
             <button
               type="button"
               onClick={() => { setOpen(false); onExportSelected(); }}
@@ -581,6 +585,8 @@ function WalletBadge({ children, wallet }: { children: React.ReactNode; wallet: 
 // PostgreSQL mutations as of Phase 7; View Details stays a disabled
 // placeholder (no detail view exists yet).
 function RowActionsCell({ row, onEdit, onDelete }: { row: TopUpRow; onEdit: (row: TopUpRow) => void; onDelete: (row: TopUpRow) => void }) {
+  const canEdit = useCan('page.topup.edit');
+  const canDelete = useCan('page.topup.delete');
   const [open, setOpen] = useState(false);
   const [pos, setPos] = useState({ top: 0, left: 0 });
   const btnRef = useRef<HTMLButtonElement>(null);
@@ -627,6 +633,7 @@ function RowActionsCell({ row, onEdit, onDelete }: { row: TopUpRow; onEdit: (row
     setOpen(false);
   };
 
+  if (!canEdit && !canDelete) return null;
   return (
     <span className="relative inline-flex" onClick={(event) => event.stopPropagation()}>
       <button
@@ -652,14 +659,16 @@ function RowActionsCell({ row, onEdit, onDelete }: { row: TopUpRow; onEdit: (row
           }`}
           onClick={(event) => event.stopPropagation()}
         >
-          <button
-            type="button"
-            onClick={() => { setOpen(false); onEdit(row); }}
-            className="flex w-full items-center gap-2 rounded-lg px-2.5 py-1.5 text-left text-[12px] font-normal text-[#475569] transition-colors hover:bg-[#F1F5F9] dark:text-[#9CA3AF] dark:hover:bg-white/5"
-          >
-            <Pencil size={13} />
-            Edit
-          </button>
+          {canEdit && (
+            <button
+              type="button"
+              onClick={() => { setOpen(false); onEdit(row); }}
+              className="flex w-full items-center gap-2 rounded-lg px-2.5 py-1.5 text-left text-[12px] font-normal text-[#475569] transition-colors hover:bg-[#F1F5F9] dark:text-[#9CA3AF] dark:hover:bg-white/5"
+            >
+              <Pencil size={13} />
+              Edit
+            </button>
+          )}
           <button
             type="button"
             onClick={copyRow}
@@ -678,14 +687,16 @@ function RowActionsCell({ row, onEdit, onDelete }: { row: TopUpRow; onEdit: (row
             <Eye size={13} />
             View Details
           </button>
-          <button
-            type="button"
-            onClick={() => { setOpen(false); onDelete(row); }}
-            className="flex w-full items-center gap-2 rounded-lg px-2.5 py-1.5 text-left text-[12px] font-normal text-rose-600 transition-colors hover:bg-rose-50 dark:text-rose-400 dark:hover:bg-rose-500/10"
-          >
-            <Trash2 size={13} />
-            Delete
-          </button>
+          {canDelete && (
+            <button
+              type="button"
+              onClick={() => { setOpen(false); onDelete(row); }}
+              className="flex w-full items-center gap-2 rounded-lg px-2.5 py-1.5 text-left text-[12px] font-normal text-rose-600 transition-colors hover:bg-rose-50 dark:text-rose-400 dark:hover:bg-rose-500/10"
+            >
+              <Trash2 size={13} />
+              Delete
+            </button>
+          )}
         </div>,
         document.body
       )}
@@ -756,6 +767,10 @@ function renderCell(row: TopUpRow, key: ColumnKey, onEdit: (row: TopUpRow) => vo
 }
 
 export default function SendMoneyTopUpPage() {
+  // UI-only: hides New/Upload/Edit/Delete for read-only roles; the API
+  // routes enforce the same permissions server-side.
+  const canEdit = useCan('page.topup.edit');
+  const canUpload = useCan('page.topup.upload');
   const [topUpRows, setTopUpRows] = useState<TopUpRow[]>([]);
   // Real Balance Shop Agent roster — collected from the same /api/opening
   // response fetchData already reads for leaderMap (col 11, "Opening AG"
@@ -1344,7 +1359,7 @@ export default function SendMoneyTopUpPage() {
       title="No Top Up Records"
       description="Top Up records will appear here once they are created or imported."
       action={
-        <button type="button" onClick={() => setNewRecordOpen(true)} className={EMPTY_STATE_PRIMARY_BUTTON}>
+        !canEdit ? undefined : <button type="button" onClick={() => setNewRecordOpen(true)} className={EMPTY_STATE_PRIMARY_BUTTON}>
           Add Record
         </button>
       }
@@ -1595,20 +1610,24 @@ export default function SendMoneyTopUpPage() {
                 </div>
               ) : (
                 <div className="ml-[10px] flex shrink-0 items-center gap-[10px]">
-                  <div className="relative">
-                    <button type="button" ref={newButtonRef} onClick={() => setNewRecordOpen(true)} aria-label="New" {...newTooltip.handlers} className={NEW_BUTTON}>
-                      <Plus size={13} />
-                      <span className="hidden xl:inline">New</span>
-                    </button>
-                    {newTooltip.rendered && <Tooltip label="New" open={newTooltip.open} pos={newTooltip.pos} onlyWhenCompact />}
-                  </div>
-                  <div className="relative">
-                    <button type="button" ref={uploadButtonRef} onClick={() => setBulkImportOpen(true)} aria-label="Upload" {...uploadTooltip.handlers} className={ICON_BUTTON}>
-                      <Upload size={13} />
-                      <span className="hidden xl:inline">Upload</span>
-                    </button>
-                    {uploadTooltip.rendered && <Tooltip label="Upload" open={uploadTooltip.open} pos={uploadTooltip.pos} onlyWhenCompact />}
-                  </div>
+                  {canEdit && (
+                    <div className="relative">
+                      <button type="button" ref={newButtonRef} onClick={() => setNewRecordOpen(true)} aria-label="New" {...newTooltip.handlers} className={NEW_BUTTON}>
+                        <Plus size={13} />
+                        <span className="hidden xl:inline">New</span>
+                      </button>
+                      {newTooltip.rendered && <Tooltip label="New" open={newTooltip.open} pos={newTooltip.pos} onlyWhenCompact />}
+                    </div>
+                  )}
+                  {canUpload && (
+                    <div className="relative">
+                      <button type="button" ref={uploadButtonRef} onClick={() => setBulkImportOpen(true)} aria-label="Upload" {...uploadTooltip.handlers} className={ICON_BUTTON}>
+                        <Upload size={13} />
+                        <span className="hidden xl:inline">Upload</span>
+                      </button>
+                      {uploadTooltip.rendered && <Tooltip label="Upload" open={uploadTooltip.open} pos={uploadTooltip.pos} onlyWhenCompact />}
+                    </div>
+                  )}
                   <div className="relative">
                     <button type="button" ref={exportButtonRef} onClick={() => handleExport()} aria-label="Export to Excel" {...exportTooltip.handlers} className={ICON_BUTTON}>
                       <Download size={13} />

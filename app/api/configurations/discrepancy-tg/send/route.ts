@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { requireAdmin } from '@/app/lib/auth/requireAdmin';
+import { requirePermission } from '@/app/lib/auth/requireAdmin';
 import { SESSION_COOKIE_NAME } from '@/app/lib/auth/session';
 import { runDiscrepancyTgSend, type DiscrepancyTgSendPart } from '@/app/lib/server/discrepancyTgSendService';
 
@@ -17,7 +17,7 @@ export const maxDuration = 300;
 // closes. Lets the confirmation pop-up show real "Sending… X / N"
 // progress from ONE request, without a separate job/polling endpoint.
 export async function POST(request: NextRequest) {
-  const session = await requireAdmin(request);
+  const session = await requirePermission(request, 'page.pendingBalance.telegram');
   if (!session) return NextResponse.json({ error: 'Unauthorized' }, { status: 403 });
 
   const sessionToken = request.cookies.get(SESSION_COOKIE_NAME)?.value;

@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import { updateSendMoneyWalletSettings, type MainReason, type ClosureType, type AffectedService } from '@/app/lib/walletStatus';
 import { updateWalletSettingsPg } from '@/app/lib/services/walletStatusConfigService';
+import { authorizeApi } from '@/app/lib/auth/guard';
 
 // Send Money-only flag — see app/api/sendmoney/wallet-status/route.ts's
 // own comment.
@@ -23,6 +24,8 @@ const VALID_AFFECTED_SERVICES: AffectedService[] = ['Deposit', 'Withdrawal'];
 // Mirrors app/api/wallet-status/update-settings/route.ts exactly,
 // targeting Send Money's own separated column block instead.
 export async function POST(request: Request) {
+  const auth = await authorizeApi(request);
+  if (auth instanceof NextResponse) return auth;
   try {
     const body = await request.json();
     const shopName = String(body?.shopName ?? '').trim();

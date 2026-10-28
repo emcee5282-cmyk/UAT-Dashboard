@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse, after } from 'next/server';
 import type { Browser } from 'puppeteer-core';
-import { SESSION_COOKIE_NAME, verifySessionToken } from '@/app/lib/auth/session';
+import { SESSION_COOKIE_NAME } from '@/app/lib/auth/session';
+import { authorizeApi } from '@/app/lib/auth/guard';
 import { launchBrowser, waitForRealData, captureElement } from '@/app/lib/server/puppeteerCapture';
 import { checkDiscrepancyTgAutoSend, runDiscrepancyTgSend } from '@/app/lib/server/discrepancyTgSendService';
 import { autoSendTriggeredBy } from '@/app/lib/discrepancyTgAutoSlot';
@@ -13,6 +14,9 @@ export const runtime = 'nodejs';
 export const maxDuration = 300;
 
 export async function POST(request: NextRequest) {
+  const auth = await authorizeApi(request);
+  if (auth instanceof NextResponse) return auth;
+
   const botToken = process.env.TELEGRAM_BOT_TOKEN;
   const chatId = process.env.TELEGRAM_CHAT_ID;
   if (!botToken || !chatId) {
@@ -20,8 +24,7 @@ export async function POST(request: NextRequest) {
   }
 
   // The caller (whoever clicked "Send to Telegram") already has a valid
-  // session — middleware.ts wouldn't have let this request reach here
-  // otherwise. Puppeteer's own internal page has no cookies at all though,
+  // session with telegram.send — checked just above. Puppeteer's own internal page has no cookies at all though,
   // so its navigation to the target dashboard path used to hit the login
   // redirect instead of the real page, and every capture selector then
   // failed with "Capture target not found" — confirmed live (reproduced
@@ -128,8 +131,8 @@ export async function POST(request: NextRequest) {
     // Operations Overview only (this route also serves a demo page) — a
     // successful CIH send inside a 12/3/6/9PM (GMT+8) window with a fresh
     // Balance Limit upload also fires the Discrepancy TG send, once per
-    // slot (see discrepancyTgAutoSlot.ts). Anyone logged in can trigger it,
-    // per explicit instruction. Runs in after() so this response returns
+    // slot (see discrepancyTgAutoSlot.ts). Anyone allowed to send to
+    // Telegram (telegram.send — Admin, OPS) can trigger it. Runs in after() so this response returns
     // as soon as the CIH photos are out.
     let discrepancyAutoSend: { triggered: boolean; slot: string | null; reason?: string } | undefined;
     if (path === '/') {
@@ -139,8 +142,7 @@ export async function POST(request: NextRequest) {
           ? { triggered: true, slot: decision.slot.key }
           : { triggered: false, slot: decision.slot?.key ?? null, reason: decision.reason };
         if (decision.send) {
-          const session = await verifySessionToken(sessionToken);
-          const triggeredBy = autoSendTriggeredBy(decision.slot, session?.username ?? 'unknown');
+          const triggeredBy = autoSendTriggeredBy(decision.slot, auth.session.username);
           after(async () => {
             try {
               const outcome = await runDiscrepancyTgSend(triggeredBy, origin, sessionToken);

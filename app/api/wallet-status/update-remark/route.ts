@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import { updateCashoutWalletRemark } from '@/app/lib/walletStatus';
 import { updateWalletRemarkPg } from '@/app/lib/services/walletStatusConfigService';
+import { authorizeApi } from '@/app/lib/auth/guard';
 
 // Cashout-only flag — see app/api/wallet-status/route.ts's own comment.
 function isPostgresSourceEnabled(): boolean {
@@ -10,6 +11,8 @@ function isPostgresSourceEnabled(): boolean {
 const MAX_REMARK_LENGTH = 500;
 
 export async function POST(request: Request) {
+  const auth = await authorizeApi(request);
+  if (auth instanceof NextResponse) return auth;
   try {
     const body = await request.json();
     const shopName = String(body?.shopName ?? '').trim();

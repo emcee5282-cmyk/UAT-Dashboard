@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getUnreconciledBalanceRows } from '@/app/lib/services/unreconciledBalanceService';
+import { authorizeApi } from '@/app/lib/auth/guard';
 
 // Pending Balance's "Unreconciled Balance" tab — always live, same Balance-
 // tab source as Agent Balance/Discrepancy Summary. Raw rows only; the
@@ -10,6 +11,8 @@ import { getUnreconciledBalanceRows } from '@/app/lib/services/unreconciledBalan
 // `?force=1` bypasses balanceService.ts's own in-memory cache (the
 // Pending Balance Refresh button's own one-shot signal).
 export async function GET(request: NextRequest) {
+  const auth = await authorizeApi(request);
+  if (auth instanceof NextResponse) return auth;
   try {
     const force = request.nextUrl.searchParams.get('force') === '1';
     const rows = await getUnreconciledBalanceRows({ force });

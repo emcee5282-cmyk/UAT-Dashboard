@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import { updateBundleField, DEFAULT_BUNDLE } from '@/app/lib/transferQueueSettings';
 import { updateBundleFieldPg } from '@/app/lib/services/transferQueueConfigService';
+import { authorizeApi } from '@/app/lib/auth/guard';
 
 // Same shared flag as the sibling GET route — see its own comment.
 function isPostgresSourceEnabled(): boolean {
@@ -8,6 +9,8 @@ function isPostgresSourceEnabled(): boolean {
 }
 
 export async function POST(request: Request) {
+  const auth = await authorizeApi(request);
+  if (auth instanceof NextResponse) return auth;
   try {
     const body = await request.json();
     const index = Number(body?.index);

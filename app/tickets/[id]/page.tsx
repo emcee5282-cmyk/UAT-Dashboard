@@ -21,6 +21,7 @@ import {
   X,
 } from 'lucide-react';
 import { useVisibilityPolling } from '@/app/lib/useVisibilityPolling';
+import { BACKGROUND_POLL_HEADERS } from '@/app/lib/auth/backgroundPoll';
 
 type TicketDetail = {
   id: number;
@@ -210,7 +211,7 @@ export default function TicketDetailPage() {
   const wasNearBottomRef = useRef(true);
 
   const loadTicket = useCallback(() => {
-    return fetch(`/api/tickets/${params.id}`)
+    return fetch(`/api/tickets/${params.id}`, { headers: BACKGROUND_POLL_HEADERS })
       .then(async (res) => {
         if (res.status === 404) {
           setNotFound(true);

@@ -6,12 +6,14 @@ import { NextRequest, NextResponse } from 'next/server';
 import { and, eq, ilike } from 'drizzle-orm';
 import { getDb } from '@/app/lib/db/client';
 import { agents } from '@/app/lib/db/schema';
-import { verifySessionToken, SESSION_COOKIE_NAME } from '@/app/lib/auth/session';
+import { authorizeApi } from '@/app/lib/auth/guard';
 
 export async function GET(request: NextRequest) {
-  const session = await verifySessionToken(request.cookies.get(SESSION_COOKIE_NAME)?.value);
-  if (!session || session.role !== 'leader' || !session.leaderId) {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+  const auth = await authorizeApi(request, ['tickets.raise']);
+  if (auth instanceof NextResponse) return auth;
+  const { session } = auth;
+  if (!session.leaderId) {
+    return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
   }
 
   const q = (request.nextUrl.searchParams.get('q') ?? '').trim();

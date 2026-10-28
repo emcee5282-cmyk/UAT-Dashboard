@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server';
 import { getSspLine1TopUpSettlement, type Product } from '@/app/lib/db/read/sspLine1';
+import { authorizeApi } from '@/app/lib/auth/guard';
 
 // Phase 10 — SSP Line 1's Top Up/Settlement, PostgreSQL-backed via each
 // transaction's own stored brand_id. Zero Google Sheets calls in this
@@ -7,6 +8,8 @@ import { getSspLine1TopUpSettlement, type Product } from '@/app/lib/db/read/sspL
 // business-day cutoff app/page.tsx already computes for its own other
 // sections, reused here rather than re-derived server-side.
 export async function GET(request: Request) {
+  const auth = await authorizeApi(request);
+  if (auth instanceof NextResponse) return auth;
   try {
     const url = new URL(request.url);
     const product = url.searchParams.get('product');

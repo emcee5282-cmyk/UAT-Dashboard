@@ -36,6 +36,7 @@ import {
 import { getPreference, setPreference } from '@/app/lib/preferences';
 import type { BalanceLimitWalletRow } from '@/app/lib/db/read/balanceLimit';
 import type { AgentBalanceRow as PgAgentBalanceRow } from '@/app/lib/services/balanceService';
+import { useCan } from '@/app/lib/auth/useSession';
 
 // Page-scoped font override (Manrope for body/labels, Space Grotesk for
 // tabular-nums), matching Daily Txn Entry's own treatment and Top Up's port
@@ -779,6 +780,8 @@ function renderCell(row: MergedRow, key: ColumnKey, colWidthsPx?: Partial<Record
 }
 
 export default function SendMoneyAgentBalance() {
+  // UI-only (the import API enforces data.upload server-side).
+  const canUpload = useCan('page.balance.upload');
   const [rows, setRows] = useState<MergedRow[]>([]);
 
   const colWidthsPx = useMemo(() => computeColumnWidthsPx(rows, DEFAULT_COLUMNS), [rows]);
@@ -1724,13 +1727,15 @@ export default function SendMoneyAgentBalance() {
                 </div>
               ) : (
                 <div className="ml-[10px] flex shrink-0 items-center gap-[10px]">
-                  <div className="relative">
-                    <button type="button" ref={uploadButtonRef} onClick={() => setBalanceLimitModalOpen(true)} aria-label="Upload Balance Limit" {...uploadTooltip.handlers} className={ICON_BUTTON}>
-                      <Upload size={13} />
-                      <span className="hidden @min-[1000px]/toolbar:inline">Upload</span>
-                    </button>
-                    {uploadTooltip.rendered && <Tooltip label="Upload Balance Limit" open={uploadTooltip.open} pos={uploadTooltip.pos} onlyWhenCompact />}
-                  </div>
+                  {canUpload && (
+                    <div className="relative">
+                      <button type="button" ref={uploadButtonRef} onClick={() => setBalanceLimitModalOpen(true)} aria-label="Upload Balance Limit" {...uploadTooltip.handlers} className={ICON_BUTTON}>
+                        <Upload size={13} />
+                        <span className="hidden @min-[1000px]/toolbar:inline">Upload</span>
+                      </button>
+                      {uploadTooltip.rendered && <Tooltip label="Upload Balance Limit" open={uploadTooltip.open} pos={uploadTooltip.pos} onlyWhenCompact />}
+                    </div>
+                  )}
                   <div className="relative">
                     <button type="button" ref={exportButtonRef} onClick={handleExport} aria-label="Export to Excel" {...exportTooltip.handlers} className={ICON_BUTTON}>
                       <Download size={13} />

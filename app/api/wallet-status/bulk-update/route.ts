@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import { updateCashoutWalletStatusBulk, type Priority, type MainReason, type ClosureType, type AffectedService, type WalletStatusBulkUpdate } from '@/app/lib/walletStatus';
 import { bulkUpdateWalletSettingsPg } from '@/app/lib/services/walletStatusConfigService';
+import { authorizeApi } from '@/app/lib/auth/guard';
 
 // Cashout-only flag — see app/api/wallet-status/route.ts's own comment.
 function isPostgresSourceEnabled(): boolean {
@@ -13,6 +14,8 @@ const VALID_CLOSURE_TYPES: ClosureType[] = ['', 'Temporary Close', 'Permanent Cl
 const VALID_AFFECTED_SERVICES: AffectedService[] = ['Deposit', 'Withdrawal'];
 
 export async function POST(request: Request) {
+  const auth = await authorizeApi(request);
+  if (auth instanceof NextResponse) return auth;
   try {
     const body = await request.json();
     const rawUpdates = Array.isArray(body?.updates) ? body.updates : [];

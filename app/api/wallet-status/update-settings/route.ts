@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import { updateCashoutWalletSettings, type MainReason, type ClosureType, type AffectedService } from '@/app/lib/walletStatus';
 import { updateWalletSettingsPg } from '@/app/lib/services/walletStatusConfigService';
+import { authorizeApi } from '@/app/lib/auth/guard';
 
 // Cashout-only flag — see app/api/wallet-status/route.ts's own comment.
 function isPostgresSourceEnabled(): boolean {
@@ -20,6 +21,8 @@ const VALID_AFFECTED_SERVICES: AffectedService[] = ['Deposit', 'Withdrawal'];
 // upload's own real per-wallet "DP Limit" value, and Schedule is derived
 // from that same upload's own Group text — neither is staff-editable).
 export async function POST(request: Request) {
+  const auth = await authorizeApi(request);
+  if (auth instanceof NextResponse) return auth;
   try {
     const body = await request.json();
     const shopName = String(body?.shopName ?? '').trim();

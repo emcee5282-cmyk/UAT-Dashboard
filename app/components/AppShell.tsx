@@ -30,9 +30,13 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
   // /internal is a server-only render target (currently just the
   // Discrepancy TG image template) — Puppeteer navigates here to screenshot
   // a page, a real person never does. Still behind normal session auth
-  // (not in PUBLIC_PAGE_PATHS), just with no sidebar/nav to screenshot
+  // (see PAGE_RULES in app/lib/auth/permissions.ts), just with no sidebar/nav to screenshot
   // around.
-  if (pathname === '/login' || pathname.startsWith('/tickets') || pathname.startsWith('/ticket-settlement') || pathname.startsWith('/internal')) {
+  //
+  // /change-password and /no-access share the login page's standalone
+  // layout — a first-login user held on /change-password must not see
+  // (or click into) dashboard navigation they can't open yet.
+  if (pathname === '/login' || pathname === '/change-password' || pathname === '/no-access' || pathname.startsWith('/tickets') || pathname.startsWith('/ticket-settlement') || pathname.startsWith('/internal')) {
     return <>{children}</>;
   }
 

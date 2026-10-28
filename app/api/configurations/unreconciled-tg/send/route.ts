@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { requireAdmin } from '@/app/lib/auth/requireAdmin';
+import { requirePermission } from '@/app/lib/auth/requireAdmin';
 import { SESSION_COOKIE_NAME } from '@/app/lib/auth/session';
 import { runUnreconciledTgSend } from '@/app/lib/server/unreconciledTgSendService';
 
@@ -10,7 +10,7 @@ export const maxDuration = 300;
 // — zero or more {"type":"progress",...} lines, then exactly one
 // {"type":"done","outcome":{...}} or {"type":"error",...} line.
 export async function POST(request: NextRequest) {
-  const session = await requireAdmin(request);
+  const session = await requirePermission(request, 'page.pendingBalance.telegram');
   if (!session) return NextResponse.json({ error: 'Unauthorized' }, { status: 403 });
 
   const sessionToken = request.cookies.get(SESSION_COOKIE_NAME)?.value;

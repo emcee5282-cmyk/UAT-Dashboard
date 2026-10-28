@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import { setTransferQueueMode, type TransferQueueMode } from '@/app/lib/transferQueueSettings';
 import { setTransferQueueModePg } from '@/app/lib/services/transferQueueConfigService';
+import { authorizeApi } from '@/app/lib/auth/guard';
 
 const VALID_MODES: TransferQueueMode[] = ['production', 'configuration'];
 
@@ -10,6 +11,8 @@ function isPostgresSourceEnabled(): boolean {
 }
 
 export async function POST(request: Request) {
+  const auth = await authorizeApi(request);
+  if (auth instanceof NextResponse) return auth;
   try {
     const body = await request.json();
     const mode = body?.mode as TransferQueueMode;

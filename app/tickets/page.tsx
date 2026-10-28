@@ -8,8 +8,11 @@
 // the hardcoded light/purple palette this flow used before.
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { Loader2, LogOut, Plus, Search, Store, UserPlus, UserRound } from 'lucide-react';
+import Link from 'next/link';
+import { KeyRound, Loader2, LogOut, Plus, Search, Store, UserPlus, UserRound } from 'lucide-react';
 import { useVisibilityPolling } from '@/app/lib/useVisibilityPolling';
+import { useCan } from '@/app/lib/auth/useSession';
+import { BACKGROUND_POLL_HEADERS } from '@/app/lib/auth/backgroundPoll';
 
 // Longer than the detail thread's poll (new tickets/unread badges are
 // lower-urgency than an open conversation) — still visibility-paused.
@@ -98,13 +101,16 @@ function compareTickets(a: TicketRow, b: TicketRow): number {
 
 export default function TicketsListPage() {
   const router = useRouter();
+  // Leaders raise tickets; an Admin opening this page (tickets.leaderView,
+  // for support/checking) gets the same list read-only, without Create.
+  const canRaise = useCan('tickets.raise');
   const [tickets, setTickets] = useState<TicketRow[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [search, setSearch] = useState('');
   const [filter, setFilter] = useState<'all' | TicketRow['status']>('all');
 
   const loadTickets = useCallback(() => {
-    return fetch('/api/tickets')
+    return fetch('/api/tickets', { headers: BACKGROUND_POLL_HEADERS })
       .then((res) => {
         if (!res.ok) throw new Error('Failed to load tickets');
         return res.json();
@@ -130,7 +136,8 @@ export default function TicketsListPage() {
   useVisibilityPolling(loadTickets, POLL_INTERVAL_MS);
 
   // Leaders never see the dashboard's AccountMenu (this whole flow bypasses
-  // AppShell/Sidebar) — this is their only way to end the session.
+  // AppShell/Sidebar) — these header buttons are their only way to change
+  // their password or end the session.
   async function handleLogout() {
     await fetch('/api/auth/logout', { method: 'POST' }).catch(() => {});
     window.location.href = '/login';
@@ -159,15 +166,25 @@ export default function TicketsListPage() {
         <div className="mb-5 flex items-center justify-between gap-3">
           <h1 className="text-2xl font-bold">Tickets</h1>
           <div className="flex items-center gap-2">
-            <button
-              type="button"
-              onClick={() => router.push('/tickets/create')}
-              aria-label="Create ticket"
-              className="flex items-center gap-1.5 rounded-[10px] border border-border bg-card px-3 py-2 text-[13px] font-semibold text-foreground transition-colors hover:bg-muted focus:outline-none focus-visible:ring-2 focus-visible:ring-[color:var(--ui-accent)] sm:px-3.5"
+            {canRaise && (
+              <button
+                type="button"
+                onClick={() => router.push('/tickets/create')}
+                aria-label="Create ticket"
+                className="flex items-center gap-1.5 rounded-[10px] border border-border bg-card px-3 py-2 text-[13px] font-semibold text-foreground transition-colors hover:bg-muted focus:outline-none focus-visible:ring-2 focus-visible:ring-[color:var(--ui-accent)] sm:px-3.5"
+              >
+                <Plus size={15} />
+                <span className="hidden sm:inline">Create ticket</span>
+              </button>
+            )}
+            <Link
+              href="/change-password"
+              aria-label="Change password"
+              title="Change password"
+              className="flex h-[38px] w-[38px] shrink-0 items-center justify-center rounded-[10px] border border-border bg-card text-muted-foreground transition-colors hover:bg-muted hover:text-foreground focus:outline-none focus-visible:ring-2 focus-visible:ring-[color:var(--ui-accent)]"
             >
-              <Plus size={15} />
-              <span className="hidden sm:inline">Create ticket</span>
-            </button>
+              <KeyRound size={16} />
+            </Link>
             <button
               type="button"
               onClick={handleLogout}

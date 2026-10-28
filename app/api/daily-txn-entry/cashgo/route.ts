@@ -3,6 +3,7 @@ import { getBusinessToday, manilaFields } from '@/app/lib/businessDate';
 import { getDailyTxnCashgoForDate, getDailyTxnCashgoHistory } from '@/app/lib/db/read/dailyTxnCashgo';
 import { upsertCashgoEntry } from '@/app/lib/services/dailyTxnEntryService';
 import { getEffectiveBusinessToday } from '@/app/lib/services/balanceService';
+import { authorizeApi } from '@/app/lib/auth/guard';
 
 // Serves both the Operations tab's CashGoHourlyCard ("today", the default)
 // and the CashGo tab's CashGoDailyTargetCard (?history=1 — last 2 months,
@@ -31,6 +32,8 @@ function formatDateLabel(dateStr: string): string {
 }
 
 export async function GET(request: Request) {
+  const auth = await authorizeApi(request);
+  if (auth instanceof NextResponse) return auth;
   const url = new URL(request.url);
   const today = todayStr();
 
@@ -68,6 +71,8 @@ export async function GET(request: Request) {
 }
 
 export async function POST(request: Request) {
+  const auth = await authorizeApi(request);
+  if (auth instanceof NextResponse) return auth;
   const body = await request.json().catch(() => null);
   const channel = body?.channel;
   if (channel !== 'bkash' && channel !== 'nagad') {

@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server';
 import { getBusinessToday, manilaFields } from '@/app/lib/businessDate';
 import { getDailyTxnWalletClosing } from '@/app/lib/db/read/dailyTxnWalletClosing';
 import { upsertWalletClosingEntries } from '@/app/lib/services/dailyTxnEntryService';
+import { authorizeApi } from '@/app/lib/auth/guard';
 
 // Report tab's "Wallet Breakdown Opening" (YesterdayClosingCard), one
 // ledger (ssp1 or ssp2) at a time, "today" only. Self-contained — entered
@@ -18,6 +19,8 @@ function isValidLedgerId(v: unknown): v is 'ssp1' | 'ssp2' {
 }
 
 export async function GET(request: Request) {
+  const auth = await authorizeApi(request);
+  if (auth instanceof NextResponse) return auth;
   const url = new URL(request.url);
   const ledgerId = url.searchParams.get('ledgerId');
   if (!isValidLedgerId(ledgerId)) {
@@ -34,6 +37,8 @@ export async function GET(request: Request) {
 }
 
 export async function POST(request: Request) {
+  const auth = await authorizeApi(request);
+  if (auth instanceof NextResponse) return auth;
   const body = await request.json().catch(() => null);
   const ledgerId = body?.ledgerId;
   const rows = body?.rows;

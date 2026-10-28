@@ -3,6 +3,7 @@ import { getBusinessToday, manilaFields } from '@/app/lib/businessDate';
 import { getDailyTxnLedgerEntries } from '@/app/lib/db/read/dailyTxnLedger';
 import { getLatestPgBalanceSnapshot } from '@/app/lib/db/read/dailyTxnPgBalance';
 import { upsertLedgerEntries } from '@/app/lib/services/dailyTxnEntryService';
+import { authorizeApi } from '@/app/lib/auth/guard';
 
 // Operations tab's LedgerCard — one ledger's rows (per brand/rowKey) for
 // "today" only. Session-gated by middleware.ts like the rest of the app; no
@@ -31,6 +32,8 @@ const LEDGER_TO_PG_KEY: Record<string, string> = {
 };
 
 export async function GET(request: Request) {
+  const auth = await authorizeApi(request);
+  if (auth instanceof NextResponse) return auth;
   const url = new URL(request.url);
   const ledgerId = url.searchParams.get('ledgerId');
   if (!ledgerId) {
@@ -73,6 +76,8 @@ export async function GET(request: Request) {
 }
 
 export async function POST(request: Request) {
+  const auth = await authorizeApi(request);
+  if (auth instanceof NextResponse) return auth;
   const body = await request.json().catch(() => null);
   const ledgerId = body?.ledgerId;
   const rows = body?.rows;

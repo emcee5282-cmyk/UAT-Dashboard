@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server';
 import { getTopUpSettlementTotals } from '@/app/lib/services/balanceService';
+import { authorizeApi } from '@/app/lib/auth/guard';
 
 // Balance page's Settlement/Top Up migration — reads PostgreSQL only
 // (wallet_transactions, via the Settlement/Top Up bulk-import wizards),
@@ -8,6 +9,8 @@ import { getTopUpSettlementTotals } from '@/app/lib/services/balanceService';
 // Company Balance/Balance Inside/Group columns keep reading whatever they
 // already read; only the Settlement/Top Up slice moves here.
 export async function GET(request: Request) {
+  const auth = await authorizeApi(request);
+  if (auth instanceof NextResponse) return auth;
   try {
     const product = new URL(request.url).searchParams.get('product');
     if (product !== 'cashout' && product !== 'sendmoney') {

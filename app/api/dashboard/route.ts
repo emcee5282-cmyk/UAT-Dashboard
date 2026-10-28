@@ -15,6 +15,7 @@ import { getAgentBalances, getLatestOpeningImportCutoff } from '@/app/lib/servic
 import { getAgentWalletRawRows } from '@/app/lib/db/read/agentWalletRaw';
 import { getBalanceLimitLastImport } from '@/app/lib/db/read/balanceLimit';
 import { isLockedStatus } from '@/app/lib/balanceEngine';
+import { authorizeApi } from '@/app/lib/auth/guard';
 
 // Production Dashboard data route — supersedes app/api/dashboard-demo/route.ts
 // (left untouched, still feeds public/dashboard-demo.html) for the new "/"
@@ -257,7 +258,9 @@ async function getDailyTxnLedgerBrandTotals(ledgerId: string, businessDate: stri
 // app/page.tsx's own AUTOPAY_UNSUPPORTED_BRANDS.
 const AUTOPAY_UNSUPPORTED_BRANDS = ['B3', 'B4', 'B5', 'J1', 'T1'];
 
-export async function GET() {
+export async function GET(request: Request) {
+  const auth = await authorizeApi(request);
+  if (auth instanceof NextResponse) return auth;
   try {
     // 32 days back covers the 30D trend chart's full window (ending
     // yesterday) with a couple days' margin — Send Money's Top Up/

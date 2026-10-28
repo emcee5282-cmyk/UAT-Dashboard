@@ -1,12 +1,17 @@
-// Shared admin-only gate for API routes — same verifySessionToken/
-// SESSION_COOKIE_NAME pattern as app/api/tickets/*, extracted once it was
-// about to be duplicated a third time (Settings > Discrepancy TG's own
-// route, plus the "Send to TG" preview/send routes).
+// Settings-only gate for API routes (Discrepancy/Unreconciled TG config).
+// Thin wrapper over the permissions table so "admin" is defined in exactly
+// one place (app/lib/auth/permissions.ts -> settings.manage).
 import type { NextRequest } from 'next/server';
-import { verifySessionToken, SESSION_COOKIE_NAME, type SessionPayload } from './session';
+import { getRequestSession } from './guard';
+import { can, type Permission } from './permissions';
+import type { SessionPayload } from './session';
 
 export async function requireAdmin(request: NextRequest): Promise<SessionPayload | null> {
-  const session = await verifySessionToken(request.cookies.get(SESSION_COOKIE_NAME)?.value);
-  if (!session || session.role !== 'admin') return null;
+  return requirePermission(request, 'settings.manage');
+}
+
+export async function requirePermission(request: NextRequest, permission: Permission): Promise<SessionPayload | null> {
+  const session = await getRequestSession(request);
+  if (!session || session.mustChangePassword || !can(session.permissions, permission)) return null;
   return session;
 }

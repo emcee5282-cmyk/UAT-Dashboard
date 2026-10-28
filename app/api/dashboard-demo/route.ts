@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server';
 import { fetchRange } from '@/app/lib/googleSheets';
 import { clean, rawVal } from '@/app/lib/format';
 import { getBusinessToday, manilaMidnight, manilaFields } from '@/app/lib/businessDate';
+import { authorizeApi } from '@/app/lib/auth/guard';
 
 // Feeds ONLY the Dashboard Demo mockup (public/dashboard-demo.html) — real
 // numbers for the sections that have a real source (Balance Overview cards,
@@ -124,7 +125,9 @@ function buildDaySeries<T>(
   });
 }
 
-export async function GET() {
+export async function GET(request: Request) {
+  const auth = await authorizeApi(request);
+  if (auth instanceof NextResponse) return auth;
   try {
     const [
       cashoutSheetRows, sendMoneySheetRows, openingRows,

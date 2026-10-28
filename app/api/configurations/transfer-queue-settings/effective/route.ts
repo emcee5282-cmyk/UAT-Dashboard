@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server';
 import { readEffectiveTransferQueueRules } from '@/app/lib/transferQueueSettings';
+import { authorizeApi } from '@/app/lib/auth/guard';
 
 // Used by the 3 LIVE Transfer Queue consumers (Cashout page, Send Money page, Sidebar
 // badge counts) — distinct from the plain GET route above, which the Configuration
@@ -8,7 +9,9 @@ import { readEffectiveTransferQueueRules } from '@/app/lib/transferQueueSettings
 // the hardcoded defaults untouched, ignoring whatever's saved (the instant-rollback
 // kill-switch); in 'configuration' mode it returns the actual saved rules
 // (cache-backed, see transferQueueSettings.ts's 60s TTL).
-export async function GET() {
+export async function GET(request: Request) {
+  const auth = await authorizeApi(request);
+  if (auth instanceof NextResponse) return auth;
   try {
     const rules = await readEffectiveTransferQueueRules();
     return NextResponse.json({ rules }, { headers: { 'Cache-Control': 'no-store' } });

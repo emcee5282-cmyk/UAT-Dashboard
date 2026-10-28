@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server';
 import { getLatestOpeningImportCutoff } from '@/app/lib/services/balanceService';
+import { authorizeApi } from '@/app/lib/auth/guard';
 
 // Opening page's own header "Last update" indicator — the same
 // import_batches signal balanceService.ts's Estimated Opening override
@@ -8,7 +9,9 @@ import { getLatestOpeningImportCutoff } from '@/app/lib/services/balanceService'
 // own response, since that route's bare-array shape is already consumed
 // by several other pages (stlm, topup, wallet-status(-demo)) that would
 // all need updating for no reason if its shape changed.
-export async function GET() {
+export async function GET(request: Request) {
+  const auth = await authorizeApi(request);
+  if (auth instanceof NextResponse) return auth;
   try {
     const lastOpeningUpload = await getLatestOpeningImportCutoff('cashout');
     return NextResponse.json({ lastOpeningUpload }, { headers: { 'Cache-Control': 'no-store' } });
