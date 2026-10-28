@@ -12,6 +12,12 @@ const { cleanAmount } = require("./parser");
 
 let activeContext = null;
 
+// Timing for slow SBO responses (see makeupDeposit / processApproval STEP 4).
+const POLL_MS = 500;
+const CHECK_WAIT_MS = 10000;
+const VERIFY_ATTEMPTS = 3;
+const VERIFY_RETRY_DELAY_MS = 3000;
+
 /* ------------------------------------------------------------------ */
 /* Browser + login (same approach as the cancel bot)                   */
 /* ------------------------------------------------------------------ */
@@ -374,18 +380,28 @@ async function makeupDeposit(page, req) {
 
     await modal.getByRole("button", { name: selectors.makeupCheckButtonText, exact: true }).click();
     await page.waitForLoadState("networkidle", { timeout: 15000 }).catch(() => {});
-    await page.waitForTimeout(1200);
-
-    messages.push(...(await visibleTexts(page, selectors.errorTextSelectors)));
 
     // Pass/fail signal: is Submit actually there and clickable? Scoped to
     // the modal (not the whole page) — the real SBO DOM has several OTHER
     // hidden "Submit" buttons belonging to unrelated forms elsewhere on
     // this same page (confirmed from the inspect-page.js dump), so an
     // unscoped page-wide lookup risks matching one of those instead.
+    //
+    // Polled for up to CHECK_WAIT_MS rather than checked once after a fixed
+    // 1.2s — under heavy load SBO's Check response can take several
+    // seconds, and a single early look reported "Check did not pass" for
+    // deposits that went through fine on a later resend (seen 2026-10-27/28).
     const submitBtn = modal.getByRole("button", { name: selectors.makeupSubmitButtonText, exact: true }).first();
-    const submitVisible = (await submitBtn.count()) > 0 && (await submitBtn.isVisible().catch(() => false));
-    const submitEnabled = submitVisible && (await submitBtn.isEnabled().catch(() => false));
+    let submitVisible = false;
+    let submitEnabled = false;
+    const checkDeadline = Date.now() + CHECK_WAIT_MS;
+    do {
+      await page.waitForTimeout(POLL_MS);
+      submitVisible = (await submitBtn.count()) > 0 && (await submitBtn.isVisible().catch(() => false));
+      submitEnabled = submitVisible && (await submitBtn.isEnabled().catch(() => false));
+    } while (!submitEnabled && Date.now() < checkDeadline);
+
+    messages.push(...(await visibleTexts(page, selectors.errorTextSelectors)));
 
     if (!submitEnabled) {
       console.log(`[STEP 3] Check did not pass — Submit button ${submitVisible ? "is disabled" : "did not appear"}.`);
@@ -482,8 +498,18 @@ async function processApproval(req) {
     }
 
     // STEP 4 — Verify: RefCode should now be on an approved deposit.
-    const verify = await search(4, "reference", req.reference);
-    const done = verify.matches.find(isApproved);
+    // Retried a few times — under load SBO can take several seconds to list
+    // the new makeup row, and a single immediate search reported
+    // MAKEUP_FAILED for deposits that were in fact approved (seen 2026-10-28).
+    let done = null;
+    for (let attempt = 1; attempt <= VERIFY_ATTEMPTS && !done; attempt++) {
+      if (attempt > 1) {
+        console.log(`[STEP 4] Not Approved yet — retrying (${attempt}/${VERIFY_ATTEMPTS}).`);
+        await byDp.page.waitForTimeout(VERIFY_RETRY_DELAY_MS);
+      }
+      const verify = await search(4, "reference", req.reference);
+      done = verify.matches.find(isApproved);
+    }
     if (done) {
       console.log(`[STEP 4] Verified Approved (DP ID ${done.dpId}).`);
       return { status: "APPROVED", sboDpId: done.dpId || req.tid, messages, ...sboInfo };
