@@ -163,7 +163,7 @@ const EXCLUDED_SDP_LEADERS: string[] = [];
 
 // Send Money has its own brand ("SH") not present in Cashout's roster — see
 // app/lib/sendMoneyOpening.ts for the same pattern used on the Opening page.
-const BRAND_PRIORITY = ['M1', 'M2', 'B1', 'B2', 'B3', 'B4', 'B5', 'K1', 'J1', 'T1', 'SH'];
+const BRAND_PRIORITY = ['M1', 'M2', 'B1', 'B2', 'B3', 'B4', 'B5', 'K1', 'J1', 'T1', 'F1', 'SH'];
 const BRAND_CODES = [...CASHOUT_BRAND_CODES, 'SH'];
 
 // Human-readable overrides for brand codes whose 2-letter form isn't a

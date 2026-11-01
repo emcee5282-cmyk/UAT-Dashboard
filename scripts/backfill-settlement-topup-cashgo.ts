@@ -75,7 +75,7 @@ function parseQuotaAmount(val: unknown): number | null {
   return isNaN(num) ? null : num * multiplier;
 }
 
-const BRAND_SUFFIX_CODES = ['M1', 'M2', 'B1', 'B2', 'B3', 'B4', 'B5', 'K1', 'J1', 'T1'];
+const BRAND_SUFFIX_CODES = ['M1', 'M2', 'B1', 'B2', 'B3', 'B4', 'B5', 'K1', 'J1', 'T1', 'F1'];
 function stripBrandSuffix(name: string): string {
   const parts = name.split('-');
   const last = parts[parts.length - 1]?.toUpperCase();

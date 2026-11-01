@@ -27,7 +27,7 @@ type Product = 'cashout' | 'sendmoney';
 // of discarding it. 'SH' included — a real brand for both products (see
 // brands table); 'BRAND' deliberately excluded — a stray, non-brand
 // artifact row, never a legitimate per-row suffix.
-const BRAND_SUFFIX_CODES = ['M1', 'M2', 'B1', 'B2', 'B3', 'B4', 'B5', 'K1', 'J1', 'T1', 'SH'];
+const BRAND_SUFFIX_CODES = ['M1', 'M2', 'B1', 'B2', 'B3', 'B4', 'B5', 'K1', 'J1', 'T1', 'F1', 'SH'];
 function extractBrandSuffix(name: string): string | null {
   const trimmed = name.trim();
   const parts = trimmed.split('-');

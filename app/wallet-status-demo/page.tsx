@@ -421,8 +421,8 @@ function sdpAllocationDisplay(row: WalletStatusRow): string {
   return row.sdpAllocation === null ? '−' : displayAvailableLimit(row.sdpAllocation);
 }
 
-const BRAND_PRIORITY = ['M1', 'M2', 'B1', 'B2', 'B3', 'B4', 'B5', 'K1', 'J1', 'T1'];
-const BRAND_CODES = ['M1', 'M2', 'B1', 'B2', 'B3', 'B4', 'B5', 'K1', 'J1', 'T1'];
+const BRAND_PRIORITY = ['M1', 'M2', 'B1', 'B2', 'B3', 'B4', 'B5', 'K1', 'J1', 'T1', 'F1'];
+const BRAND_CODES = ['M1', 'M2', 'B1', 'B2', 'B3', 'B4', 'B5', 'K1', 'J1', 'T1', 'F1'];
 
 // Same abbreviations the old raw Account-derived walletCode always ended
 // in ("-BK"/"-NG"/"-RK"/"-UP") — used to rebuild an equivalent key

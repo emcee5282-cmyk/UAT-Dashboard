@@ -152,7 +152,7 @@ function computeSdpVsBalanceRaw(leader: string, sdpRaw: string, sdpNum: number, 
   return sdpTrimmed === 'NO SDP' || sdpNum === 0 ? companyBalance : companyBalance - sdpNum;
 }
 
-const BRAND_PRIORITY = ['M1', 'M2', 'B1', 'B2', 'B3', 'B4', 'B5', 'K1', 'J1', 'T1', 'SH'];
+const BRAND_PRIORITY = ['M1', 'M2', 'B1', 'B2', 'B3', 'B4', 'B5', 'K1', 'J1', 'T1', 'F1', 'SH'];
 const SKIP_GROUPS = ['wallet with issue', 'disconnected', 'dc account'];
 
 function computeBrand(groups: string[]): string {

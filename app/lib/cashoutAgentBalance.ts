@@ -15,7 +15,7 @@ import { getBusinessToday } from './businessDate';
 // NEW fetches (`/api/agentbal`, `/api/agstlmtopup`) neither Send Money
 // consumer previously needed.
 
-const CASHOUT_BRAND_CODES = ['M1', 'M2', 'B1', 'B2', 'B3', 'B4', 'B5', 'K1', 'J1', 'T1'];
+const CASHOUT_BRAND_CODES = ['M1', 'M2', 'B1', 'B2', 'B3', 'B4', 'B5', 'K1', 'J1', 'T1', 'F1'];
 
 function parseNumber(val: string): number {
   const cleaned = (val ?? '').replace(/"/g, '').replace(/,/g, '').trim();

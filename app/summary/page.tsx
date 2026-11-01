@@ -396,7 +396,7 @@ function clean(val: string): number {
   return parseFloat(cleaned) || 0;
 }
 
-const BRAND_PRIORITY = ['M1', 'M2', 'B1', 'B2', 'B3', 'B4', 'B5', 'K1', 'J1', 'T1'];
+const BRAND_PRIORITY = ['M1', 'M2', 'B1', 'B2', 'B3', 'B4', 'B5', 'K1', 'J1', 'T1', 'F1'];
 const SKIP_GROUPS = ['wallet with issue', 'disconnected', 'dc account'];
 
 function computeBrand(groups: string[]): string {
@@ -424,7 +424,7 @@ function computeBrand(groups: string[]): string {
   return tied[0];
 }
 
-const BRAND_CODES = ['M1', 'M2', 'B1', 'B2', 'B3', 'B4', 'B5', 'K1', 'J1', 'T1'];
+const BRAND_CODES = ['M1', 'M2', 'B1', 'B2', 'B3', 'B4', 'B5', 'K1', 'J1', 'T1', 'F1'];
 
 function resolveBrand(groups: string[], agentName: string): string {
   const brand = computeBrand(groups);

@@ -33,7 +33,7 @@ function isRosterInvalid(name: string): boolean { return !name || name === '-' |
 // against — without this, any suffixed row's Top Up/Settlement silently
 // falls through to the txByAgent.get() miss and reads as 0 on the Sheets
 // side, producing a false mismatch against Postgres's correct value.
-const BRAND_SUFFIX_CODES = ['M1', 'M2', 'B1', 'B2', 'B3', 'B4', 'B5', 'K1', 'J1', 'T1'];
+const BRAND_SUFFIX_CODES = ['M1', 'M2', 'B1', 'B2', 'B3', 'B4', 'B5', 'K1', 'J1', 'T1', 'F1'];
 function stripBrandSuffix(name: string): string {
   const parts = name.split('-');
   const last = parts[parts.length - 1]?.toUpperCase();

@@ -255,7 +255,7 @@ async function getDailyTxnLedgerBrandTotals(ledgerId: string, businessDate: stri
 
 // Brands with no Autopay integration at all — ported verbatim from
 // app/page.tsx's own AUTOPAY_UNSUPPORTED_BRANDS.
-const AUTOPAY_UNSUPPORTED_BRANDS = ['B3', 'B4', 'B5', 'J1', 'T1'];
+const AUTOPAY_UNSUPPORTED_BRANDS = ['B3', 'B4', 'B5', 'J1', 'T1', 'F1'];
 
 export async function GET() {
   try {
