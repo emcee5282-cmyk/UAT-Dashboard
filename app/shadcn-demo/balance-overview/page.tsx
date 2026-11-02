@@ -404,7 +404,7 @@ function computeCashoutWalletTopUpStlm(text: string, cutoff: Date | null): Map<s
 // (from "SSP AG BalanceLimit"'s own Group column) across its wallet rows,
 // ties broken by BRAND_PRIORITY, falling back to a brand code embedded in
 // the agent name itself if no group data exists at all.
-const SSP_LINE1_BRAND_PRIORITY = ['M1', 'M2', 'B1', 'B2', 'B3', 'B4', 'B5', 'K1', 'J1', 'T1'];
+const SSP_LINE1_BRAND_PRIORITY = ['M1', 'M2', 'B1', 'B2', 'B3', 'B4', 'B5', 'K1', 'J1', 'T1', 'F1'];
 const SSP_LINE1_SKIP_GROUPS = ['wallet with issue', 'disconnected', 'dc account'];
 
 function computeSspLine1Brand(groups: string[]): string {
@@ -973,7 +973,7 @@ const BRAND_CASH_COLUMNS: { key: keyof Omit<BrandCashRow, 'brand'>; label: strin
 // "not applicable", so the Autopay column overrides to an explicit label
 // for just these rows. The footer's Autopay total is unaffected (it's a
 // genuine sum across the brands that do support it).
-const AUTOPAY_UNSUPPORTED_BRANDS = ['B3', 'B4', 'B5', 'J1', 'T1'];
+const AUTOPAY_UNSUPPORTED_BRANDS = ['B3', 'B4', 'B5', 'J1', 'T1', 'F1'];
 
 function cihValueDisplay(value: number): { text: string; className: string } {
   const zero = Math.abs(value) < 0.005;

@@ -29,7 +29,7 @@ import { useCan } from '@/app/lib/auth/useSession';
 const manrope = Manrope({ subsets: ['latin'], variable: '--font-manrope', display: 'swap' });
 const spaceGrotesk = Space_Grotesk({ subsets: ['latin'], variable: '--font-space-grotesk', display: 'swap' });
 
-const BRANDS = ['M1', 'M2', 'K1', 'B1', 'B2', 'B3', 'B4', 'B5', 'T1', 'J1'] as const;
+const BRANDS = ['M1', 'M2', 'K1', 'B1', 'B2', 'B3', 'B4', 'B5', 'T1', 'J1', 'F1'] as const;
 type Brand = (typeof BRANDS)[number];
 type BrandMap = Partial<Record<Brand, number>>;
 type LedgerKind = 'standard' | 'ess';
@@ -2774,6 +2774,13 @@ export default function DailyTxnEntryPage() {
         main:has(.dd-page[data-tab="daily"])::-webkit-scrollbar-thumb,
         main:has(.dd-page[data-tab="daily"])::-webkit-scrollbar-track {
           background: transparent;
+        }
+        /* scrollbar-color inherits — without this reset the transparent
+           rule above also hid every table's horizontal scrollbar, so a
+           brand grid wider than the card (11 brands) looked clipped. */
+        .dd-page .overflow-x-auto {
+          scrollbar-width: thin;
+          scrollbar-color: #cbd5e1 transparent;
         }
         /* AppShell's <main> has no background of its own, so the reserved
            scrollbar-gutter strip (and any other bare sliver of <main>) was

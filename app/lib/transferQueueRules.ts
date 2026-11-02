@@ -100,7 +100,7 @@ function reasonForRow(row: RuleRow | undefined): string {
 
 // --- Cashout ---
 
-const CASHOUT_BRAND_CODES = ['M1', 'M2', 'B1', 'B2', 'B3', 'B4', 'B5', 'K1', 'J1', 'T1'];
+const CASHOUT_BRAND_CODES = ['M1', 'M2', 'B1', 'B2', 'B3', 'B4', 'B5', 'K1', 'J1', 'T1', 'F1'];
 
 export function normalizeGroup(s: string): string {
   // Live "Current Group" labels sometimes carry a trailing schedule window,

@@ -20,7 +20,7 @@ import { upsertLedgerEntries, type LedgerEntryInput } from './dailyTxnEntryServi
 
 const LEDGER_IDS = ['ssp1', 'ssp2', 'ess', 'atp', 'expay', 'hkpay', 'phbpay'] as const;
 const ESS_LEDGER_ID = 'ess';
-export const DAILY_TXN_LEDGER_BRANDS = ['M1', 'M2', 'K1', 'B1', 'B2', 'B3', 'B4', 'B5', 'T1', 'J1'] as const;
+export const DAILY_TXN_LEDGER_BRANDS = ['M1', 'M2', 'K1', 'B1', 'B2', 'B3', 'B4', 'B5', 'T1', 'J1', 'F1'] as const;
 const BRANDS = DAILY_TXN_LEDGER_BRANDS;
 const WALLET_LEDGER_IDS = ['ssp1', 'ssp2'] as const;
 const WALLETS = ['Bkash', 'Nagad', 'Rocket', 'UPay'] as const;
