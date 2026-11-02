@@ -107,6 +107,9 @@ export default function SearchableCombobox({
           aria-expanded={open}
           aria-autocomplete="list"
           aria-controls={id ? `${id}-listbox` : undefined}
+          // Our own listbox is the only suggestion list — stop the browser's
+          // saved-entries popup from opening on top of it.
+          autoComplete="off"
           disabled={disabled}
           value={query}
           placeholder={placeholder}
