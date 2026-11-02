@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { AlertCircle, Camera, Loader2, Upload, X } from 'lucide-react';
-import UserAvatar, { avatarInitials } from './UserAvatar';
+import UserAvatar from './UserAvatar';
 import AvatarCropper from './AvatarCropper';
 import { MODAL_GHOST_BUTTON_CLASS, MODAL_OVERLAY_CLASS, MODAL_PRIMARY_BUTTON_SHAPE_CLASS } from './modalTheme';
 import { updateSession, type ClientSession } from '@/app/lib/auth/useSession';
@@ -171,9 +171,7 @@ export default function ProfileModal({ session, onClose }: { session: ClientSess
               )}
             </div>
 
-            <p className="mt-2.5 text-center text-[11px] text-muted-foreground">
-              {preview ? `Removing goes back to your initials (${avatarInitials(session)})` : 'PNG, JPG or WebP · max 5MB'}
-            </p>
+            {!preview && <p className="mt-2.5 text-center text-[11px] text-muted-foreground">PNG, JPG or WebP · max 5MB</p>}
             {error && (
               <p role="alert" className="mt-2 flex items-start gap-1.5 text-[12px] font-medium text-rose-600 dark:text-rose-400">
                 <AlertCircle size={13} className="mt-px shrink-0" />
