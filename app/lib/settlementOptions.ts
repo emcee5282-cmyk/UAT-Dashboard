@@ -1,7 +1,7 @@
 // Shared option lists for Settlement's New/Edit Record form (both Cashout
 // and Send Money import from here) — a single place to update if the brand
 // or remarks defaults ever change, instead of two copies drifting apart.
-export const SETTLEMENT_BRAND_OPTIONS = ['M1', 'M2', 'K1', 'J1', 'T1', 'B1', 'B2', 'B3', 'B4', 'B5'];
+export const SETTLEMENT_BRAND_OPTIONS = ['M1', 'M2', 'K1', 'J1', 'T1', 'B1', 'B2', 'B3', 'B4', 'B5', 'F1'];
 
 // Wallet options depend on the active Settlement tab — both products now
 // support Bkash (matches each page's own real wallet set).

@@ -449,7 +449,7 @@ function parseNumber(val: string): number {
   return isNaN(num) ? 0 : num;
 }
 
-const BRAND_PRIORITY = ['M1', 'M2', 'B1', 'B2', 'B3', 'B4', 'B5', 'K1', 'J1', 'T1', 'SH'];
+const BRAND_PRIORITY = ['M1', 'M2', 'B1', 'B2', 'B3', 'B4', 'B5', 'K1', 'J1', 'T1', 'F1', 'SH'];
 const BRAND_CODES = [...CASHOUT_BRAND_CODES, 'SH'];
 
 // Every wallet's own default receiving ceiling before a staff-set Balance
