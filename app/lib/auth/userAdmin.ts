@@ -20,6 +20,7 @@ export type AdminUserRow = {
   mustChangePassword: boolean;
   lastLoginAt: string | null;
   createdAt: string;
+  avatar: string | null; // profile photo data URL (see PATCH /api/me/avatar)
 };
 
 export const USERNAME_PATTERN = /^[a-z0-9][a-z0-9._-]{2,39}$/;
@@ -57,6 +58,7 @@ export async function listUsers(): Promise<AdminUserRow[]> {
       mustChangePassword: u.mustChangePassword,
       lastLoginAt: u.lastLoginAt?.toISOString() ?? null,
       createdAt: u.createdAt.toISOString(),
+      avatar: u.avatar ?? null,
     };
   });
 }

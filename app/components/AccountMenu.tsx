@@ -3,9 +3,9 @@
 import { createPortal } from 'react-dom';
 import { useEffect, useRef, useState } from 'react';
 import Link from 'next/link';
-import { KeyRound, LogOut, Sun, Moon, ChevronDown, Users } from 'lucide-react';
-import ThemeSwitch from './ThemeSwitch';
-import { useTheme } from './ThemeProvider';
+import { KeyRound, LogOut, ChevronDown, CircleUserRound } from 'lucide-react';
+import UserAvatar from './UserAvatar';
+import ProfileModal from './ProfileModal';
 import { useSession } from '@/app/lib/auth/useSession';
 
 // Global, persistent account control — rendered inline as the last item in
@@ -24,12 +24,11 @@ export default function AccountMenu({
   // AccountMenu consumer keeps its existing 32px sizing unchanged.
   compact = false,
 }: { className?: string; compact?: boolean }) {
-  const { theme } = useTheme();
   const session = useSession();
   const username = session?.username ?? null;
   const roleLabel = session?.roleLabel ?? '';
-  const canManageUsers = !!session?.permissions.includes('users.manage');
   const [open, setOpen] = useState(false);
+  const [profileOpen, setProfileOpen] = useState(false);
   const [pos, setPos] = useState({ top: 0, right: 0, width: 0 });
   const buttonRef = useRef<HTMLButtonElement>(null);
   const menuRef = useRef<HTMLDivElement>(null);
@@ -72,7 +71,6 @@ export default function AccountMenu({
   };
 
   const displayName = session?.name || (username ? username.charAt(0).toUpperCase() + username.slice(1) : 'Account');
-  const initials = (session?.name || username || '··').slice(0, 2).toUpperCase();
 
   return (
     <>
@@ -84,16 +82,9 @@ export default function AccountMenu({
         aria-expanded={open}
         className={`flex items-center rounded-lg py-1 pl-1 pr-2 text-left transition-colors hover:bg-muted ${compact ? 'h-7 gap-[9px]' : 'h-8 gap-2'} ${className}`}
       >
-        {/* Fixed indigo, not var(--ui-accent) — explicit per spec, stays
+        {/* Photo, or initials on fixed indigo (not var(--ui-accent)) — stays
             the same regardless of active product (Cashout/Send Money). */}
-        <span
-          className={`flex shrink-0 items-center justify-center rounded-full font-bold text-white ${
-            compact ? 'h-[28px] w-[28px] text-[10.5px]' : 'h-8 w-8 text-[10px]'
-          }`}
-          style={{ background: '#4F46E5' }}
-        >
-          {initials}
-        </span>
+        <UserAvatar user={session} size={compact ? 28 : 32} />
         <span className="hidden min-w-0 sm:block">
           <span className="block truncate text-[12px] font-semibold leading-tight text-foreground">{displayName}</span>
           <span className={`block truncate leading-snug text-muted-foreground ${compact ? 'text-[10.5px]' : 'text-[10px]'}`}>{roleLabel}</span>
@@ -108,26 +99,30 @@ export default function AccountMenu({
           style={{ position: 'fixed', top: pos.top, right: pos.right, width: Math.max(pos.width, 220) }}
           className="z-[999] overflow-hidden rounded-xl border border-border bg-white py-1.5 shadow-xl dark:border-[#3a3a3d] dark:bg-[#1c1c1e]"
         >
-          <div className="border-b border-border px-3 py-2 dark:border-[#3a3a3d]">
-            <p className="truncate text-[12px] font-semibold text-foreground">{displayName}</p>
-            <p className="truncate text-[10px] text-muted-foreground">{roleLabel}</p>
-            <div className="mt-1 flex items-center gap-1">
-              <span className="h-1.5 w-1.5 rounded-full bg-emerald-500" />
-              <span className="text-[9px] font-medium text-emerald-600 dark:text-emerald-400">Online</span>
+          <div className="flex items-center gap-2.5 border-b border-border px-3 py-2 dark:border-[#3a3a3d]">
+            <UserAvatar user={session} size={32} />
+            <div className="min-w-0">
+              <p className="truncate text-[12px] font-semibold text-foreground">{displayName}</p>
+              <p className="truncate text-[10px] text-muted-foreground">{roleLabel}</p>
+              <div className="mt-1 flex items-center gap-1">
+                <span className="h-1.5 w-1.5 rounded-full bg-emerald-500" />
+                <span className="text-[9px] font-medium text-emerald-600 dark:text-emerald-400">Online</span>
+              </div>
             </div>
           </div>
 
-          {canManageUsers && (
-            <Link
-              href="/admin/users"
-              role="menuitem"
-              onClick={() => setOpen(false)}
-              className="flex w-full items-center gap-2 px-3 py-2 text-left text-[12px] font-medium text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
-            >
-              <Users size={14} />
-              User Management
-            </Link>
-          )}
+          <button
+            type="button"
+            role="menuitem"
+            onClick={() => {
+              setOpen(false);
+              setProfileOpen(true);
+            }}
+            className="flex w-full items-center gap-2 px-3 py-2 text-left text-[12px] font-medium text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+          >
+            <CircleUserRound size={14} />
+            Profile
+          </button>
 
           <Link
             href="/change-password"
@@ -138,14 +133,6 @@ export default function AccountMenu({
             <KeyRound size={14} />
             Change Password
           </Link>
-
-          <div className="flex items-center justify-between px-3 py-2">
-            <span className="flex items-center gap-2 text-[12px] font-medium text-muted-foreground">
-              {theme === 'dark' ? <Moon size={14} /> : <Sun size={14} />}
-              Theme
-            </span>
-            <ThemeSwitch />
-          </div>
 
           <div className="my-1 border-t border-border dark:border-[#3a3a3d]" />
 
@@ -160,6 +147,8 @@ export default function AccountMenu({
         </div>,
         document.body
       )}
+
+      {profileOpen && session && <ProfileModal session={session} onClose={() => setProfileOpen(false)} />}
     </>
   );
 }

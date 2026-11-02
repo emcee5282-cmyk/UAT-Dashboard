@@ -63,16 +63,21 @@ export const SECTIONS: { id: string; label: string; pages: PageId[] }[] = [
   { id: 'monitoring', label: 'Monitoring', pages: ['transferQueue', 'walletStatus', 'pendingBalance'] },
 ];
 
-// Never grantable from the Roles screen — Admin only, always. Shown in the
-// matrix's Settings section as fixed "Admin only" rows.
-export const ADMIN_ONLY = {
+// The role editor's Settings section — grantable to any role (Admin always
+// has them). Holders of users.manage still can't touch Admin accounts or
+// hand out the Admin role (enforced in the /api/admin/users routes).
+export const SETTINGS_PERMISSIONS = {
   'settings.manage': 'Settings',
   'users.manage': 'Users',
   'roles.manage': 'Roles & permissions',
   'tickets.leaderView': 'Open the leader ticket pages (support view)',
   'sandbox.view': 'Demo / sandbox pages',
 } as const;
-type AdminOnlyPermission = keyof typeof ADMIN_ONLY;
+export type SettingsKey = keyof typeof SETTINGS_PERMISSIONS;
+
+// Admin-only, never grantable: pages and API writes not listed in
+// PAGE_RULES / API_RULES (new pages stay Admin-only until given a rule).
+export const ADMIN_UNLISTED = 'admin.unlisted' as const;
 
 export type Permission =
   | `page.${PageId}.view`
@@ -81,8 +86,9 @@ export type Permission =
   | `tickets.${TicketTitle}.view`
   | `tickets.${TicketTitle}.settle`
   | 'tickets.raise'
-  | AdminOnlyPermission
-  | 'system.sync';
+  | SettingsKey
+  | 'system.sync'
+  | typeof ADMIN_UNLISTED;
 
 export const viewPerm = (id: PageId) => `page.${id}.view` as const;
 export const editPerm = (id: PageId) => `page.${id}.edit` as const;
@@ -98,9 +104,10 @@ export const GRANTABLE_PERMISSIONS: Permission[] = [
   }),
   ...TICKET_TITLES.flatMap((t) => [ticketViewPerm(t), ticketSettlePerm(t)]),
   'tickets.raise',
+  ...(Object.keys(SETTINGS_PERMISSIONS) as SettingsKey[]),
 ];
 const GRANTABLE = new Set<string>(GRANTABLE_PERMISSIONS);
-export const ALL_PERMISSIONS: Permission[] = [...GRANTABLE_PERMISSIONS, ...(Object.keys(ADMIN_ONLY) as AdminOnlyPermission[]), 'system.sync'];
+export const ALL_PERMISSIONS: Permission[] = [...GRANTABLE_PERMISSIONS, ADMIN_UNLISTED, 'system.sync'];
 
 export function isGrantable(p: string): p is Permission {
   return GRANTABLE.has(p);
@@ -125,7 +132,7 @@ export function normalizeRoleKey(raw: string | null | undefined): string {
 }
 
 // What a role can actually do, given what the database stores for it.
-// Unknown/stale keys in the DB are dropped, admin-only keys can't be
+// Unknown/stale keys in the DB are dropped, Admin's internal key can't be
 // smuggled in through role_permissions, and edit implies view.
 // Admin gets everything except raising tickets — that's the leader-linked
 // flow (scoped to one leader's own shops); Admin works the staff queue and
@@ -201,7 +208,7 @@ export const PAGE_RULES: Rule[] = [
   { prefix: '/wallet-status-demo', anyOf: ['sandbox.view'] },
   { prefix: '/ticket-settlement', anyOf: ['sandbox.view'] },
 ];
-const DEFAULT_PAGE_RULE: Permission[] = ['sandbox.view']; // admin-only
+const DEFAULT_PAGE_RULE: Permission[] = [ADMIN_UNLISTED];
 
 // Pages any signed-in user may open, even while a password change is pending.
 export const ACCOUNT_PAGES = ['/change-password', '/no-access'];
@@ -272,7 +279,7 @@ export const API_RULES: ApiRule[] = [
   { prefix: '/api/daily-txn-entry/stagnant-balance', read: [v('pendingBalance')], write: [e('dailyEntry')] },
   { prefix: '/api/daily-txn-entry/unreconciled-balance', read: [v('pendingBalance')], write: [e('dailyEntry')] },
   { prefix: '/api/daily-txn-entry/discrepancy-summary', read: [v('pendingBalance')], write: [e('dailyEntry')] },
-  // Settings — Admin only, except Transfer Queue's read-only pieces and the
+  // Settings (settings.manage), except Transfer Queue's read-only pieces and the
   // Pending Balance TG send/preview endpoints.
   { prefix: '/api/configurations', read: ['settings.manage'], write: ['settings.manage'] },
   { prefix: '/api/configurations/transfer-queue-settings/effective', read: [v('transferQueue')], write: ['settings.manage'] },
@@ -306,12 +313,16 @@ const API_PATTERN_RULES: { pattern: RegExp; read: Permission[]; write: Permissio
   },
 ];
 const DEFAULT_API_READ: Permission[] = ANY_DATA_VIEW;
-const DEFAULT_API_WRITE: Permission[] = ['settings.manage'];
+const DEFAULT_API_WRITE: Permission[] = [ADMIN_UNLISTED];
 
 // Routes that check a shared secret themselves (VPS cron) — no session.
 export const SECRET_API_PREFIXES = ['/api/cron/', '/api/admin/sync-postgres', '/api/admin/daily-txn-rollover'];
 // Available to any signed-in user, even while a password change is pending.
 export const ACCOUNT_API_PATHS = ['/api/auth/me', '/api/auth/logout', '/api/auth/change-password'];
+// Any signed-in user, acting only on their own account (the handler scopes
+// to session.userId) — no page permission needed, but NOT while a password
+// change is pending.
+export const SELF_API_PATHS = ['/api/me/avatar'];
 export const PUBLIC_API_PATHS = ['/api/auth/login', '/api/auth/logout'];
 
 function matches(pathname: string, prefix: string, exact?: boolean): boolean {

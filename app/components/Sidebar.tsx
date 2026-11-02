@@ -489,29 +489,13 @@ export default function Sidebar() {
           )}
         </div>
 
-        {isDemoMode ? (
+        {isDemoMode && (
           // Quick-access copy for the drawer itself — pages also render
           // AccountMenu inline in their own header row (which shows on
           // mobile too), this is just a shortcut so it's reachable without
           // leaving the drawer.
           <div className="shrink-0 border-t border-[#E7E9EE] px-3 py-3 dark:border-[#262B38]">
             <AccountMenu className="w-full" />
-          </div>
-        ) : (
-          <div className="shrink-0 border-t border-[#E7E9EE] px-3 py-3 dark:border-[#262B38]">
-            <div className="flex items-center gap-3 rounded-lg px-2 py-1.5">
-              <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-[#4F46E5] text-[11px] font-bold text-white dark:bg-[#D9A441] dark:text-[#100C02]">
-                {(session?.name || session?.username || '··').slice(0, 2).toUpperCase()}
-              </div>
-              <div className="min-w-0 overflow-hidden whitespace-nowrap">
-                <p className="truncate text-[12px] font-semibold text-[#1A1D23] dark:text-[#F3F4F7]">Operations Admin</p>
-                <p className="truncate text-[10px] text-[#6B7280] dark:text-[#9198AC]">admin@operations.com</p>
-                <div className="mt-1 flex items-center gap-1">
-                  <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-[#16A34A] dark:bg-[#34D399]" />
-                  <span className="text-[9px] font-medium text-[#16A34A] dark:text-[#34D399]">Online</span>
-                </div>
-              </div>
-            </div>
           </div>
         )}
       </aside>
@@ -643,26 +627,6 @@ export default function Sidebar() {
               active={pathname.startsWith('/admin/users')}
               expanded={panelOpen}
             />
-          )}
-
-          {!isDemoMode && (
-            <div className="relative mt-auto flex items-center gap-2 border-t border-[#E7E9EE] pb-1 pt-3 dark:border-[#262B38]">
-              <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-[#4F46E5] text-[10px] font-bold text-white dark:bg-[#D9A441] dark:text-[#100C02]">
-                OP
-              </div>
-              <div
-                className={`min-w-0 overflow-hidden transition-all duration-300 ease-in-out ${
-                  panelOpen ? 'translate-x-0 opacity-100' : '-translate-x-1 opacity-0'
-                }`}
-              >
-                <p className="truncate text-[9.5px] font-semibold text-[#1A1D23] dark:text-[#F3F4F7]">{session?.name || session?.username || ''}</p>
-                <p className="truncate text-[7.5px] text-[#6B7280] dark:text-[#9198AC]">{session?.roleLabel ?? ''}</p>
-                <div className="mt-1 flex items-center gap-1">
-                  <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-[#16A34A] dark:bg-[#34D399]" />
-                  <span className="text-[7.5px] font-medium text-[#16A34A] dark:text-[#34D399]">Online</span>
-                </div>
-              </div>
-            </div>
           )}
         </div>
       </div>

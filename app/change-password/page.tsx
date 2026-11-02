@@ -2,9 +2,9 @@
 
 import { useRef, useState, type FormEvent } from 'react';
 import Link from 'next/link';
-import { KeyRound, Eye, EyeOff, Loader2, AlertCircle, Check, Circle, ArrowLeft, LogOut, ShieldAlert } from 'lucide-react';
+import { KeyRound, Eye, EyeOff, Loader2, AlertCircle, Check, Circle, ArrowLeft, ShieldAlert, Sparkles, Copy } from 'lucide-react';
 import { useSession } from '@/app/lib/auth/useSession';
-import { PASSWORD_REUSE_RULE, PASSWORD_RULES, validatePasswordRules } from '@/app/lib/auth/passwordRules';
+import { GENERATED_PASSWORD_LENGTH, PASSWORD_RULES, generatePassword, validatePasswordRules } from '@/app/lib/auth/passwordRules';
 
 type Field = 'currentPassword' | 'newPassword' | 'confirmPassword';
 
@@ -33,9 +33,31 @@ export default function ChangePasswordPage() {
   const [done, setDone] = useState(false);
   const submittingRef = useRef(false);
 
+  const [copied, setCopied] = useState(false);
+
   const setValue = (field: Field, value: string) => {
     setValues((v) => ({ ...v, [field]: value }));
     if (fieldErrors[field]) setFieldErrors((e) => ({ ...e, [field]: undefined }));
+  };
+
+  // Fills New + Confirm with a random 12-character password and shows it,
+  // so the user can see and copy it before saving.
+  const handleGenerate = () => {
+    const password = generatePassword();
+    setValues((v) => ({ ...v, newPassword: password, confirmPassword: password }));
+    setVisible((v) => ({ ...v, newPassword: true, confirmPassword: true }));
+    setFieldErrors((e) => ({ ...e, newPassword: undefined, confirmPassword: undefined }));
+    setCopied(false);
+  };
+
+  const handleCopy = async () => {
+    try {
+      await navigator.clipboard.writeText(values.newPassword);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    } catch {
+      setCopied(false);
+    }
   };
 
   const handleSubmit = async (event: FormEvent) => {
@@ -99,6 +121,14 @@ export default function ChangePasswordPage() {
               {session ? (
                 <>
                   Signed in as <span className="font-semibold text-foreground">{session.username}</span>
+                  {' · '}
+                  <button
+                    type="button"
+                    onClick={handleLogout}
+                    className="font-medium text-foreground underline decoration-muted-foreground/50 underline-offset-2 transition-colors hover:text-rose-600 hover:decoration-rose-600 dark:hover:text-rose-400"
+                  >
+                    Log out
+                  </button>
                 </>
               ) : (
                 <span className="inline-block h-3.5 w-32 animate-pulse rounded bg-muted align-middle" />
@@ -129,9 +159,30 @@ export default function ChangePasswordPage() {
             <form onSubmit={handleSubmit} noValidate className="space-y-4">
               {(Object.keys(LABELS) as Field[]).map((field) => (
                 <div key={field}>
-                  <label htmlFor={field} className="mb-1.5 block text-[12.5px] font-semibold text-foreground">
-                    {forced && field === 'currentPassword' ? 'Temporary password' : LABELS[field]}
-                  </label>
+                  <div className="mb-1.5 flex items-center justify-between gap-2">
+                    <label htmlFor={field} className="block text-[12.5px] font-semibold text-foreground">
+                      {forced && field === 'currentPassword' ? 'Temporary password (your username)' : LABELS[field]}
+                    </label>
+                    {field === 'newPassword' && (
+                      <div className="flex items-center gap-3 text-[12px] font-medium">
+                        {values.newPassword && (
+                          <button type="button" onClick={handleCopy} className="flex items-center gap-1 text-muted-foreground transition-colors hover:text-foreground">
+                            {copied ? <Check size={13} className="text-emerald-500" /> : <Copy size={13} />}
+                            {copied ? 'Copied' : 'Copy'}
+                          </button>
+                        )}
+                        <button
+                          type="button"
+                          onClick={handleGenerate}
+                          title={`Generate a random ${GENERATED_PASSWORD_LENGTH}-character password`}
+                          className="flex items-center gap-1 text-[#4f46e5] transition-colors hover:text-[#4338ca] dark:text-indigo-400"
+                        >
+                          <Sparkles size={13} />
+                          Generate
+                        </button>
+                      </div>
+                    )}
+                  </div>
                   <div
                     className={`flex h-11 items-center gap-2.5 rounded-xl border bg-white px-3.5 transition-colors dark:bg-[#1c1c1e] ${
                       fieldErrors[field] ? 'border-rose-300 focus-within:border-rose-400' : 'border-border focus-within:border-[#4f46e5]'
@@ -177,10 +228,6 @@ export default function ChangePasswordPage() {
                       </li>
                     );
                   })}
-                  <li className="flex items-center gap-1.5 text-[12px] text-muted-foreground">
-                    <Circle size={11} className="mx-px shrink-0" />
-                    {PASSWORD_REUSE_RULE}
-                  </li>
                 </ul>
               </div>
 
@@ -201,24 +248,14 @@ export default function ChangePasswordPage() {
             </form>
           )}
 
-          <div className="mt-6 flex items-center justify-between border-t border-border pt-5 text-[12.5px] dark:border-white/10">
-            {forced || !session ? (
-              <span />
-            ) : (
+          {!forced && session && (
+            <div className="mt-6 flex items-center border-t border-border pt-5 text-[12.5px] dark:border-white/10">
               <Link href="/" className="flex items-center gap-1.5 font-medium text-muted-foreground transition-colors hover:text-foreground">
                 <ArrowLeft size={14} />
                 Back
               </Link>
-            )}
-            <button
-              type="button"
-              onClick={handleLogout}
-              className="flex items-center gap-1.5 font-medium text-rose-600 transition-colors hover:text-rose-700 dark:text-rose-400"
-            >
-              <LogOut size={14} />
-              Logout
-            </button>
-          </div>
+            </div>
+          )}
         </div>
       </div>
     </div>

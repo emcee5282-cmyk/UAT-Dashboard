@@ -3,8 +3,8 @@
 import { useMemo, useState } from 'react';
 import { ArrowLeft, Lock, ShieldCheck } from 'lucide-react';
 import { PRIMARY_TOOLBAR_BUTTON_CLASS, EXPORT_BUTTON_CLASS } from '@/app/components/ListToolbar';
-import { ACTION_LABELS, ADMIN_ONLY, PAGES, SECTIONS, TICKET_TITLES, TICKET_TYPES, type PageAction, type PageId } from '@/app/lib/auth/permissions';
-import { actionAllowed, diffPermissions, emptyMatrix, matrixFromPermissions, permissionsFromMatrix, type Level, type MatrixState } from './roleMatrix';
+import { ACTION_LABELS, PAGES, SECTIONS, SETTINGS_PERMISSIONS, TICKET_TITLES, TICKET_TYPES, type PageAction, type PageId } from '@/app/lib/auth/permissions';
+import { SETTINGS_KEYS, actionAllowed, diffPermissions, emptyMatrix, matrixFromPermissions, permissionsFromMatrix, type Level, type MatrixState } from './roleMatrix';
 import { FormField, Modal, ModalActions, inputClass } from './dialogs';
 
 export type RoleSummary = {
@@ -54,6 +54,8 @@ export default function RoleEditor({ mode, roles, onDone, onCancel }: { mode: Mo
     });
   const setAllTickets = (on: boolean) =>
     setMatrix((m) => ({ ...m, tickets: Object.fromEntries(TICKET_TITLES.map((t) => [t, { view: on, settle: on }])) as MatrixState['tickets'], raise: on }));
+
+  const setAllSettings = (on: boolean) => setMatrix((m) => ({ ...m, settings: Object.fromEntries(SETTINGS_KEYS.map((k) => [k, on])) as MatrixState['settings'] }));
 
   const applyCopyFrom = (id: string) => {
     setCopyFrom(id);
@@ -245,15 +247,22 @@ export default function RoleEditor({ mode, roles, onDone, onCancel }: { mode: Mo
             </label>
           </MatrixSection>
 
-          <MatrixSection label="Settings" locked>
-            {Object.entries(ADMIN_ONLY).map(([key, label]) => (
-              <div key={key} className="flex items-center justify-between gap-3 border-b border-[#ECEFF3] px-5 py-2 last:border-0 dark:border-[#1A1E29]">
-                <p className="text-[12px] text-foreground">{label}</p>
-                <span className="inline-flex items-center gap-1 text-[11px] font-medium text-muted-foreground">
-                  <ShieldCheck size={12} />
-                  Admin only
-                </span>
-              </div>
+          <MatrixSection label="Settings" locked={locked} onSelectAll={() => setAllSettings(true)} onClearAll={() => setAllSettings(false)}>
+            {SETTINGS_KEYS.map((key) => (
+              <label
+                key={key}
+                className={`flex items-center gap-2 border-b border-[#ECEFF3] px-5 py-2.5 text-[12px] last:border-0 dark:border-[#1A1E29] ${locked ? 'text-muted-foreground' : 'cursor-pointer text-foreground'}`}
+              >
+                <input
+                  type="checkbox"
+                  checked={locked || matrix.settings[key]}
+                  disabled={locked}
+                  onChange={(e) => setMatrix((m) => ({ ...m, settings: { ...m.settings, [key]: e.target.checked } }))}
+                  className="accent-[var(--ui-accent)]"
+                />
+                {SETTINGS_PERMISSIONS[key]}
+                {key === 'users.manage' && <span className="text-[10.5px] text-muted-foreground">— can add and edit users, but not Admin accounts</span>}
+              </label>
             ))}
           </MatrixSection>
         </div>

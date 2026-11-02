@@ -13,6 +13,7 @@ import {
   PUBLIC_API_PATHS,
   PUBLIC_PAGES,
   SECRET_API_PREFIXES,
+  SELF_API_PATHS,
   apiPermissions,
   canAny,
   canOpenPage,
@@ -85,7 +86,9 @@ export async function proxy(request: NextRequest) {
     return isApi ? json(403, 'Password change required') : NextResponse.redirect(new URL('/change-password', request.url));
   }
 
-  if (!isAccountPath) {
+  const isSelfApi = isApi && SELF_API_PATHS.includes(pathname);
+
+  if (!isAccountPath && !isSelfApi) {
     if (isApi) {
       if (!canAny(session.permissions, apiPermissions(pathname, request.method))) return json(403, 'Forbidden');
     } else if (!canOpenPage(session.permissions, pathname)) {

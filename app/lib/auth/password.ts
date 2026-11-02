@@ -1,6 +1,6 @@
 import { randomBytes, randomInt, scrypt as scryptCallback, timingSafeEqual } from 'crypto';
 import { promisify } from 'util';
-import { hash as argon2Hash, verify as argon2Verify } from '@node-rs/argon2';
+import { argon2id, argon2Verify } from 'hash-wasm';
 
 // argon2id for every new hash (OWASP's first choice). Accounts created
 // before this switch still hold the old Node-scrypt "salt:hex" format —
@@ -8,16 +8,21 @@ import { hash as argon2Hash, verify as argon2Verify } from '@node-rs/argon2';
 // hash to argon2id on the next successful login (see needsRehash), so the
 // old format drains away without forcing anyone to reset.
 //
+// hash-wasm is pure WebAssembly: the standalone build made on Windows runs
+// unchanged on the Linux VPS (a native addon would ship the wrong binary).
+// Hashes are standard PHC strings ($argon2id$v=19$m=…,t=…,p=…$salt$hash),
+// so ones written earlier by @node-rs/argon2 still verify.
+//
 // Node runtime only (proxy.ts and route handlers both run on Node in Next 16).
 const scrypt = promisify(scryptCallback);
 const LEGACY_KEY_LENGTH = 64;
 
-// @node-rs/argon2's defaults (m=19456 KiB, t=2, p=1) are OWASP's
-// recommended argon2id minimum; algorithm 2 = Argon2id.
-const ARGON2_OPTIONS = { algorithm: 2 } as const;
+// OWASP's recommended argon2id minimum (m=19456 KiB, t=2, p=1) — the same
+// parameters the previous library used by default.
+const ARGON2_PARAMS = { memorySize: 19456, iterations: 2, parallelism: 1, hashLength: 32 } as const;
 
 export async function hashPassword(password: string): Promise<string> {
-  return argon2Hash(password, ARGON2_OPTIONS);
+  return argon2id({ password, salt: randomBytes(16), ...ARGON2_PARAMS, outputType: 'encoded' });
 }
 
 export function needsRehash(storedHash: string): boolean {
@@ -28,7 +33,7 @@ export async function verifyPassword(password: string, storedHash: string): Prom
   if (!storedHash) return false;
   if (storedHash.startsWith('$argon2')) {
     try {
-      return await argon2Verify(storedHash, password);
+      return await argon2Verify({ password, hash: storedHash });
     } catch {
       return false;
     }

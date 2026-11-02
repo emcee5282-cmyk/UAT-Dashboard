@@ -3,9 +3,9 @@ import { authorizeApi } from '@/app/lib/auth/guard';
 import { createRole, listRoles, RoleError } from '@/app/lib/auth/roles';
 import { logAudit, requestMeta } from '@/app/lib/auth/audit';
 
-// Users → Roles (Admin only — roles.manage, which can't be granted to any
-// other role). GET is also what the Users tab reads for its role tabs and
-// the Add/Edit user role dropdown.
+// Users → Roles (roles.manage — grantable from the Roles screen; the Admin
+// role itself stays locked). GET is also what the Role editor's Copy-from and
+// the Roles table read.
 export async function GET(request: NextRequest) {
   const auth = await authorizeApi(request);
   if (auth instanceof NextResponse) return auth;

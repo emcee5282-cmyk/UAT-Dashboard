@@ -5,7 +5,7 @@ import { useRouter, usePathname, useSearchParams } from 'next/navigation';
 import { Manrope } from 'next/font/google';
 import { Moon, Sun } from 'lucide-react';
 import PageHeader from '@/app/components/PageHeader';
-import PillTabs from '@/app/components/PillTabs';
+import UnderlineTabs from './UnderlineTabs';
 import AccountMenu from '@/app/components/AccountMenu';
 import { useTheme } from '@/app/components/ThemeProvider';
 import { useCan } from '@/app/lib/auth/useSession';
@@ -17,7 +17,7 @@ const manrope = Manrope({ subsets: ['latin'], variable: '--font-manrope', displa
 
 type TabKey = 'users' | 'roles';
 
-// Users & Roles (Admin only — users.manage / roles.manage; the proxy and
+// Users & Roles (users.manage / roles.manage; the proxy and
 // every /api/admin/* route enforce it, not this page). Layout mirrors
 // Pending Balance: same width/padding, header actions, pill tabs, table chrome.
 export default function UsersPage() {
@@ -57,14 +57,22 @@ export default function UsersPage() {
     <div className={`dd-page h-screen w-full flex flex-col overflow-hidden bg-[#F7F8FA] text-[#1a1a1a] transition-colors duration-300 dark:bg-[#0A0C11] dark:text-white ${manrope.variable}`}>
       <style>{`
         .dd-page :where(h1, h2, h3, p, span, td, th) { line-height: normal; }
-        .dd-page { font-family: var(--font-manrope), ui-sans-serif, system-ui, sans-serif; }
+        .dd-page {
+          --ink-0: #F7F8FA; --ink-1: #FFFFFF; --ink-2: #F1F2F5; --hair: #DDE0E7;
+          --text-hi: #1A1D23; --text-mid: #6B7280; --text-low: #9CA3AF;
+          font-family: var(--font-manrope), ui-sans-serif, system-ui, sans-serif;
+        }
+        .dark .dd-page {
+          --ink-0: #0A0C11; --ink-1: #12151D; --ink-2: #1A1E29; --hair: #262B38;
+          --text-hi: #F3F4F7; --text-mid: #9198AC; --text-low: #565C70;
+        }
         main:has(.dd-page) { background: #F7F8FA; }
         .dark main:has(.dd-page) { background: #0A0C11; }
       `}</style>
       <main className="flex flex-1 flex-col overflow-hidden px-4 pb-6 md:px-[28px] md:pb-8">
         <div className="mx-auto flex w-full max-w-[1400px] flex-1 flex-col min-h-0 pt-4">
           <PageHeader
-            title="Users"
+            title="Users & Roles"
             containerless
             stickyOffset={16}
             actions={
@@ -94,13 +102,26 @@ export default function UsersPage() {
             }
           />
 
-          {/* Same -7px pull-up as Pending Balance (see the comment there). */}
-          <div className="-mt-[7px]">
-            <PillTabs tabs={tabs} active={tab} onSelect={(k) => navigate(k)} />
-          </div>
-
-          {tab === 'users' && <UsersTab key={roleFilter ?? 'all'} refreshKey={refreshKey} initialRole={roleFilter} />}
-          {tab === 'roles' && <RolesTab refreshKey={refreshKey} onShowUsers={(roleKey) => navigate('users', roleKey)} />}
+          {tab === 'users' ? (
+            // Users tab puts Export / Add user on the switcher's row, so it
+            // renders the switcher itself (same -7px pull-up as below).
+            <div className="-mt-[7px] flex min-h-0 flex-1 flex-col">
+              <UsersTab
+                key={roleFilter ?? ''}
+                refreshKey={refreshKey}
+                initialRole={roleFilter}
+                tabs={<UnderlineTabs tabs={tabs} active={tab} onSelect={(k) => navigate(k)} />}
+              />
+            </div>
+          ) : (
+            <>
+              {/* Same -7px pull-up as Pending Balance (see the comment there). */}
+              <div className="-mt-[7px]">
+                <UnderlineTabs tabs={tabs} active={tab} onSelect={(k) => navigate(k)} />
+              </div>
+              <RolesTab refreshKey={refreshKey} onShowUsers={(roleKey) => navigate('users', roleKey)} />
+            </>
+          )}
         </div>
       </main>
     </div>

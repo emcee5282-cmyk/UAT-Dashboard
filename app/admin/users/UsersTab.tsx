@@ -1,25 +1,19 @@
 'use client';
 
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from 'react';
+import { createPortal } from 'react-dom';
 import * as XLSX from 'xlsx';
-import { Download, UserPlus } from 'lucide-react';
+import { Download, MoreHorizontal, UserPlus } from 'lucide-react';
+import UserAvatar from '@/app/components/UserAvatar';
 import SearchableCombobox from '@/app/components/SearchableCombobox';
 import Toast, { type ToastState } from '@/app/components/Toast';
 import ConnectionErrorState from '@/app/components/ConnectionErrorState';
 import TableLoadingSpinner from '@/app/components/TableLoadingSpinner';
-import {
-  EXPORT_BUTTON_CLASS,
-  PRIMARY_TOOLBAR_BUTTON_CLASS,
-  SearchPill,
-  TABLE_WRAPPER_CLASS,
-  TD_CLASS,
-  TH_CLASS,
-  TR_CLASS,
-  TextTabs,
-  TextTabsSkeleton,
-} from '@/app/components/ListToolbar';
+import { EXPORT_BUTTON_CLASS, PRIMARY_TOOLBAR_BUTTON_CLASS, SearchPill, TD_CLASS, TH_CLASS, TR_CLASS } from '@/app/components/ListToolbar';
 import { classifyFetchError } from '@/app/lib/errors';
 import type { AdminUserRow } from '@/app/lib/auth/userAdmin';
+import { useSession } from '@/app/lib/auth/useSession';
+import { TEAMS, isKnownTeam } from '@/app/lib/auth/teams';
 import { FormField, Modal, ModalActions, TempPasswordModal, formatDateTime, inputClass } from './dialogs';
 
 type RoleOption = { key: string; name: string; needsLeader: boolean };
@@ -27,16 +21,35 @@ type Leader = { id: number; name: string };
 type FormState = { username: string; name: string; role: string; team: string; leaderName: string };
 type ConfirmAction = 'reset_password' | 'deactivate' | 'reactivate' | 'unlock';
 
-const STATUS_BADGE: Record<AdminUserRow['status'], string> = {
-  Active: 'border-emerald-200 bg-emerald-50 text-emerald-700 dark:border-emerald-900/50 dark:bg-emerald-500/10 dark:text-emerald-400',
-  Locked: 'border-amber-200 bg-amber-50 text-amber-700 dark:border-amber-900/50 dark:bg-amber-500/10 dark:text-amber-400',
-  Deactivated: 'border-border bg-muted/40 text-muted-foreground',
+type StatusFilter = 'all' | 'active' | 'deactivated';
+
+// Status pill (dot + label). Locked is still an active account, just
+// temporarily blocked by failed logins — amber, with Unlock in its ⋯ menu.
+const STATUS_PILL: Record<AdminUserRow['status'], { pill: string; dot: string }> = {
+  Active: { pill: 'bg-emerald-50 text-emerald-700 dark:bg-emerald-500/10 dark:text-emerald-400', dot: 'bg-emerald-500' },
+  Locked: { pill: 'bg-amber-50 text-amber-700 dark:bg-amber-500/10 dark:text-amber-400', dot: 'bg-amber-500' },
+  Deactivated: { pill: 'bg-[#F1F2F5] text-[#6B7280] dark:bg-[#1A1E29] dark:text-[#9198AC]', dot: 'bg-[#9CA3AF]' },
 };
+
+const PILL_CLASS = 'inline-flex items-center gap-1.5 rounded-full px-2 py-0.5 text-[10.5px] font-medium';
+const ACCENT_SOFT_BG = 'bg-[color-mix(in_srgb,var(--ui-accent)_10%,transparent)]';
+const FILTER_SELECT_CLASS =
+  'h-8 shrink-0 appearance-none rounded-full border border-[#E5E7EB] bg-white pl-[13px] pr-8 text-[11px] text-[#111827] outline-none transition-colors focus:border-[var(--ui-accent)] focus:ring-2 focus:ring-[var(--ui-accent)]/20 dark:border-[#262B38] dark:bg-[#12151D] dark:text-[#E5E7EB]';
+const ROW_OUTLINE_BUTTON_CLASS =
+  'h-7 rounded-lg border border-[#E2E8F0] bg-white px-3 text-[11px] font-medium text-[#475569] transition-colors hover:border-[var(--ui-accent)] hover:bg-[#F1F5F9] dark:border-[#262B38] dark:bg-[#12151D] dark:text-[#9CA3AF] dark:hover:bg-white/5';
+
+// Row initials from the display name, ignoring any "(…)" suffix:
+// "Leader Test (JAVED)" → "LT", "Kenta" → "K".
+function rowInitials(u: AdminUserRow): string {
+  const words = (u.name || u.username).replace(/\([^)]*\)/g, ' ').trim().split(/\s+/).filter(Boolean);
+  if (words.length === 0) return u.username.slice(0, 1).toUpperCase();
+  return (words.length > 1 ? words[0][0] + words[1][0] : words[0][0]).toUpperCase();
+}
 
 const CONFIRM_COPY: Record<ConfirmAction, { title: string; body: string; cta: string; destructive?: boolean }> = {
   reset_password: {
     title: 'Reset password',
-    body: 'A new temporary password will be generated. The user is signed out everywhere and must change it at next login.',
+    body: "The password goes back to the user's username. They are signed out everywhere and must change it at next login.",
     cta: 'Reset password',
   },
   deactivate: {
@@ -49,20 +62,25 @@ const CONFIRM_COPY: Record<ConfirmAction, { title: string; body: string; cta: st
   unlock: { title: 'Unlock user', body: 'Clears the failed-login lock so the user can try again right away.', cta: 'Unlock' },
 };
 
-export default function UsersTab({ refreshKey, initialRole }: { refreshKey: number; initialRole?: string }) {
+// `tabs` is the page's Users | Roles switcher — rendered here so Export and
+// Add user can sit on the same row, on the right.
+export default function UsersTab({ refreshKey, initialRole, tabs }: { refreshKey: number; initialRole?: string; tabs: ReactNode }) {
   const [users, setUsers] = useState<AdminUserRow[] | null>(null);
   const [roles, setRoles] = useState<RoleOption[]>([]);
   const [leaders, setLeaders] = useState<Leader[]>([]);
   const [currentUserId, setCurrentUserId] = useState<number | null>(null);
+  const session = useSession();
   // Each (refreshKey, nonce) pair is one request; loading = latest not finished.
   const [nonce, setNonce] = useState(0);
   const requestKey = `${refreshKey}:${nonce}`;
   const [doneKey, setDoneKey] = useState<string | null>(null);
   const loading = doneKey !== requestKey;
   const [error, setError] = useState<string | null>(null);
-  const [roleTab, setRoleTab] = useState<string>(initialRole ?? 'all');
   const [search, setSearch] = useState('');
-  const [toast, setToast] = useState<ToastState>(null);
+  const [statusFilter, setStatusFilter] = useState<StatusFilter>('all');
+  // Pre-set when arriving from a role's user count on the Roles tab.
+  const [roleFilter, setRoleFilter] = useState(initialRole ?? 'all');
+  const [teamFilter, setTeamFilter] = useState('all');  const [toast, setToast] = useState<ToastState>(null);
 
   const [formMode, setFormMode] = useState<'create' | 'edit' | null>(null);
   const [editing, setEditing] = useState<AdminUserRow | null>(null);
@@ -98,29 +116,39 @@ export default function UsersTab({ refreshKey, initialRole }: { refreshKey: numb
     };
   }, [requestKey]);
 
-  // Role tabs come from the database — a new role shows up here on its own.
-  const roleTabs = useMemo(
-    () => [
-      { key: 'all', label: 'All', count: users?.length },
-      ...roles.map((r) => ({ key: r.key, label: r.name, count: users?.filter((u) => u.role === r.key).length })),
-    ],
-    [roles, users]
+  // Active (incl. Locked) first, then deactivated — stable within each group.
+  const sortedUsers = useMemo(() => {
+    if (!users) return [];
+    return [...users.filter((u) => u.status !== 'Deactivated'), ...users.filter((u) => u.status === 'Deactivated')];
+  }, [users]);
+
+  const statusCounts = useMemo(() => {
+    const deactivated = sortedUsers.filter((u) => u.status === 'Deactivated').length;
+    return { all: sortedUsers.length, active: sortedUsers.length - deactivated, deactivated };
+  }, [sortedUsers]);
+
+  // The fixed list, plus any older team still set on someone.
+  const teams = useMemo(
+    () => [...TEAMS, ...Array.from(new Set(sortedUsers.map((u) => u.team).filter((t): t is string => !!t && !isKnownTeam(t)))).sort()],
+    [sortedUsers]
   );
 
+  // All client-side over the loaded list — no refetch.
   const rows = useMemo(() => {
-    if (!users) return [];
     const q = search.trim().toLowerCase();
-    return users.filter(
+    return sortedUsers.filter(
       (u) =>
-        (roleTab === 'all' || u.role === roleTab) &&
-        (!q || [u.username, u.name, u.roleLabel, u.team, u.leaderName, u.status].some((v) => v?.toLowerCase().includes(q)))
+        (statusFilter === 'all' || (statusFilter === 'deactivated') === (u.status === 'Deactivated')) &&
+        (roleFilter === 'all' || u.role === roleFilter) &&
+        (teamFilter === 'all' || u.team === teamFilter) &&
+        (!q || [u.username, u.name].some((v) => v?.toLowerCase().includes(q)))
     );
-  }, [users, roleTab, search]);
+  }, [sortedUsers, search, statusFilter, roleFilter, teamFilter]);
 
   const roleNeedsLeader = (key: string) => roles.find((r) => r.key === key)?.needsLeader ?? false;
 
   const openCreate = () => {
-    setForm({ username: '', name: '', role: roleTab !== 'all' ? roleTab : (roles.find((r) => r.key === 'viewer')?.key ?? roles[0]?.key ?? ''), team: '', leaderName: '' });
+    setForm({ username: '', name: '', role: roles.find((r) => r.key === 'viewer')?.key ?? roles[0]?.key ?? '', team: '', leaderName: '' });
     setEditing(null);
     setFormError(null);
     setFormMode('create');
@@ -212,91 +240,189 @@ export default function UsersTab({ refreshKey, initialRole }: { refreshKey: numb
       <Toast toast={toast} onDismiss={() => setToast(null)} />
 
       <div className="flex shrink-0 flex-wrap items-center justify-between gap-4">
-        <div className="flex flex-wrap items-center gap-6">
-          {firstLoad ? <TextTabsSkeleton count={5} /> : <TextTabs tabs={roleTabs} selected={roleTab} onSelect={setRoleTab} />}
-          <SearchPill value={search} onChange={setSearch} loading={firstLoad} placeholder="Search users" />
-        </div>
+        {/* The tab switcher carries its own mb-4 for when it stacks alone — not
+            wanted on a shared row, where it would push the buttons off-center. */}
+        <div className="[&>div]:mb-0">{tabs}</div>
         <div className="flex items-center gap-[10px]">
-          <button type="button" onClick={openCreate} disabled={firstLoad} className={PRIMARY_TOOLBAR_BUTTON_CLASS}>
-            <UserPlus size={13} />
-            Add user
-          </button>
           <button type="button" onClick={handleExport} disabled={!users || rows.length === 0} aria-label="Export to Excel" title="Export" className={EXPORT_BUTTON_CLASS}>
             <Download size={13} />
             <span className="hidden xl:inline">Export</span>
           </button>
+          <button type="button" onClick={openCreate} disabled={firstLoad} className={PRIMARY_TOOLBAR_BUTTON_CLASS}>
+            <UserPlus size={13} />
+            Add user
+          </button>
         </div>
       </div>
 
-      <div className={TABLE_WRAPPER_CLASS}>
-        {loading && <TableLoadingSpinner overlay />}
-        <table className="w-full min-w-[860px] table-fixed border-separate border-spacing-0 text-xs">
-          <colgroup>
-            <col style={{ width: '15%' }} />
-            <col style={{ width: '16%' }} />
-            <col style={{ width: '16%' }} />
-            <col style={{ width: '9%' }} />
-            <col style={{ width: '13%' }} />
-            <col style={{ width: '13%' }} />
-            <col style={{ width: '18%' }} />
-          </colgroup>
-          <thead>
-            <tr className="h-[38px]">
-              {['Username', 'Display name', 'Role', 'Team', 'Status', 'Last login'].map((h) => (
-                <th key={h} className={`${TH_CLASS} text-left`}>
-                  {h}
-                </th>
-              ))}
-              <th className={`${TH_CLASS} text-right`}>Actions</th>
-            </tr>
-          </thead>
-          <tbody>
-            {users && rows.length === 0 ? (
-              <tr>
-                <td colSpan={7} className="px-5 py-10 text-center text-muted-foreground">
-                  No users match.
-                </td>
+      <div className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-[10px] border border-[#DEE1E8] bg-white dark:border-[#262B38] dark:bg-[#12151D]">
+        <div className="flex shrink-0 flex-wrap items-center justify-between gap-3 border-b border-[#E2E8F0] px-4 py-3 dark:border-[#262B38]">
+          <div className="flex items-center gap-1">
+            {(
+              [
+                ['all', 'All', statusCounts.all],
+                ['active', 'Active', statusCounts.active],
+                ['deactivated', 'Deactivated', statusCounts.deactivated],
+              ] as const
+            ).map(([key, label, count]) => {
+              const selected = statusFilter === key;
+              return (
+                <button
+                  key={key}
+                  type="button"
+                  onClick={() => setStatusFilter(key)}
+                  aria-pressed={selected}
+                  className={`flex h-8 items-center gap-1.5 rounded-lg px-3 text-[12px] transition-colors ${
+                    selected ? `${ACCENT_SOFT_BG} font-semibold text-[var(--ui-accent)]` : 'font-medium text-muted-foreground hover:bg-muted hover:text-foreground'
+                  }`}
+                >
+                  {label}
+                  <span
+                    className={`rounded-md px-1.5 text-[10.5px] font-medium ${
+                      selected ? 'bg-white/70 text-[var(--ui-accent)] dark:bg-white/10' : 'bg-[#F1F2F5] text-muted-foreground dark:bg-[#1A1E29]'
+                    }`}
+                  >
+                    {firstLoad ? '−' : count}
+                  </span>
+                </button>
+              );
+            })}
+          </div>
+          <div className="flex flex-wrap items-center gap-2">
+            <SearchPill value={search} onChange={setSearch} loading={firstLoad} placeholder="Search name or username" />
+            <FilterSelect label="Filter by role" value={roleFilter} onChange={setRoleFilter} allLabel="All roles" options={roles.map((r) => ({ value: r.key, label: r.name }))} />
+            <FilterSelect label="Filter by team" value={teamFilter} onChange={setTeamFilter} allLabel="All teams" options={teams.map((t) => ({ value: t, label: t }))} />
+          </div>
+        </div>
+
+        <div className="relative min-h-0 flex-1 overflow-auto">
+          {loading && <TableLoadingSpinner overlay />}
+          <table className="w-full min-w-[920px] table-fixed border-separate border-spacing-0 text-xs">
+            <colgroup>
+              <col style={{ width: '29%' }} />
+              <col style={{ width: '19%' }} />
+              <col style={{ width: '12%' }} />
+              <col style={{ width: '17%' }} />
+              <col style={{ width: '12%' }} />
+              <col style={{ width: '11%' }} />
+            </colgroup>
+            <thead>
+              <tr className="h-[38px]">
+                {['User', 'Role', 'Team', 'Status', 'Last login'].map((h) => (
+                  <th key={h} className={`${TH_CLASS} text-left`}>
+                    {h}
+                  </th>
+                ))}
+                <th className={TH_CLASS} aria-label="Actions" />
               </tr>
-            ) : (
-              rows.map((u) => (
-                <tr key={u.id} className={TR_CLASS}>
-                  <td className={`${TD_CLASS} truncate font-medium text-foreground`}>
-                    {u.username}
-                    {isSelf(u) && <span className="ml-1.5 text-[10px] font-normal text-muted-foreground">(you)</span>}
-                  </td>
-                  <td className={`${TD_CLASS} truncate text-foreground`}>{u.name || '−'}</td>
-                  <td className={`${TD_CLASS} truncate text-foreground`}>
-                    {u.roleLabel}
-                    {u.leaderName && <span className="text-muted-foreground"> · {u.leaderName}</span>}
-                  </td>
-                  <td className={`${TD_CLASS} truncate text-foreground`}>{u.team || '−'}</td>
-                  <td className={`${TD_CLASS} whitespace-nowrap`}>
-                    <span className={`inline-flex items-center rounded-md border px-2 py-0.5 text-[10.5px] font-medium ${STATUS_BADGE[u.status]}`}>{u.status}</span>
-                    {u.mustChangePassword && u.status === 'Active' && <span className="ml-1.5 text-[10px] text-muted-foreground">temp pw</span>}
-                  </td>
-                  <td className={`${TD_CLASS} whitespace-nowrap text-foreground`}>{formatDateTime(u.lastLoginAt)}</td>
-                  <td className={`${TD_CLASS} whitespace-nowrap text-right`}>
-                    <div className="inline-flex items-center gap-0.5">
-                      <RowButton onClick={() => openEdit(u)}>Edit</RowButton>
-                      {!isSelf(u) && u.status !== 'Deactivated' && <RowButton onClick={() => setConfirm({ user: u, action: 'reset_password' })}>Reset password</RowButton>}
-                      {u.status === 'Locked' && <RowButton onClick={() => setConfirm({ user: u, action: 'unlock' })}>Unlock</RowButton>}
-                      {!isSelf(u) &&
-                        (u.status === 'Deactivated' ? (
-                          <RowButton onClick={() => setConfirm({ user: u, action: 'reactivate' })}>Reactivate</RowButton>
-                        ) : (
-                          <RowButton danger onClick={() => setConfirm({ user: u, action: 'deactivate' })}>
-                            Deactivate
-                          </RowButton>
-                        ))}
-                    </div>
+            </thead>
+            <tbody>
+              {!loading && users && rows.length === 0 ? (
+                <tr>
+                  <td colSpan={6} className="px-5 py-10 text-center text-muted-foreground">
+                    No users match.
                   </td>
                 </tr>
-              ))
-            )}
-          </tbody>
-        </table>
-      </div>
+              ) : (
+                !loading &&
+                rows.map((u, i) => {
+                  const deactivated = u.status === 'Deactivated';
+                  const self = isSelf(u);
+                  const textTone = deactivated ? 'text-muted-foreground' : 'text-foreground';
+                  return (
+                    <tr
+                      key={u.id}
+                      className={`${TR_CLASS} ${deactivated ? 'bg-[#FAFBFC] dark:bg-white/[0.015]' : ''}`}
+                      style={{ '--stagger-delay': `${Math.min(i, 12) * 30}ms` } as CSSProperties}
+                    >
+                      <td className={`${TD_CLASS} py-2.5`}>
+                        <div className="flex min-w-0 items-center gap-2.5">
+                          {/* Own row follows the live session, so a photo saved
+                              from Profile shows here without a refresh. */}
+                          <UserAvatar
+                            user={{ name: u.name, username: u.username, avatar: self && session ? session.avatar : u.avatar }}
+                            initials={rowInitials(u)}
+                            size={34}
+                            muted={deactivated}
+                          />
+                          <div className="min-w-0">
+                            <p className="flex min-w-0 items-center gap-1.5">
+                              <span className={`truncate text-[12px] font-semibold ${textTone}`}>{u.name || u.username}</span>
+                              {self && (
+                                <span className={`shrink-0 rounded-md ${ACCENT_SOFT_BG} px-1.5 py-px text-[9.5px] font-semibold tracking-wide text-[var(--ui-accent)]`}>YOU</span>
+                              )}
+                            </p>
+                            <p className="truncate text-[11px] text-muted-foreground">@{u.username}</p>
+                          </div>
+                        </div>
+                      </td>
+                      <td className={`${TD_CLASS} ${textTone}`}>
+                        <div className="flex min-w-0 items-center gap-1.5">
+                          <span className="truncate">{u.roleLabel}</span>
+                          {u.leaderName && (
+                            <span className="shrink-0 rounded-md border border-[#E5E7EB] bg-[#F7F8FA] px-1.5 py-px text-[10px] font-medium text-[#6B7280] dark:border-[#262B38] dark:bg-[#1A1E29] dark:text-[#9198AC]">
+                              {u.leaderName}
+                            </span>
+                          )}
+                        </div>
+                      </td>
+                      <td className={`${TD_CLASS} truncate ${textTone}`}>{u.team || '−'}</td>
+                      <td className={`${TD_CLASS} whitespace-nowrap`}>
+                        <span className="inline-flex items-center gap-1.5">
+                          <span className={`${PILL_CLASS} ${STATUS_PILL[u.status].pill}`}>
+                            <span className={`h-1.5 w-1.5 rounded-full ${STATUS_PILL[u.status].dot}`} />
+                            {u.status}
+                          </span>
+                          {u.mustChangePassword && !deactivated && (
+                            <span className={`${PILL_CLASS} bg-amber-50 text-amber-700 dark:bg-amber-500/10 dark:text-amber-400`}>Temp password</span>
+                          )}
+                        </span>
+                      </td>
+                      <td className={`${TD_CLASS} whitespace-nowrap ${textTone}`}>{u.lastLoginAt ? formatDateTime(u.lastLoginAt) : 'Never'}</td>
+                      <td className={`${TD_CLASS} whitespace-nowrap text-right`}>
+                        <div className="inline-flex items-center gap-1">
+                          {deactivated ? (
+                            <button
+                              type="button"
+                              onClick={() => setConfirm({ user: u, action: 'reactivate' })}
+                              className={`h-7 rounded-lg ${ACCENT_SOFT_BG} px-3 text-[11px] font-semibold text-[var(--ui-accent)] transition-colors hover:bg-[color-mix(in_srgb,var(--ui-accent)_16%,transparent)]`}
+                            >
+                              Reactivate
+                            </button>
+                          ) : (
+                            <button type="button" onClick={() => openEdit(u)} className={ROW_OUTLINE_BUTTON_CLASS}>
+                              Edit
+                            </button>
+                          )}
+                          {self ? (
+                            <span className="inline-block w-7" aria-hidden />
+                          ) : (
+                            <MoreMenu
+                              items={
+                                deactivated
+                                  ? [{ label: 'Edit', onSelect: () => openEdit(u) }]
+                                  : [
+                                      ...(u.status === 'Locked' ? [{ label: 'Unlock', onSelect: () => setConfirm({ user: u, action: 'unlock' }) }] : []),
+                                      { label: 'Reset password', onSelect: () => setConfirm({ user: u, action: 'reset_password' }) },
+                                      'divider' as const,
+                                      { label: 'Deactivate', danger: true, onSelect: () => setConfirm({ user: u, action: 'deactivate' }) },
+                                    ]
+                              }
+                            />
+                          )}
+                        </div>
+                      </td>
+                    </tr>
+                  );
+                })
+              )}
+            </tbody>
+          </table>
+        </div>
 
+        <div className="flex shrink-0 flex-wrap items-center justify-between gap-2 border-t border-[#E2E8F0] px-4 py-2.5 text-[11px] text-muted-foreground dark:border-[#262B38]">
+          <span>{firstLoad ? ' ' : `Showing ${rows.length} of ${statusCounts.all} user${statusCounts.all === 1 ? '' : 's'}`}</span>        </div>
+      </div>
       {formMode && (
         <Modal title={formMode === 'create' ? 'Add user' : `Edit ${editing?.username}`} onClose={() => setFormMode(null)} busy={saving}>
           <form
@@ -347,8 +473,17 @@ export default function UsersTab({ refreshKey, initialRole }: { refreshKey: numb
                 />
               </FormField>
             )}
-            <FormField label="Team" hint="Optional.">
-              <input value={form.team} onChange={(e) => setForm((f) => ({ ...f, team: e.target.value }))} className={inputClass} />
+            <FormField label="Team" hint="Optional." error={formError?.field === 'team' ? formError.message : undefined}>
+              <select value={form.team} onChange={(e) => setForm((f) => ({ ...f, team: e.target.value }))} className={inputClass}>
+                <option value="">No team</option>
+                {/* A team set before the fixed list stays selectable for that user. */}
+                {form.team && !isKnownTeam(form.team) && <option value={form.team}>{form.team}</option>}
+                {TEAMS.map((t) => (
+                  <option key={t} value={t}>
+                    {t}
+                  </option>
+                ))}
+              </select>
             </FormField>
             {formError && !formError.field && <p className="text-[12px] font-medium text-rose-600 dark:text-rose-400">{formError.message}</p>}
             <ModalActions onCancel={() => setFormMode(null)} confirmLabel={formMode === 'create' ? 'Create user' : 'Save changes'} busy={saving} submit />
@@ -378,16 +513,121 @@ export default function UsersTab({ refreshKey, initialRole }: { refreshKey: numb
   );
 }
 
-function RowButton({ children, onClick, danger }: { children: React.ReactNode; onClick: () => void; danger?: boolean }) {
+function FilterSelect({
+  label,
+  value,
+  onChange,
+  allLabel,
+  options,
+}: {
+  label: string;
+  value: string;
+  onChange: (value: string) => void;
+  allLabel: string;
+  options: { value: string; label: string }[];
+}) {
   return (
-    <button
-      type="button"
-      onClick={onClick}
-      className={`rounded-md px-2 py-1 text-[11px] font-medium transition-colors ${
-        danger ? 'text-rose-600 hover:bg-rose-50 dark:text-rose-400 dark:hover:bg-rose-500/10' : 'text-muted-foreground hover:bg-muted hover:text-foreground'
-      }`}
-    >
-      {children}
-    </button>
+    <div className="relative">
+      <select aria-label={label} value={value} onChange={(e) => onChange(e.target.value)} className={FILTER_SELECT_CLASS}>
+        <option value="all">{allLabel}</option>
+        {options.map((o) => (
+          <option key={o.value} value={o.value}>
+            {o.label}
+          </option>
+        ))}
+      </select>
+      <svg viewBox="0 0 16 16" width="10" height="10" fill="none" className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-[#6B7280]" aria-hidden>
+        <path d="M4 6l4 4 4-4" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+      </svg>
+    </div>
+  );
+}
+
+type MenuItem = { label: string; onSelect: () => void; danger?: boolean } | 'divider';
+
+// Row "⋯" menu. Portal + fixed position so the table's own scroll box
+// can't clip it; closes on outside click, Escape, scroll or resize.
+function MoreMenu({ items }: { items: MenuItem[] }) {
+  const [open, setOpen] = useState(false);
+  const [pos, setPos] = useState({ top: 0, right: 0 });
+  const buttonRef = useRef<HTMLButtonElement>(null);
+  const menuRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!open) return;
+    const close = () => setOpen(false);
+    const onPointerDown = (event: MouseEvent) => {
+      const target = event.target as Node;
+      if (!buttonRef.current?.contains(target) && !menuRef.current?.contains(target)) close();
+    };
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') close();
+    };
+    document.addEventListener('mousedown', onPointerDown);
+    document.addEventListener('keydown', onKey);
+    window.addEventListener('scroll', close, true);
+    window.addEventListener('resize', close);
+    return () => {
+      document.removeEventListener('mousedown', onPointerDown);
+      document.removeEventListener('keydown', onKey);
+      window.removeEventListener('scroll', close, true);
+      window.removeEventListener('resize', close);
+    };
+  }, [open]);
+
+  const toggle = () => {
+    const rect = buttonRef.current?.getBoundingClientRect();
+    if (rect) setPos({ top: rect.bottom + 4, right: window.innerWidth - rect.right });
+    setOpen((v) => !v);
+  };
+
+  return (
+    <>
+      <button
+        ref={buttonRef}
+        type="button"
+        onClick={toggle}
+        aria-label="More actions"
+        aria-haspopup="menu"
+        aria-expanded={open}
+        className="flex h-7 w-7 items-center justify-center rounded-lg text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+      >
+        <MoreHorizontal size={15} />
+      </button>
+      {open &&
+        typeof document !== 'undefined' &&
+        createPortal(
+          <div
+            ref={menuRef}
+            role="menu"
+            style={{ position: 'fixed', top: pos.top, right: pos.right }}
+            className="z-[999] w-44 rounded-xl border border-border bg-white p-1 shadow-xl dark:border-[#262B38] dark:bg-[#12151D]"
+          >
+            {items.map((item, i) =>
+              item === 'divider' ? (
+                <div key={`divider-${i}`} className="my-1 border-t border-[#F1F5F9] dark:border-[#1A1E29]" />
+              ) : (
+                <button
+                  key={item.label}
+                  type="button"
+                  role="menuitem"
+                  onClick={() => {
+                    setOpen(false);
+                    item.onSelect();
+                  }}
+                  className={`flex w-full items-center rounded-lg px-2.5 py-1.5 text-left text-[12px] transition-colors ${
+                    item.danger
+                      ? 'text-rose-600 hover:bg-rose-50 dark:text-rose-400 dark:hover:bg-rose-500/10'
+                      : 'text-[#475569] hover:bg-[#F1F5F9] dark:text-[#9CA3AF] dark:hover:bg-white/5'
+                  }`}
+                >
+                  {item.label}
+                </button>
+              )
+            )}
+          </div>,
+          document.body
+        )}
+    </>
   );
 }

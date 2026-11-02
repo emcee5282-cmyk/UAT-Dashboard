@@ -3,12 +3,13 @@ import { eq } from 'drizzle-orm';
 import { getDb } from '@/app/lib/db/client';
 import { users } from '@/app/lib/db/schema';
 import { authorizeApi } from '@/app/lib/auth/guard';
-import { SYSTEM_ROLE, needsLeaderLink, normalizeRoleKey } from '@/app/lib/auth/permissions';
+import { ADMIN_ROLE, SYSTEM_ROLE, needsLeaderLink, normalizeRoleKey } from '@/app/lib/auth/permissions';
 import { isAssignableRole, storedPermissionsFor } from '@/app/lib/auth/roles';
-import { generateTempPassword, hashPassword } from '@/app/lib/auth/password';
+import { hashPassword } from '@/app/lib/auth/password';
 import { revokeUserSessions } from '@/app/lib/auth/session';
 import { logAudit, requestMeta } from '@/app/lib/auth/audit';
 import { cleanText, leaderExists } from '@/app/lib/auth/userAdmin';
+import { isKnownTeam } from '@/app/lib/auth/teams';
 
 type Action = 'update' | 'reset_password' | 'unlock' | 'deactivate' | 'reactivate';
 const ACTIONS: Action[] = ['update', 'reset_password', 'unlock', 'deactivate', 'reactivate'];
@@ -40,6 +41,11 @@ export async function PATCH(request: NextRequest, { params }: { params: Promise<
   const isSelf = target.id === actorId;
   // The scheduler's service account is hidden from User Management.
   if (normalizeRoleKey(target.role) === SYSTEM_ROLE) return NextResponse.json({ error: 'Not found' }, { status: 404 });
+  // users.manage can be granted to non-Admins — they stop at Admin accounts.
+  const actorIsAdmin = normalizeRoleKey(auth.session.role) === ADMIN_ROLE;
+  if (!actorIsAdmin && normalizeRoleKey(target.role) === ADMIN_ROLE) {
+    return NextResponse.json({ error: 'Only an Admin can change an Admin account.' }, { status: 403 });
+  }
   const now = new Date();
 
   if (action === 'update') {
@@ -50,8 +56,15 @@ export async function PATCH(request: NextRequest, { params }: { params: Promise<
     const leaderId = body.leaderId == null || body.leaderId === '' ? null : Number(body.leaderId);
 
     if (!name) return NextResponse.json({ error: 'Display name is required.', field: 'name' }, { status: 400 });
+    // A team set before the fixed list existed may be kept as-is.
+    if (team && team !== target.team && !isKnownTeam(team)) {
+      return NextResponse.json({ error: 'Pick a team from the list.', field: 'team' }, { status: 400 });
+    }
     if (role !== currentRole && !(await isAssignableRole(role))) {
       return NextResponse.json({ error: 'Pick a valid role.', field: 'role' }, { status: 400 });
+    }
+    if (!actorIsAdmin && role === ADMIN_ROLE) {
+      return NextResponse.json({ error: 'Only an Admin can give the Admin role.', field: 'role' }, { status: 403 });
     }
     if (isSelf && role !== currentRole) {
       return NextResponse.json({ error: 'You cannot change your own role.', field: 'role' }, { status: 400 });
@@ -81,7 +94,8 @@ export async function PATCH(request: NextRequest, { params }: { params: Promise<
     if (isSelf) {
       return NextResponse.json({ error: 'Use Change password for your own account.' }, { status: 400 });
     }
-    const tempPassword = generateTempPassword();
+    // Back to the first-login password (the username) — must change it again.
+    const tempPassword = target.username;
     await db
       .update(users)
       .set({

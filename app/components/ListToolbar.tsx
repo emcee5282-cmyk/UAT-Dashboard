@@ -1,9 +1,8 @@
 'use client';
 
-// Toolbar pieces shared with Pending Balance's tabs — the underlined text
-// tabs (Cashout / Send Money / Group Total), the rounded search pill and the
-// Export button — so new list pages (Users) match it exactly instead of
-// re-styling. Classes are copied verbatim from
+// Toolbar pieces shared with Pending Balance's tabs — the rounded search
+// pill and the Export button — so new list pages (Users) match it exactly
+// instead of re-styling. Classes are copied verbatim from
 // app/monitoring/pending-balance/StagnantBalancesTab.tsx (which keeps its
 // own local copies, per that file's established convention).
 import { Search } from 'lucide-react';
@@ -22,49 +21,6 @@ export const TH_CLASS =
   'sticky top-0 z-[2] border-b border-[#E2E8F0] bg-[#FAFBFC] px-5 text-[10px] font-semibold uppercase tracking-[0.03em] text-muted-foreground dark:border-[#262B38] dark:bg-[#0E1119]';
 export const TR_CLASS = 'dt-row-stagger-in border-b border-[#ECEFF3] dark:border-[#1A1E29]';
 export const TD_CLASS = 'px-5 py-2';
-
-export function TextTabs<K extends string>({
-  tabs,
-  selected,
-  onSelect,
-}: {
-  tabs: { key: K; label: string; count?: number }[];
-  selected: K;
-  onSelect: (key: K) => void;
-}) {
-  return (
-    <div className="flex flex-wrap items-center gap-x-8 gap-y-1">
-      {tabs.map((t) => {
-        const isSelected = selected === t.key;
-        return (
-          <button
-            key={t.key}
-            type="button"
-            onClick={() => onSelect(t.key)}
-            className={`relative flex h-8 items-center gap-1.5 text-[13.5px] transition-colors after:absolute after:inset-x-0 after:bottom-0 after:h-[2px] after:content-[''] ${
-              isSelected
-                ? 'font-semibold text-foreground after:bg-[#3b82f6]'
-                : 'font-medium text-muted-foreground after:bg-transparent hover:text-foreground'
-            }`}
-          >
-            {t.label}
-            {t.count !== undefined && <span className="text-[11px] font-medium text-muted-foreground">{t.count}</span>}
-          </button>
-        );
-      })}
-    </div>
-  );
-}
-
-export function TextTabsSkeleton({ count = 4 }: { count?: number }) {
-  return (
-    <div className="flex items-center gap-8">
-      {Array.from({ length: count }).map((_, i) => (
-        <div key={i} className="dt-skeleton h-[13px] w-20 rounded" />
-      ))}
-    </div>
-  );
-}
 
 export function SearchPill({
   value,

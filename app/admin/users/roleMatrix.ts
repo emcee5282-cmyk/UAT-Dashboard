@@ -6,6 +6,7 @@ import {
   ACTION_NEEDS_EDIT,
   PAGES,
   PAGE_IDS,
+  SETTINGS_PERMISSIONS,
   TICKET_TITLES,
   TICKET_TYPES,
   actionPerm,
@@ -15,17 +16,21 @@ import {
   viewPerm,
   type PageAction,
   type PageId,
+  type SettingsKey,
   type Permission,
   type TicketTitle,
 } from '@/app/lib/auth/permissions';
 
 export type Level = 'none' | 'view' | 'edit';
 
+export const SETTINGS_KEYS = Object.keys(SETTINGS_PERMISSIONS) as SettingsKey[];
+
 export type MatrixState = {
   levels: Record<PageId, Level>;
   actions: Record<PageId, Partial<Record<PageAction, boolean>>>;
   tickets: Record<TicketTitle, { view: boolean; settle: boolean }>;
   raise: boolean;
+  settings: Record<SettingsKey, boolean>;
 };
 
 export function emptyMatrix(): MatrixState {
@@ -34,6 +39,7 @@ export function emptyMatrix(): MatrixState {
     actions: Object.fromEntries(PAGE_IDS.map((id) => [id, {}])) as MatrixState['actions'],
     tickets: Object.fromEntries(TICKET_TITLES.map((t) => [t, { view: false, settle: false }])) as MatrixState['tickets'],
     raise: false,
+    settings: Object.fromEntries(SETTINGS_KEYS.map((k) => [k, false])) as MatrixState['settings'],
   };
 }
 
@@ -46,6 +52,7 @@ export function matrixFromPermissions(perms: readonly string[]): MatrixState {
   }
   for (const t of TICKET_TITLES) m.tickets[t] = { view: has(ticketViewPerm(t)) || has(ticketSettlePerm(t)), settle: has(ticketSettlePerm(t)) };
   m.raise = has('tickets.raise');
+  for (const k of SETTINGS_KEYS) m.settings[k] = has(k);
   return m;
 }
 
@@ -70,6 +77,7 @@ export function permissionsFromMatrix(m: MatrixState): Permission[] {
     if (m.tickets[t].settle) out.push(ticketSettlePerm(t));
   }
   if (m.raise) out.push('tickets.raise');
+  for (const k of SETTINGS_KEYS) if (m.settings[k]) out.push(k);
   return out.sort();
 }
 
@@ -82,6 +90,7 @@ export function describePermission(p: string): string {
     return `${page}: ${ACTION_LABELS[parts[2] as PageAction] ?? parts[2]}`;
   }
   if (p === 'tickets.raise') return 'Tickets: Raise (own only)';
+  if (p in SETTINGS_PERMISSIONS) return `Settings: ${SETTINGS_PERMISSIONS[p as SettingsKey]}`;
   if (parts[0] === 'tickets' && parts[1] in TICKET_TYPES) {
     return `Tickets · ${TICKET_TYPES[parts[1] as TicketTitle]}: ${parts[2] === 'settle' ? 'Settle' : 'View'}`;
   }
@@ -93,16 +102,4 @@ export function diffPermissions(before: readonly string[], after: readonly strin
     added: after.filter((p) => !before.includes(p)).map(describePermission),
     removed: before.filter((p) => !after.includes(p)).map(describePermission),
   };
-}
-
-// One-line access summary for the Roles table / role tabs.
-export function accessSummary(perms: readonly string[]): string {
-  const pages = PAGE_IDS.filter((id) => perms.includes(viewPerm(id)));
-  const edits = PAGE_IDS.filter((id) => perms.includes(editPerm(id)));
-  const settles = TICKET_TITLES.filter((t) => perms.includes(ticketSettlePerm(t)));
-  const bits: string[] = [];
-  if (pages.length) bits.push(`${pages.length} page${pages.length === 1 ? '' : 's'}${edits.length ? ` (${edits.length} editable)` : ''}`);
-  if (settles.length) bits.push(`settles ${settles.length} ticket type${settles.length === 1 ? '' : 's'}`);
-  if (perms.includes('tickets.raise')) bits.push('raises tickets');
-  return bits.join(' · ') || 'No access';
 }

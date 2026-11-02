@@ -102,8 +102,8 @@ export function FormField({ label, hint, error, children }: { label: string; hin
   );
 }
 
-// Shown exactly once — the password lives only in this component's state
-// and is gone when the dialog closes (the server never returns it again).
+// After Add user / Reset password — the first-login password is the
+// username; the user is held on Change Password until they set their own.
 export function TempPasswordModal({ username, password, onClose }: { username: string; password: string; onClose: () => void }) {
   const [copied, setCopied] = useState(false);
   const copy = async () => {
@@ -117,15 +117,15 @@ export function TempPasswordModal({ username, password, onClose }: { username: s
   };
   return (
     <div className={MODAL_OVERLAY_CLASS(false)}>
-      <div role="dialog" aria-modal="true" aria-label="Temporary password" className={MODAL_CARD_CLASS(false)}>
+      <div role="dialog" aria-modal="true" aria-label="First-login password" className={MODAL_CARD_CLASS(false)}>
         <div className="mb-4 flex items-center gap-2.5">
           <span className={MODAL_GLYPH_CLASS} style={MODAL_GLYPH_STYLE}>
             <KeyRound size={16} />
           </span>
-          <h2 className="text-[15px] font-bold text-foreground">Temporary password</h2>
+          <h2 className="text-[15px] font-bold text-foreground">First-login password</h2>
         </div>
         <p className="text-[12.5px] text-foreground">
-          For <span className="font-semibold">{username}</span>. They must change it at first login.
+          <span className="font-semibold">{username}</span> logs in with their username as the password, then must set their own before opening any page.
         </p>
         <div className="mt-3 flex items-center gap-2 rounded-[10px] border border-border bg-muted/30 px-3 py-2.5">
           <span className="flex-1 select-all break-all text-[14px] font-semibold tracking-wide text-foreground">{password}</span>
@@ -140,7 +140,7 @@ export function TempPasswordModal({ username, password, onClose }: { username: s
         </div>
         <p className="mt-3 flex items-start gap-1.5 text-[11.5px] text-amber-700 dark:text-amber-400">
           <AlertTriangle size={13} className="mt-px shrink-0" />
-          This is the only time it will be shown. Send it to the user privately.
+          Ask them to log in and change it right away — until they do, anyone who knows the username can sign in.
         </p>
         <div className="mt-5 flex justify-end">
           <button type="button" onClick={onClose} className={MODAL_PRIMARY_BUTTON_SHAPE_CLASS} style={{ background: 'var(--product-accent)' }}>

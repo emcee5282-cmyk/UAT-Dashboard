@@ -96,6 +96,9 @@ export const users = pgTable('users', {
   failedLoginCount: integer('failed_login_count').notNull().default(0),
   lockedUntil: timestamp('locked_until', { withTimezone: true }),
   passwordChangedAt: timestamp('password_changed_at', { withTimezone: true }),
+  // Profile photo as a data:image/(webp|jpeg|png);base64 URL (640x640,
+  // under 1MB — enforced by PATCH /api/me/avatar). Null = initials.
+  avatar: text('avatar'),
   createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
   lastLoginAt: timestamp('last_login_at', { withTimezone: true }),

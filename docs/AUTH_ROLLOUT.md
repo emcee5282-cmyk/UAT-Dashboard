@@ -8,14 +8,9 @@ Pick a quiet window (e.g. after the 9 PM Telegram send). Allow about 1 hour.
 
 ## Before rollout day
 
-1. **Fix the password-library build issue (must do first).**
-   The site is built on your Windows PC, but the password library (argon2)
-   is a native module and only the Windows version gets packaged. On the
-   Linux VPS, login would fail. Pick one fix (ask Claude to do it):
-   - **Recommended:** switch to a pure-JavaScript argon2 (`hash-wasm`) — works
-     on any OS, nothing else changes.
-   - Or: install the Linux binary before each build
-     (`npm install --no-save --os=linux --cpu=x64 @node-rs/argon2-linux-x64-gnu`).
+1. ~~Fix the password-library build issue.~~ **Done** — passwords now use
+   `hash-wasm` (WebAssembly argon2id), so the Windows-built package runs on the
+   Linux VPS. Existing argon2id hashes still verify.
 2. **Merge `feature/auth-roles`** into the branch you deploy from
    (`deploy.sh` builds whatever is checked out). Careful: pushing a branch to
    GitHub also creates a Vercel preview build.
@@ -54,8 +49,9 @@ the current live site ignores them.
    ```
    npx tsx --env-file=.env.prodmigrate scripts/_apply-auth-security-migration.ts
    ```
-   Expect: `0044_add_auth_security.sql: applied (13 statements)` and
-   `0045_add_roles.sql: applied (8 statements)`. Running it twice is harmless.
+   Expect: `0044_add_auth_security.sql: applied (13 statements)`,
+   `0045_add_roles.sql: applied (8 statements)` and
+   `0046_add_user_avatar.sql: applied (1 statements)`. Running it twice is harmless.
 3. **Do not** use `npm run db:migrate` — production's migration history is out
    of step and it would try to re-run old migrations.
 
@@ -93,9 +89,8 @@ Use your PC's copy of the app, temporarily pointed at production:
 1. In `.env.local`, comment out the local `DATABASE_URL` line and uncomment the
    DigitalOcean one. Restart `npm run dev`.
 2. Open `http://localhost:3000`, log in with the Admin from Step 4.
-3. **Users → Add user** for each person on your list. Each time, copy the
-   temporary password from the pop-up into your private handover list — it is
-   shown only once.
+3. **Users → Add user** for each person on your list. Their first-login
+   password is their **username**; they must change it before any page opens.
 4. ⚠️ While pointed at production, **don't press any "Send to Telegram"
    button** — production's database holds the real Telegram bot tokens.
 5. Switch `.env.local` back to the local database and restart `npm run dev`.
@@ -116,8 +111,9 @@ ssh root@159.89.169.210 "pm2 restart dashboard"
    mentioning `argon2`, `sessions` or `roles`.
 
 ### Step 9 — Hand out credentials
-Send each person their username + temporary password **privately**. They must
-set their own password at first login (10+ characters, letters and numbers).
+Send each person their username **privately** (first-login password = the
+username). They must set their own password at first login (10+ characters,
+letters and numbers, not the username).
 
 ### Step 10 — Next morning
 - The 12 AM rollover and the sync ran (Daily Entry shows today's carry-over).
@@ -127,7 +123,8 @@ set their own password at first login (10+ characters, letters and numbers).
 
 ## If something breaks — roll back
 
-**Site down / nobody can log in (most likely cause: the password-library build issue in "Before rollout day" #1):**
+**Site down / nobody can log in:** (the pre-auth code is also tagged in git as
+`pre-auth-rollout`, for rebuilding the old site if the VPS copy is lost)
 ```
 ssh root@159.89.169.210
 pm2 stop dashboard

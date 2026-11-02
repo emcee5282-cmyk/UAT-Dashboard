@@ -40,6 +40,11 @@ export async function POST(request: NextRequest) {
   if (!(await verifyPassword(currentPassword, user.passwordHash))) {
     return NextResponse.json({ error: 'Current password is incorrect.', field: 'currentPassword' }, { status: 400 });
   }
+  // The first-login password is the username — never accept it (or any
+  // case variant) as the new one.
+  if (newPassword.toLowerCase() === user.username.toLowerCase()) {
+    return NextResponse.json({ error: 'New password cannot be your username.', field: 'newPassword' }, { status: 400 });
+  }
   // The current hash IS the temporary password while mustChangePassword is
   // set, so this one check covers "cannot reuse the temporary password".
   if (await verifyPassword(newPassword, user.passwordHash)) {

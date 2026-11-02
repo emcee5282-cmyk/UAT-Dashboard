@@ -3,13 +3,15 @@ import { sql } from 'drizzle-orm';
 import { getDb } from '@/app/lib/db/client';
 import { users } from '@/app/lib/db/schema';
 import { authorizeApi } from '@/app/lib/auth/guard';
-import { needsLeaderLink } from '@/app/lib/auth/permissions';
-import { generateTempPassword, hashPassword } from '@/app/lib/auth/password';
+import { ADMIN_ROLE, needsLeaderLink, normalizeRoleKey } from '@/app/lib/auth/permissions';
+import { hashPassword } from '@/app/lib/auth/password';
+import { isKnownTeam } from '@/app/lib/auth/teams';
 import { logAudit, requestMeta } from '@/app/lib/auth/audit';
 import { isAssignableRole, listRoles, storedPermissionsFor } from '@/app/lib/auth/roles';
 import { USERNAME_PATTERN, USERNAME_RULE, cleanText, leaderExists, listLeaders, listUsers } from '@/app/lib/auth/userAdmin';
 
-// User Management (Admin only — users.manage in permissions.ts). Also
+// User Management (users.manage in permissions.ts). Only an Admin may see,
+// create or assign the Admin role — users.manage alone stops at non-Admins. Also
 // returns the role list (role tabs + the Add/Edit dropdown come from the DB).
 export async function GET(request: NextRequest) {
   const auth = await authorizeApi(request);
@@ -19,16 +21,19 @@ export async function GET(request: NextRequest) {
     {
       users: userRows,
       leaders: leaderRows,
-      roles: roleRows.map((r) => ({ key: r.key, name: r.name, needsLeader: needsLeaderLink(r.permissions) })),
+      roles: roleRows
+        .filter((r) => r.key !== ADMIN_ROLE || normalizeRoleKey(auth.session.role) === ADMIN_ROLE)
+        .map((r) => ({ key: r.key, name: r.name, needsLeader: needsLeaderLink(r.permissions) })),
       currentUserId: auth.session.userId,
     },
     { headers: { 'Cache-Control': 'no-store' } }
   );
 }
 
-// Create: the server generates the temporary password and returns it in
-// this one response only — it's never stored in plain text or retrievable
-// again (a lost one means Reset password).
+// Create: the first-login password is the username itself (stored hashed
+// like any password). mustChangePassword holds the account on
+// /change-password until the user sets their own — the proxy and every API
+// route enforce that, it can't be skipped.
 export async function POST(request: NextRequest) {
   const auth = await authorizeApi(request);
   if (auth instanceof NextResponse) return auth;
@@ -48,7 +53,11 @@ export async function POST(request: NextRequest) {
 
   if (!USERNAME_PATTERN.test(username)) return NextResponse.json({ error: `Username: ${USERNAME_RULE}`, field: 'username' }, { status: 400 });
   if (!name) return NextResponse.json({ error: 'Display name is required.', field: 'name' }, { status: 400 });
+  if (team && !isKnownTeam(team)) return NextResponse.json({ error: 'Pick a team from the list.', field: 'team' }, { status: 400 });
   if (!(await isAssignableRole(role))) return NextResponse.json({ error: 'Pick a valid role.', field: 'role' }, { status: 400 });
+  if (role === ADMIN_ROLE && normalizeRoleKey(auth.session.role) !== ADMIN_ROLE) {
+    return NextResponse.json({ error: 'Only an Admin can create Admin accounts.', field: 'role' }, { status: 403 });
+  }
   const needsLeader = needsLeaderLink(await storedPermissionsFor(role));
   if (needsLeader && (!leaderId || !Number.isInteger(leaderId) || !(await leaderExists(leaderId)))) {
     return NextResponse.json({ error: 'This role raises tickets, so the account must be linked to a leader name.', field: 'leaderId' }, { status: 400 });
@@ -58,7 +67,7 @@ export async function POST(request: NextRequest) {
   const [existing] = await db.select({ id: users.id }).from(users).where(sql`lower(${users.username}) = ${username}`).limit(1);
   if (existing) return NextResponse.json({ error: 'That username is already taken.', field: 'username' }, { status: 409 });
 
-  const tempPassword = generateTempPassword();
+  const tempPassword = username; // first-login password = username
   const [created] = await db
     .insert(users)
     .values({

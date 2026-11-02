@@ -7,6 +7,7 @@ import ConnectionErrorState from '../components/ConnectionErrorState';
 import { classifyFetchError, type ClassifiedError, assertAllOk } from '../lib/errors';
 import DiscrepancyTgTab from './DiscrepancyTgTab';
 import UnreconciledTgTab from './UnreconciledTgTab';
+import { useCan } from '../lib/auth/useSession';
 
 // Same pill/badge tab switcher style as Daily Transaction Entry's own
 // PAGE_TABS row (app/daily-txn-entry/page.tsx) — duplicated locally per
@@ -544,17 +545,9 @@ function ModeStatusCard({
 
 export default function SettingsPage() {
   const [tab, setTab] = useState<'transfer-queue' | 'discrepancy-tg' | 'unreconciled-tg'>('transfer-queue');
-  // Same fetch('/api/auth/me') -> role convention Sidebar.tsx already uses
-  // to hide the Tickets nav entry from non-staff — the Discrepancy TG tab
-  // is admin-only, both here (visibility) and server-side (the route
-  // itself 403s non-admins regardless of what this shows).
-  const [isAdmin, setIsAdmin] = useState(false);
-  useEffect(() => {
-    fetch('/api/auth/me')
-      .then((res) => (res.ok ? res.json() : null))
-      .then((data) => setIsAdmin(data?.role === 'admin'))
-      .catch(() => setIsAdmin(false));
-  }, []);
+  // The Discrepancy TG tab needs settings.manage, both here (visibility) and
+  // server-side (the route itself 403s without it regardless of this).
+  const canManageSettings = useCan('settings.manage');
 
   const [rules, setRules] = useState<RuleRow[]>([]);
   const [drafts, setDrafts] = useState<RuleRow[]>([]);
@@ -784,7 +777,7 @@ export default function SettingsPage() {
             button itself is hidden from non-admins (the route 403s them
             too, so this is a visibility convenience, not the real gate). */}
         <div className="mb-5 flex items-center gap-2">
-          {SETTINGS_TABS.filter((t) => t.key !== 'discrepancy-tg' || isAdmin).map((t) => (
+          {SETTINGS_TABS.filter((t) => t.key !== 'discrepancy-tg' || canManageSettings).map((t) => (
             <button
               key={t.key}
               onClick={() => setTab(t.key)}

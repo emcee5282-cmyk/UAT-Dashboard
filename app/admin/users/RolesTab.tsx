@@ -8,7 +8,6 @@ import TableLoadingSpinner from '@/app/components/TableLoadingSpinner';
 import { PRIMARY_TOOLBAR_BUTTON_CLASS, SearchPill, TABLE_WRAPPER_CLASS, TD_CLASS, TH_CLASS, TR_CLASS } from '@/app/components/ListToolbar';
 import { classifyFetchError } from '@/app/lib/errors';
 import RoleEditor, { type RoleSummary } from './RoleEditor';
-import { accessSummary } from './roleMatrix';
 import { Modal, ModalActions, formatDateTime } from './dialogs';
 
 type View = { kind: 'list' } | { kind: 'create'; from?: RoleSummary } | { kind: 'edit'; role: RoleSummary };
@@ -49,9 +48,12 @@ export default function RolesTab({ refreshKey, onShowUsers }: { refreshKey: numb
     };
   }, [requestKey]);
 
+  // Admin (locked) pinned first, then the rest by Last edited, newest first.
   const rows = useMemo(() => {
     const q = search.trim().toLowerCase();
-    return (roles ?? []).filter((r) => !q || r.name.toLowerCase().includes(q) || (r.description ?? '').toLowerCase().includes(q));
+    return (roles ?? [])
+      .filter((r) => !q || r.name.toLowerCase().includes(q))
+      .sort((a, b) => Number(b.locked) - Number(a.locked) || Date.parse(b.updatedAt) - Date.parse(a.updatedAt));
   }, [roles, search]);
 
   const confirmDelete = async () => {
@@ -101,46 +103,40 @@ export default function RolesTab({ refreshKey, onShowUsers }: { refreshKey: numb
         </button>
       </div>
 
-      <div className={TABLE_WRAPPER_CLASS}>
+      <div className={TABLE_WRAPPER_CLASS.replace('flex-1', 'flex-none')}>
         {loading && <TableLoadingSpinner overlay />}
-        <table className="w-full min-w-[860px] table-fixed border-separate border-spacing-0 text-xs">
+        <table className="w-full min-w-[640px] table-fixed border-separate border-spacing-0 text-xs">
           <colgroup>
-            <col style={{ width: '15%' }} />
-            <col style={{ width: '33%' }} />
-            <col style={{ width: '8%' }} />
-            <col style={{ width: '22%' }} />
-            <col style={{ width: '22%' }} />
+            <col style={{ width: '28%' }} />
+            <col style={{ width: '14%' }} />
+            <col style={{ width: '32%' }} />
+            <col style={{ width: '26%' }} />
           </colgroup>
           <thead>
             <tr className="h-[38px]">
-              <th className={`${TH_CLASS} text-left`}>Role name</th>
-              <th className={`${TH_CLASS} text-left`}>Description</th>
-              <th className={`${TH_CLASS} text-right`}>Users</th>
+              <th className={`${TH_CLASS} !pl-6 text-left`}>Role name</th>
+              <th className={`${TH_CLASS} text-left`}>Users</th>
               <th className={`${TH_CLASS} text-left`}>Last edited</th>
-              <th className={`${TH_CLASS} text-right`}>Actions</th>
+              <th className={`${TH_CLASS} !pr-6 text-right`}>Actions</th>
             </tr>
           </thead>
           <tbody>
             {roles && rows.length === 0 ? (
               <tr>
-                <td colSpan={5} className="px-5 py-10 text-center text-muted-foreground">
+                <td colSpan={4} className="px-5 py-10 text-center text-muted-foreground">
                   No roles match.
                 </td>
               </tr>
             ) : (
               rows.map((r) => (
                 <tr key={r.id} className={TR_CLASS}>
-                  <td className={`${TD_CLASS} truncate font-medium text-foreground`}>
+                  <td className={`${TD_CLASS} !pl-6 truncate text-left font-medium text-foreground`}>
                     <span className="inline-flex items-center gap-1.5">
                       {r.name}
                       {r.locked && <Lock size={11} className="text-muted-foreground" aria-label="Locked" />}
                     </span>
                   </td>
-                  <td className={TD_CLASS}>
-                    <p className="truncate text-foreground">{r.description || '−'}</p>
-                    <p className="truncate text-[10.5px] text-muted-foreground">{r.locked ? 'Full access (locked)' : accessSummary(r.permissions)}</p>
-                  </td>
-                  <td className={`${TD_CLASS} text-right`}>
+                  <td className={`${TD_CLASS} text-left`}>
                     {r.userCount > 0 ? (
                       <button type="button" onClick={() => onShowUsers(r.key)} className="font-medium text-[var(--ui-accent)] hover:underline">
                         {r.userCount}
@@ -149,25 +145,39 @@ export default function RolesTab({ refreshKey, onShowUsers }: { refreshKey: numb
                       <span className="text-muted-foreground">0</span>
                     )}
                   </td>
-                  <td className={`${TD_CLASS} truncate text-foreground`}>
+                  <td className={`${TD_CLASS} truncate text-left text-foreground`}>
                     {formatDateTime(r.updatedAt)}
-                    {r.updatedByName && <span className="text-muted-foreground"> · {r.updatedByName}</span>}
+                    {/* Seeded/default roles were never edited by a person. */}
+                    <span className="text-muted-foreground"> · {r.updatedByName ?? 'System'}</span>
                   </td>
-                  <td className={`${TD_CLASS} whitespace-nowrap text-right`}>
-                    <div className="inline-flex items-center gap-0.5">
-                      <RowButton onClick={() => setView({ kind: 'edit', role: r })}>{r.locked ? 'View' : 'Edit'}</RowButton>
-                      <RowButton onClick={() => setView({ kind: 'create', from: r })}>Duplicate</RowButton>
-                      {!r.locked && (
-                        <RowButton
-                          danger
-                          onClick={() => {
-                            setDeleteError(null);
-                            setDeleting(r);
-                          }}
-                        >
-                          Delete
-                        </RowButton>
-                      )}
+                  <td className={`${TD_CLASS} !pr-6 whitespace-nowrap text-right`}>
+                    {/* Fixed-width slots (Edit | Duplicate | Delete) so the
+                        buttons line up on every row; Admin's Delete slot
+                        stays empty but keeps its width. */}
+                    <div className="inline-flex items-center justify-end">
+                      <span className={`${ACTION_SLOT_CLASS} w-[48px]`}>
+                        <RowButton onClick={() => setView({ kind: 'edit', role: r })}>{r.locked ? 'View' : 'Edit'}</RowButton>
+                      </span>
+                      <span className={`${ACTION_SLOT_CLASS} w-[76px]`}>
+                        <RowButton onClick={() => setView({ kind: 'create', from: r })}>Duplicate</RowButton>
+                      </span>
+                      <span
+                        className={`${ACTION_SLOT_CLASS} w-[56px]`}
+                        title={!r.locked && r.userCount > 0 ? 'Reassign users before deleting this role.' : undefined}
+                      >
+                        {!r.locked && (
+                          <RowButton
+                            danger
+                            disabled={r.userCount > 0}
+                            onClick={() => {
+                              setDeleteError(null);
+                              setDeleting(r);
+                            }}
+                          >
+                            Delete
+                          </RowButton>
+                        )}
+                      </span>
                     </div>
                   </td>
                 </tr>
@@ -178,44 +188,31 @@ export default function RolesTab({ refreshKey, onShowUsers }: { refreshKey: numb
       </div>
 
       {deleting && (
+        // Only reachable for roles with 0 users (Delete is disabled otherwise;
+        // the server also refuses with 409 if users were added meanwhile).
         <Modal title="Delete role" onClose={() => setDeleting(null)} busy={deleteBusy}>
-          {deleting.userCount > 0 ? (
-            <>
-              <p className="text-[12.5px] text-foreground">
-                <span className="font-semibold">{deleting.name}</span> still has {deleting.userCount} user{deleting.userCount === 1 ? '' : 's'}. Move them to another role
-                first (Users tab → Edit → Role), then delete it.
-              </p>
-              <ModalActions
-                onCancel={() => setDeleting(null)}
-                onConfirm={() => {
-                  onShowUsers(deleting.key);
-                  setDeleting(null);
-                }}
-                confirmLabel="Show these users"
-              />
-            </>
-          ) : (
-            <>
-              <p className="text-[12.5px] text-foreground">
-                Delete the <span className="font-semibold">{deleting.name}</span> role? No users have it. This is recorded in the audit log.
-              </p>
-              {deleteError && <p className="mt-2 text-[12px] font-medium text-rose-600 dark:text-rose-400">{deleteError}</p>}
-              <ModalActions onCancel={() => setDeleting(null)} onConfirm={confirmDelete} confirmLabel="Delete role" busy={deleteBusy} destructive />
-            </>
-          )}
+          <p className="text-[12.5px] text-foreground">
+            Delete the <span className="font-semibold">{deleting.name}</span> role? No users have it. This is recorded in the audit log.
+          </p>
+          {deleteError && <p className="mt-2 text-[12px] font-medium text-rose-600 dark:text-rose-400">{deleteError}</p>}
+          <ModalActions onCancel={() => setDeleting(null)} onConfirm={confirmDelete} confirmLabel="Delete role" busy={deleteBusy} destructive />
         </Modal>
       )}
     </div>
   );
 }
 
-function RowButton({ children, onClick, danger }: { children: React.ReactNode; onClick: () => void; danger?: boolean }) {
+const ACTION_SLOT_CLASS = 'inline-flex shrink-0 justify-center';
+
+// `danger`: muted like the others, red only on hover.
+function RowButton({ children, onClick, danger, disabled }: { children: React.ReactNode; onClick: () => void; danger?: boolean; disabled?: boolean }) {
   return (
     <button
       type="button"
       onClick={onClick}
-      className={`rounded-md px-2 py-1 text-[11px] font-medium transition-colors ${
-        danger ? 'text-rose-600 hover:bg-rose-50 dark:text-rose-400 dark:hover:bg-rose-500/10' : 'text-muted-foreground hover:bg-muted hover:text-foreground'
+      disabled={disabled}
+      className={`rounded-md px-2 py-1 text-[11px] font-medium text-muted-foreground transition-colors disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:bg-transparent disabled:hover:text-muted-foreground ${
+        danger ? 'hover:bg-rose-50 hover:text-rose-600 dark:hover:bg-rose-500/10 dark:hover:text-rose-400' : 'hover:bg-muted hover:text-foreground'
       }`}
     >
       {children}
