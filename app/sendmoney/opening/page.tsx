@@ -20,6 +20,7 @@ import ConnectionErrorState from '@/app/components/ConnectionErrorState';
 import RecordFormModal, { type RecordFormField } from '@/app/components/RecordFormModal';
 import BulkImportModal from '@/app/components/BulkImportModal';
 import BulkEditModal, { type BulkEditUpdates } from '@/app/components/BulkEditModal';
+import { deleteJson, deleteRowsOneByOne } from '@/app/lib/bulkDelete';
 import ConfirmDeleteModal from '@/app/components/ConfirmDeleteModal';
 import { classifyFetchError, type ClassifiedError } from '@/app/lib/errors';
 import { parseSendMoneyOpeningCsv, parseNullableNumber, type SendMoneyOpeningRow } from '@/app/lib/sendMoneyOpening';
@@ -148,13 +149,16 @@ function BulkActionsMenu({
   onBulkEdit,
   onExportSelected,
   onClearSelection,
+  onDeleteSelected,
 }: {
   count: number;
   onBulkEdit: () => void;
   onExportSelected: () => void;
   onClearSelection: () => void;
+  onDeleteSelected: () => void;
 }) {
   const canEdit = useCan('page.opening.bulkEdit');
+  const canDelete = useCan('page.opening.delete');
   const [open, setOpen] = useState(false);
   const [pos, setPos] = useState({ top: 0, left: 0 });
   const btnRef = useRef<HTMLButtonElement>(null);
@@ -222,15 +226,16 @@ function BulkActionsMenu({
               <Download size={13} />
               Export Selected
             </button>
-            <button
-              type="button"
-              disabled
-              title="Coming soon"
-              className="flex w-full cursor-not-allowed items-center gap-2 rounded-lg px-2.5 py-1.5 text-left text-[12px] font-normal text-[#b3b8c2] dark:text-[#5a5f66]"
-            >
-              <Trash2 size={13} />
-              Delete Selected
-            </button>
+            {canDelete && (
+              <button
+                type="button"
+                onClick={() => { setOpen(false); onDeleteSelected(); }}
+                className="flex w-full items-center gap-2 rounded-lg px-2.5 py-1.5 text-left text-[12px] font-normal text-rose-600 transition-colors hover:bg-rose-50 dark:text-rose-400 dark:hover:bg-rose-500/10"
+              >
+                <Trash2 size={13} />
+                Delete Selected
+              </button>
+            )}
             <div className="my-1 border-t border-[#F1F5F9] dark:border-[#1A1E29]" />
             <button
               type="button"
@@ -750,6 +755,8 @@ export default function SendMoneyOpeningPage() {
   const [newRecordOpen, setNewRecordOpen] = useState(false);
   const [bulkImportOpen, setBulkImportOpen] = useState(false);
   const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set());
+  // Rows counted when Delete Selected was clicked; 0 = confirm dialog closed.
+  const [bulkDeleteCount, setBulkDeleteCount] = useState(0);
   const [bulkEditOpen, setBulkEditOpen] = useState(false);
   const [selectionBarRendered, setSelectionBarRendered] = useState(false);
   const [deletingRow, setDeletingRow] = useState<Row | null>(null);
@@ -1065,6 +1072,17 @@ export default function SendMoneyOpeningPage() {
       sdp: values.sdp,
     });
   }, [patchOpeningAgents]);
+
+  // Delete Selected — one existing single-row DELETE per selected wallet.
+  const handleConfirmBulkDelete = useCallback(async () => {
+    const agentCodes = rows.filter((row) => selectedIds.has(row._id)).map((row) => row.agentName);
+    try {
+      await deleteRowsOneByOne(agentCodes, (agentCode) => deleteJson('/api/v2/sendmoney/opening', { agentCode }));
+    } finally {
+      setSelectedIds(new Set());
+      await fetchData();
+    }
+  }, [rows, selectedIds, fetchData]);
 
   const handleBulkEditApply = useCallback(async (updates: BulkEditUpdates) => {
     const agentCodes = rows.filter((row) => selectedIds.has(row._id)).map((row) => row.agentName);
@@ -1407,6 +1425,7 @@ export default function SendMoneyOpeningPage() {
                     onBulkEdit={() => setBulkEditOpen(true)}
                     onExportSelected={handleExportSelected}
                     onClearSelection={() => setSelectedIds(new Set())}
+                    onDeleteSelected={() => setBulkDeleteCount(selectedIds.size)}
                   />
                 </div>
               )}
@@ -1714,6 +1733,15 @@ export default function SendMoneyOpeningPage() {
         subject={deletingRow?.agentName ?? ''}
         primaryButtonClassName="bg-rose-600 hover:bg-rose-700"
         dataProduct="sendmoney"
+      />
+
+      <ConfirmDeleteModal
+        isOpen={bulkDeleteCount > 0}
+        onClose={() => setBulkDeleteCount(0)}
+        onConfirm={handleConfirmBulkDelete}
+        title="Delete Selected"
+        subject={`${bulkDeleteCount} selected wallet${bulkDeleteCount === 1 ? '' : 's'}`}
+        primaryButtonClassName="bg-rose-600 hover:bg-rose-700"
       />
 
       <RecordFormModal
