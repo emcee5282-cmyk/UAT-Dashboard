@@ -192,7 +192,6 @@ body {
   margin: 0;
   background: linear-gradient(135deg, #f8fafc 0%, #eef2ff 100%);
   color: var(--foreground);
-  transition: background-color 250ms ease, color 250ms ease;
   font-variant-numeric: normal;
 }
 
@@ -489,3 +488,20 @@ body {
 .dt-modal-overlay-out { animation: dt-modal-overlay-out 120ms ease-in forwards; }
 .dt-modal-card-in { animation: dt-modal-card-in 200ms ease-out; }
 .dt-modal-card-out { animation: dt-modal-card-out 120ms ease-in forwards; }
+/* Theme change circular reveal (ThemeProvider.changeTheme) — turn off the
+   browser's default crossfade so only the clip-path circle animates. */
+::view-transition-old(root),
+::view-transition-new(root) {
+  animation: none;
+  mix-blend-mode: normal;
+}
+
+/* Set on <html> only while the theme is switching, so the many
+   transition-colors / hover transitions don't fade the new colors in a
+   second time. Removed right after — hover effects are untouched. */
+html.theme-switching,
+html.theme-switching *,
+html.theme-switching *::before,
+html.theme-switching *::after {
+  transition: none !important;
+}
