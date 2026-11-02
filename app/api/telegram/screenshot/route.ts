@@ -94,7 +94,9 @@ export async function POST(request: NextRequest) {
     // to string-replace a separator that isn't guaranteed to be there.
     const datePart = new Intl.DateTimeFormat('en-US', { month: 'long', day: 'numeric', timeZone: 'Asia/Manila' }).format(now);
     const timePart = new Intl.DateTimeFormat('en-US', { hour: '2-digit', minute: '2-digit', hour12: true, timeZone: 'Asia/Manila' }).format(now);
-    const caption = `<b>✅ Updated: ${label}</b>\n📅 ${datePart} | ${timePart}`;
+    // Who pressed "Send to Telegram" — the username is [a-z0-9._-] only
+    // (USERNAME_PATTERN), so it's safe inside the HTML caption as-is.
+    const caption = `<b>✅ Updated: ${label}</b>\n📅 ${datePart} | ${timePart}\n👤 Sent by: ${auth.session.username}`;
 
     let telegramRes: Response;
     if (screenshots.length === 1) {
