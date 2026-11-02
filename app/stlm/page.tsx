@@ -37,6 +37,7 @@ import EmptyState from '../components/EmptyState';
 import TableLoadingSpinner from '../components/TableLoadingSpinner';
 import DataTable from '../components/DataTable';
 import RecordFormModal, { type RecordFormField } from '../components/RecordFormModal';
+import { deleteJson, deleteRowsOneByOne } from '@/app/lib/bulkDelete';
 import ConfirmDeleteModal from '../components/ConfirmDeleteModal';
 import { SETTLEMENT_BRAND_OPTIONS, CASHOUT_WALLET_OPTIONS, SETTLEMENT_REMARKS_SUGGESTIONS } from '../lib/settlementOptions';
 import BulkImportModal from '../components/BulkImportModal';
@@ -236,13 +237,16 @@ function BulkActionsMenu({
   onBulkEdit,
   onExportSelected,
   onClearSelection,
+  onDeleteSelected,
 }: {
   count: number;
   onBulkEdit: () => void;
   onExportSelected: () => void;
   onClearSelection: () => void;
+  onDeleteSelected: () => void;
 }) {
   const canEdit = useCan('page.settlement.bulkEdit');
+  const canDelete = useCan('page.settlement.delete');
   const [open, setOpen] = useState(false);
   const [pos, setPos] = useState({ top: 0, left: 0 });
   const btnRef = useRef<HTMLButtonElement>(null);
@@ -313,15 +317,16 @@ function BulkActionsMenu({
               <Download size={13} />
               Export Selected
             </button>
-            <button
-              type="button"
-              disabled
-              title="Coming soon"
-              className="flex w-full cursor-not-allowed items-center gap-2 rounded-lg px-2.5 py-1.5 text-left text-[12px] font-normal text-[#b3b8c2] dark:text-[#5a5f66]"
-            >
-              <Trash2 size={13} />
-              Delete Selected
-            </button>
+            {canDelete && (
+              <button
+                type="button"
+                onClick={() => { setOpen(false); onDeleteSelected(); }}
+                className="flex w-full items-center gap-2 rounded-lg px-2.5 py-1.5 text-left text-[12px] font-normal text-rose-600 transition-colors hover:bg-rose-50 dark:text-rose-400 dark:hover:bg-rose-500/10"
+              >
+                <Trash2 size={13} />
+                Delete Selected
+              </button>
+            )}
             <div className="my-1 border-t border-[#F1F5F9] dark:border-[#1A1E29]" />
             <button
               type="button"
@@ -982,6 +987,8 @@ export default function StlmPage() {
   // any future bulk action beyond Bulk Edit (Delete Selected, Export
   // Selected, etc.) — nothing about this state is Bulk-Edit-specific.
   const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set());
+  // Rows counted when Delete Selected was clicked; 0 = confirm dialog closed.
+  const [bulkDeleteCount, setBulkDeleteCount] = useState(0);
   const [bulkEditOpen, setBulkEditOpen] = useState(false);
   // Mirrors `selectedIds.size > 0` — shows the "{N} Selected" + Bulk Actions
   // indicator alongside (never instead of) New/Upload/Export/Refresh/
@@ -1466,6 +1473,16 @@ export default function StlmPage() {
     setDeletingRow(null);
   }, [deletingRow, fetchData]);
 
+  // Delete Selected — one existing single-row DELETE per selected id.
+  const handleConfirmBulkDelete = useCallback(async () => {
+    try {
+      await deleteRowsOneByOne(Array.from(selectedIds), (id) => deleteJson('/api/v2/settlement', { id }));
+    } finally {
+      setSelectedIds(new Set());
+      await fetchData();
+    }
+  }, [selectedIds, fetchData]);
+
   const handleBulkEditApply = useCallback(async (updates: BulkEditUpdates) => {
     const payload: Record<string, string> = {};
     if (updates.wallet !== undefined) payload.wallet = updates.wallet;
@@ -1811,6 +1828,7 @@ export default function StlmPage() {
                     onBulkEdit={() => setBulkEditOpen(true)}
                     onExportSelected={handleExportSelected}
                     onClearSelection={() => setSelectedIds(new Set())}
+                    onDeleteSelected={() => setBulkDeleteCount(selectedIds.size)}
                   />
                 </div>
               )}
@@ -2150,6 +2168,15 @@ export default function StlmPage() {
         onConfirm={handleConfirmDelete}
         title="Delete Settlement Record"
         subject={deletingRow ? `${deletingRow.agentName.toUpperCase()}'s ${displayNum(deletingRow.amount)} settlement on ${formatDateDisplay(deletingRow.date)}` : ''}
+        primaryButtonClassName="bg-rose-600 hover:bg-rose-700"
+      />
+
+      <ConfirmDeleteModal
+        isOpen={bulkDeleteCount > 0}
+        onClose={() => setBulkDeleteCount(0)}
+        onConfirm={handleConfirmBulkDelete}
+        title="Delete Selected"
+        subject={`${bulkDeleteCount} selected settlement record${bulkDeleteCount === 1 ? '' : 's'}`}
         primaryButtonClassName="bg-rose-600 hover:bg-rose-700"
       />
     </div>
