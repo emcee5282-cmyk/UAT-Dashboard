@@ -30,6 +30,7 @@ import { eq, and, inArray, sql } from 'drizzle-orm';
 import { getDb } from '../db/client';
 import * as schema from '../db/schema';
 import { aggregateByShop, aggregateByShopWithLines, aggregateByWalletType, formatUploadTimestamp } from '../estimatedOpening';
+import { CASHOUT_ESTIMATE_WALLET_TYPES } from '../estimateUpload';
 import { extractRealShopName, extractSendMoneyShopName, extractOpeningWalletTypeSuffix } from '../realShopName';
 import { readLatestOpeningImportCutoffPg } from '../db/read/rosterSyncLog';
 import { toBusinessDate, manilaFields } from '../businessDate';
@@ -53,11 +54,11 @@ const WALLET_TYPE_TO_OPENING_SUFFIX: Record<string, string> = {
 };
 
 const KNOWN_WALLET_TYPES = new Set(['BKASH', 'NAGAD', 'ROCKET', 'UPAY']);
-// Local-bank wallets (BRAC / Islami Bank) that real Cashout files now carry —
-// accepted by the Cashout file guard below only. Deliberately NOT in
-// KNOWN_WALLET_TYPES: that set also normalizes wallet_transactions' free-text
-// wallet names, which never hold these.
-const CASHOUT_FILE_WALLET_TYPES = new Set([...KNOWN_WALLET_TYPES, 'BRAK', 'IBBL']);
+// The Cashout file guard below accepts the local-bank wallets (BRAK/IBBL)
+// too — the same list the upload preview flags against
+// (CASHOUT_ESTIMATE_WALLET_TYPES). Deliberately not KNOWN_WALLET_TYPES: that
+// set also normalizes wallet_transactions' free-text wallet names.
+const CASHOUT_FILE_WALLET_TYPES = CASHOUT_ESTIMATE_WALLET_TYPES;
 // wallet_transactions.wallet is free-text (typed by whoever uploaded the
 // Settlement/Top Up file) and has confirmed live typos ('ROCJET', 'NAGA',
 // 'NAGAd') — trim+uppercase normalizes casing but can't fix a typo, so
