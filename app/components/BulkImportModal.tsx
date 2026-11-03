@@ -31,7 +31,7 @@ import { detectDuplicateAgentNames } from '../lib/duplicateDetector';
 import type { ExistingTransactionSignature } from '../lib/services/transactionPageService';
 import { calculateImportSummary, calculateOpeningImportSummary, type ImportSummary } from '../lib/importSummary';
 import { mockImportRecords } from '../lib/importService';
-import { parseEstimateRows, formatImportTimestamp, type EstimateImportRecord, type EstimateRowError } from '../lib/estimateUpload';
+import { parseEstimateRows, formatImportTimestamp, CASHOUT_ESTIMATE_WALLET_TYPES, type EstimateImportRecord, type EstimateRowError } from '../lib/estimateUpload';
 import type { RecordFormField } from './RecordFormModal';
 import RowIssueEditModal from './RowIssueEditModal';
 import EstimateLastImportRow from './EstimateLastImportRow';
@@ -452,6 +452,15 @@ export default function BulkImportModal({
   const [estimateImportResult, setEstimateImportResult] = useState<EstimateImportRecord | null>(null);
   const [lastImport, setLastImport] = useState<EstimateImportRecord | null>(null);
   const estimateProgressTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  // Per-row Skip/Edit for Estimate Mode, keyed by the sheet's own row number
+  // (EstimateRowError.row). Skipped rows are left out of the upload; an edit
+  // rewrites estimateParsed's cell and re-runs parseEstimateRows. Every
+  // flagged row must be fixed or skipped before Import is allowed.
+  const [estimateSkippedRows, setEstimateSkippedRows] = useState<Set<number>>(new Set());
+  const [estimateEditingRow, setEstimateEditingRow] = useState<number | null>(null);
+  const [estimateEditValues, setEstimateEditValues] = useState<Record<string, string>>({});
+  // Unknown-wallet-type check is Cashout-only, same as the server's own guard.
+  const estimateAllowedWalletTypes = estimateApiBasePath?.includes('sendmoney') ? undefined : CASHOUT_ESTIMATE_WALLET_TYPES;
 
   // Fetched as soon as the modal opens (not gated behind ticking the
   // checkbox) so Last Import is ready the instant Estimate Mode is checked —
@@ -753,6 +762,9 @@ export default function BulkImportModal({
     setEstimateDetectedErrors(0);
     setEstimateRowErrors([]);
     setEstimateErrorsExpanded(false);
+    setEstimateSkippedRows(new Set());
+    setEstimateEditingRow(null);
+    setEstimateEditValues({});
     setEstimateImportProgress(0);
     setEstimateImportError(null);
     setEstimateImportResult(null);
@@ -813,7 +825,7 @@ export default function BulkImportModal({
           if (!headerRow || headerRow.length === 0) throw new Error('The file appears to be empty.');
           parsedHeaderRow = headerRow;
           parsedDataRows = dataRows;
-          result = parseEstimateRows(headerRow, dataRows, estimateExtractShopName!, estimateSkipShopNames);
+          result = parseEstimateRows(headerRow, dataRows, estimateExtractShopName!, estimateSkipShopNames, estimateAllowedWalletTypes);
         } catch (err) {
           failure = err instanceof Error ? err.message : 'Could not read this file.';
         }
@@ -835,6 +847,9 @@ export default function BulkImportModal({
         setEstimateDetectedShops(result.detectedShops);
         setEstimateDetectedErrors(result.detectedErrors);
         setEstimateRowErrors(result.rowErrors);
+        setEstimateSkippedRows(new Set());
+        // Open straight away when something needs a Skip/Edit decision.
+        setEstimateErrorsExpanded(result.detectedErrors > 0);
         setStep('validation');
         return;
       }
@@ -1256,7 +1271,12 @@ export default function BulkImportModal({
       const res = await fetch(`${estimateApiBasePath}/upload-estimated-balance`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ ...estimateParsed, fileName: file.name }),
+        // Skipped rows never leave the browser (row number = index + 2).
+        body: JSON.stringify({
+          headerRow: estimateParsed.headerRow,
+          dataRows: estimateParsed.dataRows.filter((_, i) => !estimateSkippedRows.has(i + 2)),
+          fileName: file.name,
+        }),
       });
       if (!res.ok) {
         const errBody = await res.json().catch(() => null);
@@ -1288,7 +1308,7 @@ export default function BulkImportModal({
       setEstimateImportError(err instanceof Error ? err.message : 'Import failed.');
       setStep('validation');
     }
-  }, [estimateParsed, file, estimateApiBasePath, onImported]);
+  }, [estimateParsed, estimateSkippedRows, file, estimateApiBasePath, onImported]);
 
   // Opening's real template (public/templates/opening-*-template.xlsx) has
   // a non-flat layout — summary cells (Updated Time, AG Total Opening
@@ -1354,6 +1374,64 @@ export default function BulkImportModal({
 
   const downloadReport = moduleKind === 'opening' ? downloadOpeningReport : downloadTransactionReport;
 
+  // Estimate Mode's flagged rows, one entry per sheet row (a row can carry
+  // several errors, e.g. both Total DP and Total WD).
+  const estimateErrorRowGroups = useMemo(() => {
+    const groups = new Map<number, EstimateRowError[]>();
+    for (const e of estimateRowErrors) (groups.get(e.row) ?? groups.set(e.row, []).get(e.row)!).push(e);
+    return Array.from(groups.entries()).map(([row, errors]) => ({ row, errors, skipped: estimateSkippedRows.has(row) }));
+  }, [estimateRowErrors, estimateSkippedRows]);
+  const estimateUnresolvedCount = estimateErrorRowGroups.filter((g) => !g.skipped).length;
+  const estimateSkippedCount = estimateErrorRowGroups.length - estimateUnresolvedCount;
+
+  const toggleEstimateSkip = useCallback((row: number) => {
+    setEstimateSkippedRows((prev) => {
+      const next = new Set(prev);
+      if (next.has(row)) next.delete(row);
+      else next.add(row);
+      return next;
+    });
+    setEstimateEditingRow((current) => (current === row ? null : current));
+  }, []);
+
+  const skipAllEstimateErrors = useCallback(() => {
+    setEstimateSkippedRows(new Set(estimateErrorRowGroups.map((g) => g.row)));
+    setEstimateEditingRow(null);
+  }, [estimateErrorRowGroups]);
+
+  const startEstimateEdit = useCallback((row: number, errors: EstimateRowError[]) => {
+    if (!estimateParsed) return;
+    const values: Record<string, string> = {};
+    for (const e of errors) {
+      const col = estimateParsed.headerRow.findIndex((h) => String(h ?? '').trim().toLowerCase() === e.column.toLowerCase());
+      values[e.column] = col === -1 ? '' : String(estimateParsed.dataRows[row - 2]?.[col] ?? '');
+    }
+    setEstimateEditValues(values);
+    setEstimateEditingRow(row);
+  }, [estimateParsed]);
+
+  // Writes the edited cells back into the parsed file and re-validates the
+  // whole file — a fixed row simply drops off the flagged list.
+  const saveEstimateEdit = useCallback(() => {
+    if (!estimateParsed || estimateEditingRow === null) return;
+    const index = estimateEditingRow - 2;
+    const dataRows = estimateParsed.dataRows.slice();
+    const row = (dataRows[index] ?? []).slice();
+    for (const [column, value] of Object.entries(estimateEditValues)) {
+      const col = estimateParsed.headerRow.findIndex((h) => String(h ?? '').trim().toLowerCase() === column.toLowerCase());
+      if (col !== -1) row[col] = value.trim();
+    }
+    dataRows[index] = row;
+    const next = { headerRow: estimateParsed.headerRow, dataRows };
+    const result = parseEstimateRows(next.headerRow, next.dataRows, estimateExtractShopName!, estimateSkipShopNames, estimateAllowedWalletTypes);
+    setEstimateParsed(next);
+    setEstimateDetectedShops(result.detectedShops);
+    setEstimateDetectedErrors(result.detectedErrors);
+    setEstimateRowErrors(result.rowErrors);
+    setEstimateEditingRow(null);
+    setEstimateEditValues({});
+  }, [estimateParsed, estimateEditingRow, estimateEditValues, estimateExtractShopName, estimateSkipShopNames, estimateAllowedWalletTypes]);
+
   const downloadEstimateReport = useCallback(() => {
     const headers = ['Row', 'Shop Code', 'Shop Name', 'Column', 'Invalid Value', 'Error Message'];
     const data = estimateRowErrors.map((e) => [e.row, e.shopCode, e.shopName, e.column, e.value, e.message]);
@@ -1370,7 +1448,7 @@ export default function BulkImportModal({
   // real "0 records imported successfully" completion is more confusing
   // than just blocking it up front.
   const canContinue = estimateMode
-    ? (estimateParsed !== null && estimateDetectedShops > 0)
+    ? (estimateParsed !== null && estimateDetectedShops - estimateSkippedCount > 0 && estimateUnresolvedCount === 0)
     : (activeErrorCount === 0 && duplicatesConfirmed && allDatesConfirmed && readyRows.length > 0);
   const hasNonBlockingIssues = (summary?.warningCount ?? 0) + (summary?.duplicateCount ?? 0) > 0;
 
@@ -1626,10 +1704,9 @@ export default function BulkImportModal({
                 </button>
               </div>
 
-              {/* Detected — Shops / Ready / Errors. Bad rows
-                  are silently excluded at import time (no per-row Edit/Skip
-                  here, unlike Normal Mode) — matches the old standalone
-                  UploadExcelModal's own behavior exactly. */}
+              {/* Detected — Shops / Ready / Errors. Errors counts rows
+                  still needing a decision; each flagged row is fixed (Edit)
+                  or left out (Skip) below before Import is allowed. */}
               <p className="mt-3 text-[11px] font-semibold text-muted-foreground">Detected</p>
               <div className="mt-2 grid grid-cols-3 gap-2">
                 <div className="flex items-center gap-2 rounded-[14px] border border-border p-2.5">
@@ -1647,7 +1724,7 @@ export default function BulkImportModal({
                   </div>
                   <div className="min-w-0">
                     <p className="text-[15px] font-bold tabular-nums text-foreground">{(estimateDetectedShops - estimateDetectedErrors).toLocaleString()}</p>
-                    <p className="text-[10px] text-muted-foreground">Ready</p>
+                    <p className="text-[10px] text-muted-foreground">Ready{estimateSkippedCount > 0 ? ` · ${estimateSkippedCount} skipped` : ''}</p>
                   </div>
                 </div>
                 <button
@@ -1659,14 +1736,14 @@ export default function BulkImportModal({
                   }`}
                 >
                   <div className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-lg ${
-                    estimateDetectedErrors === 0
+                    estimateUnresolvedCount === 0
                       ? 'bg-emerald-50 text-emerald-600 dark:bg-emerald-500/15 dark:text-emerald-400'
                       : 'bg-rose-50 text-rose-600 dark:bg-rose-500/15 dark:text-rose-400'
                   }`}>
-                    {estimateDetectedErrors === 0 ? <CheckCircle2 size={14} /> : <AlertCircle size={14} />}
+                    {estimateUnresolvedCount === 0 ? <CheckCircle2 size={14} /> : <AlertCircle size={14} />}
                   </div>
                   <div className="min-w-0 flex-1">
-                    <p className="text-[15px] font-bold tabular-nums text-foreground">{estimateDetectedErrors}</p>
+                    <p className="text-[15px] font-bold tabular-nums text-foreground">{estimateUnresolvedCount}</p>
                     <p className="text-[10px] text-muted-foreground">Errors</p>
                   </div>
                   {estimateDetectedErrors > 0 && (
@@ -1679,45 +1756,112 @@ export default function BulkImportModal({
 
               {estimateDetectedErrors > 0 && estimateErrorsExpanded && (
                 <div className="mt-3 overflow-hidden rounded-[14px] border border-border">
+                  {/* Same Skip All / Skip-Restore / Edit pattern as Normal
+                      Mode's Errors panel. Skip All covers rows beyond the
+                      20-row display cap too. */}
                   <div className="flex items-center justify-between gap-2 border-b border-border bg-muted/20 px-3 py-2">
                     <p className="text-[11px] text-muted-foreground">
-                      The following rows were skipped during import because of validation errors.
+                      Fix each flagged row with Edit, or Skip it to leave it out of this import.
                     </p>
-                    <button
-                      type="button"
-                      onClick={downloadEstimateReport}
-                      className="flex shrink-0 items-center gap-1 rounded-md border border-border px-2 py-1 text-[10px] font-medium text-foreground transition-colors hover:bg-muted"
-                    >
-                      <Download size={11} />
-                      Download Error Report (.xlsx)
-                    </button>
+                    <div className="flex shrink-0 items-center gap-1.5">
+                      <button
+                        type="button"
+                        onClick={downloadEstimateReport}
+                        className="flex items-center gap-1 rounded-md border border-border px-2 py-1 text-[10px] font-medium text-foreground transition-colors hover:bg-muted"
+                      >
+                        <Download size={11} />
+                        Error Report
+                      </button>
+                      {estimateUnresolvedCount > 0 && (
+                        <button
+                          type="button"
+                          onClick={skipAllEstimateErrors}
+                          className="rounded-md border border-border px-2 py-1 text-[10px] font-semibold text-foreground transition-colors hover:bg-muted"
+                        >
+                          Skip All
+                        </button>
+                      )}
+                    </div>
                   </div>
-                  <div className="max-h-[208px] overflow-auto">
-                    <table className="w-full border-collapse text-[10px]">
-                      <thead className="sticky top-0 z-10 bg-white shadow-[0_2px_2px_-1px_rgba(0,0,0,0.15)] dark:bg-[#2a2a2d]">
-                        <tr className="border-b border-border">
-                          <th className="whitespace-nowrap px-2.5 py-1.5 text-left font-semibold text-muted-foreground">Row</th>
-                          <th className="whitespace-nowrap px-2.5 py-1.5 text-left font-semibold text-muted-foreground">Shop Code</th>
-                          <th className="whitespace-nowrap px-2.5 py-1.5 text-left font-semibold text-muted-foreground">Shop Name</th>
-                          <th className="whitespace-nowrap px-2.5 py-1.5 text-left font-semibold text-muted-foreground">Column</th>
-                          <th className="whitespace-nowrap px-2.5 py-1.5 text-left font-semibold text-muted-foreground">Invalid Value</th>
-                          <th className="whitespace-nowrap px-2.5 py-1.5 text-left font-semibold text-muted-foreground">Error Message</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {estimateRowErrors.map((e, i) => (
-                          <tr key={`${e.row}-${e.column}-${i}`} className="border-b border-border last:border-0">
-                            <td className="whitespace-nowrap px-2.5 py-1.5 tabular-nums text-foreground">{e.row}</td>
-                            <td className="whitespace-nowrap px-2.5 py-1.5 text-foreground">{e.shopCode}</td>
-                            <td className="whitespace-nowrap px-2.5 py-1.5 text-foreground">{e.shopName}</td>
-                            <td className="whitespace-nowrap px-2.5 py-1.5 text-muted-foreground">{e.column}</td>
-                            <td className="whitespace-nowrap px-2.5 py-1.5 text-rose-600 dark:text-rose-400">{e.value || '(blank)'}</td>
-                            <td className="whitespace-nowrap px-2.5 py-1.5 text-muted-foreground">{e.message}</td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
+                  <div className="max-h-[280px] divide-y divide-border overflow-y-auto">
+                    {estimateErrorRowGroups.slice(0, 20).map((group) => {
+                      const editing = estimateEditingRow === group.row;
+                      return (
+                        <div key={group.row} className={`px-3 py-2 transition-opacity ${group.skipped ? 'opacity-50' : ''}`}>
+                          <div className="flex items-center gap-3">
+                            <div className="min-w-0 flex-1">
+                              <div className="flex flex-wrap items-center gap-1.5">
+                                <p className="truncate text-[13px] font-medium text-foreground">{group.errors[0].shopCode}</p>
+                                {group.skipped
+                                  ? <SkippedBadge />
+                                  : group.errors.map((e) => (
+                                    <span key={e.column} className="inline-flex items-center rounded-md border border-rose-200 bg-rose-50 px-1.5 py-0.5 text-[10px] font-medium text-rose-700 dark:border-rose-500/30 dark:bg-rose-500/10 dark:text-rose-400">
+                                      {e.column}: {e.message}
+                                    </span>
+                                  ))}
+                              </div>
+                              <p className="mt-0.5 text-[11px] text-muted-foreground">
+                                Row {group.row} · {group.errors.map((e) => `${e.column} "${e.value || '(blank)'}"`).join(' · ')}
+                              </p>
+                            </div>
+                            <div className="flex shrink-0 items-center gap-1.5">
+                              <button
+                                type="button"
+                                onClick={() => toggleEstimateSkip(group.row)}
+                                className={`rounded-md border px-2.5 py-1.5 text-[11px] font-semibold transition-colors ${
+                                  group.skipped
+                                    ? 'border-foreground bg-foreground text-white dark:border-white dark:bg-white dark:text-[#1c1c1e]'
+                                    : 'border-border text-muted-foreground hover:bg-muted'
+                                }`}
+                              >
+                                {group.skipped ? 'Restore' : 'Skip'}
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => (editing ? setEstimateEditingRow(null) : startEstimateEdit(group.row, group.errors))}
+                                disabled={group.skipped}
+                                aria-label={`Edit row ${group.row}`}
+                                title="Edit"
+                                className="rounded-md border border-border p-1.5 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground disabled:cursor-not-allowed disabled:opacity-40"
+                              >
+                                <Pencil size={13} />
+                              </button>
+                            </div>
+                          </div>
+                          {editing && (
+                            <form
+                              onSubmit={(ev) => { ev.preventDefault(); saveEstimateEdit(); }}
+                              className="mt-2 flex flex-wrap items-end gap-2"
+                            >
+                              {Object.keys(estimateEditValues).map((column) => (
+                                <label key={column} className="flex flex-col gap-1">
+                                  <span className="text-[10px] font-medium text-muted-foreground">{column}</span>
+                                  <input
+                                    autoFocus={column === Object.keys(estimateEditValues)[0]}
+                                    value={estimateEditValues[column]}
+                                    onChange={(ev) => setEstimateEditValues((prev) => ({ ...prev, [column]: ev.target.value }))}
+                                    className="w-40 rounded-md border border-border bg-background px-2 py-1 text-[12px] text-foreground focus:outline-none focus:ring-2 focus:ring-[var(--ui-accent)]"
+                                  />
+                                </label>
+                              ))}
+                              <button type="submit" className="inline-flex items-center gap-1 rounded-md border border-border px-2.5 py-1.5 text-[11px] font-semibold text-foreground transition-colors hover:bg-muted">
+                                <Check size={12} />
+                                Save
+                              </button>
+                              <button type="button" onClick={() => setEstimateEditingRow(null)} className="rounded-md px-2 py-1.5 text-[11px] text-muted-foreground hover:bg-muted">
+                                Cancel
+                              </button>
+                            </form>
+                          )}
+                        </div>
+                      );
+                    })}
                   </div>
+                  {estimateErrorRowGroups.length > 20 && (
+                    <p className="border-t border-border px-3 py-2 text-[11px] text-muted-foreground">
+                      Showing 20 of {estimateErrorRowGroups.length} flagged rows. Download the Error Report to review the rest, or use Skip All.
+                    </p>
+                  )}
                 </div>
               )}
 
@@ -2485,7 +2629,7 @@ export default function BulkImportModal({
                 >
                   {!canContinue && <ChevronRight size={13} className="opacity-0" />}
                   {estimateMode
-                    ? 'Import Data'
+                    ? (estimateUnresolvedCount > 0 ? 'Resolve Errors' : 'Import Data')
                     : activeErrorCount > 0
                     ? 'Resolve Errors'
                     : !allDuplicatesDecided

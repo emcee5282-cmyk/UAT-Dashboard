@@ -43,6 +43,13 @@ export function formatImportTimestamp(serverTimestamp: string): string {
   return `${datePart} ${timePart}`;
 }
 
+// Every wallet type a Cashout Balance Limit file may carry in its "Bank"
+// column — the 4 e-wallets plus the BRAC/Islami Bank local-bank wallets.
+// Shared with the server's own Cashout file guard
+// (estimatedOpeningService.ts) so the preview flags exactly the rows the
+// import would reject. Send Money has no such guard.
+export const CASHOUT_ESTIMATE_WALLET_TYPES: ReadonlySet<string> = new Set(['BKASH', 'NAGAD', 'ROCKET', 'UPAY', 'BRAK', 'IBBL']);
+
 export type ParsedEstimateRows = {
   detectedShops: number;
   detectedErrors: number;
@@ -54,11 +61,15 @@ export type ParsedEstimateRows = {
 // flagged as an error here is actually excluded at import time too, not
 // silently included with a wrong total. Throws if the file is missing its
 // "Account" column, matching the server's own findColumn behavior.
+// allowedWalletTypes (Cashout only) also flags a row whose "Bank" isn't one
+// of them — checked on every row with a non-blank Bank, skip-listed shops
+// included, because the server's wallet totals count every such row.
 export function parseEstimateRows(
   headerRow: (string | number)[],
   dataRows: (string | number)[][],
   extractShopName: (raw: string | number) => string,
-  skipShopNames: string[]
+  skipShopNames: string[],
+  allowedWalletTypes?: ReadonlySet<string>
 ): ParsedEstimateRows {
   const accountCol = headerRow.findIndex((h) => String(h ?? '').trim().toLowerCase() === 'account');
   if (accountCol === -1) {
@@ -66,6 +77,7 @@ export function parseEstimateRows(
   }
   const dpCol = headerRow.findIndex((h) => String(h ?? '').trim().toLowerCase() === 'total dp');
   const wdCol = headerRow.findIndex((h) => String(h ?? '').trim().toLowerCase() === 'total wd');
+  const bankCol = headerRow.findIndex((h) => String(h ?? '').trim().toLowerCase() === 'bank');
 
   const errorRowNumbers = new Set<number>();
   const rowErrors: EstimateRowError[] = [];
@@ -76,6 +88,17 @@ export function parseEstimateRows(
     const rawAccount = row[accountCol];
     const shopCode = String(rawAccount ?? '').trim() || '(blank)';
     const shopName = extractShopName(rawAccount);
+
+    if (allowedWalletTypes && bankCol !== -1) {
+      const bank = String(row[bankCol] ?? '').trim().toUpperCase();
+      if (bank && !allowedWalletTypes.has(bank)) {
+        errorRowNumbers.add(rowNumber);
+        rowErrors.push({
+          row: rowNumber, shopCode, shopName: shopName || '—', column: 'Bank',
+          value: String(row[bankCol] ?? ''), message: 'Unknown wallet type',
+        });
+      }
+    }
 
     if (!shopName) {
       errorRowNumbers.add(rowNumber);
