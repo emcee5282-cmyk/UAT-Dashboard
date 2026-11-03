@@ -138,11 +138,18 @@ const WALLET_TYPE_ORDER = [
 const WALLET_TYPE_ABBREVIATIONS: Record<string, string> = Object.fromEntries(
   WALLET_TYPE_ORDER.map(({ match, abbreviation }) => [match, abbreviation])
 );
+// Local-bank wallets (Bank "BRAK" / "IBBL") — Type column label only. Kept
+// out of WALLET_TYPE_ABBREVIATIONS above: that map also builds the
+// BK/NG/RK/UP per-wallet keys matched against the Opening roster.
+const LOCAL_BANK_TYPE_ORDER = [
+  { match: 'BRAK', abbreviation: 'LB Brack' },
+  { match: 'IBBL', abbreviation: 'LB IBBL' },
+];
 
 function computeWalletType(types: string[]): string {
   const normalized = new Set(types.map((raw) => raw.trim().toUpperCase()).filter((t) => t && t !== '-'));
 
-  const abbreviations = WALLET_TYPE_ORDER
+  const abbreviations = [...WALLET_TYPE_ORDER, ...LOCAL_BANK_TYPE_ORDER]
     .filter(({ match }) => normalized.has(match))
     .map(({ abbreviation }) => abbreviation);
 
@@ -165,6 +172,8 @@ const WALLET_TYPE_FILTER_OPTIONS = [
   { label: 'Nagad', abbreviation: 'NG' },
   { label: 'Rocket', abbreviation: 'RK' },
   { label: 'UPay', abbreviation: 'UP' },
+  { label: 'LB Brack', abbreviation: 'LB Brack' },
+  { label: 'LB IBBL', abbreviation: 'LB IBBL' },
 ];
 
 const WALLET_TYPE_FILTER_LABELS = [...WALLET_TYPE_FILTER_OPTIONS.map((opt) => opt.label), '-'];
