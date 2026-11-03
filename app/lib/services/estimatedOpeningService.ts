@@ -53,6 +53,11 @@ const WALLET_TYPE_TO_OPENING_SUFFIX: Record<string, string> = {
 };
 
 const KNOWN_WALLET_TYPES = new Set(['BKASH', 'NAGAD', 'ROCKET', 'UPAY']);
+// Local-bank wallets (BRAC / Islami Bank) that real Cashout files now carry —
+// accepted by the Cashout file guard below only. Deliberately NOT in
+// KNOWN_WALLET_TYPES: that set also normalizes wallet_transactions' free-text
+// wallet names, which never hold these.
+const CASHOUT_FILE_WALLET_TYPES = new Set([...KNOWN_WALLET_TYPES, 'BRAK', 'IBBL']);
 // wallet_transactions.wallet is free-text (typed by whoever uploaded the
 // Settlement/Top Up file) and has confirmed live typos ('ROCJET', 'NAGA',
 // 'NAGAd') — trim+uppercase normalizes casing but can't fix a typo, so
@@ -127,11 +132,11 @@ export async function importEstimatedOpeningFromUpload(
   //      sides, while rejecting both a tiny/malformed file (upload 29's 132)
   //      and an accidentally-swapped Send Money file (~16,500 shops).
   if (product === 'cashout') {
-    const badWalletTypes = walletTotals.map((w) => w.wallet).filter((w) => !KNOWN_WALLET_TYPES.has(w.toUpperCase()));
+    const badWalletTypes = walletTotals.map((w) => w.wallet).filter((w) => !CASHOUT_FILE_WALLET_TYPES.has(w.toUpperCase()));
     if (badWalletTypes.length > 0) {
       throw new Error(
         `Upload rejected: this doesn't look like a Cashout file — found wallet type(s) ${badWalletTypes.join(', ')}, ` +
-        `which don't match Bkash/Nagad/Rocket/UPay. Confirm this is the correct Cashout BalanceLimit file.`
+        `which don't match Bkash/Nagad/Rocket/UPay/BRAK/IBBL. Confirm this is the correct Cashout BalanceLimit file.`
       );
     }
     if (shopTotals.length < 1000 || shopTotals.length > 5000) {
