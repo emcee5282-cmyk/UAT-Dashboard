@@ -30,7 +30,7 @@ import { eq, and, inArray, sql } from 'drizzle-orm';
 import { getDb } from '../db/client';
 import * as schema from '../db/schema';
 import { aggregateByShop, aggregateByShopWithLines, aggregateByWalletType, formatUploadTimestamp } from '../estimatedOpening';
-import { CASHOUT_ESTIMATE_WALLET_TYPES } from '../estimateUpload';
+import { CASHOUT_ESTIMATE_WALLET_TYPES, findBankColumn, isIgnoredWalletRow } from '../estimateUpload';
 import { extractRealShopName, extractSendMoneyShopName, extractOpeningWalletTypeSuffix } from '../realShopName';
 import { readLatestOpeningImportCutoffPg } from '../db/read/rosterSyncLog';
 import { toBusinessDate, manilaFields } from '../businessDate';
@@ -105,6 +105,12 @@ export async function importEstimatedOpeningFromUpload(
   // aggregateByShop) — same rules the old Sheets path already enforced,
   // not new ones.
   const extractShopName = product === 'cashout' ? extractRealShopName : extractSendMoneyShopName;
+  // Cashout's ignored wallet types (BKASHM) are dropped before anything is
+  // aggregated — not imported, and not tripping the file guard below.
+  if (product === 'cashout') {
+    const bankCol = findBankColumn(headerRow);
+    dataRows = dataRows.filter((row) => !isIgnoredWalletRow(row, bankCol));
+  }
   const shopTotals = aggregateByShop(headerRow, dataRows, extractShopName);
   const walletTotals = aggregateByWalletType(headerRow, dataRows, product);
   // Same raw rows, kept split by their own raw Account text — only actually

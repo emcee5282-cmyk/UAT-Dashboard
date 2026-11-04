@@ -50,6 +50,19 @@ export function formatImportTimestamp(serverTimestamp: string): string {
 // import would reject. Send Money has no such guard.
 export const CASHOUT_ESTIMATE_WALLET_TYPES: ReadonlySet<string> = new Set(['BKASH', 'NAGAD', 'ROCKET', 'UPAY', 'BRAK', 'IBBL']);
 
+// Cashout wallet types dropped from the file silently — per explicit
+// instruction, not flagged, not imported (for now). The server drops the
+// same rows (dropIgnoredWalletRows) before aggregating.
+export const CASHOUT_IGNORED_WALLET_TYPES: ReadonlySet<string> = new Set(['BKASHM']);
+
+export function findBankColumn(headerRow: (string | number)[]): number {
+  return headerRow.findIndex((h) => String(h ?? '').trim().toLowerCase() === 'bank');
+}
+
+export function isIgnoredWalletRow(row: (string | number)[], bankCol: number): boolean {
+  return bankCol !== -1 && CASHOUT_IGNORED_WALLET_TYPES.has(String(row[bankCol] ?? '').trim().toUpperCase());
+}
+
 export type ParsedEstimateRows = {
   detectedShops: number;
   detectedErrors: number;
@@ -77,14 +90,21 @@ export function parseEstimateRows(
   }
   const dpCol = headerRow.findIndex((h) => String(h ?? '').trim().toLowerCase() === 'total dp');
   const wdCol = headerRow.findIndex((h) => String(h ?? '').trim().toLowerCase() === 'total wd');
-  const bankCol = headerRow.findIndex((h) => String(h ?? '').trim().toLowerCase() === 'bank');
+  const bankCol = findBankColumn(headerRow);
 
   const errorRowNumbers = new Set<number>();
   const rowErrors: EstimateRowError[] = [];
+  let ignoredRows = 0;
   dataRows.forEach((row, i) => {
     // +1 for 0-index, +1 for the header row — matches the row number as it
     // appears in the spreadsheet itself.
     const rowNumber = i + 2;
+    // Cashout only (allowedWalletTypes set) — silently dropped, see
+    // CASHOUT_IGNORED_WALLET_TYPES.
+    if (allowedWalletTypes && isIgnoredWalletRow(row, bankCol)) {
+      ignoredRows++;
+      return;
+    }
     const rawAccount = row[accountCol];
     const shopCode = String(rawAccount ?? '').trim() || '(blank)';
     const shopName = extractShopName(rawAccount);
@@ -126,5 +146,5 @@ export function parseEstimateRows(
     }
   });
 
-  return { detectedShops: dataRows.length, detectedErrors: errorRowNumbers.size, rowErrors };
+  return { detectedShops: dataRows.length - ignoredRows, detectedErrors: errorRowNumbers.size, rowErrors };
 }
