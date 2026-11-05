@@ -38,10 +38,20 @@ function aggregateByLeader(rows: UnreconciledBalanceRow[]): Map<string, Unreconc
     existing.balanceInside += r.balanceInside;
     existing.agentWithdrawal += r.agentWithdrawal;
     existing.sdp += r.sdp;
-    existing.sdpVsBalance += r.sdpVsBalance;
     map.set(r.leader, existing);
   }
+  for (const leaderRow of map.values()) leaderRow.sdpVsBalance = withheldBalance(leaderRow);
   return map;
+}
+
+// WITHHELD BALANCE — per explicit instruction, the leader's own net Total
+// Discrepancy (negative shops already deducted) minus Total SDP, computed on
+// the leader's totals. Not the sum of the shops' own SDP vs Balance figures
+// (that per-shop Company Balance − SDP rule counted wallet money and never
+// let one shop's SDP offset another's). Can be negative; the TG images show
+// a negative as 0, page/export keep the real sign.
+function withheldBalance(row: Pick<UnreconciledLeaderRow, 'agentWithdrawal' | 'sdp'>): number {
+  return row.agentWithdrawal - row.sdp;
 }
 
 // Default order for every consumer (page's initial render, export, TG
@@ -59,15 +69,15 @@ export function buildUnreconciledView(rows: UnreconciledBalanceRow[], view: Unre
     for (const leader of leaders) {
       const c = cashoutMap.get(leader) ?? emptyLeaderRow(leader);
       const s = sendMoneyMap.get(leader) ?? emptyLeaderRow(leader);
-      result.push({
+      const merged = {
         leader,
         shopCount: c.shopCount + s.shopCount,
         companyBalance: c.companyBalance + s.companyBalance,
         balanceInside: c.balanceInside + s.balanceInside,
         agentWithdrawal: c.agentWithdrawal + s.agentWithdrawal,
         sdp: c.sdp + s.sdp,
-        sdpVsBalance: c.sdpVsBalance + s.sdpVsBalance,
-      });
+      };
+      result.push({ ...merged, sdpVsBalance: withheldBalance(merged) });
     }
     return result.sort(byAgentWithdrawalDesc);
   }

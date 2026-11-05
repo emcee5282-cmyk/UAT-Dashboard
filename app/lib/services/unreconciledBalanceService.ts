@@ -14,9 +14,9 @@ export type UnreconciledBalanceRow = {
   balanceInside: number;
   agentWithdrawal: number;
   sdp: number;
-  // "WITHHELD BALANCE" on the page/export/images — the Balance tab's own
-  // SDP vs Balance figure (computeSdpVsBalance in balanceEngine.ts),
-  // reused unchanged, never recomputed here.
+  // The Balance tab's own per-shop SDP vs Balance figure (computeSdpVsBalance
+  // in balanceEngine.ts). No longer feeds "WITHHELD BALANCE" — that's now
+  // computed per leader in unreconciledBalanceAggregate.ts.
   sdpVsBalance: number;
 };
 
