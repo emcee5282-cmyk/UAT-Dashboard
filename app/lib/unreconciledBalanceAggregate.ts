@@ -48,10 +48,11 @@ function aggregateByLeader(rows: UnreconciledBalanceRow[]): Map<string, Unreconc
 // Discrepancy (negative shops already deducted) minus Total SDP, computed on
 // the leader's totals. Not the sum of the shops' own SDP vs Balance figures
 // (that per-shop Company Balance − SDP rule counted wallet money and never
-// let one shop's SDP offset another's). Can be negative; the TG images show
-// a negative as 0, page/export keep the real sign.
+// let one shop's SDP offset another's). Floored at 0 everywhere (page,
+// export, TG images) — per explicit instruction, SDP covering the whole
+// discrepancy means nothing is withheld, so there's nothing to display.
 function withheldBalance(row: Pick<UnreconciledLeaderRow, 'agentWithdrawal' | 'sdp'>): number {
-  return row.agentWithdrawal - row.sdp;
+  return Math.max(row.agentWithdrawal - row.sdp, 0);
 }
 
 // Default order for every consumer (page's initial render, export, TG
