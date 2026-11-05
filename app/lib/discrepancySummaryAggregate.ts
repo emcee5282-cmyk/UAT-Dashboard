@@ -89,7 +89,10 @@ export function buildDiscrepancySummaryView(rows: DiscrepancySummaryRow[], view:
 
   const leaders: DiscrepancyLeaderGroup[] = [];
   for (const [leader, leaderRows] of byLeader) {
-    const included = leaderRows.filter((r) => r.agentWithdrawal > 0);
+    // A shop whose Company Balance displays as 0 is left out entirely (not
+    // listed, its SDP not counted in the leader's total) even when it has an
+    // SDP or a sub-1 Agent Withdrawal — per explicit instruction.
+    const included = leaderRows.filter((r) => r.agentWithdrawal > 0 && Math.round(r.companyBalance) !== 0);
     const hasIncludedShops = included.length > 0;
     const totals = sumIncluded(included);
 
