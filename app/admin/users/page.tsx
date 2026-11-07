@@ -5,7 +5,7 @@ import { useRouter, usePathname, useSearchParams } from 'next/navigation';
 import { Manrope } from 'next/font/google';
 import { Moon, Sun } from 'lucide-react';
 import PageHeader from '@/app/components/PageHeader';
-import UnderlineTabs from './UnderlineTabs';
+import PillTabs from '@/app/components/PillTabs';
 import AccountMenu from '@/app/components/AccountMenu';
 import { useTheme } from '@/app/components/ThemeProvider';
 import { useCan } from '@/app/lib/auth/useSession';
@@ -110,14 +110,14 @@ export default function UsersPage() {
                 key={roleFilter ?? ''}
                 refreshKey={refreshKey}
                 initialRole={roleFilter}
-                tabs={<UnderlineTabs tabs={tabs} active={tab} onSelect={(k) => navigate(k)} />}
+                tabs={<PillTabs tabs={tabs} active={tab} onSelect={(k) => navigate(k)} />}
               />
             </div>
           ) : (
             <>
               {/* Same -7px pull-up as Pending Balance (see the comment there). */}
               <div className="-mt-[7px]">
-                <UnderlineTabs tabs={tabs} active={tab} onSelect={(k) => navigate(k)} />
+                <PillTabs tabs={tabs} active={tab} onSelect={(k) => navigate(k)} />
               </div>
               <RolesTab refreshKey={refreshKey} onShowUsers={(roleKey) => navigate('users', roleKey)} />
             </>
