@@ -14,9 +14,13 @@ import { normalizeOpeningAgentName, extractOpeningWalletTypeSuffix, extractRealS
 // (blank result) keeps the ORIGINAL raw text unchanged, exactly matching
 // today's behavior — this can only IMPROVE a currently-broken/ambiguous
 // match, never break a currently-working one.
+// Cashout also falls back to normalizeOpeningAgentName — the same strip the
+// Opening import applies when it stores agent_code — so a glued-suffix cell
+// like "RANGER028NG" (which extractRealShopName can't parse) resolves to the
+// stored "RANGER028" instead of being flagged as an Unregistered Agent.
 function resolveTransactionAgentName(raw: string, product?: 'cashout' | 'sendmoney'): string {
-  const extracted = product === 'sendmoney' ? extractSendMoneyShopName(raw) : extractRealShopName(raw);
-  return extracted || raw;
+  if (product === 'sendmoney') return extractSendMoneyShopName(raw) || raw;
+  return extractRealShopName(raw) || normalizeOpeningAgentName(raw) || raw;
 }
 
 // Thin, reusable wrapper around the `xlsx` library — every bulk-import
