@@ -26,6 +26,7 @@ import {
 import { getBusinessToday, toBusinessDate, manilaFields } from '../businessDate';
 import { readEstimatedOpeningPg } from '../db/read/estimatedOpening';
 import { extractOpeningWalletTypeSuffix } from '../realShopName';
+import { OPENING_SUFFIX_TO_WALLET_TYPE, WALLET_TYPE_TO_OPENING_SUFFIX } from '../shopDisplayName';
 import { MemoCache } from '../server/memoCache';
 
 export type Product = 'cashout' | 'sendmoney';
@@ -433,15 +434,10 @@ export async function getAgentBalance(product: Product, agentCode: string): Prom
 // duplicated here since this is the one place server-side that needs to go
 // the OTHER direction (abbreviation -> full name) to match a line to its
 // real wallet.
-const OPENING_SUFFIX_TO_WALLET_TYPE: Record<string, string> = {
-  BK: 'BKASH', NG: 'NAGAD', RK: 'ROCKET', UP: 'UPAY',
-};
-// The other direction — needed to reconstruct a synthesized raw display
+// Both directions live in shopDisplayName.ts (shared with Settlement/Top
+// Up's display name); the reverse map reconstructs a synthesized raw display
 // name (see the "orphan wallet" handling below) for a real wallet that has
 // no opening_wallet_lines row of its own to source one from.
-const WALLET_TYPE_TO_OPENING_SUFFIX: Record<string, string> = {
-  BKASH: 'BK', NAGAD: 'NG', ROCKET: 'RK', UPAY: 'UP',
-};
 
 type WalletRowForCalc = {
   balance: string | null;
