@@ -15,6 +15,25 @@ export const WALLET_TYPE_TO_OPENING_SUFFIX: Record<string, string> = {
   BKASH: 'BK', NAGAD: 'NG', ROCKET: 'RK', UPAY: 'UP',
 };
 
+// The names Opening shows for one shop — its wallet-line names if it has
+// any, else its bare agent_code. Used to build the Settlement/Top Up
+// roster client-side (same rule as shopNameLookup.ts server-side).
+export function openingShopNames(agentCode: string, lineRawNames: string[]): string[] {
+  return lineRawNames.length > 0 ? lineRawNames : [agentCode];
+}
+
+// A name carrying a wallet suffix ("...-BK", "RANGER028NG") must be posted
+// with that same wallet — otherwise the row is shown and counted under a
+// different wallet line than the name says. An unrecognized wallet passes
+// here (checkWalletField already flags it); a name with no suffix always passes.
+export function shopNameWalletMismatch(shopName: string, wallet: string): { expectedSuffix: string } | null {
+  const suffix = extractOpeningWalletTypeSuffix(shopName);
+  if (!suffix) return null;
+  const walletSuffix = WALLET_TYPE_TO_OPENING_SUFFIX[wallet.trim().toUpperCase()];
+  if (!walletSuffix || walletSuffix === suffix) return null;
+  return { expectedSuffix: suffix };
+}
+
 export function resolveShopDisplayName(agentCode: string, lineRawNames: string[], wallet: string | null | undefined): string {
   if (lineRawNames.length === 0) return agentCode;
   // Stored wallet text is mixed-case ("BKASH"/"Bkash"/"bkash") — compare upper.

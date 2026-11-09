@@ -458,7 +458,7 @@ export async function readEstimatedOpeningDisplayPg(product: Product): Promise<{
       (isTopup ? agentCodesWithTopupRow : agentCodesWithSettlementRow).add(t.agentCode);
 
       if (t.wallet) {
-        const key = `${t.agentId}:${t.wallet}`;
+        const key = `${t.agentId}:${t.wallet.trim().toUpperCase()}`; // stored wallet text is mixed-case ("Bkash"/"bkash") — line lookups use upper
         const walletTypeMaps = topupByAgentWalletAndType.has(key)
           ? { topup: topupByAgentWalletAndType.get(key)!, settlement: settlementByAgentWalletAndType.get(key)! }
           : { topup: zeroedTypeMap(TOPUP_TYPE_OPTIONS), settlement: zeroedTypeMap(SETTLEMENT_REMARKS_SUGGESTIONS) };

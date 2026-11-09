@@ -44,6 +44,7 @@ import BulkImportModal from '../components/BulkImportModal';
 import BulkEditModal, { type BulkEditUpdates } from '../components/BulkEditModal';
 import { classifyFetchError, type ClassifiedError } from '../lib/errors';
 import { displayNum, parseAmount, fmt, fmtAbbrev, exportNum } from '@/app/lib/format';
+import { openingShopNames } from '@/app/lib/shopDisplayName';
 import { getPreference, setPreference } from '../lib/preferences';
 import DateRangeFilter, { presetOf, daysInRange, type DateRangeValue } from '../components/DateRangeFilter';
 import { calculateColumnLayout, type ColumnLayout } from '../lib/columnLayout';
@@ -1153,10 +1154,12 @@ export default function StlmPage() {
       // Opening's own already-migrated Postgres read (consumed here
       // read-only, not modified).
       if (openingRes.ok) {
-        const openingRows: { agentCode: string }[] = await openingRes.json();
+        const openingRows: { agentCode: string; walletOpening?: { rawAgentName: string }[] }[] = await openingRes.json();
         const names = new Set<string>();
         openingRows.forEach((r) => {
-          if (r.agentCode && r.agentCode !== '-' && r.agentCode !== 'OLD') names.add(r.agentCode.toUpperCase());
+          if (!r.agentCode || r.agentCode === '-' || r.agentCode === 'OLD') return;
+          // Opening's own names (wallet lines, else the bare code) — the only names an entry or upload may use.
+          for (const name of openingShopNames(r.agentCode, (r.walletOpening ?? []).map((l) => l.rawAgentName))) names.add(name.toUpperCase());
         });
         setOpeningAgentNames(Array.from(names).sort((a, b) => a.localeCompare(b)));
       }
@@ -2120,7 +2123,7 @@ export default function StlmPage() {
           // Uppercase, not toProperCase — Agent Name's canonical form is
           // full caps (matches the live table's own .toUpperCase()
           // display), unlike Wallet below which really is Title Case.
-          agentName: editingRow.agentName.toUpperCase(),
+          agentName: editingRow.displayName.toUpperCase(),
           wallet: toProperCase(editingRow.wallet),
           amount: String(parseAmount(editingRow.amount)),
           remarks: editingRow.remarks,

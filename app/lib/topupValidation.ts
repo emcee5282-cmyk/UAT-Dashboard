@@ -3,6 +3,7 @@ import {
   checkBrandField,
   checkAgentNameField,
   checkWalletField,
+  checkShopNameWalletField,
   checkAmountField,
   checkDateField,
   type ValidationEntry,
@@ -20,6 +21,7 @@ export type TopUpValidationConfig = {
   walletOptions: string[];
   agentRoster: string[];
   typeOptions: string[];
+  checkShopNameWallet?: boolean; // Cashout only — see settlementValidation.ts's ValidationConfig
 };
 
 export function checkTypeField(value: string, config: Pick<TopUpValidationConfig, 'typeOptions'>): FieldCheckResult {
@@ -42,6 +44,7 @@ export function validateTopUpRows(rows: TopUpImportRow[], config: TopUpValidatio
     addIssue(entries, row, 'Brand', row.brand, checkBrandField(row.brand, config), 'error');
     addIssue(entries, row, 'Agent Name', row.agentName, checkAgentNameField(row.agentName, config), 'error');
     addIssue(entries, row, 'Wallet', row.wallet, checkWalletField(row.wallet, config), 'error');
+    addIssue(entries, row, 'Wallet', row.wallet, checkShopNameWalletField(row.agentName, row.wallet, config), 'error');
     addIssue(entries, row, 'Amount', row.amount, checkAmountField(row.amount), 'error');
     addIssue(entries, row, 'Date', row.date, checkDateField(row.date), 'error');
     addIssue(entries, row, 'Type', row.type, checkTypeField(row.type, config), 'error');
