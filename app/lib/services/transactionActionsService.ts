@@ -25,7 +25,8 @@
 import { eq, and, inArray, sql } from 'drizzle-orm';
 import { getDb } from '../db/client';
 import * as schema from '../db/schema';
-import { checkWalletField, checkAmountField, checkDateField, parseImportDate } from '../settlementValidation';
+import { checkWalletField, checkShopNameWalletField, checkAmountField, checkDateField, parseImportDate } from '../settlementValidation';
+import { loadShopNameToAgentId } from './shopNameLookup';
 import { parseAmount } from '../format';
 import { manilaFields } from '../businessDate';
 import { invalidateBalanceCache } from './balanceService';
@@ -58,15 +59,18 @@ function toStorageDate(display: string): string {
   return `${year}-${String(month + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
 }
 
+// Same name rules as the upload (shopNameLookup.ts) — for Cashout, the
+// exact name Opening shows, never a split shop's bare code.
 async function resolveAgentId(product: Product, agentName: string): Promise<number> {
-  const db = getDb();
-  const trimmed = agentName.trim();
-  const [agent] = await db
-    .select({ id: schema.agents.id })
-    .from(schema.agents)
-    .where(and(eq(schema.agents.product, product), sql`lower(${schema.agents.agentCode}) = lower(${trimmed})`));
-  if (!agent) throw new TransactionActionError(`Agent "${agentName}" not found in the roster.`, 400);
-  return agent.id;
+  const agentId = (await loadShopNameToAgentId(product)).get(agentName.trim().toLowerCase());
+  if (!agentId) throw new TransactionActionError(`Shop "${agentName}" not found in Opening — use the exact name the Opening page shows.`, 400);
+  return agentId;
+}
+
+function assertWalletMatchesShopName(product: Product, agentName: string, wallet: string): void {
+  if (product !== 'cashout') return;
+  const result = checkShopNameWalletField(agentName, wallet, { walletOptions: WALLET_OPTIONS, checkShopNameWallet: true });
+  if (result) throw new TransactionActionError(result.message, 400);
 }
 
 export type TransactionFieldUpdates = {
@@ -92,6 +96,9 @@ export async function updateTransactions(
   if (updates.amount !== undefined) {
     const result = checkAmountField(updates.amount);
     if (result) throw new TransactionActionError(result.message, 400);
+  }
+  if (updates.agentName !== undefined && updates.wallet !== undefined) {
+    assertWalletMatchesShopName(product, updates.agentName, updates.wallet);
   }
   const storageDate = updates.date !== undefined ? toStorageDate(updates.date) : undefined;
 
@@ -159,16 +166,13 @@ export async function createTransaction(product: Product, transactionType: Trans
   const db = getDb();
   let insertedId = 0;
 
-  await db.transaction(async (tx) => {
-    const [agent] = await tx
-      .select({ id: schema.agents.id })
-      .from(schema.agents)
-      .where(and(eq(schema.agents.product, product), sql`lower(${schema.agents.agentCode}) = lower(${agentName})`));
-    if (!agent) throw new TransactionActionError(`Agent "${input.agentName}" not found in the roster.`, 400);
+  assertWalletMatchesShopName(product, agentName, input.wallet);
+  const agentId = await resolveAgentId(product, agentName);
 
+  await db.transaction(async (tx) => {
     const [inserted] = await tx.insert(schema.walletTransactions).values({
       product,
-      agentId: agent.id,
+      agentId,
       transactionType,
       amount: parseAmount(input.amount).toFixed(2),
       wallet: input.wallet || null,

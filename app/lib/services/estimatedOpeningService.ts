@@ -223,7 +223,7 @@ export async function importEstimatedOpeningFromUpload(
     txByAgentId.set(t.agentId, bucket);
 
     if (t.wallet) {
-      const key = `${t.agentId}:${t.wallet}`;
+      const key = `${t.agentId}:${t.wallet.trim().toUpperCase()}`; // stored wallet text is mixed-case ("Bkash"/"bkash") — line lookups use upper
       const walletBucket = txByAgentWallet.get(key) ?? { topUp: 0, settlement: 0 };
       if (t.transactionType === 'topup') walletBucket.topUp += n(t.amount); else walletBucket.settlement += n(t.amount);
       txByAgentWallet.set(key, walletBucket);

@@ -1,26 +1,17 @@
 import * as XLSX from 'xlsx';
-import { normalizeOpeningAgentName, extractOpeningWalletTypeSuffix, extractRealShopName, extractSendMoneyShopName } from './realShopName';
+import { normalizeOpeningAgentName, extractOpeningWalletTypeSuffix, extractSendMoneyShopName } from './realShopName';
 
-// Settlement/Top Up's own "Agent"/"To Agent" cell mostly already carries a
-// clean bare code, but — confirmed live via DRUID004 (2 real ₱50,000
-// settlements landed on a stale duplicate agent instead of the real, active
-// shop) — the SAME raw per-wallet account text Opening/Balance Limit both
-// already handle (e.g. "N-M1AG-S8-DRUID004-BK") sometimes appears here too.
-// Unlike importOpeningFile's own agentName, this pipeline has no roster
-// available at parse time to decide "does the extracted code actually
-// match a real shop" — so instead of Opening's stricter contract, this
-// tries the same extraction Balance Limit already trusts and ONLY uses it
-// when it produces something non-empty; a cell extraction can't resolve
-// (blank result) keeps the ORIGINAL raw text unchanged, exactly matching
-// today's behavior — this can only IMPROVE a currently-broken/ambiguous
-// match, never break a currently-working one.
-// Cashout also falls back to normalizeOpeningAgentName — the same strip the
-// Opening import applies when it stores agent_code — so a glued-suffix cell
-// like "RANGER028NG" (which extractRealShopName can't parse) resolves to the
-// stored "RANGER028" instead of being flagged as an Unregistered Agent.
+// Settlement/Top Up's own "Agent"/"To Agent" cell. Send Money still
+// extracts the bare shop code from a raw per-wallet string, keeping the
+// raw text when extraction can't resolve. Cashout no longer extracts anything: Opening is the single source of
+// truth for shop names, so the cell must BE an Opening name (e.g.
+// "U-M1AG-L4-BITTER004-BK"), checked as-is against that roster
+// (shopNameLookup.ts) — a bare "BITTER004" for a shop Opening splits into
+// wallet lines is flagged, not silently rewritten. Whitespace is removed
+// the same way the Opening import cleans its own raw names.
 function resolveTransactionAgentName(raw: string, product?: 'cashout' | 'sendmoney'): string {
   if (product === 'sendmoney') return extractSendMoneyShopName(raw) || raw;
-  return extractRealShopName(raw) || normalizeOpeningAgentName(raw) || raw;
+  return raw.replace(/\s+/g, '');
 }
 
 // Thin, reusable wrapper around the `xlsx` library — every bulk-import

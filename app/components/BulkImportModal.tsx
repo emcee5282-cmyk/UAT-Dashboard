@@ -484,7 +484,8 @@ export default function BulkImportModal({
     agentRoster,
     remarksSuggestions,
     typeOptions,
-  }), [brandOptions, walletOptions, agentRoster, remarksSuggestions, typeOptions]);
+    checkShopNameWallet: product === 'cashout',
+  }), [brandOptions, walletOptions, agentRoster, remarksSuggestions, typeOptions, product]);
 
   // Shared by the initial scan AND every post-edit re-check — a single
   // source of truth for "given these rows, what issues do they have."

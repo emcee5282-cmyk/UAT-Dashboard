@@ -1,6 +1,7 @@
 import { excelSerialToDate, type SettlementImportRow } from './xlsxParser';
 import { manilaFields, manilaMidnight } from './businessDate';
 import { parseAmount } from './format';
+import { shopNameWalletMismatch, OPENING_SUFFIX_TO_WALLET_TYPE } from './shopDisplayName';
 
 // Validation Engine — deliberately separate from parsing/duplicate-
 // detection/summary (see xlsxParser.ts, duplicateDetector.ts,
@@ -26,6 +27,9 @@ export type ValidationConfig = {
   walletOptions: string[]; // depends on the active Settlement tab (Cashout vs Send Money)
   agentRoster: string[]; // known agents — a miss here still blocks (see below)
   remarksSuggestions: string[]; // a miss here is a Warning, never an Error
+  // Cashout only — a shop name carrying a wallet suffix must be posted with
+  // that wallet (see shopDisplayName.ts's shopNameWalletMismatch).
+  checkShopNameWallet?: boolean;
 };
 
 // Accepts whatever shape the official template's Date column actually
@@ -85,9 +89,19 @@ export function checkBrandField(value: string, config: Pick<ValidationConfig, 'b
 export function checkAgentNameField(value: string, config: Pick<ValidationConfig, 'agentRoster'>): FieldCheckResult {
   if (!value) return { message: 'Agent Name is required.' };
   if (!config.agentRoster.some((known) => known.toLowerCase() === value.toLowerCase())) {
-    return { message: 'Agent not found in Balance Shop.' };
+    return { message: 'Shop name not found in Opening — use the exact name the Opening page shows.' };
   }
   return null;
+}
+
+// Cross-field: only runs once Wallet itself is valid, so a bad wallet is
+// reported once (by checkWalletField), not twice.
+export function checkShopNameWalletField(agentName: string, wallet: string, config: Pick<ValidationConfig, 'walletOptions' | 'checkShopNameWallet'>): FieldCheckResult {
+  if (!config.checkShopNameWallet || !agentName || checkWalletField(wallet, config)) return null;
+  const mismatch = shopNameWalletMismatch(agentName, wallet);
+  if (!mismatch) return null;
+  const expected = OPENING_SUFFIX_TO_WALLET_TYPE[mismatch.expectedSuffix];
+  return { message: `Wallet "${wallet}" doesn't match shop "${agentName}" — its -${mismatch.expectedSuffix} line is ${expected}.` };
 }
 
 export function checkWalletField(value: string, config: Pick<ValidationConfig, 'walletOptions'>): FieldCheckResult {
@@ -134,6 +148,7 @@ export function validateSettlementRows(rows: SettlementImportRow[], config: Vali
     addIssue(entries, row, 'Brand', row.brand, checkBrandField(row.brand, config), 'error');
     addIssue(entries, row, 'Agent Name', row.agentName, checkAgentNameField(row.agentName, config), 'error');
     addIssue(entries, row, 'Wallet', row.wallet, checkWalletField(row.wallet, config), 'error');
+    addIssue(entries, row, 'Wallet', row.wallet, checkShopNameWalletField(row.agentName, row.wallet, config), 'error');
     addIssue(entries, row, 'Amount', row.amount, checkAmountField(row.amount), 'error');
     addIssue(entries, row, 'Date', row.date, checkDateField(row.date), 'error');
     addIssue(entries, row, 'Remarks', row.remarks, checkRemarksField(row.remarks, config), 'warning');

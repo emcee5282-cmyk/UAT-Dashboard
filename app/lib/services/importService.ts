@@ -35,6 +35,7 @@ import { getBusinessToday, manilaFields } from '../businessDate';
 import { extractRawWalletFamily, extractShopSeriesFamily, extractOpeningWalletTypeSuffix } from '../realShopName';
 import { buildGhostAgentMap, reconcileGhostsForImport } from './shopIdentityReconciliation';
 import { invalidateBalanceCache } from './balanceService';
+import { loadShopNameToAgentId } from './shopNameLookup';
 
 export type Product = 'cashout' | 'sendmoney';
 const WALLET_OPTIONS = ['BKASH', 'NAGAD', 'ROCKET', 'UPAY'];
@@ -183,7 +184,7 @@ export async function importSettlementFile(params: { product: Product; file: Fil
   const db = getDb();
   const parsed = await parseWorkbookFile(params.file);
   const rows = mapSettlementRows(parsed, params.product);
-  const agentIdByCode = await loadAgentMap(params.product);
+  const agentIdByCode = await loadShopNameToAgentId(params.product);
   const brandIdByCode = await loadBrandMap(params.product);
 
   const config: ValidationConfig = {
@@ -191,6 +192,7 @@ export async function importSettlementFile(params: { product: Product; file: Fil
     walletOptions: WALLET_OPTIONS,
     agentRoster: Array.from(agentIdByCode.keys()),
     remarksSuggestions: [],
+    checkShopNameWallet: params.product === 'cashout',
   };
   // Validated against the FULL, unfiltered row set — excludedRows (rows the
   // user Skipped client-side) is applied later, only to what actually gets
@@ -231,7 +233,7 @@ export async function importTopUpFile(params: { product: Product; file: File; fi
   const db = getDb();
   const parsed = await parseWorkbookFile(params.file);
   const rows = mapTopUpRows(parsed, params.product);
-  const agentIdByCode = await loadAgentMap(params.product);
+  const agentIdByCode = await loadShopNameToAgentId(params.product);
   const brandIdByCode = await loadBrandMap(params.product);
 
   // Phase 7 fix — this used to be a hardcoded, WRONG local array
@@ -250,6 +252,7 @@ export async function importTopUpFile(params: { product: Product; file: File; fi
     walletOptions: WALLET_OPTIONS,
     agentRoster: Array.from(agentIdByCode.keys()),
     typeOptions: TOPUP_TYPE_OPTIONS,
+    checkShopNameWallet: params.product === 'cashout',
   };
   const validationIssues = validateTopUpRows(rows, config);
   const withinFileDupes = detectDuplicatesWithinFile(rows);
@@ -311,7 +314,7 @@ async function insertTransactionRows<T extends { row: number; agentName: string 
   excludedRows?: Set<number>
 ): Promise<{ validCount: number; duplicateCount: number; errorCount: number; insertedIds: number[]; flaggedDuplicateIds: number[] }> {
   const db = getDb();
-  const agentIdByCode = await loadAgentMap(product);
+  const agentIdByCode = await loadShopNameToAgentId(product);
   const brandIdByCode = await loadBrandMap(product);
   let validCount = 0, duplicateCount = 0, errorCount = 0;
   const insertedIds: number[] = [];
