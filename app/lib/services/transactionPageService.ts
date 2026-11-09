@@ -27,6 +27,7 @@ import { getDb } from '../db/client';
 import * as schema from '../db/schema';
 import { getBusinessToday, manilaFields } from '../businessDate';
 import { getEffectiveBusinessToday } from './balanceService';
+import { resolveShopDisplayName } from '../shopDisplayName';
 
 export type Product = 'cashout' | 'sendmoney';
 export type TransactionType = 'settlement' | 'topup';
@@ -91,6 +92,7 @@ function toSlashDate(isoDate: string): string {
 
 type RawRow = {
   id: number;
+  agentId: number;
   agentCode: string;
   amount: string;
   wallet: string | null;
@@ -112,6 +114,7 @@ async function getTransactionRowsRaw(product: Product, transactionType: Transact
   return db
     .select({
       id: schema.walletTransactions.id,
+      agentId: schema.walletTransactions.agentId,
       agentCode: schema.agents.agentCode,
       amount: schema.walletTransactions.amount,
       wallet: schema.walletTransactions.wallet,
@@ -132,6 +135,23 @@ async function getTransactionRowsRaw(product: Product, transactionType: Transact
     ));
 }
 
+// Opening's per-wallet raw names for every shop in `rows`, so each row can
+// be shown under the same name Opening/Balance show it (shopDisplayName.ts).
+async function getOpeningLineNames(rows: RawRow[]): Promise<Map<number, string[]>> {
+  const agentIds = Array.from(new Set(rows.map((r) => r.agentId)));
+  const byAgent = new Map<number, string[]>();
+  if (agentIds.length === 0) return byAgent;
+  const lines = await getDb()
+    .select({ agentId: schema.openingWalletLines.agentId, rawAgentName: schema.openingWalletLines.rawAgentName })
+    .from(schema.openingWalletLines)
+    .where(inArray(schema.openingWalletLines.agentId, agentIds));
+  for (const l of lines) {
+    if (!byAgent.has(l.agentId)) byAgent.set(l.agentId, []);
+    byAgent.get(l.agentId)!.push(l.rawAgentName);
+  }
+  return byAgent;
+}
+
 
 // Distinct Manila business dates that have at least one row — powers the
 // date-range popover's calendar (disabled = not in this list) and Quick
@@ -150,7 +170,8 @@ export async function getAvailableTransactionDates(product: Product, transaction
 
 export type SettlementPgRow = {
   id: number;
-  agentName: string;
+  agentName: string; // bare agent_code — what Edit/Create resolve against, never shown
+  displayName: string; // Opening's own name for this row's shop+wallet (shopDisplayName.ts)
   amount: string;
   remarks: string;
   date: string;
@@ -180,9 +201,11 @@ export type TransactionPageData<Row> = {
 
 export async function getSettlementRows(product: Product, range?: DateRange): Promise<SettlementPgRow[]> {
   const rows = await getTransactionRowsRaw(product, 'settlement', range);
+  const lineNames = await getOpeningLineNames(rows);
   return rows.map((r) => ({
     id: r.id,
     agentName: r.agentCode,
+    displayName: resolveShopDisplayName(r.agentCode, lineNames.get(r.agentId) ?? [], r.wallet),
     amount: r.amount,
     remarks: r.remarks ?? '',
     date: toSlashDate(r.occurredOn),
@@ -211,7 +234,8 @@ export async function getSettlementPageData(product: Product, range?: DateRange)
 
 export type TopUpPgRow = {
   id: number;
-  agentName: string;
+  agentName: string; // bare agent_code — what Edit/Create resolve against, never shown
+  displayName: string; // Opening's own name for this row's shop+wallet (shopDisplayName.ts)
   wallet: string;
   amount: string;
   date: string;
@@ -235,9 +259,11 @@ const TOPUP_TYPE_LABEL: Record<Product, string> = {
 
 export async function getTopUpRows(product: Product, range?: DateRange): Promise<TopUpPgRow[]> {
   const rows = await getTransactionRowsRaw(product, 'topup', range);
+  const lineNames = await getOpeningLineNames(rows);
   return rows.map((r) => ({
     id: r.id,
     agentName: r.agentCode,
+    displayName: resolveShopDisplayName(r.agentCode, lineNames.get(r.agentId) ?? [], r.wallet),
     wallet: r.wallet ?? '',
     amount: r.amount,
     date: toSlashDate(r.occurredOn),

@@ -380,7 +380,8 @@ function highlightMatch(text: string, query: string): React.ReactNode {
 }
 
 type TopUpRow = {
-  agentName: string;
+  agentName: string; // bare agent_code — Edit/Create only
+  displayName: string; // Opening's name, what every view shows
   wallet: string;
   amount: string;
   date: string;
@@ -621,7 +622,7 @@ function RowActionsCell({ row, onEdit, onDelete }: { row: TopUpRow; onEdit: (row
     const text = [
       `Brand: ${row.brand}`,
       `Leader: ${toProperCase(row.leader)}`,
-      `Agent Name: ${toProperCase(row.agentName)}`,
+      `Agent Name: ${row.displayName.toUpperCase()}`,
       `Wallet: ${toProperCase(row.wallet)}`,
       `Amount: ${displayNum(row.amount)}`,
       `Type: ${toProperCase(row.type)}`,
@@ -724,7 +725,7 @@ function renderCell(row: TopUpRow, col: ColumnDef, style: CSSProperties, onEdit:
       return <div key={key} role="cell" style={style} title={leaderText} className={base}>{highlightMatch(leaderText, searchTerm)}</div>;
     }
     case COLUMN_IDS.AGENT_NAME: {
-      const agentNameText = row.agentName.toUpperCase();
+      const agentNameText = row.displayName.toUpperCase();
       return <div key={key} role="cell" style={style} title={agentNameText} className={base}>{highlightMatch(agentNameText, searchTerm)}</div>;
     }
     case COLUMN_IDS.WALLET:
@@ -897,7 +898,7 @@ export default function TopUpPage() {
         const body = await res.json().catch(() => null);
         throw new Error(body?.error || `Request failed with status ${res.status}`);
       }
-      type RawTopUpRow = { id: number; agentName: string; wallet: string; amount: string; date: string; type: string; leader: string; brand: string };
+      type RawTopUpRow = { id: number; agentName: string; displayName: string; wallet: string; amount: string; date: string; type: string; leader: string; brand: string };
       const data: {
         rows: RawTopUpRow[];
         total: number; count: number; previousPeriodTotal: number; previousPeriodCount: number;
@@ -906,6 +907,7 @@ export default function TopUpPage() {
       } = await res.json();
       const toTopUpRow = (r: RawTopUpRow): TopUpRow => ({
         agentName: r.agentName,
+        displayName: r.displayName,
         wallet: r.wallet,
         amount: r.amount,
         date: r.date,
@@ -969,7 +971,7 @@ export default function TopUpPage() {
   }, [searchTerm, sortColumn, sortDirection, rowsPerPage]);
 
   const searchedRows = topUpRows.filter((row) => {
-    const haystack = `${row.agentName} ${row.amount} ${row.type} ${row.date} ${row.wallet} ${row.brand} ${row.leader}`.toLowerCase();
+    const haystack = `${row.displayName} ${row.amount} ${row.type} ${row.date} ${row.wallet} ${row.brand} ${row.leader}`.toLowerCase();
     return haystack.includes(searchTerm.toLowerCase());
   });
 
@@ -1034,7 +1036,7 @@ export default function TopUpPage() {
   // against yesterday's unfiltered one.
   const previousPeriodFilteredRows = useMemo(() => {
     return previousPeriodRows.filter((row) => {
-      const haystack = `${row.agentName} ${row.amount} ${row.type} ${row.date} ${row.wallet} ${row.brand} ${row.leader}`.toLowerCase();
+      const haystack = `${row.displayName} ${row.amount} ${row.type} ${row.date} ${row.wallet} ${row.brand} ${row.leader}`.toLowerCase();
       if (!haystack.includes(searchTerm.toLowerCase())) return false;
       if (brandFilter[row.brand] === false) return false;
       if (leaderFilter[row.leader] === false) return false;
@@ -1095,7 +1097,7 @@ export default function TopUpPage() {
           case COLUMN_IDS.LEADER:
             return row.leader.toLowerCase();
           case COLUMN_IDS.AGENT_NAME:
-            return row.agentName.toLowerCase();
+            return row.displayName.toLowerCase();
           case COLUMN_IDS.WALLET:
             return row.wallet.toLowerCase();
           case COLUMN_IDS.AMOUNT:
@@ -1282,7 +1284,7 @@ export default function TopUpPage() {
         case COLUMN_IDS.LEADER:
           return row.leader;
         case COLUMN_IDS.AGENT_NAME:
-          return row.agentName;
+          return row.displayName;
         case COLUMN_IDS.WALLET:
           return row.wallet;
         case COLUMN_IDS.AMOUNT:
@@ -1796,7 +1798,7 @@ export default function TopUpPage() {
                         >
                           <input
                             type="checkbox"
-                            aria-label={`Select row for ${row.agentName}`}
+                            aria-label={`Select row for ${row.displayName}`}
                             checked={isChecked}
                             onChange={() => toggleRowSelection(row._id)}
                             className="h-[11px] w-[11px] cursor-pointer"
@@ -1830,7 +1832,7 @@ export default function TopUpPage() {
                     >
                       <div className="flex items-start justify-between gap-2">
                         <div className="min-w-0">
-                          <p className="truncate text-sm font-bold text-foreground">{row.agentName.toUpperCase()}</p>
+                          <p className="truncate text-sm font-bold text-foreground">{row.displayName.toUpperCase()}</p>
                           <p className="truncate text-[12px] font-normal text-muted-foreground">{row.brand} · {toProperCase(row.wallet)}{row.leader && row.leader !== '−' ? ` · ${toProperCase(row.leader)}` : ''}</p>
                         </div>
                         <span className="shrink-0 text-[12px] font-normal text-muted-foreground">{formatDateDisplay(row.date)}</span>
@@ -1932,7 +1934,7 @@ export default function TopUpPage() {
         onClose={() => setDeletingRow(null)}
         onConfirm={handleConfirmDelete}
         title="Delete Top Up Record"
-        subject={deletingRow ? `${deletingRow.agentName.toUpperCase()}'s ${displayNum(deletingRow.amount)} top up on ${formatDateDisplay(deletingRow.date)}` : ''}
+        subject={deletingRow ? `${deletingRow.displayName.toUpperCase()}'s ${displayNum(deletingRow.amount)} top up on ${formatDateDisplay(deletingRow.date)}` : ''}
         primaryButtonClassName="bg-rose-600 hover:bg-rose-700"
       />
 

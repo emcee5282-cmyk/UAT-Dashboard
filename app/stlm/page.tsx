@@ -389,7 +389,8 @@ function highlightMatch(text: string, query: string): React.ReactNode {
 }
 
 type StlmRow = {
-  agentName: string;
+  agentName: string; // bare agent_code — Edit/Create only
+  displayName: string; // Opening's name, what every view shows
   amount: string;
   remarks: string;
   date: string;
@@ -798,7 +799,7 @@ function RowActionsCell({ row, onEdit, onDelete }: { row: StlmRow; onEdit: (row:
     const text = [
       `Brand: ${row.brand}`,
       `Leader: ${toProperCase(row.leader)}`,
-      `Agent Name: ${toProperCase(row.agentName)}`,
+      `Agent Name: ${row.displayName.toUpperCase()}`,
       `Wallet: ${toProperCase(row.wallet)}`,
       `Amount: ${displayNum(row.amount)}`,
       `Type: ${toProperCase(row.remarks)}`,
@@ -904,7 +905,7 @@ function renderCell(row: StlmRow, col: ColumnDef, style: CSSProperties, onEdit: 
     case COLUMN_IDS.AGENT_NAME: {
       // Uppercased for display (kept from the earlier "capitalize Agent
       // Name" request — not part of this column-sizing revert).
-      const agentNameText = row.agentName.toUpperCase();
+      const agentNameText = row.displayName.toUpperCase();
       return <div key={key} role="cell" style={style} title={agentNameText} className={base}>{highlightMatch(agentNameText, searchTerm)}</div>;
     }
     case COLUMN_IDS.WALLET:
@@ -1126,7 +1127,7 @@ export default function StlmPage() {
         const body = await res.json().catch(() => null);
         throw new Error(body?.error || `Request failed with status ${res.status}`);
       }
-      type RawStlmRow = { id: number; agentName: string; amount: string; remarks: string; date: string; wallet: string; brand: string; leader: string };
+      type RawStlmRow = { id: number; agentName: string; displayName: string; amount: string; remarks: string; date: string; wallet: string; brand: string; leader: string };
       const data: {
         rows: RawStlmRow[];
         total: number; count: number; previousPeriodTotal: number; previousPeriodCount: number;
@@ -1135,6 +1136,7 @@ export default function StlmPage() {
       } = await res.json();
       const toStlmRow = (r: RawStlmRow): StlmRow => ({
         agentName: r.agentName,
+        displayName: r.displayName,
         amount: r.amount,
         remarks: r.remarks,
         date: r.date,
@@ -1203,7 +1205,7 @@ export default function StlmPage() {
   }, [searchTerm, sortColumn, sortDirection, rowsPerPage]);
 
   const searchedRows = stlmRows.filter((row) => {
-    const haystack = `${row.agentName} ${row.amount} ${row.remarks} ${row.date} ${row.wallet} ${row.brand} ${row.leader}`.toLowerCase();
+    const haystack = `${row.displayName} ${row.amount} ${row.remarks} ${row.date} ${row.wallet} ${row.brand} ${row.leader}`.toLowerCase();
     return haystack.includes(searchTerm.toLowerCase());
   });
 
@@ -1255,7 +1257,7 @@ export default function StlmPage() {
   // against yesterday's unfiltered one.
   const previousPeriodFilteredRows = useMemo(() => {
     return previousPeriodRows.filter((row) => {
-      const haystack = `${row.agentName} ${row.amount} ${row.remarks} ${row.date} ${row.wallet} ${row.brand} ${row.leader}`.toLowerCase();
+      const haystack = `${row.displayName} ${row.amount} ${row.remarks} ${row.date} ${row.wallet} ${row.brand} ${row.leader}`.toLowerCase();
       if (!haystack.includes(searchTerm.toLowerCase())) return false;
       if (brandFilter[row.brand] === false) return false;
       if (leaderFilter[row.leader] === false) return false;
@@ -1330,7 +1332,7 @@ export default function StlmPage() {
           case COLUMN_IDS.LEADER:
             return row.leader.toLowerCase();
           case COLUMN_IDS.AGENT_NAME:
-            return row.agentName.toLowerCase();
+            return row.displayName.toLowerCase();
           case COLUMN_IDS.WALLET:
             return row.wallet.toLowerCase();
           case COLUMN_IDS.AMOUNT:
@@ -1525,7 +1527,7 @@ export default function StlmPage() {
         case COLUMN_IDS.LEADER:
           return row.leader;
         case COLUMN_IDS.AGENT_NAME:
-          return row.agentName;
+          return row.displayName;
         case COLUMN_IDS.WALLET:
           return row.wallet;
         case COLUMN_IDS.AMOUNT:
@@ -2032,7 +2034,7 @@ export default function StlmPage() {
                         >
                           <input
                             type="checkbox"
-                            aria-label={`Select row for ${row.agentName}`}
+                            aria-label={`Select row for ${row.displayName}`}
                             checked={isChecked}
                             onChange={() => toggleRowSelection(row._id)}
                             className="h-[11px] w-[11px] cursor-pointer"
@@ -2066,7 +2068,7 @@ export default function StlmPage() {
                     >
                       <div className="flex items-start justify-between gap-2">
                         <div className="min-w-0">
-                          <p className="truncate text-sm font-bold text-foreground">{row.agentName.toUpperCase()}</p>
+                          <p className="truncate text-sm font-bold text-foreground">{row.displayName.toUpperCase()}</p>
                           <p className="truncate text-[12px] font-normal text-muted-foreground">{row.brand} · {toProperCase(row.wallet)}{row.leader && row.leader !== '−' ? ` · ${toProperCase(row.leader)}` : ''}</p>
                         </div>
                         <span className="shrink-0 text-[12px] font-normal text-muted-foreground">{formatDateDisplay(row.date)}</span>
@@ -2167,7 +2169,7 @@ export default function StlmPage() {
         onClose={() => setDeletingRow(null)}
         onConfirm={handleConfirmDelete}
         title="Delete Settlement Record"
-        subject={deletingRow ? `${deletingRow.agentName.toUpperCase()}'s ${displayNum(deletingRow.amount)} settlement on ${formatDateDisplay(deletingRow.date)}` : ''}
+        subject={deletingRow ? `${deletingRow.displayName.toUpperCase()}'s ${displayNum(deletingRow.amount)} settlement on ${formatDateDisplay(deletingRow.date)}` : ''}
         primaryButtonClassName="bg-rose-600 hover:bg-rose-700"
       />
 
