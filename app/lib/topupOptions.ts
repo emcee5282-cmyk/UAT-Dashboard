@@ -8,7 +8,7 @@ export { SETTLEMENT_BRAND_OPTIONS, CASHOUT_WALLET_OPTIONS, SENDMONEY_WALLET_OPTI
 // Every recognized "money coming in" type, shared by both products (same
 // set for Cashout and Send Money's own Bulk Import/Add-Edit Type field —
 // per explicit instruction, not product-specific like the old single-
-// literal-per-product model this replaced). Formal-cased; nothing here is
-// an abbreviation so nothing stays all-caps (contrast Settlement's own
-// remarks suggestions, which keep SPC/SDP/STLM/MC caps).
-export const TOPUP_TYPE_OPTIONS = ['Bundle Transfer In', 'Internal Transfer In', 'Top Up', 'Adjustment'];
+// literal-per-product model this replaced). Formal-cased, except real
+// abbreviations (SDP), which stay all-caps — same rule as Settlement's own
+// remarks suggestions.
+export const TOPUP_TYPE_OPTIONS = ['Bundle Transfer In', 'Internal Transfer In', 'Top Up', 'SDP Refund', 'Adjustment'];
