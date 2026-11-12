@@ -25,4 +25,5 @@ export const SETTLEMENT_REMARKS_SUGGESTIONS = [
   'SPC',
   'SDP Refund',
   'SPC Banking Comm',
+  'Adjustment',
 ];

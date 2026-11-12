@@ -61,6 +61,10 @@ export type BalanceLimitRow = {
   rawAccount: string;
   shopCode: string; // '' if unresolvable — same convention as realShopName.ts's own functions
   accountStatus: string;
+  // The file's own "Status" cell as-is ("Active"/"Locked"/...), '' when the
+  // column is absent — accountStatus above only keeps it for Reach Limit/
+  // Disable, so mergeSendMoneyLockedRows needs the untouched text.
+  rawStatus: string;
   bank: string; // raw wallet-type text, e.g. "BKASH" / "NAGADC"
   group: string;
   balance: string;
@@ -164,6 +168,7 @@ export function mapBalanceLimitRows(parsed: ParsedWorkbook, product: Product): B
         // Group, which is the only field that actually carries the
         // DP+WD/WD Only/DP Only composition normalizeWalletStatus needs.
         accountStatus: /reach limit/i.test(statusText) || /disable/i.test(statusText) ? statusText : group,
+        rawStatus: statusText,
         bank: String(cols[indices.bank] ?? '').trim(),
         group,
         balance: String(cols[indices.balance] ?? '').trim(),
@@ -173,4 +178,66 @@ export function mapBalanceLimitRows(parsed: ParsedWorkbook, product: Product): B
         dpLimit: String(cols[indices.dpLimit] ?? '').trim(),
       };
     });
+}
+
+// Send Money only — the same shop + wallet sometimes appears twice in one
+// file under different leader/brand prefixes, e.g. "N-B2PS3-SHEL042-NG"
+// (Status Locked, the old name) and "N-M1PS3-SHEL042-NG" (Status Active).
+// Per explicit instruction they are ONE shop: the Locked row's Total DP/
+// Total WD are added onto the Active row and the Locked row is dropped;
+// everything else (name, group, status, login, balance, DP limit) follows
+// the Active row only — the Locked row's Balance is NOT carried over. Only
+// Status "Locked" merges (Disable/Reach Limit rows stay separate), and only
+// when the group has exactly one Active row to merge into; anything
+// ambiguous (no Active, 2+ Active) is left untouched. A row whose DP/WD
+// isn't a valid number is never merged, so validateRow still reports it.
+function lockedMergeKey(row: BalanceLimitRow): string | null {
+  // Whitespace stripped — real files also carry "N- M2PS1-BROOK058-NG".
+  const parts = row.shopCode.replace(/\s+/g, '').toUpperCase().split('-');
+  if (parts.length < 4) return null;
+  return `${parts[0]}|${parts.slice(2).join('-')}|${row.bank.trim().toUpperCase()}`;
+}
+
+function parseAmount(val: string): number {
+  const cleaned = val.replace(/,/g, '').trim();
+  if (!cleaned || cleaned === '-') return 0;
+  const num = Number(cleaned);
+  return Number.isFinite(num) ? num : 0;
+}
+
+function isValidAmount(val: string): boolean {
+  const cleaned = val.replace(/,/g, '').trim();
+  return !cleaned || cleaned === '-' || Number.isFinite(Number(cleaned));
+}
+
+export function mergeSendMoneyLockedRows(rows: BalanceLimitRow[]): BalanceLimitRow[] {
+  const groups = new Map<string, BalanceLimitRow[]>();
+  for (const row of rows) {
+    const key = lockedMergeKey(row);
+    if (!key) continue;
+    (groups.get(key) ?? groups.set(key, []).get(key)!).push(row);
+  }
+
+  const dropped = new Set<BalanceLimitRow>();
+  const replaced = new Map<BalanceLimitRow, BalanceLimitRow>();
+  for (const group of groups.values()) {
+    if (group.length < 2) continue;
+    const active = group.filter((r) => /^active$/i.test(r.rawStatus));
+    if (active.length !== 1) continue;
+    const target = active[0];
+    if (!isValidAmount(target.totalDP) || !isValidAmount(target.totalWD)) continue;
+    const locked = group.filter((r) =>
+      r !== target &&
+      /^locked$/i.test(r.rawStatus) &&
+      r.shopCode !== target.shopCode && // only the different-prefix case
+      isValidAmount(r.totalDP) && isValidAmount(r.totalWD)
+    );
+    if (locked.length === 0) continue;
+    const totalDP = locked.reduce((s, r) => s + parseAmount(r.totalDP), parseAmount(target.totalDP));
+    const totalWD = locked.reduce((s, r) => s + parseAmount(r.totalWD), parseAmount(target.totalWD));
+    replaced.set(target, { ...target, totalDP: String(totalDP), totalWD: String(totalWD) });
+    for (const r of locked) dropped.add(r);
+  }
+
+  return rows.filter((r) => !dropped.has(r)).map((r) => replaced.get(r) ?? r);
 }
