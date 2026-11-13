@@ -38,7 +38,7 @@ import { invalidateBalanceCache } from './balanceService';
 import { loadShopNameToAgentId } from './shopNameLookup';
 
 export type Product = 'cashout' | 'sendmoney';
-const WALLET_OPTIONS = ['BKASH', 'NAGAD', 'ROCKET', 'UPAY'];
+const WALLET_OPTIONS = ['BKASH', 'NAGAD', 'ROCKET', 'UPAY', 'LOCAL BANK'];
 
 // "Placeholder" Leader names — a row whose own Leader cell is one of these
 // (or blank) hasn't really been assigned a real Leader yet, so a same-family
