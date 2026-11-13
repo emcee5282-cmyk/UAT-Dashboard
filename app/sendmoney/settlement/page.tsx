@@ -954,7 +954,9 @@ export default function SendMoneySettlementPage() {
       setLoading(true);
       setError(null);
 
-      const range = rangeOverride ?? dateRangeRef.current;
+      // onRefresh/onRetry/onImported pass fetchData by reference, so a click
+      // event can arrive here — only a real {from,to} counts as an override.
+      const range = (typeof rangeOverride?.from === 'string' && typeof rangeOverride?.to === 'string' ? rangeOverride : null) ?? dateRangeRef.current;
       const rangeParams = range ? `&from=${range.from}&to=${range.to}` : '';
       const [res, openingRes, availableRes] = await Promise.all([
         fetch(`/api/v2/sendmoney/settlement?t=${Date.now()}${rangeParams}`),
