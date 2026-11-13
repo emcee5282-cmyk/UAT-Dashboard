@@ -34,7 +34,7 @@ import { invalidateBalanceCache } from './balanceService';
 export type Product = 'cashout' | 'sendmoney';
 export type TransactionType = 'settlement' | 'topup';
 
-const WALLET_OPTIONS = ['BKASH', 'NAGAD', 'ROCKET', 'UPAY'];
+const WALLET_OPTIONS = ['BKASH', 'NAGAD', 'ROCKET', 'UPAY', 'LOCAL BANK'];
 
 export class TransactionActionError extends Error {
   status: number;

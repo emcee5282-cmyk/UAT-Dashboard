@@ -5,7 +5,8 @@ export const SETTLEMENT_BRAND_OPTIONS = ['M1', 'M2', 'K1', 'J1', 'T1', 'B1', 'B2
 
 // Wallet options depend on the active Settlement tab — both products now
 // support Bkash (matches each page's own real wallet set).
-export const CASHOUT_WALLET_OPTIONS = ['Nagad', 'Rocket', 'Bkash', 'Upay'];
+// 'Local Bank' — Bones (LB) shops' bank-account wallet.
+export const CASHOUT_WALLET_OPTIONS = ['Nagad', 'Rocket', 'Bkash', 'Upay', 'Local Bank'];
 export const SENDMONEY_WALLET_OPTIONS = ['Nagad', 'Rocket', 'Upay', 'Bkash'];
 
 // Every recognized "money going out" remark, shared by both products — per
