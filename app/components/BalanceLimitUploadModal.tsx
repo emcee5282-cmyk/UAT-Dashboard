@@ -28,7 +28,7 @@ import {
   MODAL_PRIMARY_BUTTON_SHAPE_CLASS,
 } from './modalTheme';
 import { parseWorkbookFile } from '../lib/xlsxParser';
-import { mapBalanceLimitRows, type BalanceLimitRow } from '../lib/balanceLimitParser';
+import { mapBalanceLimitRows, mergeOldRows, type BalanceLimitRow } from '../lib/balanceLimitParser';
 import { isValidNumericCell } from '../lib/uploadValidation';
 
 type Product = 'cashout' | 'sendmoney';
@@ -172,7 +172,7 @@ export default function BalanceLimitUploadModal({
         // entirely, not flagged as errors. Matches the server-side filter
         // in balanceLimitService.ts exactly, so the preview's counts here
         // are never out of sync with what actually gets imported.
-        parsedRows = allRows.filter((r) => r.shopCode !== 'OLD' && r.shopCode !== 'MANUAL');
+        parsedRows = mergeOldRows(allRows, product).filter((r) => r.shopCode !== 'OLD' && r.shopCode !== 'MANUAL');
         computedIssues = parsedRows.map((r) => validatePreviewRow(r)).filter((x): x is RowIssue => x !== null);
 
         // Step 2 — an unmatched-but-format-valid shop code (i.e. one that

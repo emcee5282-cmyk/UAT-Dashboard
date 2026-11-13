@@ -241,3 +241,74 @@ export function mergeSendMoneyLockedRows(rows: BalanceLimitRow[]): BalanceLimitR
 
   return rows.filter((r) => !dropped.has(r)).map((r) => replaced.get(r) ?? r);
 }
+
+// Both products — an "OLD" account (e.g. "N-M1PS2-DREAM001A-NG-OLD",
+// "...-JETT020-BKOLD") used to be dropped outright, losing its Total DP/
+// Total WD. Per explicit instruction its DP/WD now counts toward the real
+// shop: the OLD tag is stripped, the account is re-resolved to its shop, and
+// its DP/WD is added onto that shop's current same-wallet row (Active first,
+// else the first one; Send Money also matches a prefix-changed name the same
+// way mergeSendMoneyLockedRows does). With no current row to merge into it
+// is kept as its own wallet line under the real shop, Balance 0. Its Balance
+// is never carried over. OLD rows with no DP/WD, an unparseable amount, or a
+// name that can't be resolved stay dropped exactly as before.
+const OLD_TAG_AT_END = /[\s-]*\(?OLD\)?\s*$/i;
+const OLD_TAG_AT_START = /^\(?OLD\)?[\s-]+/i;
+
+export function stripOldTag(rawAccount: string): string | null {
+  const idx = rawAccount.indexOf(' - ');
+  const phonePrefix = idx === -1 ? '' : rawAccount.slice(0, idx + 3);
+  const name = (idx === -1 ? rawAccount : rawAccount.slice(idx + 3)).trim();
+  const stripped = name.replace(OLD_TAG_AT_END, '').replace(OLD_TAG_AT_START, '').trim();
+  if (stripped === name || !stripped || /OLD/i.test(stripped)) return null;
+  return phonePrefix + stripped;
+}
+
+export function mergeOldRows(rows: BalanceLimitRow[], product: Product): BalanceLimitRow[] {
+  const extractShopName = product === 'cashout' ? extractRealShopName : extractSendMoneyShopName;
+  const bankKey = (r: BalanceLimitRow) => r.bank.trim().toUpperCase();
+  const current = rows.filter((r) => r.shopCode !== 'OLD');
+
+  const byShopBank = new Map<string, BalanceLimitRow[]>();
+  const byLockedKey = new Map<string, BalanceLimitRow[]>();
+  for (const r of current) {
+    const k = `${r.shopCode}|${bankKey(r)}`;
+    (byShopBank.get(k) ?? byShopBank.set(k, []).get(k)!).push(r);
+    const lk = product === 'sendmoney' ? lockedMergeKey(r) : null;
+    if (lk) (byLockedKey.get(lk) ?? byLockedKey.set(lk, []).get(lk)!).push(r);
+  }
+
+  const additions = new Map<BalanceLimitRow, { dp: number; wd: number }>();
+  const keptOld: BalanceLimitRow[] = [];
+  for (const old of rows) {
+    if (old.shopCode !== 'OLD') continue;
+    if (!isValidAmount(old.totalDP) || !isValidAmount(old.totalWD)) continue;
+    const dp = parseAmount(old.totalDP);
+    const wd = parseAmount(old.totalWD);
+    if (dp === 0 && wd === 0) continue;
+    const strippedAccount = stripOldTag(old.rawAccount);
+    if (!strippedAccount) continue;
+    const shopCode = extractShopName(strippedAccount);
+    if (!shopCode || shopCode === 'OLD' || shopCode === 'MANUAL' || !/[A-Z]+[0-9]+/i.test(shopCode)) continue;
+
+    const resolved: BalanceLimitRow = { ...old, rawAccount: strippedAccount, shopCode };
+    const lk = product === 'sendmoney' ? lockedMergeKey(resolved) : null;
+    const candidates = (byShopBank.get(`${shopCode}|${bankKey(old)}`) ?? (lk ? byLockedKey.get(lk) : undefined) ?? [])
+      .filter((r) => isValidAmount(r.totalDP) && isValidAmount(r.totalWD));
+    const target = candidates.find((r) => /^active$/i.test(r.rawStatus)) ?? candidates[0];
+
+    if (target) {
+      const sum = additions.get(target) ?? { dp: 0, wd: 0 };
+      additions.set(target, { dp: sum.dp + dp, wd: sum.wd + wd });
+    } else {
+      keptOld.push({ ...resolved, balance: '0' });
+    }
+  }
+
+  const merged = current.map((r) => {
+    const add = additions.get(r);
+    if (!add) return r;
+    return { ...r, totalDP: String(parseAmount(r.totalDP) + add.dp), totalWD: String(parseAmount(r.totalWD) + add.wd) };
+  });
+  return [...merged, ...keptOld];
+}

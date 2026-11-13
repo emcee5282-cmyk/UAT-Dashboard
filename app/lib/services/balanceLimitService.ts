@@ -37,7 +37,7 @@ import { eq, and, inArray, sql, getTableColumns } from 'drizzle-orm';
 import { getDb } from '../db/client';
 import * as schema from '../db/schema';
 import { parseWorkbookFile } from '../xlsxParser';
-import { mapBalanceLimitRows, mergeSendMoneyLockedRows, type BalanceLimitRow } from '../balanceLimitParser';
+import { mapBalanceLimitRows, mergeSendMoneyLockedRows, mergeOldRows, type BalanceLimitRow } from '../balanceLimitParser';
 import { isValidNumericCell } from '../uploadValidation';
 import { resolveBrand, type BrandResolutionConfig } from '../balanceEngine';
 import { BRAND_CODES } from '../transferQueueCount';
@@ -131,7 +131,9 @@ export async function importBalanceLimitFile(params: {
   // 'MANUAL' return value IS the "not a real identifiable shop" signal).
   // Silently excluded here, before rowCount/validation/import even see
   // them — not flagged as an error, not counted as valid, not inserted.
-  const nonPlaceholderRows = allRows.filter((r) => r.shopCode !== 'OLD' && r.shopCode !== 'MANUAL');
+  // OLD accounts with real DP/WD are first folded into their real shop (see
+  // mergeOldRows' own comment); whatever OLD rows remain are dropped here.
+  const nonPlaceholderRows = mergeOldRows(allRows, params.product).filter((r) => r.shopCode !== 'OLD' && r.shopCode !== 'MANUAL');
   // Send Money: fold a Locked old-prefix row's DP/WD into its Active
   // same-shop/same-wallet row before anything else sees it (see
   // mergeSendMoneyLockedRows' own comment) — so rowCount, new-shop creation
