@@ -264,6 +264,20 @@ export function stripOldTag(rawAccount: string): string | null {
   return phonePrefix + stripped;
 }
 
+// An OLD account → its real shop: tag stripped, name re-resolved. null when
+// it doesn't resolve to a real shop code. Shared with the Estimated Balance
+// upload (estimatedOpening.ts) so both uploads count OLD rows the same way.
+export function resolveOldAccount(
+  rawAccount: string,
+  extractShopName: (raw: string) => string
+): { account: string; shopCode: string } | null {
+  const account = stripOldTag(rawAccount);
+  if (!account) return null;
+  const shopCode = extractShopName(account);
+  if (!shopCode || shopCode === 'OLD' || shopCode === 'MANUAL' || !/[A-Z]+[0-9]+/i.test(shopCode)) return null;
+  return { account, shopCode };
+}
+
 export function mergeOldRows(rows: BalanceLimitRow[], product: Product): BalanceLimitRow[] {
   const extractShopName = product === 'cashout' ? extractRealShopName : extractSendMoneyShopName;
   const bankKey = (r: BalanceLimitRow) => r.bank.trim().toUpperCase();
@@ -286,12 +300,11 @@ export function mergeOldRows(rows: BalanceLimitRow[], product: Product): Balance
     const dp = parseAmount(old.totalDP);
     const wd = parseAmount(old.totalWD);
     if (dp === 0 && wd === 0) continue;
-    const strippedAccount = stripOldTag(old.rawAccount);
-    if (!strippedAccount) continue;
-    const shopCode = extractShopName(strippedAccount);
-    if (!shopCode || shopCode === 'OLD' || shopCode === 'MANUAL' || !/[A-Z]+[0-9]+/i.test(shopCode)) continue;
+    const real = resolveOldAccount(old.rawAccount, extractShopName);
+    if (!real) continue;
+    const shopCode = real.shopCode;
 
-    const resolved: BalanceLimitRow = { ...old, rawAccount: strippedAccount, shopCode };
+    const resolved: BalanceLimitRow = { ...old, rawAccount: real.account, shopCode };
     const lk = product === 'sendmoney' ? lockedMergeKey(resolved) : null;
     const candidates = (byShopBank.get(`${shopCode}|${bankKey(old)}`) ?? (lk ? byLockedKey.get(lk) : undefined) ?? [])
       .filter((r) => isValidAmount(r.totalDP) && isValidAmount(r.totalWD));
