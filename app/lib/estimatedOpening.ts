@@ -4,6 +4,24 @@ import { fetchRange } from './googleSheets';
 import { BRAND_CODES } from './transferQueueCount';
 import { getBusinessToday, toManilaWallClock, fromManilaWallClockMs, parseCardCutoffDate, manilaMidnight } from './businessDate';
 import { isValidNumericCell } from './uploadValidation';
+import { resolveOldAccount } from './balanceLimitParser';
+
+// A row's shop + Account text for the per-shop totals. An OLD account
+// (e.g. "...-CLAW006-BK-OLD") counts toward its real shop with the tag
+// stripped — same rule as the Balance Limit upload (mergeOldRows), per
+// explicit instruction; it used to be dropped, losing its Total DP/WD.
+// null = skip the row (MANUAL, unresolvable OLD, no shop).
+function resolveRowShop(
+  rawCell: string | number | undefined | null,
+  extractShopName: (raw: string | number | undefined | null) => string
+): { shopName: string; rawAccount: string } | null {
+  const rawAccount = String(rawCell ?? '').trim();
+  const shopName = extractShopName(rawCell);
+  if (!shopName || shopName === 'MANUAL') return null;
+  if (shopName !== 'OLD') return { shopName, rawAccount };
+  const real = resolveOldAccount(rawAccount, extractShopName);
+  return real ? { shopName: real.shopCode, rawAccount: real.account } : null;
+}
 
 // "Estimated Opening" — a dedicated sheet tab (in the same spreadsheet as
 // everything else) that holds a raw upload of "assumed balance" data used
@@ -263,8 +281,9 @@ export function aggregateByShop(
 
   const totals = new Map<string, { totalDP: number; totalWD: number }>();
   for (const row of dataRows) {
-    const shopName = extractShopName(row[accountCol]);
-    if (!shopName || shopName === 'OLD' || shopName === 'MANUAL') continue;
+    const resolved = resolveRowShop(row[accountCol], extractShopName);
+    if (!resolved) continue;
+    const { shopName } = resolved;
     // A garbage (non-numeric, non-blank) Total DP/WD cell skips the whole
     // row instead of silently defaulting to 0 — matches the client-side
     // upload preview's own validation (app/lib/uploadValidation.ts) so a
@@ -307,9 +326,9 @@ export function aggregateByShopWithLines(
 
   const totals = new Map<string, { shopName: string; rawAccount: string; totalDP: number; totalWD: number }>();
   for (const row of dataRows) {
-    const rawAccount = String(row[accountCol] ?? '').trim();
-    const shopName = extractShopName(row[accountCol]);
-    if (!shopName || shopName === 'OLD' || shopName === 'MANUAL') continue;
+    const resolved = resolveRowShop(row[accountCol], extractShopName);
+    if (!resolved) continue;
+    const { shopName, rawAccount } = resolved;
     if (!isValidNumericCell(row[dpCol]) || !isValidNumericCell(row[wdCol])) continue;
     const key = `${shopName} ${rawAccount}`;
     const existing = totals.get(key) ?? { shopName, rawAccount, totalDP: 0, totalWD: 0 };
