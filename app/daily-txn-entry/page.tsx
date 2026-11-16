@@ -79,6 +79,8 @@ const LEDGERS: LedgerMeta[] = [
   { id: 'expay', title: 'EXPAY Gateway · Cashout', kind: 'standard' },
   { id: 'hkpay', title: 'HKPAY Gateway · Cashout', kind: 'standard' },
   { id: 'phbpay', title: 'PHBPAY Gateway · Cashout & Sendmoney', kind: 'standard' },
+  { id: 'htpayCo', title: 'HTPAY Gateway · Cashout', kind: 'standard' },
+  { id: 'htpaySm', title: 'HTPAY Gateway · SendMoney', kind: 'standard' },
 ];
 
 // New "PG Balances" tab — a separate view (same page, pill-switch below the
@@ -362,7 +364,7 @@ function LedgerCard({ def, onActivity }: { def: LedgerMeta; onActivity: () => vo
   // to `kind` (ESS previously read "Available for WD" here; ATP/EXPAY/
   // HKPAY are 'standard' kind, same as SSP Line 1/2, so this can't be
   // derived from isEss alone anymore).
-  const totalLabel = ['atp', 'expay', 'hkpay', 'phbpay', 'ess'].includes(def.id) ? 'Available Balance' : 'Total';
+  const totalLabel = ['atp', 'expay', 'hkpay', 'phbpay', 'htpayCo', 'htpaySm', 'ess'].includes(def.id) ? 'Available Balance' : 'Total';
 
   function onCellInput(e: React.FormEvent<HTMLInputElement>) {
     const { row, brand } = e.currentTarget.dataset as { row: RowKey; brand: Brand };

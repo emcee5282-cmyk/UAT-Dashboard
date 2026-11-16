@@ -102,6 +102,8 @@ type CashInHandRow = {
   autopaySupported: boolean;
   expay: number;
   phbpay: number;
+  htpayCashout: number;
+  htpaySendMoney: number;
   totalBrandCIH: number;
 };
 
@@ -273,7 +275,7 @@ export async function GET(request: Request) {
       cashoutSheetRows, sendMoneySheetRows,
       cashoutAgentWalletRaw, cashoutTransactions, cashGoHistoryRows,
       sendMoneyAgentWalletRaw, sendMoneyTransactions,
-      ssp1LedgerRows, ssp2LedgerRows, essLedgerRows, atpLedgerRows, expayLedgerRows, phbpayLedgerRows,
+      ssp1LedgerRows, ssp2LedgerRows, essLedgerRows, atpLedgerRows, expayLedgerRows, phbpayLedgerRows, htpayCoLedgerRows, htpaySmLedgerRows,
       estimatedOpening, estimatedSendMoneyOpening,
       openingTrendCashout, openingTrendSendMoney,
       cashoutAgentBalances, sendMoneyAgentBalances,
@@ -322,6 +324,10 @@ export async function GET(request: Request) {
       getDailyTxnLedgerBrandTotals('atp', todayKey),
       getDailyTxnLedgerBrandTotals('expay', todayKey),
       getDailyTxnLedgerBrandTotals('phbpay', todayKey),
+      // HTPAY has no Report-tab PG key (Operations-tab ledgers only), so
+      // these read the ledger's own carried-forward Opening.
+      getDailyTxnLedgerBrandTotals('htpayCo', todayKey),
+      getDailyTxnLedgerBrandTotals('htpaySm', todayKey),
       // Estimated Opening override — PostgreSQL (readEstimatedOpeningDisplayPg,
       // the exact same reader the Balance pages' own /api/opening/estimated-balance
       // and /api/sendmoney/opening/estimated-balance GET routes already use),
@@ -854,6 +860,8 @@ export async function GET(request: Request) {
     const atpByBrand = new Map(atpLedgerRows.map((r) => [r.brand.toUpperCase(), r.total]));
     const expayByBrand = new Map(expayLedgerRows.map((r) => [r.brand.toUpperCase(), r.total]));
     const phbpayByBrand = new Map(phbpayLedgerRows.map((r) => [r.brand.toUpperCase(), r.total]));
+    const htpayCoByBrand = new Map(htpayCoLedgerRows.map((r) => [r.brand.toUpperCase(), r.total]));
+    const htpaySmByBrand = new Map(htpaySmLedgerRows.map((r) => [r.brand.toUpperCase(), r.total]));
 
     const cashInHandRows: CashInHandRow[] = DAILY_TXN_LEDGER_BRANDS.map((brand) => {
       const key = brand.toUpperCase();
@@ -863,6 +871,8 @@ export async function GET(request: Request) {
       const autopay = atpByBrand.get(key) ?? 0;
       const expay = expayByBrand.get(key) ?? 0;
       const phbpay = phbpayByBrand.get(key) ?? 0;
+      const htpayCashout = htpayCoByBrand.get(key) ?? 0;
+      const htpaySendMoney = htpaySmByBrand.get(key) ?? 0;
       return {
         brand,
         sspAg,
@@ -872,7 +882,9 @@ export async function GET(request: Request) {
         autopaySupported: !AUTOPAY_UNSUPPORTED_BRANDS.includes(key),
         expay,
         phbpay,
-        totalBrandCIH: sspAg + sspPs + ess + autopay + expay + phbpay,
+        htpayCashout,
+        htpaySendMoney,
+        totalBrandCIH: sspAg + sspPs + ess + autopay + expay + phbpay + htpayCashout + htpaySendMoney,
       };
     });
 
@@ -888,6 +900,8 @@ export async function GET(request: Request) {
       autopaySupported: true,
       expay: cashInHandRows.reduce((s, r) => s + r.expay, 0),
       phbpay: cashInHandRows.reduce((s, r) => s + r.phbpay, 0),
+      htpayCashout: cashInHandRows.reduce((s, r) => s + r.htpayCashout, 0),
+      htpaySendMoney: cashInHandRows.reduce((s, r) => s + r.htpaySendMoney, 0),
       totalBrandCIH: cashInHandRows.reduce((s, r) => s + r.totalBrandCIH, 0),
     };
 
