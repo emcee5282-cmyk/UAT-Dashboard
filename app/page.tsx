@@ -107,6 +107,8 @@ type ApiCashInHand = {
   autopaySupported: boolean;
   expay: number;
   phbpay: number;
+  htpayCashout: number;
+  htpaySendMoney: number;
   totalBrandCIH: number;
 };
 
@@ -635,6 +637,8 @@ const LEDGER_SKELETON_COL_WIDTHS = ['flex-[1.6]', 'flex-1', 'flex-1', 'flex-1', 
 // Same idea for the Running Balance / Cash In Hand tables — Brand name
 // column wider than the 6 numeric columns beside it.
 const BRAND_TABLE_SKELETON_COL_WIDTHS = ['flex-[1.3]', 'flex-1', 'flex-1', 'flex-1', 'flex-1', 'flex-1', 'flex-1', 'flex-[0.9]'];
+// Cash In Hand has 2 more PG columns (HTPAY Cashout / SendMoney) than Running Balance.
+const CIH_SKELETON_COL_WIDTHS = ['flex-[1.3]', 'flex-1', 'flex-1', 'flex-1', 'flex-1', 'flex-1', 'flex-1', 'flex-1', 'flex-1', 'flex-[0.9]'];
 
 function LedgerSkeleton() {
   // Mirrors WalletSummaryTable's real shape: a bordered title row, then a
@@ -1286,7 +1290,7 @@ function RunningBalanceSkeleton() {
 // Cash In Hand (section 7)
 // ---------------------------------------------------------------------------
 
-type CihColumnKey = 'sspAg' | 'sspPs' | 'ess' | 'autopay' | 'expay' | 'phbpay' | 'totalBrandCIH';
+type CihColumnKey = 'sspAg' | 'sspPs' | 'ess' | 'autopay' | 'expay' | 'phbpay' | 'htpayCashout' | 'htpaySendMoney' | 'totalBrandCIH';
 type CihSortKey = 'brand' | CihColumnKey;
 
 const CIH_COLUMNS: { key: CihColumnKey; label: string }[] = [
@@ -1296,6 +1300,8 @@ const CIH_COLUMNS: { key: CihColumnKey; label: string }[] = [
   { key: 'autopay', label: 'Autopay' },
   { key: 'expay', label: 'Expay' },
   { key: 'phbpay', label: 'PHBPAY' },
+  { key: 'htpayCashout', label: 'HTPAY Cashout' },
+  { key: 'htpaySendMoney', label: 'HTPAY SendMoney' },
   { key: 'totalBrandCIH', label: 'Total CIH' },
 ];
 
@@ -1493,7 +1499,7 @@ function CashInHandSection({ rows, total }: { rows: ApiCashInHand[]; total: ApiC
 }
 
 function CashInHandSkeleton() {
-  // 8-column table (Brand + 7 CIH_COLUMNS) with 10 brand rows + a Total
+  // 10-column table (Brand + 9 CIH_COLUMNS) with 10 brand rows + a Total
   // row, matching the real CashInHandSection — same fix as
   // RunningBalanceSkeleton above, just keeping this section's own header
   // border (the real header here does have a border-b, unlike Running
@@ -1511,19 +1517,19 @@ function CashInHandSkeleton() {
         <SkeletonBlock className="h-8 w-24 shrink-0 rounded-lg" />
       </div>
       <div className="flex gap-4 border-b border-[#DEE1E8] px-4 py-3 dark:border-[#262B38]">
-        {BRAND_TABLE_SKELETON_COL_WIDTHS.map((w, i) => (
+        {CIH_SKELETON_COL_WIDTHS.map((w, i) => (
           <SkeletonBlock key={i} className={`h-3 ${w}`} />
         ))}
       </div>
       {Array.from({ length: 10 }).map((_, i) => (
         <div key={i} className="flex items-center gap-4 border-b border-[#EEF0F3] px-4 py-3 dark:border-[#1D212B]">
-          {BRAND_TABLE_SKELETON_COL_WIDTHS.map((w, j) => (
+          {CIH_SKELETON_COL_WIDTHS.map((w, j) => (
             <SkeletonBlock key={j} className={`h-3 ${w}`} />
           ))}
         </div>
       ))}
       <div className="flex items-center gap-4 px-4 py-3">
-        {BRAND_TABLE_SKELETON_COL_WIDTHS.map((w, i) => (
+        {CIH_SKELETON_COL_WIDTHS.map((w, i) => (
           <SkeletonBlock key={i} className={`h-3 ${w}`} />
         ))}
       </div>
