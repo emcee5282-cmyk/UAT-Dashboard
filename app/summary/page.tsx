@@ -1943,7 +1943,6 @@ export default function Summary() {
         allowEstimateMode
         estimateApiBasePath="/api/opening"
         estimateExtractShopName={extractRealShopName}
-        estimateSkipShopNames={['OLD', 'MANUAL']}
         onImported={fetchData}
       />
 

@@ -969,6 +969,33 @@ export const estimatedBalanceWalletLines = pgTable(
   (t) => [index('estimated_balance_wallet_lines_upload_id_idx').on(t.uploadId), index('estimated_balance_wallet_lines_agent_id_idx').on(t.agentId)]
 );
 
+// Estimated Balance transaction uploads (2026-11-16) — the Estimated upload
+// now takes the raw Deposit export (DP, shop in "To Account") and the raw
+// Payout export (WD, shop in "From Account") as two SEPARATE uploads, and
+// the dashboard adds the transactions up itself. Each upload's per-wallet
+// sums (raw Account text + Bank, transactions dated activityDate by their
+// own Updated Time) are kept here so the OTHER side's latest upload for the
+// same activity day can be merged in: a DP upload replaces only the DP
+// rows, a WD upload only the WD rows, and every upload re-builds the full
+// DP+WD estimate from both. Kept per raw Account (= per wallet) since
+// commission is computed per wallet.
+export const estimatedTxnWalletSums = pgTable(
+  'estimated_txn_wallet_sums',
+  {
+    id: serial('id').primaryKey(),
+    product: productEnum('product').notNull(),
+    activityDate: date('activity_date').notNull(),
+    kind: text('kind').notNull(), // 'dp' | 'wd'
+    rawAccount: text('raw_account').notNull(),
+    bank: text('bank').notNull(),
+    amount: numeric('amount', { precision: 18, scale: 2 }).notNull(),
+    txnCount: integer('txn_count').notNull(),
+    fileName: text('file_name'),
+    uploadedAt: timestamp('uploaded_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [index('estimated_txn_wallet_sums_day_idx').on(t.product, t.activityDate, t.kind)]
+);
+
 // Pending Balance > Stagnant Balances — one row per agent, a running streak
 // of consecutive Estimated Balance uploads where THIS agent's own upload
 // row had Withdrawal at 0 (or no row at all that upload). Deposit plays no

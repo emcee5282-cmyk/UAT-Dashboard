@@ -1770,7 +1770,6 @@ export default function SendMoneyOpeningPage() {
         allowEstimateMode
         estimateApiBasePath="/api/sendmoney/opening"
         estimateExtractShopName={extractSendMoneyShopName}
-        estimateSkipShopNames={['OLD']}
         onImported={fetchData}
       />
 
