@@ -26,7 +26,8 @@
 // computeCompanyBalance() already applies for the live dashboard's own
 // Company Balance formula. Verified numerically against the old formula in
 // this task's own testing, not just reasoned about.
-import { eq, and, inArray, sql } from 'drizzle-orm';
+import { eq, and, inArray, sql, lt } from 'drizzle-orm';
+import { formatEstimateDay as formatDay, type EstimateKind, type EstimateWalletSum } from '../estimateTransactions';
 import { getDb } from '../db/client';
 import * as schema from '../db/schema';
 import { aggregateByShop, aggregateByShopWithLines, aggregateByWalletType, formatUploadTimestamp } from '../estimatedOpening';
@@ -90,12 +91,25 @@ export function toDateOnlyString(date: Date): string {
 
 export type EstimatedOpeningUploadResult = { uploadedAt: string; shopCount: number };
 
+// Used by the transaction-based upload (importEstimatedTransactionsUpload):
+// - uploadedAtDate: the same instant that upload already derived its
+//   activity day from, so cutoffDate can't differ across a 2 AM rollover.
+// - skipShopCountGuard: a DP-only or WD-only day legitimately has fewer
+//   shops than the old full file (e.g. 867 shops paid out by 11 AM); the
+//   wrong-product check is done on the account text instead.
+// - skipStreaks: the Stagnant Balances streak is a "WD was 0" rule, so it
+//   is only evaluated once the day's WD side has been uploaded — a DP-only
+//   upload would otherwise mark every shop as WD 0 and, being once per
+//   cutoff day, the later WD upload could no longer correct it.
+export type EstimatedImportOptions = { uploadedAtDate?: Date; skipShopCountGuard?: boolean; skipStreaks?: boolean };
+
 export async function importEstimatedOpeningFromUpload(
   product: Product,
   headerRow: (string | number)[],
   dataRows: (string | number)[][],
   fileName: string,
-  uploadedBy = 'Operations Admin'
+  uploadedBy = 'Operations Admin',
+  options: EstimatedImportOptions = {}
 ): Promise<EstimatedOpeningUploadResult> {
   const db = getDb();
 
@@ -146,7 +160,7 @@ export async function importEstimatedOpeningFromUpload(
         `which don't match Bkash/Nagad/Rocket/UPay/BRAK/IBBL. Confirm this is the correct Cashout BalanceLimit file.`
       );
     }
-    if (shopTotals.length < 1000 || shopTotals.length > 5000) {
+    if (!options.skipShopCountGuard && (shopTotals.length < 1000 || shopTotals.length > 5000)) {
       throw new Error(
         `Upload rejected: this file has ${shopTotals.length} shop rows, outside Cashout's expected range (1,000-5,000; ` +
         `typical is ~2,300-2,400). Confirm this is the correct Cashout file, not Send Money's.`
@@ -172,7 +186,7 @@ export async function importEstimatedOpeningFromUpload(
   if (!openingImportExists) {
     throw new Error(`No completed Opening import found for ${product} yet — upload Opening at least once before uploading Estimated Balance.`);
   }
-  const uploadedAtDate = new Date();
+  const uploadedAtDate = options.uploadedAtDate ?? new Date();
   const cutoffDateStr = toDateOnlyString(uploadedAtDate);
   // Top Up/Settlement must describe the SAME activity date as the file's own
   // DP/WD (cutoffDate minus one Manila business day — a file uploaded on
@@ -398,7 +412,7 @@ export async function importEstimatedOpeningFromUpload(
     : [];
   const streakByAgentId = new Map(existingStreakRows.map((r) => [r.agentId, { noDataStreakDays: r.noDataStreakDays, lastCheckedCutoffDate: r.lastCheckedCutoffDate }]));
 
-  const stagnantRows = agentRows.map((agent) => {
+  const stagnantRows = options.skipStreaks ? [] : agentRows.map((agent) => {
     const entry = entryByAgentId.get(agent.id);
     const hadActivityThisUpload = entry ? entry.withdrawal !== 0 : false;
     const update = computeStreakUpdate(streakByAgentId.get(agent.id) ?? null, cutoffDateStr, hadActivityThisUpload);
@@ -418,7 +432,7 @@ export async function importEstimatedOpeningFromUpload(
   // them; ~3,000 of them would otherwise each get a junk row).
   const cashoutWalletStreakRows: { agentId: number; walletSuffix: string; noDataStreakDays: number; fileAsOfDate: string | null; updatedAt: Date }[] = [];
   const activeAgentIds = agentRows.filter((a) => a.isActive).map((a) => a.id);
-  if (product === 'cashout' && activeAgentIds.length > 0) {
+  if (product === 'cashout' && activeAgentIds.length > 0 && !options.skipStreaks) {
     const [allOpeningLines, existingWalletRows] = await Promise.all([
       db
         .select({ agentId: schema.openingWalletLines.agentId, rawAgentName: schema.openingWalletLines.rawAgentName })
@@ -559,4 +573,161 @@ export async function importEstimatedOpeningFromUpload(
 
   invalidateBalanceCache();
   return { uploadedAt: formatUploadTimestamp(uploadedAtDate), shopCount: shopTotals.length };
+}
+
+// ---------------------------------------------------------------------------
+// Transaction-based Estimated Balance upload (2026-11-16) — see
+// app/lib/estimateTransactions.ts for the file format. The browser sends
+// per-wallet, per-day sums of one export (DP = Deposit, WD = Payout); this:
+//   1. keeps only the day the upload counts for — same rule as before: an
+//      upload made on business day D counts for D-1 (activityDate), and a
+//      transaction belongs to the day of its own "Updated Time". Sums from
+//      any other day are ignored, never added.
+//   2. merges in the latest upload of the OTHER kind for that same day
+//      (estimated_txn_wallet_sums), so DP and WD can arrive separately.
+//   3. runs the combined per-wallet DP/WD through the same Estimated Opening
+//      import as before (importEstimatedOpeningFromUpload) — Opening wallet
+//      matching, Top Up/Settlement, wallet lines all unchanged.
+//   4. replaces this kind's stored sums for that day.
+export type EstimatedTxnUploadResult = EstimatedOpeningUploadResult & {
+  kind: EstimateKind;
+  activityDate: string;
+  txnCount: number;
+  otherSideUploaded: boolean;
+};
+
+const TXN_SUM_RETENTION_DAYS = 14;
+
+// What the upload preview checks each transaction against, so a transaction
+// the import would silently leave out is flagged (Skip/Edit) instead:
+// every agent_code of the product (inactive too — importEstimatedOpening
+// FromUpload's agentByCode matches them all) → that shop's Opening wallet
+// lines as full wallet types. null = no Opening lines, so the whole-shop
+// branch counts every wallet; an array = only these wallets are counted
+// (a row whose suffix matches none is skipped there, see matchedOpeningLine).
+export type EstimateShopWallets = Record<string, string[] | null>;
+
+export async function getEstimateShopWallets(product: Product): Promise<EstimateShopWallets> {
+  const db = getDb();
+  const [agentRows, lineRows] = await Promise.all([
+    db.select({ id: schema.agents.id, agentCode: schema.agents.agentCode }).from(schema.agents).where(eq(schema.agents.product, product)),
+    db
+      .select({ agentId: schema.openingWalletLines.agentId, rawAgentName: schema.openingWalletLines.rawAgentName })
+      .from(schema.openingWalletLines)
+      .innerJoin(schema.agents, eq(schema.openingWalletLines.agentId, schema.agents.id))
+      .where(eq(schema.agents.product, product)),
+  ]);
+  const linesByAgentId = new Map<number, string[]>();
+  for (const l of lineRows) {
+    const list = linesByAgentId.get(l.agentId) ?? [];
+    const suffix = extractOpeningWalletTypeSuffix(l.rawAgentName);
+    const walletType = suffix ? OPENING_SUFFIX_TO_WALLET_TYPE[suffix] : undefined;
+    if (walletType && !list.includes(walletType)) list.push(walletType);
+    linesByAgentId.set(l.agentId, list);
+  }
+  const result: EstimateShopWallets = {};
+  for (const a of agentRows) result[a.agentCode] = linesByAgentId.get(a.id) ?? null;
+  return result;
+}
+
+function isWalletSum(v: unknown): v is EstimateWalletSum {
+  if (!v || typeof v !== 'object') return false;
+  const w = v as Record<string, unknown>;
+  return typeof w.account === 'string' && w.account.trim() !== ''
+    && typeof w.bank === 'string'
+    && typeof w.date === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(w.date)
+    && typeof w.amount === 'number' && Number.isFinite(w.amount)
+    && typeof w.count === 'number' && Number.isInteger(w.count) && w.count >= 0;
+}
+
+export async function importEstimatedTransactionsUpload(
+  product: Product,
+  kind: unknown,
+  wallets: unknown,
+  fileName: string,
+  uploadedBy = 'Operations Admin'
+): Promise<EstimatedTxnUploadResult> {
+  if (kind !== 'dp' && kind !== 'wd') throw new Error('Choose whether this file is Deposit (DP) or Withdrawal (WD).');
+  if (!Array.isArray(wallets) || !wallets.every(isWalletSum)) throw new Error('Invalid upload data.');
+  const db = getDb();
+
+  const uploadedAtDate = new Date();
+  const activityDate = subtractDays(toDateOnlyString(uploadedAtDate), 1);
+  const dayWallets = wallets.filter((w) => w.date === activityDate);
+  if (dayWallets.length === 0) {
+    const countByDate = new Map<string, number>();
+    for (const w of wallets) countByDate.set(w.date, (countByDate.get(w.date) ?? 0) + w.count);
+    const found = Array.from(countByDate.entries()).sort().map(([d, c]) => `${formatDay(d)} (${c.toLocaleString()})`).join(', ');
+    throw new Error(
+      `No transactions in this file have an Updated Time on ${formatDay(activityDate)} — an upload made today counts for that day. ` +
+      `Dates in this file: ${found || 'none'}.`
+    );
+  }
+
+  // Wrong-product guard (replaces the shop-count range for this path):
+  // Cashout wallets read "...-M1AG-..." and Send Money's "...-M1PS3-...".
+  const otherProductPattern = product === 'cashout' ? /[A-Z0-9]PS\d*-/i : /[A-Z0-9]AG\d*-/i;
+  const otherProductCount = dayWallets.filter((w) => otherProductPattern.test(w.account)).length;
+  if (otherProductCount > dayWallets.length / 2) {
+    throw new Error(`Upload rejected: this looks like a ${product === 'cashout' ? 'Send Money' : 'Cashout'} file. Upload it from that product's Opening page.`);
+  }
+
+  const otherKind: EstimateKind = kind === 'dp' ? 'wd' : 'dp';
+  const otherRows = await db
+    .select({ rawAccount: schema.estimatedTxnWalletSums.rawAccount, bank: schema.estimatedTxnWalletSums.bank, amount: schema.estimatedTxnWalletSums.amount, fileName: schema.estimatedTxnWalletSums.fileName })
+    .from(schema.estimatedTxnWalletSums)
+    .where(and(eq(schema.estimatedTxnWalletSums.product, product), eq(schema.estimatedTxnWalletSums.activityDate, activityDate), eq(schema.estimatedTxnWalletSums.kind, otherKind)));
+
+  // Same row shape the old pre-summed file had — one row per wallet.
+  const byWallet = new Map<string, { account: string; bank: string; dp: number; wd: number }>();
+  const add = (account: string, bank: string, side: EstimateKind, amount: number) => {
+    const key = `${account}\u0000${bank}`;
+    const row = byWallet.get(key) ?? { account, bank, dp: 0, wd: 0 };
+    row[side] += amount;
+    byWallet.set(key, row);
+  };
+  for (const w of dayWallets) add(w.account, w.bank, kind, w.amount);
+  for (const r of otherRows) add(r.rawAccount, r.bank, otherKind, n(r.amount));
+  const headerRow = ['Account', 'Bank', 'Total DP', 'Total WD'];
+  const dataRows = Array.from(byWallet.values()).map((r) => [r.account, r.bank, Math.round(r.dp * 100) / 100, Math.round(r.wd * 100) / 100]);
+
+  const otherFileName = otherRows[0]?.fileName ?? null;
+  const label = kind === 'dp'
+    ? `DP: ${fileName}${otherFileName ? ` + WD: ${otherFileName}` : ''}`
+    : `${otherFileName ? `DP: ${otherFileName} + ` : ''}WD: ${fileName}`;
+
+  const result = await importEstimatedOpeningFromUpload(product, headerRow, dataRows, label, uploadedBy, {
+    uploadedAtDate,
+    skipShopCountGuard: true,
+    skipStreaks: kind !== 'wd' && otherRows.length === 0,
+  });
+
+  // Only after the estimate itself succeeded — a rejected upload never
+  // replaces the previously stored side.
+  await db.transaction(async (tx) => {
+    await tx.delete(schema.estimatedTxnWalletSums).where(and(
+      eq(schema.estimatedTxnWalletSums.product, product),
+      eq(schema.estimatedTxnWalletSums.activityDate, activityDate),
+      eq(schema.estimatedTxnWalletSums.kind, kind),
+    ));
+    await tx.delete(schema.estimatedTxnWalletSums).where(and(
+      eq(schema.estimatedTxnWalletSums.product, product),
+      lt(schema.estimatedTxnWalletSums.activityDate, subtractDays(activityDate, TXN_SUM_RETENTION_DAYS)),
+    ));
+    const rows = dayWallets.map((w) => ({
+      product, activityDate, kind, rawAccount: w.account, bank: w.bank,
+      amount: String(w.amount), txnCount: w.count, fileName, uploadedAt: uploadedAtDate,
+    }));
+    for (let i = 0; i < rows.length; i += 500) {
+      await tx.insert(schema.estimatedTxnWalletSums).values(rows.slice(i, i + 500));
+    }
+  });
+
+  return {
+    ...result,
+    kind,
+    activityDate,
+    txnCount: dayWallets.reduce((s, w) => s + w.count, 0),
+    otherSideUploaded: otherRows.length > 0,
+  };
 }

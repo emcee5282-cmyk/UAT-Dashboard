@@ -31,7 +31,8 @@ import { detectDuplicateAgentNames } from '../lib/duplicateDetector';
 import type { ExistingTransactionSignature } from '../lib/services/transactionPageService';
 import { calculateImportSummary, calculateOpeningImportSummary, type ImportSummary } from '../lib/importSummary';
 import { mockImportRecords } from '../lib/importService';
-import { parseEstimateRows, formatImportTimestamp, CASHOUT_ESTIMATE_WALLET_TYPES, type EstimateImportRecord, type EstimateRowError } from '../lib/estimateUpload';
+import { formatImportTimestamp, CASHOUT_ESTIMATE_WALLET_TYPES, type EstimateImportRecord, type EstimateRowError } from '../lib/estimateUpload';
+import { parseEstimateTransactions, previousDay, formatEstimateDay, ESTIMATE_KIND_LABEL, type EstimateKind, type EstimateShopCheck } from '../lib/estimateTransactions';
 import type { RecordFormField } from './RecordFormModal';
 import RowIssueEditModal from './RowIssueEditModal';
 import EstimateLastImportRow from './EstimateLastImportRow';
@@ -105,6 +106,21 @@ const SCAN_MESSAGES = ['Uploading...', 'Reading Excel...', 'Validating Records..
 // bar's tick step is derived from these so it reaches its 90% cap in
 // roughly this real-world duration regardless of file size.
 const IMPORT_PROGRESS_TICK_MS = 120;
+
+// The payment system's Deposit/Payout exports declare a full-sheet range
+// (A1:Y1048576) even though only ~30k rows hold data — shrink !ref to the
+// last real cell so sheet_to_json doesn't walk a million empty rows.
+function trimSheetRange(sheet: XLSX.WorkSheet): void {
+  let maxRow = -1;
+  let maxCol = -1;
+  for (const key of Object.keys(sheet)) {
+    if (key.startsWith('!')) continue;
+    const { r, c } = XLSX.utils.decode_cell(key);
+    if (r > maxRow) maxRow = r;
+    if (c > maxCol) maxCol = c;
+  }
+  if (maxRow >= 0) sheet['!ref'] = XLSX.utils.encode_range({ s: { r: 0, c: 0 }, e: { r: maxRow, c: maxCol } });
+}
 const IMPORT_PROGRESS_TARGET_MS = 3500;
 
 const MONTH_ABBR = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
@@ -326,7 +342,6 @@ type BulkImportModalProps = {
   // standalone UploadExcelModal used. Required when allowEstimateMode is true.
   estimateApiBasePath?: string;
   estimateExtractShopName?: (raw: string | number) => string;
-  estimateSkipShopNames?: string[];
   // Phase 7 — Settlement/Top Up's own real-upload switch, same shape as
   // Opening's estimateApiBasePath/moduleKind==='opening' pair but generic
   // over any non-Opening module: when both are set, handleImportStart POSTs
@@ -358,7 +373,6 @@ export default function BulkImportModal({
   allowEstimateMode = false,
   estimateApiBasePath,
   estimateExtractShopName,
-  estimateSkipShopNames = [],
   importApiBasePath,
   product,
   onImported,
@@ -442,6 +456,18 @@ export default function BulkImportModal({
   // block rather than folded into the generic rows/summary shape above since
   // its data doesn't fit that per-agent-record model at all.
   const [estimateMode, setEstimateMode] = useState(false);
+  // DP (Deposit export) or WD (Payout export) — deliberately starts empty
+  // every time Estimate Mode is ticked; no file can be chosen until the
+  // user picks one (see app/lib/estimateTransactions.ts).
+  const [estimateKind, setEstimateKind] = useState<EstimateKind | null>(null);
+  // Preview-only extras for the transaction export: distinct shops, rows
+  // per Updated Time day, and rows left out for not being Successful.
+  const [estimateShopCount, setEstimateShopCount] = useState(0);
+  const [estimateCountByDate, setEstimateCountByDate] = useState<Record<string, number>>({});
+  const [estimateNotSuccessful, setEstimateNotSuccessful] = useState(0);
+  // From the server's reply — false means the day's other side (WD after a
+  // DP upload, or DP after WD) hasn't been uploaded yet.
+  const [estimateOtherSideUploaded, setEstimateOtherSideUploaded] = useState(true);
   const [estimateParsed, setEstimateParsed] = useState<{ headerRow: (string | number)[]; dataRows: (string | number)[][] } | null>(null);
   const [estimateDetectedShops, setEstimateDetectedShops] = useState(0);
   const [estimateDetectedErrors, setEstimateDetectedErrors] = useState(0);
@@ -457,10 +483,39 @@ export default function BulkImportModal({
   // rewrites estimateParsed's cell and re-runs parseEstimateRows. Every
   // flagged row must be fixed or skipped before Import is allowed.
   const [estimateSkippedRows, setEstimateSkippedRows] = useState<Set<number>>(new Set());
+  // Loaded fresh on every scan (GET upload-estimated-balance) — lets the
+  // preview flag a counted-day transaction the import would leave out
+  // (unknown shop, unmatched OLD, MANUAL, wallet not on Opening).
+  const [estimateShopCheck, setEstimateShopCheck] = useState<EstimateShopCheck | undefined>(undefined);
   const [estimateEditingRow, setEstimateEditingRow] = useState<number | null>(null);
   const [estimateEditValues, setEstimateEditValues] = useState<Record<string, string>>({});
   // Unknown-wallet-type check is Cashout-only, same as the server's own guard.
   const estimateAllowedWalletTypes = estimateApiBasePath?.includes('sendmoney') ? undefined : CASHOUT_ESTIMATE_WALLET_TYPES;
+
+  // estimateDetectedShops keeps its original role as the row count the
+  // Errors/Skip math runs against — for the transaction export that's the
+  // Successful transactions; the distinct shop count is its own state.
+  const applyEstimateParse = useCallback((result: ReturnType<typeof parseEstimateTransactions>) => {
+    setEstimateDetectedShops(result.txnCount);
+    setEstimateDetectedErrors(result.detectedErrors);
+    setEstimateRowErrors(result.rowErrors);
+    setEstimateShopCount(result.shopCount);
+    setEstimateCountByDate(result.countByDate);
+    setEstimateNotSuccessful(result.notSuccessfulCount);
+  }, []);
+
+  // The day this upload counts for (business today − 1) and how many of
+  // the file's transactions are dated that day — the server applies the
+  // same rule; this only warns early and blocks a file with none.
+  const estimateActivityDate = useMemo(() => {
+    const { year, month, day } = manilaFields(getBusinessToday());
+    return previousDay(`${year}-${String(month + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [estimateParsed]);
+  const estimateActivityCount = estimateCountByDate[estimateActivityDate] ?? 0;
+  // Estimate Mode needs a DP/WD choice before any file can be picked.
+  const uploadLocked = estimateMode && estimateKind === null;
+  const estimateOtherDateCount = Object.entries(estimateCountByDate).reduce((s, [d, c]) => (d === estimateActivityDate ? s : s + c), 0);
 
   // Fetched as soon as the modal opens (not gated behind ticking the
   // checkbox) so Last Import is ready the instant Estimate Mode is checked —
@@ -758,7 +813,12 @@ export default function BulkImportModal({
       importProgressTimerRef.current = null;
     }
     setEstimateMode(false);
+    setEstimateKind(null);
+    setEstimateShopCount(0);
+    setEstimateCountByDate({});
+    setEstimateNotSuccessful(0);
     setEstimateParsed(null);
+    setEstimateShopCheck(undefined);
     setEstimateDetectedShops(0);
     setEstimateDetectedErrors(0);
     setEstimateRowErrors([]);
@@ -816,17 +876,26 @@ export default function BulkImportModal({
         let failure: string | null = null;
         let parsedHeaderRow: (string | number)[] = [];
         let parsedDataRows: (string | number)[][] = [];
-        let result: { detectedShops: number; detectedErrors: number; rowErrors: EstimateRowError[] } | null = null;
+        let result: ReturnType<typeof parseEstimateTransactions> | null = null;
+        let shopCheck: EstimateShopCheck | undefined;
         try {
+          if (!estimateKind) throw new Error('Choose Deposit (DP) or Withdrawal (WD) first.');
           const buffer = await file.arrayBuffer();
           const workbook = XLSX.read(buffer, { type: 'array' });
           const sheet = workbook.Sheets[workbook.SheetNames[0]];
+          trimSheetRange(sheet);
           const sheetRows: (string | number)[][] = XLSX.utils.sheet_to_json(sheet, { header: 1, blankrows: false });
           const [headerRow, ...dataRows] = sheetRows;
           if (!headerRow || headerRow.length === 0) throw new Error('The file appears to be empty.');
           parsedHeaderRow = headerRow;
           parsedDataRows = dataRows;
-          result = parseEstimateRows(headerRow, dataRows, estimateExtractShopName!, estimateSkipShopNames, estimateAllowedWalletTypes);
+          // Without the shop list a can't-be-added transaction would slip
+          // through unflagged, so the scan stops instead.
+          const shopsRes = await fetch(`${estimateApiBasePath}/upload-estimated-balance?t=${Date.now()}`);
+          const shopsBody: { shops?: EstimateShopCheck['shops'] } | null = shopsRes.ok ? await shopsRes.json().catch(() => null) : null;
+          if (!shopsBody?.shops) throw new Error('Could not load the shop list to check this file. Please try again.');
+          shopCheck = { activityDate: estimateActivityDate, shops: shopsBody.shops };
+          result = parseEstimateTransactions(headerRow, dataRows, estimateKind, estimateExtractShopName!, estimateAllowedWalletTypes, new Set(), shopCheck);
         } catch (err) {
           failure = err instanceof Error ? err.message : 'Could not read this file.';
         }
@@ -845,9 +914,8 @@ export default function BulkImportModal({
           return;
         }
         setEstimateParsed({ headerRow: parsedHeaderRow, dataRows: parsedDataRows });
-        setEstimateDetectedShops(result.detectedShops);
-        setEstimateDetectedErrors(result.detectedErrors);
-        setEstimateRowErrors(result.rowErrors);
+        setEstimateShopCheck(shopCheck);
+        applyEstimateParse(result);
         setEstimateSkippedRows(new Set());
         // Open straight away when something needs a Skip/Edit decision.
         setEstimateErrorsExpanded(result.detectedErrors > 0);
@@ -1256,7 +1324,10 @@ export default function BulkImportModal({
   // Same request shape as the old standalone UploadExcelModal's own
   // handleImportData.
   const handleEstimateImportStart = useCallback(async () => {
-    if (!estimateParsed || !file || !estimateApiBasePath) return;
+    if (!estimateParsed || !file || !estimateApiBasePath || !estimateKind) return;
+    // Per-wallet, per-day sums with every Skipped row left out — the
+    // server only ever receives these (~1-2k rows), never the raw ~30k.
+    const { sums } = parseEstimateTransactions(estimateParsed.headerRow, estimateParsed.dataRows, estimateKind, estimateExtractShopName!, estimateAllowedWalletTypes, estimateSkippedRows, estimateShopCheck);
     setStep('importing');
     setEstimateImportProgress(0);
     setEstimateImportError(null);
@@ -1272,18 +1343,14 @@ export default function BulkImportModal({
       const res = await fetch(`${estimateApiBasePath}/upload-estimated-balance`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        // Skipped rows never leave the browser (row number = index + 2).
-        body: JSON.stringify({
-          headerRow: estimateParsed.headerRow,
-          dataRows: estimateParsed.dataRows.filter((_, i) => !estimateSkippedRows.has(i + 2)),
-          fileName: file.name,
-        }),
+        body: JSON.stringify({ kind: estimateKind, wallets: sums, fileName: file.name }),
       });
       if (!res.ok) {
         const errBody = await res.json().catch(() => null);
         throw new Error(errBody?.error || 'Import failed.');
       }
-      const result: { uploadedAt: string; shopCount: number } = await res.json();
+      const result: { uploadedAt: string; shopCount: number; otherSideUploaded: boolean } = await res.json();
+      setEstimateOtherSideUploaded(result.otherSideUploaded);
 
       if (estimateProgressTimerRef.current) {
         clearInterval(estimateProgressTimerRef.current);
@@ -1309,7 +1376,7 @@ export default function BulkImportModal({
       setEstimateImportError(err instanceof Error ? err.message : 'Import failed.');
       setStep('validation');
     }
-  }, [estimateParsed, estimateSkippedRows, file, estimateApiBasePath, onImported]);
+  }, [estimateParsed, estimateSkippedRows, file, estimateApiBasePath, onImported, estimateKind, estimateExtractShopName, estimateAllowedWalletTypes, estimateShopCheck]);
 
   // Opening's real template (public/templates/opening-*-template.xlsx) has
   // a non-flat layout — summary cells (Updated Time, AG Total Opening
@@ -1424,14 +1491,13 @@ export default function BulkImportModal({
     }
     dataRows[index] = row;
     const next = { headerRow: estimateParsed.headerRow, dataRows };
-    const result = parseEstimateRows(next.headerRow, next.dataRows, estimateExtractShopName!, estimateSkipShopNames, estimateAllowedWalletTypes);
+    if (!estimateKind) return;
+    const result = parseEstimateTransactions(next.headerRow, next.dataRows, estimateKind, estimateExtractShopName!, estimateAllowedWalletTypes, new Set(), estimateShopCheck);
     setEstimateParsed(next);
-    setEstimateDetectedShops(result.detectedShops);
-    setEstimateDetectedErrors(result.detectedErrors);
-    setEstimateRowErrors(result.rowErrors);
+    applyEstimateParse(result);
     setEstimateEditingRow(null);
     setEstimateEditValues({});
-  }, [estimateParsed, estimateEditingRow, estimateEditValues, estimateExtractShopName, estimateSkipShopNames, estimateAllowedWalletTypes]);
+  }, [estimateParsed, estimateEditingRow, estimateEditValues, estimateExtractShopName, estimateAllowedWalletTypes, estimateKind, applyEstimateParse, estimateShopCheck]);
 
   const downloadEstimateReport = useCallback(() => {
     const headers = ['Row', 'Shop Code', 'Shop Name', 'Column', 'Invalid Value', 'Error Message'];
@@ -1449,7 +1515,7 @@ export default function BulkImportModal({
   // real "0 records imported successfully" completion is more confusing
   // than just blocking it up front.
   const canContinue = estimateMode
-    ? (estimateParsed !== null && estimateDetectedShops - estimateSkippedCount > 0 && estimateUnresolvedCount === 0)
+    ? (estimateParsed !== null && estimateDetectedShops - estimateSkippedCount > 0 && estimateUnresolvedCount === 0 && estimateActivityCount > 0)
     : (activeErrorCount === 0 && duplicatesConfirmed && allDatesConfirmed && readyRows.length > 0);
   const hasNonBlockingIssues = (summary?.warningCount ?? 0) + (summary?.duplicateCount ?? 0) > 0;
 
@@ -1603,16 +1669,41 @@ export default function BulkImportModal({
                   <input
                     type="checkbox"
                     checked={estimateMode}
-                    onChange={(event) => setEstimateMode(event.target.checked)}
+                    onChange={(event) => { setEstimateMode(event.target.checked); setEstimateKind(null); setScanError(null); }}
                     className="mt-0.5 h-[18px] w-[18px] shrink-0 rounded-[5px] border-border accent-[color:var(--ui-accent)]"
                   />
                   <div className="min-w-0">
                     <p className="text-[13px] font-bold text-foreground">Estimate Opening Balance</p>
                     <p className="mt-0.5 text-[12px] leading-relaxed text-muted-foreground">
-                      Upload a raw Balance Limit export to generate the next day&apos;s Opening Balance.
+                      Upload the Deposit or Payout transaction export — the transactions are added up per wallet to generate the next day&apos;s Opening Balance.
                     </p>
                   </div>
                 </label>
+              )}
+
+              {allowEstimateMode && estimateMode && (
+                <div className="mb-3.5">
+                  <p className="mb-1.5 text-[11px] font-semibold text-muted-foreground">What is this file? <span className="text-rose-600 dark:text-rose-400">*</span></p>
+                  <div role="radiogroup" aria-label="Estimate file type" className="grid grid-cols-2 gap-2">
+                    {(['dp', 'wd'] as const).map((kind) => {
+                      const selected = estimateKind === kind;
+                      return (
+                        <button
+                          key={kind}
+                          type="button"
+                          role="radio"
+                          aria-checked={selected}
+                          onClick={() => { setEstimateKind(kind); setScanError(null); }}
+                          className={`rounded-[12px] border px-3 py-2.5 text-left transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--ui-accent)] ${
+                            selected ? 'border-[color:var(--ui-accent)] bg-[color:var(--ui-accent-soft)]' : 'border-border bg-muted/20 hover:border-muted-foreground/40'
+                          }`}
+                        >
+                          <p className="text-[12.5px] font-bold text-foreground">{ESTIMATE_KIND_LABEL[kind]}</p>
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
               )}
 
               {!estimateMode && (
@@ -1630,21 +1721,26 @@ export default function BulkImportModal({
               )}
 
               <div
-                onDragEnter={(event) => { event.preventDefault(); setDragActive(true); }}
-                onDragOver={(event) => { event.preventDefault(); setDragActive(true); }}
+                onDragEnter={(event) => { event.preventDefault(); if (!uploadLocked) setDragActive(true); }}
+                onDragOver={(event) => { event.preventDefault(); if (!uploadLocked) setDragActive(true); }}
                 onDragLeave={(event) => { event.preventDefault(); setDragActive(false); }}
-                onDrop={handleDrop}
-                onClick={() => fileInputRef.current?.click()}
-                className={`flex h-[130px] cursor-pointer flex-col items-center justify-center gap-1.5 rounded-[14px] border-[1.5px] border-dashed px-4 text-center transition-colors ${
-                  dragActive ? 'border-[color:var(--ui-accent)] bg-[color:var(--ui-accent-soft)]' : 'border-border bg-muted/20 hover:border-[color:var(--ui-accent)] hover:bg-[color:var(--ui-accent-soft)]'
+                onDrop={(event) => { if (uploadLocked) { event.preventDefault(); return; } handleDrop(event); }}
+                onClick={() => { if (!uploadLocked) fileInputRef.current?.click(); }}
+                aria-disabled={uploadLocked}
+                className={`flex h-[130px] flex-col items-center justify-center gap-1.5 rounded-[14px] border-[1.5px] border-dashed px-4 text-center transition-colors ${
+                  uploadLocked
+                    ? 'cursor-not-allowed border-border bg-muted/20 opacity-60'
+                    : dragActive ? 'cursor-pointer border-[color:var(--ui-accent)] bg-[color:var(--ui-accent-soft)]' : 'cursor-pointer border-border bg-muted/20 hover:border-[color:var(--ui-accent)] hover:bg-[color:var(--ui-accent-soft)]'
                 }`}
               >
                 <span className={MODAL_GLYPH_CLASS} style={MODAL_GLYPH_STYLE}>
                   <Upload size={17} />
                 </span>
-                <p className="mt-1 text-[13.5px] font-bold text-foreground">Drag &amp; drop your Excel file here</p>
+                <p className="mt-1 text-[13.5px] font-bold text-foreground">
+                  {uploadLocked ? 'Choose Deposit (DP) or Withdrawal (WD) first' : 'Drag & drop your Excel file here'}
+                </p>
                 <p className="text-[11.5px] text-muted-foreground">
-                  or click to browse · Supports {estimateMode ? 'Balance Limit export' : TEMPLATE_LABEL[templateModule]} (.xlsx)
+                  or click to browse · Supports {estimateMode ? (estimateKind === 'wd' ? 'Export Payout' : estimateKind === 'dp' ? 'Export Deposit' : 'Deposit / Payout export') : TEMPLATE_LABEL[templateModule]} (.xlsx)
                 </p>
                 <input
                   ref={fileInputRef}
@@ -1692,7 +1788,7 @@ export default function BulkImportModal({
                 <div className="min-w-0 flex-1">
                   <p className="truncate text-[13px] font-semibold text-foreground">{file?.name}</p>
                   <p className="text-[11px] text-muted-foreground">
-                    {file ? (file.size / 1024).toFixed(0) : 0} KB · {estimateDetectedShops} rows · Modified {file ? new Date(file.lastModified).toLocaleDateString() : ''}
+                    {estimateKind ? `${ESTIMATE_KIND_LABEL[estimateKind]} · ` : ''}{file ? (file.size / 1024).toFixed(0) : 0} KB · {estimateDetectedShops.toLocaleString()} successful transactions · Modified {file ? new Date(file.lastModified).toLocaleDateString() : ''}
                   </p>
                 </div>
                 <button
@@ -1715,7 +1811,7 @@ export default function BulkImportModal({
                     <Store size={14} />
                   </div>
                   <div className="min-w-0">
-                    <p className="text-[15px] font-bold tabular-nums text-foreground">{estimateDetectedShops.toLocaleString()}</p>
+                    <p className="text-[15px] font-bold tabular-nums text-foreground">{estimateShopCount.toLocaleString()}</p>
                     <p className="text-[10px] text-muted-foreground">Shops</p>
                   </div>
                 </div>
@@ -1725,7 +1821,7 @@ export default function BulkImportModal({
                   </div>
                   <div className="min-w-0">
                     <p className="text-[15px] font-bold tabular-nums text-foreground">{(estimateDetectedShops - estimateDetectedErrors).toLocaleString()}</p>
-                    <p className="text-[10px] text-muted-foreground">Ready{estimateSkippedCount > 0 ? ` · ${estimateSkippedCount} skipped` : ''}</p>
+                    <p className="text-[10px] text-muted-foreground">Transactions ready{estimateSkippedCount > 0 ? ` · ${estimateSkippedCount} skipped` : ''}</p>
                   </div>
                 </div>
                 <button
@@ -1753,6 +1849,29 @@ export default function BulkImportModal({
                       : <ChevronDown size={13} className="shrink-0 text-muted-foreground" />
                   )}
                 </button>
+              </div>
+
+              {/* Which day this upload counts for — only transactions whose
+                  Updated Time falls on that day are added; the rest are
+                  ignored (the server re-applies the same rule). */}
+              <div className={`mt-3 rounded-[14px] border px-3 py-2.5 text-[11.5px] leading-relaxed ${
+                estimateActivityCount > 0
+                  ? 'border-border bg-muted/20 text-foreground'
+                  : 'border-rose-200 bg-rose-50 text-rose-700 dark:border-rose-500/30 dark:bg-rose-500/10 dark:text-rose-400'
+              }`}>
+                <p>
+                  Counts for <span className="font-semibold">{formatEstimateDay(estimateActivityDate)}</span>
+                  {' '}(by Updated Time): <span className="font-semibold tabular-nums">{estimateActivityCount.toLocaleString()}</span> transactions.
+                </p>
+                {estimateActivityCount === 0 && (
+                  <p className="mt-0.5">No transactions in this file are dated {formatEstimateDay(estimateActivityDate)} — nothing to import. Dates found: {Object.keys(estimateCountByDate).sort().map(formatEstimateDay).join(', ') || 'none'}.</p>
+                )}
+                {estimateOtherDateCount > 0 && (
+                  <p className="mt-0.5 text-muted-foreground">{estimateOtherDateCount.toLocaleString()} transaction{estimateOtherDateCount === 1 ? '' : 's'} from other dates will not be added.</p>
+                )}
+                {estimateNotSuccessful > 0 && (
+                  <p className="mt-0.5 text-muted-foreground">{estimateNotSuccessful.toLocaleString()} row{estimateNotSuccessful === 1 ? '' : 's'} not &quot;Successful&quot; left out.</p>
+                )}
               </div>
 
               {estimateDetectedErrors > 0 && estimateErrorsExpanded && (
@@ -2513,6 +2632,11 @@ export default function BulkImportModal({
                 </div>
                 <p className="mt-3 text-[14px] font-bold text-foreground">Opening Balance imported successfully!</p>
                 <p className="mt-0.5 text-[12px] text-muted-foreground">{estimateImportResult.shopCount} shops imported.</p>
+                {!estimateOtherSideUploaded && estimateKind && (
+                  <p className="mt-1 text-[12px] font-medium text-amber-700 dark:text-amber-400">
+                    {estimateKind === 'dp' ? 'Withdrawal (WD)' : 'Deposit (DP)'} for this day isn&apos;t uploaded yet — upload the {estimateKind === 'dp' ? 'Payout' : 'Deposit'} export too.
+                  </p>
+                )}
               </div>
               <div className="grid w-full grid-cols-3 gap-3">
                 <div className="min-w-0">
