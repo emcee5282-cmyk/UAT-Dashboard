@@ -441,11 +441,19 @@ export async function GET(request: Request) {
     // over. Once a valid Estimated Balance exists, it already bakes that
     // stale day in (see app/lib/estimatedOpening.ts), so this goes back to
     // today-only to avoid counting it twice.
-    const cashoutLiveCutoff = (cashoutCutoffDate !== null && cashoutCutoffDate.getTime() < cutoff.getTime() && !estimatedOpeningValid)
-      ? cashoutCutoffDate
+    // Rounded to its business day (same toBusinessDate() wrapper as
+    // cashoutHasTodayBalanceData above) — cashoutCutoffDate is a precise
+    // completedAt (e.g. Nov 16 02:22), while each transaction's date parses
+    // to Manila midnight, so comparing against the raw timestamp dropped
+    // every row from Opening's own refresh day and zeroed Top Up/Settlement
+    // right after the 2AM rollover.
+    const cashoutCutoffDay = cashoutCutoffDate !== null ? toBusinessDate(cashoutCutoffDate) : null;
+    const sendMoneyCutoffDay = sendMoneyCutoffDate !== null ? toBusinessDate(sendMoneyCutoffDate) : null;
+    const cashoutLiveCutoff = (cashoutCutoffDay !== null && cashoutCutoffDay.getTime() < cutoff.getTime() && !estimatedOpeningValid)
+      ? cashoutCutoffDay
       : cutoff;
-    const sendMoneyLiveCutoff = (sendMoneyCutoffDate !== null && sendMoneyCutoffDate.getTime() < cutoff.getTime() && !estimatedSendMoneyOpeningValid)
-      ? sendMoneyCutoffDate
+    const sendMoneyLiveCutoff = (sendMoneyCutoffDay !== null && sendMoneyCutoffDay.getTime() < cutoff.getTime() && !estimatedSendMoneyOpeningValid)
+      ? sendMoneyCutoffDay
       : cutoff;
 
     // ---------- Cashout ----------
