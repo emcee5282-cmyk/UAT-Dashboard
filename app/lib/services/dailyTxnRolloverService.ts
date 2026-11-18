@@ -24,7 +24,7 @@ export const DAILY_TXN_LEDGER_BRANDS = ['M1', 'M2', 'K1', 'B1', 'B2', 'B3', 'B4'
 const BRANDS = DAILY_TXN_LEDGER_BRANDS;
 const WALLET_LEDGER_IDS = ['ssp1', 'ssp2'] as const;
 const WALLETS = ['Bkash', 'Nagad', 'Rocket', 'UPay'] as const;
-const PG_KEYS = ['autopay', 'expay', 'ssp1', 'ssp2', 'essPg', 'hkpay', 'phbpay'] as const;
+const PG_KEYS = ['autopay', 'expay', 'ssp1', 'ssp2', 'essPg', 'hkpay', 'phbpay', 'htpayCo', 'htpaySm'] as const;
 
 const LEDGER_RETENTION_DAYS = 30;
 const REPORT_RETENTION_DAYS = 7;

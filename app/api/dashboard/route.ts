@@ -216,6 +216,7 @@ type RawBrandBalanceRow = { brand: string; opening: number; deposit: number; wit
 // 'atp'/'autopay' — everything else matches).
 const LEDGER_TO_PG_KEY: Record<string, string> = {
   ssp1: 'ssp1', ssp2: 'ssp2', ess: 'essPg', atp: 'autopay', expay: 'expay', hkpay: 'hkpay', phbpay: 'phbpay',
+  htpayCo: 'htpayCo', htpaySm: 'htpaySm',
 };
 
 async function getDailyTxnLedgerBrandTotals(ledgerId: string, businessDate: string): Promise<RawBrandBalanceRow[]> {
@@ -324,8 +325,8 @@ export async function GET(request: Request) {
       getDailyTxnLedgerBrandTotals('atp', todayKey),
       getDailyTxnLedgerBrandTotals('expay', todayKey),
       getDailyTxnLedgerBrandTotals('phbpay', todayKey),
-      // HTPAY has no Report-tab PG key (Operations-tab ledgers only), so
-      // these read the ledger's own carried-forward Opening.
+      // HTPAY's Opening comes from Report tab's PG Closing Balances like
+      // the others, falling back to the ledger's own carried-forward Opening.
       getDailyTxnLedgerBrandTotals('htpayCo', todayKey),
       getDailyTxnLedgerBrandTotals('htpaySm', todayKey),
       // Estimated Opening override — PostgreSQL (readEstimatedOpeningDisplayPg,

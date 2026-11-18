@@ -29,6 +29,8 @@ const LEDGER_TO_PG_KEY: Record<string, string> = {
   expay: 'expay',
   hkpay: 'hkpay',
   phbpay: 'phbpay',
+  htpayCo: 'htpayCo',
+  htpaySm: 'htpaySm',
 };
 
 export async function GET(request: Request) {

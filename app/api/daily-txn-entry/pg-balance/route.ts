@@ -9,7 +9,7 @@ import { authorizeApi } from '@/app/lib/auth/guard';
 // Self-contained, same as wallet-closing above (not derived from Operations
 // tab's ledgers).
 
-const PG_KEYS = ['autopay', 'expay', 'ssp1', 'ssp2', 'essPg', 'hkpay', 'phbpay'] as const;
+const PG_KEYS = ['autopay', 'expay', 'ssp1', 'ssp2', 'essPg', 'hkpay', 'phbpay', 'htpayCo', 'htpaySm'] as const;
 
 function todayStr(): string {
   const { year, month, day } = manilaFields(getBusinessToday());
