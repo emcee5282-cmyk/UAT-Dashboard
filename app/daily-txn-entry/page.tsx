@@ -93,8 +93,8 @@ const LEDGERS: LedgerMeta[] = [
 const PG_WALLETS = ['Bkash', 'Nagad', 'Rocket', 'UPay'] as const;
 type PgWallet = (typeof PG_WALLETS)[number];
 
-type PgKey = 'autopay' | 'expay' | 'ssp1' | 'ssp2' | 'essPg' | 'hkpay' | 'phbpay';
-const PG_KEYS: PgKey[] = ['autopay', 'expay', 'ssp1', 'ssp2', 'essPg', 'hkpay', 'phbpay'];
+type PgKey = 'autopay' | 'expay' | 'ssp1' | 'ssp2' | 'essPg' | 'hkpay' | 'phbpay' | 'htpayCo' | 'htpaySm';
+const PG_KEYS: PgKey[] = ['autopay', 'expay', 'ssp1', 'ssp2', 'essPg', 'hkpay', 'phbpay', 'htpayCo', 'htpaySm'];
 const PG_LABELS: Record<PgKey, string> = {
   autopay: 'AUTOPAY',
   expay: 'EXPAY',
@@ -103,6 +103,8 @@ const PG_LABELS: Record<PgKey, string> = {
   essPg: 'ESS',
   hkpay: 'HKPAY',
   phbpay: 'PHBPAY',
+  htpayCo: 'HTPAY Cashout',
+  htpaySm: 'HTPAY SendMoney',
 };
 
 // Ported verbatim from the reference file's fmt() — parenthesized negatives,
