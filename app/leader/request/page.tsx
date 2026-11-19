@@ -74,7 +74,7 @@ export default function LeaderRequestPage() {
   }
 
   return (
-    <div className="min-h-screen w-full bg-background font-[Inter,sans-serif] text-foreground">
+    <div className="h-dvh w-full overflow-y-auto bg-background font-[Inter,sans-serif] text-foreground">
       <form onSubmit={submit} className={`mx-auto w-full max-w-2xl px-4 py-6 sm:px-8 ${LEADER_NAV_PADDING}`} noValidate>
         <h1 className="mb-5 text-2xl font-bold">New request</h1>
 

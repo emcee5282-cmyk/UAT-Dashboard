@@ -170,7 +170,7 @@ export default function TicketsListPage() {
   }, [tickets, filter, search]);
 
   return (
-    <div className="min-h-screen w-full bg-background font-[Inter,sans-serif] text-foreground">
+    <div className="h-dvh w-full overflow-y-auto bg-background font-[Inter,sans-serif] text-foreground">
       <div className={`mx-auto w-full max-w-2xl px-5 py-8 sm:px-8 ${canRaise ? LEADER_NAV_PADDING : ''}`}>
         <div className="mb-5 flex items-center justify-between gap-3">
           <h1 className="text-2xl font-bold">Tickets</h1>
