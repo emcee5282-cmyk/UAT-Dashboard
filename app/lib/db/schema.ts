@@ -1194,7 +1194,11 @@ export const dailyTxnRolloverRuns = pgTable(
 // staff/admin side are a later phase; leaders only ever read status here)
 // ---------------------------------------------------------------------------
 
-export const ticketTitleEnum = pgEnum('ticket_title', ['agent_concern', 'shop_replacement', 'adding_new_account']);
+// topup_request / settlement_request: a leader asking ops to top up or
+// settle ONE of their own shops (Tracker / leader portal). Approving one
+// (status 'settled') is a status change only — the real transaction is
+// still recorded by staff on the Top Up / Settlement pages.
+export const ticketTitleEnum = pgEnum('ticket_title', ['agent_concern', 'shop_replacement', 'adding_new_account', 'topup_request', 'settlement_request']);
 // 'day_shift' | '24_hours' — Adding new account's Limit Duration field only.
 export const ticketLimitDurationEnum = pgEnum('ticket_limit_duration', ['day_shift', '24_hours']);
 // 'pending' (default on create) -> 'ongoing' -> 'settled' | 'rejected'.
@@ -1230,6 +1234,11 @@ export const tickets = pgTable(
     dailyLimit: numeric('daily_limit', { precision: 18, scale: 2 }),
     limitDuration: ticketLimitDurationEnum('limit_duration'),
     numShops: integer('num_shops'),
+    // Top-up / settlement requests only, both below (the shop itself is the
+    // single id in shopIds). Amount is always positive. Wallet is one of
+    // Bkash / Nagad / Rocket / Upay.
+    requestAmount: numeric('request_amount', { precision: 18, scale: 2 }),
+    requestWallet: text('request_wallet'),
     // Optional, all title types.
     details: text('details'),
     status: ticketStatusEnum('status').notNull().default('pending'),

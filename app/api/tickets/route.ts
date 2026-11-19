@@ -5,6 +5,7 @@ import { agents, leaders, ticketMessages, tickets, users } from '@/app/lib/db/sc
 import { authorizeApi } from '@/app/lib/auth/guard';
 import { can, queueTitlesFor } from '@/app/lib/auth/permissions';
 import { classifyTicketPriority } from '@/app/lib/ticketPriorityClassifier';
+import { REQUEST_TITLES, REQUEST_WALLETS, isRequestTitle, parseRequestAmount } from '@/app/lib/leaderRequests';
 
 const PRIORITY_RANK = { urgent: 0, moderate: 1, normal: 2 } as const;
 
@@ -16,12 +17,14 @@ type CreateTicketBody = {
   agentIds?: number[];
   shopIds?: number[];
   dailyLimit?: string | number;
+  amount?: string | number;
+  wallet?: string;
   limitDuration?: string;
   numShops?: string | number;
   details?: string;
 };
 
-const VALID_TITLES = ['agent_concern', 'shop_replacement', 'adding_new_account'];
+const VALID_TITLES = ['agent_concern', 'shop_replacement', 'adding_new_account', ...REQUEST_TITLES];
 const VALID_DURATIONS = ['day_shift', '24_hours'];
 
 // Confirms every id actually belongs to this leader's own agent pool before
@@ -95,8 +98,18 @@ export async function GET(request: NextRequest) {
     }
   }
 
+  // Shop code for top-up/settlement requests (single shop each) so list
+  // rows can show which shop a request is for without opening it.
+  const requestShopIds = [...new Set(rows.filter((t) => isRequestTitle(t.title)).flatMap((t) => t.shopIds ?? []))];
+  const shopCodeById = new Map(
+    requestShopIds.length > 0
+      ? (await db.select({ id: agents.id, agentCode: agents.agentCode }).from(agents).where(inArray(agents.id, requestShopIds))).map((a) => [a.id, a.agentCode] as const)
+      : []
+  );
+
   let result = rows.map((t) => {
     const latest = latestByTicket.get(t.id);
+    const requestShopCode = isRequestTitle(t.title) ? (shopCodeById.get(t.shopIds?.[0] ?? -1) ?? null) : null;
     // Leader view: unread if the newest message wasn't the leader's own and
     // arrived after their last view. Staff view: the mirror image — unread
     // (from-leader) if the newest message IS from a leader and arrived
@@ -108,7 +121,7 @@ export async function GET(request: NextRequest) {
     // Same redaction rule as GET /api/tickets/:id — a leader must never see
     // who claimed their ticket, including in this list-row snippet.
     const lastMessageText = latest ? (!isStaffQueue && latest.kind === 'assigned' ? 'This ticket has been assigned.' : latest.message) : null;
-    return { ...t, hasUnread, lastMessageAt: latest?.createdAt ?? null, lastMessageText, lastMessageSenderRole: latest?.senderRole ?? null };
+    return { ...t, requestShopCode, hasUnread, lastMessageAt: latest?.createdAt ?? null, lastMessageText, lastMessageSenderRole: latest?.senderRole ?? null };
   });
 
   if (isStaffQueue) {
@@ -190,6 +203,35 @@ export async function POST(request: NextRequest) {
     const [created] = await db
       .insert(tickets)
       .values({ title, shopIds, details, priority, prioritySource: 'rule', createdBy: session.userId })
+      .returning();
+    return NextResponse.json({ ticket: created }, { headers: { 'Cache-Control': 'no-store' } });
+  }
+
+  // Top-up / settlement request (leader portal): exactly one of the leader's
+  // own shops, a positive amount, and a wallet. Status-only workflow —
+  // approving never writes wallet_transactions.
+  if (isRequestTitle(title)) {
+    const shopIds = Array.isArray(body.shopIds) ? body.shopIds.filter((n) => Number.isInteger(n)) : [];
+    if (shopIds.length !== 1) {
+      return NextResponse.json({ error: 'Pick exactly one shop.' }, { status: 400 });
+    }
+    if (!(await idsBelongToLeader(shopIds, session.leaderId))) {
+      return NextResponse.json({ error: 'That shop is not in your roster.' }, { status: 403 });
+    }
+    const requestAmount = parseRequestAmount(body.amount);
+    if (!requestAmount) {
+      return NextResponse.json({ error: 'Enter a valid amount greater than 0.' }, { status: 400 });
+    }
+    const wallet = (body.wallet ?? '').toString().trim();
+    if (!(REQUEST_WALLETS as readonly string[]).includes(wallet)) {
+      return NextResponse.json({ error: 'Pick a wallet.' }, { status: 400 });
+    }
+
+    const db = getDb();
+    const priority = classifyTicketPriority(null, details);
+    const [created] = await db
+      .insert(tickets)
+      .values({ title, shopIds, requestAmount, requestWallet: wallet, details, priority, prioritySource: 'rule', createdBy: session.userId })
       .returning();
     return NextResponse.json({ ticket: created }, { headers: { 'Cache-Control': 'no-store' } });
   }

@@ -8,6 +8,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { Loader2, Moon, RefreshCw, Search, Sun } from 'lucide-react';
+import { REQUEST_LABEL, formatAmount } from '@/app/lib/leaderRequests';
 import { useVisibilityPolling } from '@/app/lib/useVisibilityPolling';
 import { BACKGROUND_POLL_HEADERS } from '@/app/lib/auth/backgroundPoll';
 import { useTheme } from '@/app/components/ThemeProvider';
@@ -15,7 +16,7 @@ import AccountMenu from '@/app/components/AccountMenu';
 
 const POLL_INTERVAL_MS = 9000;
 
-type TicketType = 'agent_concern' | 'shop_replacement' | 'adding_new_account';
+type TicketType = 'agent_concern' | 'shop_replacement' | 'adding_new_account' | 'topup_request' | 'settlement_request';
 
 type StaffTicketRow = {
   id: number;
@@ -24,6 +25,9 @@ type StaffTicketRow = {
   agentIds: number[] | null;
   shopIds: number[] | null;
   numShops: number | null;
+  requestAmount: string | null;
+  requestWallet: string | null;
+  requestShopCode: string | null;
   status: 'pending' | 'ongoing' | 'settled' | 'rejected';
   priority: 'urgent' | 'moderate' | 'normal';
   createdAt: string;
@@ -34,6 +38,8 @@ const TYPE_META: Record<TicketType, { label: string; dotClassName: string }> = {
   agent_concern: { label: 'Agent concern', dotClassName: 'bg-indigo-500' },
   shop_replacement: { label: 'Shop replacement', dotClassName: 'bg-amber-500' },
   adding_new_account: { label: 'Adding new account', dotClassName: 'bg-purple-500' },
+  topup_request: { label: 'Top-up request', dotClassName: 'bg-teal-500' },
+  settlement_request: { label: 'Settlement request', dotClassName: 'bg-orange-500' },
 };
 
 const STATUS_STYLE: Record<StaffTicketRow['status'], { label: string; className: string }> = {
@@ -78,6 +84,9 @@ function summarize(t: StaffTicketRow): string {
   if (t.title === 'shop_replacement') {
     const count = t.shopIds?.length ?? 0;
     return `Shop replacement — ${count} shop${count === 1 ? '' : 's'}`;
+  }
+  if (t.title === 'topup_request' || t.title === 'settlement_request') {
+    return `${REQUEST_LABEL[t.title]} — ${t.requestShopCode ?? ''} ${t.requestWallet ?? ''} ${formatAmount(t.requestAmount)}`;
   }
   return `Adding new account — ${t.numShops ?? '?'} shop${t.numShops === 1 ? '' : 's'}`;
 }

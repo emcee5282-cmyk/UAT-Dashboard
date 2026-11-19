@@ -18,6 +18,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { useParams, useRouter } from 'next/navigation';
 import { createPortal } from 'react-dom';
 import { AlertTriangle, ArrowLeft, ImagePlus, Loader2, Moon, RefreshCw, Send, Sun, X } from 'lucide-react';
+import { formatAmount } from '@/app/lib/leaderRequests';
 import { useVisibilityPolling } from '@/app/lib/useVisibilityPolling';
 import { useSession } from '@/app/lib/auth/useSession';
 import { canSettleTicket } from '@/app/lib/auth/permissions';
@@ -28,10 +29,12 @@ import { MODAL_OVERLAY_CLASS, MODAL_CARD_CLASS, MODAL_GHOST_BUTTON_CLASS, MODAL_
 
 type TicketDetail = {
   id: number;
-  title: 'agent_concern' | 'shop_replacement' | 'adding_new_account';
+  title: 'agent_concern' | 'shop_replacement' | 'adding_new_account' | 'topup_request' | 'settlement_request';
   issueType: string | null;
   agentCodes: string[];
   shopCodes: string[];
+  requestAmount: string | null;
+  requestWallet: string | null;
   dailyLimit: string | null;
   limitDuration: 'day_shift' | '24_hours' | null;
   numShops: number | null;
@@ -64,6 +67,8 @@ const TITLE_LABEL: Record<TicketDetail['title'], string> = {
   agent_concern: 'Agent concern',
   shop_replacement: 'Shop replacement',
   adding_new_account: 'Adding new account',
+  topup_request: 'Top-up request',
+  settlement_request: 'Settlement request',
 };
 
 const DURATION_LABEL: Record<string, string> = { day_shift: 'Day shift', '24_hours': '24 hours' };
@@ -601,6 +606,13 @@ export default function StaffTicketDetailPage() {
                     </>
                   )}
                   {ticket.title === 'shop_replacement' && <DetailBlock label="Shop(s)" value={ticket.shopCodes.join(', ') || '—'} />}
+                  {(ticket.title === 'topup_request' || ticket.title === 'settlement_request') && (
+                    <>
+                      <DetailBlock label="Shop" value={ticket.shopCodes.join(', ') || '—'} />
+                      <DetailBlock label="Wallet" value={ticket.requestWallet ?? '—'} />
+                      <DetailBlock label="Amount" value={formatAmount(ticket.requestAmount)} />
+                    </>
+                  )}
                   {ticket.title === 'adding_new_account' && (
                     <>
                       <DetailBlock label="Daily limit" value={ticket.dailyLimit ?? '—'} />

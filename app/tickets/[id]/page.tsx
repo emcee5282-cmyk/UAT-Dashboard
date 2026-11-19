@@ -22,10 +22,13 @@ import {
 } from 'lucide-react';
 import { useVisibilityPolling } from '@/app/lib/useVisibilityPolling';
 import { BACKGROUND_POLL_HEADERS } from '@/app/lib/auth/backgroundPoll';
+import { formatAmount } from '@/app/lib/leaderRequests';
 
 type TicketDetail = {
   id: number;
-  title: 'agent_concern' | 'shop_replacement' | 'adding_new_account';
+  title: 'agent_concern' | 'shop_replacement' | 'adding_new_account' | 'topup_request' | 'settlement_request';
+  requestAmount: string | null;
+  requestWallet: string | null;
   issueType: string | null;
   agentCodes: string[];
   shopCodes: string[];
@@ -71,6 +74,8 @@ const TITLE_LABEL: Record<TicketDetail['title'], string> = {
   agent_concern: 'Agent concern',
   shop_replacement: 'Shop replacement',
   adding_new_account: 'Adding new account',
+  topup_request: 'Top-up request',
+  settlement_request: 'Settlement request',
 };
 
 const DURATION_LABEL: Record<string, string> = { day_shift: 'Day shift', '24_hours': '24 hours' };
@@ -119,6 +124,9 @@ function condensedSummary(t: TicketDetail): string {
     if (t.agentCodes.length) parts.push(t.agentCodes.join(', '));
   } else if (t.title === 'shop_replacement') {
     if (t.shopCodes.length) parts.push(t.shopCodes.join(', '));
+  } else if (t.title === 'topup_request' || t.title === 'settlement_request') {
+    if (t.shopCodes.length) parts.push(t.shopCodes.join(', '));
+    parts.push(`${t.requestWallet ?? ''} ${formatAmount(t.requestAmount)}`.trim());
   } else {
     parts.push(`${t.numShops ?? '?'} shop${t.numShops === 1 ? '' : 's'}`);
     if (t.dailyLimit) parts.push(`Limit ${t.dailyLimit}`);
@@ -466,6 +474,13 @@ export default function TicketDetailPage() {
                     </>
                   )}
                   {ticket.title === 'shop_replacement' && <DetailRow label="Shop(s)" value={ticket.shopCodes.join(', ') || '—'} />}
+                  {(ticket.title === 'topup_request' || ticket.title === 'settlement_request') && (
+                    <>
+                      <DetailRow label="Shop" value={ticket.shopCodes.join(', ') || '—'} />
+                      <DetailRow label="Wallet" value={ticket.requestWallet ?? '—'} />
+                      <DetailRow label="Amount" value={formatAmount(ticket.requestAmount)} />
+                    </>
+                  )}
                   {ticket.title === 'adding_new_account' && (
                     <>
                       <DetailRow label="Daily limit" value={ticket.dailyLimit ?? '—'} />

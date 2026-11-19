@@ -52,6 +52,8 @@ export const TICKET_TYPES = {
   agent_concern: 'Agent concern',
   shop_replacement: 'Shop replacement',
   adding_new_account: 'Adding new account',
+  topup_request: 'Top-up request',
+  settlement_request: 'Settlement request',
 } as const;
 export type TicketTitle = keyof typeof TICKET_TYPES;
 export const TICKET_TITLES = Object.keys(TICKET_TYPES) as TicketTitle[];
@@ -197,6 +199,9 @@ export const PAGE_RULES: Rule[] = [
   { prefix: '/staff/tickets', anyOf: ANY_TICKET_QUEUE },
   { prefix: '/tickets/create', anyOf: ['tickets.raise'] },
   { prefix: '/tickets', anyOf: ['tickets.raise', 'tickets.leaderView'] },
+  // Leader portal (balance, top-up/settlement requests). Leader accounts
+  // only — every /api/leader handler also requires a linked users.leaderId.
+  { prefix: '/leader', anyOf: ['tickets.raise'] },
   // Puppeteer render targets for TG sends — opened server-side with the
   // sender's own forwarded session cookie.
   { prefix: '/internal', anyOf: ANY_TELEGRAM },
@@ -294,6 +299,7 @@ export const API_RULES: ApiRule[] = [
   // leaders) live inside each handler.
   { prefix: '/api/tickets', read: ['tickets.raise', 'tickets.leaderView', ...ANY_TICKET_QUEUE], write: ['tickets.raise', ...TICKET_TITLES.map(ticketSettlePerm)] },
   { prefix: '/api/agents/search', read: ['tickets.raise'] },
+  { prefix: '/api/leader', read: ['tickets.raise'] },
   // Users & roles
   { prefix: '/api/admin/users', read: ['users.manage'], write: ['users.manage'] },
   { prefix: '/api/admin/roles', read: ['roles.manage'], write: ['roles.manage'] },

@@ -36,7 +36,10 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
   // /change-password and /no-access share the login page's standalone
   // layout — a first-login user held on /change-password must not see
   // (or click into) dashboard navigation they can't open yet.
-  if (pathname === '/login' || pathname === '/change-password' || pathname === '/no-access' || pathname.startsWith('/tickets') || pathname.startsWith('/ticket-settlement') || pathname.startsWith('/internal')) {
+  //
+  // /leader is the leader portal (balance, top-up/settlement requests) —
+  // same standalone, mobile-first flow as /tickets.
+  if (pathname === '/login' || pathname === '/change-password' || pathname === '/no-access' || pathname.startsWith('/tickets') || pathname.startsWith('/leader') || pathname.startsWith('/ticket-settlement') || pathname.startsWith('/internal')) {
     return <>{children}</>;
   }
 

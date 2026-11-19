@@ -9,7 +9,9 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
-import { KeyRound, Loader2, LogOut, Plus, Search, Store, UserPlus, UserRound } from 'lucide-react';
+import { ArrowDownToLine, ArrowUpFromLine, KeyRound, Loader2, LogOut, Plus, Search, Store, UserPlus, UserRound } from 'lucide-react';
+import { REQUEST_LABEL, formatAmount } from '@/app/lib/leaderRequests';
+import LeaderBottomNav, { LEADER_NAV_PADDING } from '@/app/components/LeaderBottomNav';
 import { useVisibilityPolling } from '@/app/lib/useVisibilityPolling';
 import { useCan } from '@/app/lib/auth/useSession';
 import { BACKGROUND_POLL_HEADERS } from '@/app/lib/auth/backgroundPoll';
@@ -20,7 +22,9 @@ const POLL_INTERVAL_MS = 9000;
 
 type TicketRow = {
   id: number;
-  title: 'agent_concern' | 'shop_replacement' | 'adding_new_account';
+  title: 'agent_concern' | 'shop_replacement' | 'adding_new_account' | 'topup_request' | 'settlement_request';
+  requestAmount: string | null;
+  requestWallet: string | null;
   issueType: string | null;
   agentIds: number[] | null;
   shopIds: number[] | null;
@@ -52,6 +56,8 @@ const TYPE_STYLE: Record<TicketRow['title'], { Icon: typeof Store; className: st
   shop_replacement: { Icon: Store, className: 'bg-emerald-50 text-emerald-600 dark:bg-emerald-500/10 dark:text-emerald-400' },
   agent_concern: { Icon: UserRound, className: 'bg-orange-50 text-orange-600 dark:bg-orange-500/10 dark:text-orange-400' },
   adding_new_account: { Icon: UserPlus, className: 'bg-violet-50 text-violet-600 dark:bg-violet-500/10 dark:text-violet-400' },
+  topup_request: { Icon: ArrowDownToLine, className: 'bg-teal-50 text-teal-600 dark:bg-teal-500/10 dark:text-teal-400' },
+  settlement_request: { Icon: ArrowUpFromLine, className: 'bg-orange-50 text-orange-600 dark:bg-orange-500/10 dark:text-orange-400' },
 };
 
 const FILTERS: { value: 'all' | TicketRow['status']; label: string }[] = [
@@ -70,6 +76,9 @@ function summarize(t: TicketRow): string {
   if (t.title === 'shop_replacement') {
     const count = t.shopIds?.length ?? 0;
     return `Shop replacement — ${count} shop${count === 1 ? '' : 's'}`;
+  }
+  if (t.title === 'topup_request' || t.title === 'settlement_request') {
+    return `${REQUEST_LABEL[t.title]} — ${t.requestWallet ?? ''} ${formatAmount(t.requestAmount)}`;
   }
   return `Adding new account — ${t.numShops ?? '?'} shop${t.numShops === 1 ? '' : 's'}`;
 }
@@ -162,7 +171,7 @@ export default function TicketsListPage() {
 
   return (
     <div className="min-h-screen w-full bg-background font-[Inter,sans-serif] text-foreground">
-      <div className="mx-auto w-full max-w-2xl px-5 py-8 sm:px-8">
+      <div className={`mx-auto w-full max-w-2xl px-5 py-8 sm:px-8 ${canRaise ? LEADER_NAV_PADDING : ''}`}>
         <div className="mb-5 flex items-center justify-between gap-3">
           <h1 className="text-2xl font-bold">Tickets</h1>
           <div className="flex items-center gap-2">
@@ -291,6 +300,7 @@ export default function TicketsListPage() {
           </div>
         )}
       </div>
+      <LeaderBottomNav />
     </div>
   );
 }

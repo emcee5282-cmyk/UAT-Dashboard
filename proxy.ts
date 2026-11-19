@@ -121,5 +121,9 @@ export const config = {
   // rendering as plain letter badges instead of the real PNGs). Root-level
   // public/*.svg is excluded for the same reason — the login page's own
   // logo is one, and it must load while signed out.
-  matcher: ['/((?!_next/static|_next/image|favicon\\.ico|wallets/|templates/|[^/]+\\.svg$).*)'],
+  //
+  // The installable leader app's files (manifest.json, sw.js, offline.html,
+  // icons/) are also excluded: Chrome fetches the manifest and icons
+  // without the session cookie, and the offline page must load signed out.
+  matcher: ['/((?!_next/static|_next/image|favicon\\.ico|wallets/|templates/|icons/|manifest\\.json$|sw\\.js$|offline\\.html$|[^/]+\\.svg$).*)'],
 };
