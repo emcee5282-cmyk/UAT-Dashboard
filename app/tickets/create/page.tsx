@@ -18,15 +18,10 @@ type Lang = 'en' | 'bn';
 type AgentOption = { id: number; agentCode: string };
 
 const ISSUE_TYPES = [
-  'Reconnect wallet — OTP',
-  'Ask agent to be put on WD only / DP only',
-  'Clear balance',
-  'Reduce balance',
-  'Blocked account / locked',
-  'House notice',
-  'E-wallet office issue',
-  'Suspend by e-wallet',
-  'Agent problem',
+  'Open/Close Wallet (Urgent)',
+  'Reconnect wallet/OTP',
+  'Clear Balance',
+  'Reduce Balance',
   'Others',
 ];
 
